@@ -11,7 +11,8 @@ use hexx::Hex;
 use rand::seq::IndexedRandom;
 use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -219,6 +220,94 @@ impl OverworldState {
         crate::battle::movement_edge_cost(registry, &self.map, ARMY_CLASS, ARMY_CLIMB, from, to)
     }
 
+    /// Every tile this army could end its move on, with the cheapest cost to
+    /// get there. Other armies block both movement and parking, matching
+    /// what [`Self::apply_move`] will actually allow. Ignores whether the
+    /// army has already moved, so callers can preview a spent army's reach.
+    pub fn reachable(&self, registry: &DataRegistry, id: ArmyId) -> HashMap<Hex, u32> {
+        let Some(army) = self.army(id) else {
+            return HashMap::new();
+        };
+        let mut best: HashMap<Hex, u32> = HashMap::new();
+        let mut heap = BinaryHeap::new();
+        best.insert(army.pos, 0);
+        heap.push((Reverse(0u32), army.pos.x, army.pos.y));
+
+        while let Some((Reverse(cost), x, y)) = heap.pop() {
+            let hex = Hex::new(x, y);
+            if best.get(&hex).is_some_and(|&c| c < cost) {
+                continue;
+            }
+            for next in hex.all_neighbors() {
+                if self.army_at(next).is_some() {
+                    continue;
+                }
+                let Some(step) = self.edge_cost(registry, hex, next) else {
+                    continue;
+                };
+                let total = cost + step;
+                if total > army.movement {
+                    continue;
+                }
+                if best.get(&next).is_none_or(|&c| total < c) {
+                    best.insert(next, total);
+                    heap.push((Reverse(total), next.x, next.y));
+                }
+            }
+        }
+        best
+    }
+
+    /// Visible enemy armies this army could engage this turn: those sitting
+    /// next to a tile it can reach (or next to where it already stands).
+    pub fn attack_targets(&self, registry: &DataRegistry, id: ArmyId) -> Vec<ArmyId> {
+        let Some(army) = self.army(id) else {
+            return Vec::new();
+        };
+        let reach = self.reachable(registry, id);
+        self.armies
+            .iter()
+            .filter(|e| e.alive && e.side != army.side)
+            .filter(|e| self.army_visible_to(registry, e, army.side))
+            .filter(|e| {
+                e.pos.distance_to(army.pos) == 1
+                    || reach.keys().any(|hex| hex.distance_to(e.pos) == 1)
+            })
+            .map(|e| e.id)
+            .collect()
+    }
+
+    /// Armies that may pile into a battle at `at` alongside `principal`.
+    ///
+    /// Attackers must still have their move in hand, since joining an
+    /// assault is what they spend their turn on. Defenders answer whatever
+    /// they have been up to: holding ground where you already stand is not
+    /// a separate action.
+    pub fn reinforcement_candidates(
+        &self,
+        at: Hex,
+        side: u8,
+        principal: ArmyId,
+        attacking: bool,
+    ) -> Vec<ArmyId> {
+        self.armies
+            .iter()
+            .filter(|a| a.alive && a.side == side && a.id != principal)
+            .filter(|a| a.pos.distance_to(at) <= 1)
+            .filter(|a| !attacking || !a.moved)
+            .map(|a| a.id)
+            .collect()
+    }
+
+    /// Spend the turn of every army committed to a battle.
+    pub fn commit_to_battle(&mut self, armies: &[ArmyId]) {
+        for id in armies {
+            if let Some(army) = self.army_mut(*id) {
+                army.moved = true;
+            }
+        }
+    }
+
     pub fn apply(
         &mut self,
         registry: &DataRegistry,
@@ -360,22 +449,23 @@ impl OverworldState {
         events
     }
 
-    /// Feed a battle outcome back into the strategic layer. Survivor lists
-    /// replace each army's roster; empty armies are destroyed, and a
-    /// victorious attacker advances onto the contested tile.
+    /// Feed a battle outcome back into the strategic layer. Every
+    /// participating army gets its surviving roster back; armies that lost
+    /// everything are destroyed, and a victorious attacker advances onto the
+    /// contested tile.
     pub fn apply_battle_result(
         &mut self,
         attacker: ArmyId,
         defender: ArmyId,
-        attacker_survivors: Vec<UnitPlacement>,
-        defender_survivors: Vec<UnitPlacement>,
+        survivors: &[(ArmyId, Vec<UnitPlacement>)],
     ) -> Vec<OverworldEvent> {
         let mut events = Vec::new();
         let defender_pos = self.army(defender).map(|a| a.pos);
 
-        for (id, survivors) in [(attacker, attacker_survivors), (defender, defender_survivors)] {
+        for (id, units) in survivors {
+            let id = *id;
             if let Some(army) = self.army_mut(id) {
-                army.units = survivors;
+                army.units = units.clone();
                 if army.units.is_empty() {
                     army.alive = false;
                     events.push(OverworldEvent::ArmyDestroyed { army: id });
@@ -408,6 +498,20 @@ impl OverworldState {
             events.push(OverworldEvent::GameEnded { winner });
         }
     }
+}
+
+/// Which nearby armies an AI side throws into a battle. Concentration of
+/// force is almost always right here -- a battle is fought to the death, so
+/// arriving outnumbered is the main way to lose one -- but this is a
+/// separate function so smarter (or more cowardly) doctrines can replace it.
+pub fn ai_reinforcements(
+    state: &OverworldState,
+    at: Hex,
+    side: u8,
+    principal: ArmyId,
+    attacking: bool,
+) -> Vec<ArmyId> {
+    state.reinforcement_candidates(at, side, principal, attacking)
 }
 
 /// Baseline overworld AI: push each army toward the most valuable visible

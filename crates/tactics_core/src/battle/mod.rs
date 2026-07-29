@@ -11,7 +11,10 @@ mod fog;
 mod movement;
 mod orders;
 
-pub use combat::{expected_damage, hit_chance};
+pub use combat::{
+    expected_damage, hit_breakdown, hit_chance, preview_attack, AttackPreview, CounterPreview,
+    HitBreakdown, HitFactor, HitModifier, MAX_HIT, MIN_HIT,
+};
 pub use fog::{los_clear, unit_vision, FogMap, SideFog};
 pub use movement::{edge_cost as movement_edge_cost, move_points, path_to, reachable};
 pub use orders::{Event, Order, OrderError};
@@ -59,13 +62,36 @@ pub struct Unit {
     pub hp: i32,
     pub moved: bool,
     pub acted: bool,
+    /// Opportunity fire left this round. Independent of [`Self::acted`] so a
+    /// unit that already spent its turn can still answer during the enemy's.
+    /// Cleared after returning fire; restored for everyone at round start.
+    pub can_return_fire: bool,
     pub alive: bool,
 }
 
+/// Why a battle stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndReason {
+    /// One side (or every side) was wiped out.
+    Eliminated,
+    /// The sides lost each other: [`STALEMATE_TURNS`] rounds passed with no
+    /// damage dealt and nobody holding an enemy in sight, so both disengage
+    /// with whatever they have left. Without this, survivors who lose
+    /// contact in the fog wander until they happen to collide — hundreds of
+    /// rounds, with the campaign stuck behind them.
+    Stalemate,
+}
+
+/// Rounds without contact before the battle is called off. Contact means a
+/// hit landed or some side can see an enemy, so a long careful approach
+/// under observation is not mistaken for a stalemate.
+pub const STALEMATE_TURNS: u32 = 8;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BattleResult {
-    /// `None` means a draw (mutual destruction).
+    /// `None` means a draw: either mutual destruction or a stalemate.
     pub winner: Option<u8>,
+    pub reason: EndReason,
 }
 
 /// The full battle simulation state.
@@ -79,6 +105,9 @@ pub struct BattleState {
     pub fog: FogMap,
     pub rng: ChaCha8Rng,
     pub over: Option<BattleResult>,
+    /// Round in which the sides were last in contact, for the stalemate
+    /// check.
+    pub last_contact_turn: u32,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -131,6 +160,7 @@ impl BattleState {
             fog: FogMap::default(),
             rng: ChaCha8Rng::seed_from_u64(seed),
             over: None,
+            last_contact_turn: 1,
         };
         for placement in &file.units {
             state.spawn_unit(registry, placement);
@@ -158,6 +188,7 @@ impl BattleState {
             fog: FogMap::default(),
             rng: ChaCha8Rng::seed_from_u64(seed),
             over: None,
+            last_contact_turn: 1,
         };
         for placement in placements {
             state.spawn_unit(registry, placement);
@@ -194,6 +225,7 @@ impl BattleState {
             hp: vehicle.max_hp,
             moved: false,
             acted: false,
+            can_return_fire: true,
             alive: true,
         });
         id
@@ -209,6 +241,15 @@ impl BattleState {
 
     pub fn unit_at(&self, hex: Hex) -> Option<&Unit> {
         self.units.iter().find(|u| u.alive && u.pos == hex)
+    }
+
+    /// The unit at `hex` if `side` may act on it as a target: an enemy its
+    /// fog currently spots. Callers that would otherwise reach for
+    /// [`Self::unit_at`] should prefer this, so an order refusal never
+    /// betrays a unit the side cannot see.
+    pub fn spotted_enemy_at(&self, hex: Hex, side: u8) -> Option<&Unit> {
+        self.unit_at(hex)
+            .filter(|u| u.side != side && self.fog.side(side).spotted.contains(&u.id))
     }
 
     pub fn alive_units(&self) -> impl Iterator<Item = &Unit> {

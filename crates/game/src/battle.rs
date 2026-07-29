@@ -10,38 +10,58 @@ use bevy::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use tactics_core::ai::{make_battle_planner, AiPlanner};
 use tactics_core::battle::{
-    reachable, BattleState, Event as BattleEvent, Order, SideState, UnitId,
+    reachable, BattleState, EndReason, Event as BattleEvent, Order, SideState, UnitId,
 };
 use tactics_core::map::UnitPlacement;
 use tactics_core::overworld::ArmyId;
 use tactics_core::Hex;
+
+/// One army committed to a field battle.
+#[derive(Clone)]
+pub struct BattleForce {
+    pub army: ArmyId,
+    pub side: u8,
+    pub units: Vec<UnitPlacement>,
+}
 
 /// Why we are entering the battle state; set before switching to it.
 #[derive(Resource, Clone)]
 pub enum PendingBattle {
     /// A scenario map with its own unit placements (campaign/demo).
     Scenario { map_id: String },
-    /// Two overworld armies clashing on a terrain-picked battle map.
+    /// Overworld armies clashing on a terrain-picked battle map. More than
+    /// two can take part: neighbours on either side may reinforce.
     Field {
         map_id: String,
+        /// The army that started it, and the one that was attacked. These
+        /// two decide who advances onto the contested tile afterwards.
         attacker: ArmyId,
         defender: ArmyId,
         sides: Vec<SideState>,
-        attacker_units: Vec<UnitPlacement>,
-        defender_units: Vec<UnitPlacement>,
         attacker_side: u8,
-        defender_side: u8,
+        forces: Vec<BattleForce>,
     },
 }
 
-/// Reported back to the overworld when a field battle ends.
+/// Reported back to the overworld when a field battle ends. Survivors are
+/// listed per army so each one gets its own casualties back.
 #[derive(Resource, Clone)]
 pub struct BattleOutcome {
     pub attacker: ArmyId,
     pub defender: ArmyId,
     pub winner: Option<u8>,
-    pub attacker_survivors: Vec<UnitPlacement>,
-    pub defender_survivors: Vec<UnitPlacement>,
+    /// Both sides withdrew intact rather than one being destroyed.
+    pub stalemate: bool,
+    pub survivors: Vec<(ArmyId, Vec<UnitPlacement>)>,
+}
+
+/// Bookkeeping for a battle that resolves an overworld clash.
+struct FieldBattle {
+    attacker: ArmyId,
+    defender: ArmyId,
+    /// The army each unit was drawn from, indexed by unit index. Units are
+    /// spawned in placement order, so this lines up with `UnitId`.
+    origins: Vec<ArmyId>,
 }
 
 #[derive(Default, PartialEq, Eq, Clone, Copy)]
@@ -65,7 +85,7 @@ struct Battle {
     range_dirty: bool,
     mode: InputMode,
     /// Which overworld clash this battle resolves, if any.
-    field: Option<(ArmyId, ArmyId, u8, u8)>,
+    field: Option<FieldBattle>,
     /// Delay before leaving the battle screen once it's decided.
     exit_timer: Option<Timer>,
 }
@@ -166,6 +186,14 @@ impl Plugin for BattlePlugin {
 // --- setup ----------------------------------------------------------------
 
 fn seed() -> u64 {
+    // Dev tool: STAHL_SEED=<n> replays a battle shot for shot, which is
+    // what makes a misbehaving fight reproducible.
+    if let Some(seed) = std::env::var("STAHL_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        return seed;
+    }
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
@@ -199,17 +227,21 @@ fn setup_battle(
             attacker,
             defender,
             sides,
-            attacker_units,
-            defender_units,
             attacker_side,
-            defender_side,
+            forces,
         } => {
             let file = registry.map(map_id).expect("field battle map exists");
             let map = tactics_core::map::HexMap::from_map_file(file).expect("map parses");
-            let placements =
-                deploy(registry, &map, attacker_units, defender_units, *attacker_side, *defender_side);
+            let (placements, origins) = deploy(registry, &map, forces, *attacker_side);
             let state = BattleState::from_placements(registry, map, sides.clone(), &placements, seed());
-            (state, Some((*attacker, *defender, *attacker_side, *defender_side)))
+            (
+                state,
+                Some(FieldBattle {
+                    attacker: *attacker,
+                    defender: *defender,
+                    origins,
+                }),
+            )
         }
     };
 
@@ -283,46 +315,54 @@ fn setup_battle(
     });
 }
 
-/// Place two armies' units on opposite edges of a field map.
+/// Line the attacking armies up along the west edge and the defenders along
+/// the east. Returns the placements plus, for each one, the army it came
+/// from, so casualties can be reported back to the right army afterwards.
 fn deploy(
     registry: &tactics_core::data::DataRegistry,
     map: &tactics_core::map::HexMap,
-    attacker_units: &[UnitPlacement],
-    defender_units: &[UnitPlacement],
+    forces: &[BattleForce],
     attacker_side: u8,
-    defender_side: u8,
-) -> Vec<UnitPlacement> {
-    let mut cols: Vec<i32> = map.iter().map(|(h, _)| tactics_core::hex_to_offset(h)[0]).collect();
-    cols.sort_unstable();
-    let (min_col, max_col) = (*cols.first().unwrap_or(&0), *cols.last().unwrap_or(&0));
+) -> (Vec<UnitPlacement>, Vec<ArmyId>) {
+    // Tiles a vehicle can actually sit on, nearest edge first. Taking spots
+    // in this order lets a side deploy as deep inland as it needs to, so
+    // three armies fit where one used to.
+    let deployable = |west: bool| -> Vec<Hex> {
+        let mut spots: Vec<(i32, i32, Hex)> = map
+            .iter()
+            .filter(|(_, tile)| {
+                registry
+                    .terrain(&tile.terrain)
+                    .is_some_and(|t| t.cost_for(tactics_core::data::MovementClass::Tracked).is_some())
+            })
+            .map(|(hex, _)| {
+                let [col, row] = tactics_core::hex_to_offset(hex);
+                (if west { col } else { -col }, row, hex)
+            })
+            .collect();
+        spots.sort_unstable_by_key(|(depth, row, _)| (*depth, *row));
+        spots.into_iter().map(|(_, _, hex)| hex).collect()
+    };
 
     let mut placements = Vec::new();
-    let mut place = |units: &[UnitPlacement], side: u8, west: bool| {
-        let mut spots = Vec::new();
-        for (hex, tile) in map.iter() {
-            let [col, _row] = tactics_core::hex_to_offset(hex);
-            let near_edge = if west { col <= min_col + 2 } else { col >= max_col - 2 };
-            if !near_edge {
-                continue;
-            }
-            let passable = registry
-                .terrain(&tile.terrain)
-                .is_some_and(|t| t.cost_for(tactics_core::data::MovementClass::Tracked).is_some());
-            if passable {
-                spots.push(hex);
+    let mut origins = Vec::new();
+    for west in [true, false] {
+        let mut spots = deployable(west).into_iter();
+        for force in forces
+            .iter()
+            .filter(|f| (f.side == attacker_side) == west)
+        {
+            for unit in &force.units {
+                let Some(hex) = spots.next() else { break };
+                let mut placement = unit.clone();
+                placement.at = tactics_core::hex_to_offset(hex);
+                placement.side = force.side;
+                placements.push(placement);
+                origins.push(force.army);
             }
         }
-        spots.sort_unstable_by_key(|h| (h.y, h.x));
-        for (unit, hex) in units.iter().zip(spots) {
-            let mut p = unit.clone();
-            p.at = tactics_core::hex_to_offset(hex);
-            p.side = side;
-            placements.push(p);
-        }
-    };
-    place(attacker_units, attacker_side, true);
-    place(defender_units, defender_side, false);
-    placements
+    }
+    (placements, origins)
 }
 
 fn spawn_unit_sprite(commands: &mut Commands, art: &ArtCache, id: UnitId, side: u8) {
@@ -576,10 +616,11 @@ fn pump_events(
                 log.push(format!("Enemy spotted: {}", name(*unit)));
             }
         }
-        BattleEvent::BattleEnded { winner } => {
-            let text = match winner {
-                Some(w) => format!("Victory: {}", battle.state.sides[*w as usize].name),
-                None => "Mutual destruction.".into(),
+        BattleEvent::BattleEnded { winner, reason } => {
+            let text = match (winner, reason) {
+                (Some(w), _) => format!("Victory: {}", battle.state.sides[*w as usize].name),
+                (None, EndReason::Stalemate) => "Contact lost. Both sides break off.".into(),
+                (None, EndReason::Eliminated) => "Mutual destruction.".into(),
             };
             log.push(text);
             battle.exit_timer = Some(Timer::from_seconds(2.5, TimerMode::Once));
@@ -686,7 +727,7 @@ fn handle_input(
     // A = attack the hovered enemy with the best weapon.
     if keys.just_pressed(KeyCode::KeyA) {
         if let (Some(unit), Some(hex)) = (battle.selected, hovered) {
-            if let Some(target) = battle.state.unit_at(hex).filter(|t| t.side != side) {
+            if let Some(target) = battle.state.spotted_enemy_at(hex, side) {
                 let target_id = target.id;
                 attack_with_best(registry, &mut battle, unit, target_id, &mut log);
             }
@@ -735,8 +776,10 @@ fn handle_input(
         return;
     }
 
-    // Click spotted enemy: attack with the best weapon.
-    if let Some(target) = battle.state.unit_at(hex).filter(|u| u.side != side) {
+    // Click spotted enemy: attack with the best weapon. Unspotted enemies
+    // fall through to the move branch, so probing the fog by clicking is not
+    // a way to find them — you drive in and get ambushed like anyone else.
+    if let Some(target) = battle.state.spotted_enemy_at(hex, side) {
         let target_id = target.id;
         if let Some(unit) = battle.selected {
             attack_with_best(registry, &mut battle, unit, target_id, &mut log);
@@ -993,61 +1036,205 @@ fn update_panel(
         text.0 = log.0.iter().cloned().collect::<Vec<_>>().join("\n");
     }
 
-    // Panel shows the selected unit, else the hovered unit.
-    let hovered_unit = map_render::hovered_tile(&windows, &camera, &state.map, rotation.0)
-        .and_then(|hex| state.unit_at(hex))
-        .map(|u| u.id);
-    let shown = battle.selected.or(hovered_unit).and_then(|id| state.unit(id));
-
     let view_side = state.sides.iter().position(|s| s.ai.is_none()).unwrap_or(0) as u8;
-    if let Ok(mut text) = panel.single_mut() {
-        match shown {
-            Some(unit) if unit.side == view_side || state.fog.side(view_side).spotted.contains(&unit.id) => {
-                let vehicle = registry.vehicle(&unit.vehicle);
-                let vehicle_name = vehicle.map(|v| v.name.as_str()).unwrap_or("?");
-                let max_hp = vehicle.map(|v| v.max_hp).unwrap_or(10);
-                let mut lines = vec![
-                    format!("{}", unit.name),
-                    format!("{vehicle_name}"),
-                    format!("HP {}/{max_hp}", unit.hp.max(0)),
-                    format!("Side: {}", state.sides[unit.side as usize].name),
-                ];
-                if let Some(v) = vehicle {
-                    lines.push(format!(
-                        "Armor F{}/S{}/R{}  Move {}",
-                        v.armor.front, v.armor.side, v.armor.rear, v.movement.points
-                    ));
-                }
-                lines.push("Crew:".into());
-                for c in &unit.crew {
-                    if let Some(ch) = registry.character(c) {
-                        lines.push(format!(
-                            "  {} (G{} D{} A{})",
-                            ch.name, ch.stats.gunnery, ch.stats.driving, ch.stats.awareness
-                        ));
-                    }
-                }
-                if let Some(tile) = state.map.get(unit.pos) {
-                    if let Some(t) = registry.terrain(&tile.terrain) {
-                        lines.push(format!(
-                            "On {} (cover {}%, elev {})",
-                            t.name, t.cover, tile.elevation
-                        ));
-                    }
-                }
-                text.0 = lines.join("\n");
-                if let Ok(mut image) = portrait.single_mut() {
-                    let key = unit.crew.first().map(String::as_str).unwrap_or(&unit.vehicle);
-                    if let Some(handle) = art.portraits.get(key) {
-                        image.image = handle.clone();
-                    }
-                }
-            }
-            _ => {
-                text.0 = "Select a unit\n\nLMB: select/move\nA: attack hovered\nB: blind fire\nV: wait\nEnter: end turn\nQ/E: rotate view".into();
-            }
+    let visible = |unit: &tactics_core::battle::Unit| {
+        unit.side == view_side || state.fog.side(view_side).spotted.contains(&unit.id)
+    };
+
+    let hovered_tile = map_render::hovered_tile(&windows, &camera, &state.map, rotation.0);
+    let hovered_unit = hovered_tile
+        .and_then(|hex| state.unit_at(hex))
+        .filter(|u| visible(u))
+        .map(|u| u.id);
+
+    let Ok(mut text) = panel.single_mut() else {
+        return;
+    };
+
+    // Hovering an enemy while something is selected is a question about a
+    // shot, so answer that first. Otherwise inspect whatever is under the
+    // cursor, falling back to the selection and then the bare tile.
+    let attack = battle.selected.zip(hovered_unit).filter(|(attacker, target)| {
+        state.unit(*attacker).map(|u| u.side) != state.unit(*target).map(|u| u.side)
+    });
+    if let Some((attacker, target)) = attack {
+        let weapon = state
+            .unit(target)
+            .map(|t| best_weapon_for_tile(registry, state, attacker, t.pos))
+            .unwrap_or(0);
+        if let Some(preview) =
+            tactics_core::battle::preview_attack(registry, state, attacker, weapon, target, false)
+        {
+            text.0 = format_attack(&preview);
+            set_portrait(&mut portrait, &art, state, target);
+            return;
         }
     }
+
+    let shown = hovered_unit
+        .or(battle.selected)
+        .and_then(|id| state.unit(id))
+        .filter(|u| visible(u));
+    if let Some(unit) = shown {
+        // Describe the tile under the cursor rather than the unit's own, so
+        // terrain can be read without dropping the selection.
+        text.0 = format_unit(registry, state, unit, hovered_tile.unwrap_or(unit.pos));
+        set_portrait(&mut portrait, &art, state, unit.id);
+        return;
+    }
+    if let Some(hex) = hovered_tile {
+        text.0 = format_tile(registry, state, hex);
+        return;
+    }
+    text.0 = "Hover a tile for terrain\n\nLMB: select/move\nA: attack hovered\nB: blind fire\nV: wait\nEnter: end turn\nQ/E: rotate view".into();
+}
+
+fn set_portrait(
+    portrait: &mut Query<&mut ImageNode, With<PanelPortrait>>,
+    art: &ArtCache,
+    state: &BattleState,
+    id: UnitId,
+) {
+    let Some(unit) = state.unit(id) else { return };
+    let Ok(mut image) = portrait.single_mut() else {
+        return;
+    };
+    let key = unit.crew.first().map(String::as_str).unwrap_or(&unit.vehicle);
+    if let Some(handle) = art.portraits.get(key) {
+        image.image = handle.clone();
+    }
+}
+
+/// The shot the player is contemplating, with the arithmetic spelled out.
+fn format_attack(preview: &tactics_core::battle::AttackPreview) -> String {
+    let mut lines = vec![
+        format!("Attack: {}", preview.target_name),
+        format!("{} - {}", preview.target_vehicle, preview.target_side),
+        format!(
+            "HP {}/{}  at {} hexes",
+            preview.target_hp, preview.target_max_hp, preview.distance
+        ),
+        String::new(),
+        format!(
+            "{} (range {}-{})",
+            preview.weapon_name, preview.weapon_range[0], preview.weapon_range[1]
+        ),
+    ];
+    if !preview.in_range {
+        lines.push("OUT OF RANGE".into());
+    }
+    lines.push(format!("Hit {}%", preview.hit.total));
+    lines.push(format!("  base {}", preview.hit.base));
+    for modifier in &preview.hit.modifiers {
+        lines.push(format!("  {:+} {}", modifier.delta, modifier.label));
+    }
+    if preview.hit.clamped {
+        lines.push(format!(
+            "  (capped at {}-{}%)",
+            tactics_core::battle::MIN_HIT,
+            tactics_core::battle::MAX_HIT
+        ));
+    }
+    lines.push(String::new());
+    lines.push(format!(
+        "Damage {} (vs {:?} armor {})",
+        preview.damage, preview.facing, preview.effective_armor
+    ));
+    lines.push(format!("Expected {:.1}", preview.expected_damage));
+    if preview.lethal {
+        lines.push("A hit destroys it.".into());
+    }
+    match &preview.counter {
+        Some(counter) => lines.push(format!(
+            "Return fire: {} {}% for {}",
+            counter.weapon_name, counter.hit_chance, counter.damage
+        )),
+        None => lines.push("No return fire.".into()),
+    }
+    lines.push(String::new());
+    if preview.in_range {
+        lines.push("A or click to fire".into());
+    }
+    lines.join("\n")
+}
+
+fn format_unit(
+    registry: &tactics_core::data::DataRegistry,
+    state: &BattleState,
+    unit: &tactics_core::battle::Unit,
+    tile: Hex,
+) -> String {
+    let vehicle = registry.vehicle(&unit.vehicle);
+    let mut lines = vec![
+        unit.name.clone(),
+        vehicle.map(|v| v.name.clone()).unwrap_or_else(|| "?".into()),
+        format!("HP {}/{}", unit.hp.max(0), vehicle.map(|v| v.max_hp).unwrap_or(10)),
+        format!("Side: {}", state.sides[unit.side as usize].name),
+    ];
+    if let Some(v) = vehicle {
+        lines.push(format!(
+            "Armor F{}/S{}/R{}  Move {}",
+            v.armor.front, v.armor.side, v.armor.rear, v.movement.points
+        ));
+        for weapon in v.weapons.iter().filter_map(|w| registry.weapon(w)) {
+            lines.push(format!(
+                "  {} dmg {} rng {}-{}",
+                weapon.name, weapon.damage, weapon.range[0], weapon.range[1]
+            ));
+        }
+    }
+    lines.push("Crew:".into());
+    for c in &unit.crew {
+        if let Some(ch) = registry.character(c) {
+            lines.push(format!(
+                "  {} (G{} D{} A{})",
+                ch.name, ch.stats.gunnery, ch.stats.driving, ch.stats.awareness
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.push(format_tile(registry, state, tile));
+    lines.join("\n")
+}
+
+/// What a tile does to whoever stands on it.
+fn format_tile(
+    registry: &tactics_core::data::DataRegistry,
+    state: &BattleState,
+    hex: Hex,
+) -> String {
+    let Some(tile) = state.map.get(hex) else {
+        return String::new();
+    };
+    let Some(terrain) = registry.terrain(&tile.terrain) else {
+        return tile.terrain.clone();
+    };
+    let mut lines = vec![format!("{} (elev {})", terrain.name, tile.elevation)];
+    if terrain.cover > 0 {
+        lines.push(format!(
+            "Cover {}%: -{}% to be hit",
+            terrain.cover,
+            terrain.cover / 2
+        ));
+    } else {
+        lines.push("No cover".into());
+    }
+    if terrain.vision_block > 0 {
+        lines.push(format!("Blocks sight (+{})", terrain.vision_block));
+    }
+    let costs: Vec<String> = [
+        (tactics_core::data::MovementClass::Tracked, "trk"),
+        (tactics_core::data::MovementClass::Wheeled, "whl"),
+        (tactics_core::data::MovementClass::Foot, "ft"),
+    ]
+    .iter()
+    .map(|(class, label)| match terrain.cost_for(*class) {
+        Some(cost) => format!("{label}{cost}"),
+        None => format!("{label}-"),
+    })
+    .collect();
+    lines.push(format!("Move {}", costs.join(" ")));
+    lines.join("\n")
 }
 
 fn update_flashes(
@@ -1090,26 +1277,42 @@ fn finish_battle(
         return;
     }
 
-    if let Some((attacker, defender, attacker_side, defender_side)) = battle.field {
-        let survivors = |side: u8| -> Vec<UnitPlacement> {
-            battle
-                .state
-                .side_units(side)
-                .map(|u| UnitPlacement {
-                    at: [0, 0],
-                    side,
-                    vehicle: u.vehicle.clone(),
-                    crew: u.crew.clone(),
-                    name: Some(u.name.clone()),
-                })
-                .collect()
-        };
+    if let Some(field) = &battle.field {
+        // Start every participating army at zero survivors so armies that
+        // were wiped out are still reported, then hand each living unit
+        // back to the army it marched in with.
+        let mut survivors: Vec<(ArmyId, Vec<UnitPlacement>)> = Vec::new();
+        let mut slot_of = HashMap::new();
+        for army in &field.origins {
+            slot_of.entry(*army).or_insert_with(|| {
+                survivors.push((*army, Vec::new()));
+                survivors.len() - 1
+            });
+        }
+        for unit in battle.state.alive_units() {
+            let Some(army) = field.origins.get(unit.id.index()) else {
+                continue;
+            };
+            let Some(&slot) = slot_of.get(army) else {
+                continue;
+            };
+            survivors[slot].1.push(UnitPlacement {
+                at: [0, 0],
+                side: unit.side,
+                vehicle: unit.vehicle.clone(),
+                crew: unit.crew.clone(),
+                name: Some(unit.name.clone()),
+            });
+        }
         commands.insert_resource(BattleOutcome {
-            attacker,
-            defender,
+            attacker: field.attacker,
+            defender: field.defender,
             winner: battle.state.over.and_then(|r| r.winner),
-            attacker_survivors: survivors(attacker_side),
-            defender_survivors: survivors(defender_side),
+            stalemate: matches!(
+                battle.state.over.map(|r| r.reason),
+                Some(EndReason::Stalemate)
+            ),
+            survivors,
         });
     }
 
