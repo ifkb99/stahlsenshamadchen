@@ -26,12 +26,11 @@ fn main() {
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Stahlsenshamädchen".into(),
-                        ..default()
-                    }),
+                    primary_window: Some(primary_window()),
                     ..default()
                 })
+                // Sprites are pixel art drawn at native size; smoothing them
+                // would only blur the texels.
                 .set(ImagePlugin::default_nearest()),
         )
         .insert_resource(ClearColor(Color::srgb(0.09, 0.10, 0.13)))
@@ -46,6 +45,23 @@ fn main() {
         ))
         .add_systems(Update, (map_render::reposition_tiles, dev_screenshot))
         .run();
+}
+
+fn primary_window() -> Window {
+    let mut resolution = bevy::window::WindowResolution::default();
+    // Dev tool: STAHL_SCALE=1.5 fakes a HiDPI display so pixel-grid
+    // regressions can be reproduced on an ordinary 1x monitor.
+    if let Some(scale) = std::env::var("STAHL_SCALE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+    {
+        resolution.set_scale_factor_override(Some(scale));
+    }
+    Window {
+        title: "Stahlsenshamädchen".into(),
+        resolution,
+        ..default()
+    }
 }
 
 /// Dev tool: STAHL_SCREENSHOT=out.png captures the window a few seconds in

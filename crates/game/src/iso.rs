@@ -16,11 +16,23 @@ use tactics_core::hexx;
 use tactics_core::map::HexMap;
 use tactics_core::Hex;
 
-/// Hex circumradius in pixels (before the isometric squash).
-pub const HEX_SIZE: f32 = 36.0;
-/// Vertical squash factor for the isometric look.
-pub const SQUASH: f32 = 0.55;
-/// Screen pixels per elevation level.
+// Sprites are drawn at their native size, so one texel is one world unit.
+// The hex is sized in whole texels — and, because a pointy-top hex tiles at
+// exactly its width horizontally and three quarters of its height
+// vertically, these values keep every tile centre on a whole texel. That is
+// what makes tiles butt together seamlessly instead of showing ragged seams.
+
+/// Width of a hex top face, in texels. Must be even.
+pub const HEX_WIDTH: f32 = 64.0;
+/// Height of a hex top face, in texels. Must be divisible by 4 so the
+/// three-quarter row pitch stays whole.
+pub const HEX_HEIGHT: f32 = 40.0;
+/// Hex circumradius, derived so the face is exactly `HEX_WIDTH` across.
+pub const HEX_SIZE: f32 = HEX_WIDTH / 1.732_050_8;
+/// Vertical squash for the isometric look, derived from the face height.
+pub const SQUASH: f32 = HEX_HEIGHT / (2.0 * HEX_SIZE);
+/// Screen texels per elevation level. Must be even: prism sprites are
+/// centred, so half of it becomes a position offset.
 pub const ELEV_PX: f32 = 14.0;
 
 /// Current view orientation, in 60-degree steps (0..6).
@@ -43,7 +55,17 @@ pub fn layout() -> hexx::HexLayout {
 /// Screen position of a tile's top-face center, plus its depth (z).
 /// Depth sorts by the tile's *ground* row so raised tiles still occlude
 /// correctly, with a small elevation bias for stacks on the same row.
+///
+/// The position is rounded to a whole texel: sprites sample cleanly only
+/// when their centre sits on the texel grid, and a fractional centre makes
+/// neighbouring tiles disagree about where their shared edge falls.
 pub fn project(hex: Hex, elevation: i32, rotation: u32, center: Hex) -> (Vec2, f32) {
+    let (pos, z) = project_exact(hex, elevation, rotation, center);
+    (pos.round(), z)
+}
+
+/// Unrounded projection, for angle math where sub-texel precision matters.
+pub fn project_exact(hex: Hex, elevation: i32, rotation: u32, center: Hex) -> (Vec2, f32) {
     let rotated = hex.rotate_cw_around(center, rotation);
     let ground = layout().hex_to_world_pos(rotated);
     let pos = Vec2::new(ground.x, ground.y + elevation as f32 * ELEV_PX);
@@ -69,18 +91,17 @@ pub fn pick(map: &HexMap, world: Vec2, rotation: u32, center: Hex) -> Option<Hex
 /// The screen-space direction a unit facing `dir` points in, given the
 /// current view rotation. Used to orient unit sprites.
 pub fn facing_angle(pos: Hex, dir: hexx::EdgeDirection, rotation: u32, center: Hex) -> f32 {
-    let (from, _) = project(pos, 0, rotation, center);
-    let (to, _) = project(pos.neighbor(dir), 0, rotation, center);
+    let (from, _) = project_exact(pos, 0, rotation, center);
+    let (to, _) = project_exact(pos.neighbor(dir), 0, rotation, center);
     (to - from).to_angle()
 }
 
 // --- Placeholder art -----------------------------------------------------
 
-/// Pixel size of the hex face sprite.
+/// Texel size of the hex face sprite. Exactly the face dimensions, with no
+/// padding, so adjacent tiles interlock without gaps.
 pub fn face_size() -> (u32, u32) {
-    let w = (3.0f32.sqrt() * HEX_SIZE).ceil() as u32 + 2;
-    let h = (2.0 * HEX_SIZE * SQUASH).ceil() as u32 + 2;
-    (w, h)
+    (HEX_WIDTH as u32, HEX_HEIGHT as u32)
 }
 
 /// Generated placeholder images, keyed so mods with real art can bypass
@@ -161,21 +182,40 @@ pub fn tile_image(color: [u8; 3], elevation: i32) -> Image {
     let h = face_h + extra;
     let mut data = vec![0u8; (w * h * 4) as usize];
 
-    // Rasterize the top face and record each column's lowest face pixel.
+    // Rasterize the top face into a mask first, so the outline can be
+    // derived from it. Probing the hex shape at fixed offsets instead
+    // leaves the outline dotted along the shallow diagonal edges.
+    let mut mask = vec![false; (w * face_h) as usize];
     let mut bottom = vec![None::<u32>; w as usize];
     for y in 0..face_h {
         for x in 0..w {
             let px = x as f32 - w as f32 / 2.0 + 0.5;
             let py = face_h as f32 / 2.0 - y as f32 - 0.5;
             if inside_hex(px, py) {
-                // Edge detection for a subtle outline.
-                let edge = !inside_hex(px - 1.5, py)
-                    || !inside_hex(px + 1.5, py)
-                    || !inside_hex(px, py - 1.5)
-                    || !inside_hex(px, py + 1.5);
-                put(&mut data, w, x, y, shade(color, if edge { 0.72 } else { 1.0 }));
+                mask[(y * w + x) as usize] = true;
                 bottom[x as usize] = Some(y);
             }
+        }
+    }
+    let filled = |x: i64, y: i64| -> bool {
+        x >= 0
+            && y >= 0
+            && x < w as i64
+            && y < face_h as i64
+            && mask[(y as u32 * w + x as u32) as usize]
+    };
+    for y in 0..face_h {
+        for x in 0..w {
+            if !filled(x as i64, y as i64) {
+                continue;
+            }
+            // A rim texel is one missing an orthogonal neighbour, which
+            // gives a uniformly thick outline all the way around.
+            let rim = !filled(x as i64 - 1, y as i64)
+                || !filled(x as i64 + 1, y as i64)
+                || !filled(x as i64, y as i64 - 1)
+                || !filled(x as i64, y as i64 + 1);
+            put(&mut data, w, x, y, shade(color, if rim { 0.82 } else { 1.0 }));
         }
     }
     // Extrude walls below the face; left side darker than right for a fake

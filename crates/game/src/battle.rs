@@ -1,6 +1,7 @@
 //! The battle screen: renders a `tactics_core` battle, feeds it player
 //! orders, animates the resulting events, and drives AI sides.
 
+use crate::camera::CameraFocus;
 use crate::iso::{self, ArtCache, ViewCenter, ViewRotation};
 use crate::map_render::{self, CurrentMap, FogOverlay};
 use crate::mods::Mods;
@@ -179,7 +180,7 @@ fn setup_battle(
     rotation: Res<ViewRotation>,
     mut center: ResMut<ViewCenter>,
     mut log: ResMut<BattleLog>,
-    mut camera: Query<&mut Transform, With<Camera2d>>,
+    mut focus: ResMut<CameraFocus>,
 ) {
     let registry = &mods.0;
     let pending = pending
@@ -265,11 +266,8 @@ fn setup_battle(
     log.0.clear();
     log.push("Battle started. LMB select/move, A attack hovered enemy, B blind fire, V wait, Enter end turn, Q/E rotate.");
 
-    if let Ok(mut cam) = camera.single_mut() {
-        let (pos, _) = iso::project(center.0, 0, rotation.0, center.0);
-        cam.translation.x = pos.x;
-        cam.translation.y = pos.y;
-    }
+    let (map_center, _) = iso::project(center.0, 0, rotation.0, center.0);
+    focus.0 = map_center;
 
     commands.insert_resource(Battle {
         state,
@@ -369,7 +367,8 @@ fn spawn_battle_ui(commands: &mut Commands) {
             position_type: PositionType::Absolute,
             top: Val::Px(8.0),
             left: Val::Px(0.0),
-            right: Val::Px(0.0),
+            // Stop short of the side panel so the two never overlap.
+            right: Val::Px(264.0),
             justify_content: JustifyContent::Center,
             ..default()
         },
@@ -471,7 +470,9 @@ fn drive_movers(
         let eb = map.0.get(b).map(|t| t.elevation).unwrap_or(0);
         let (pa, za) = iso::project(a, ea, rotation.0, center.0);
         let (pb, zb) = iso::project(b, eb, rotation.0, center.0);
-        let pos = pa.lerp(pb, t);
+        // Snapped so a moving unit steps across whole pixels instead of
+        // shimmering through sub-texel positions.
+        let pos = pa.lerp(pb, t).round();
         transform.translation = Vec3::new(pos.x, pos.y + 10.0, za.max(zb) + 1.5);
     }
 }
@@ -862,8 +863,8 @@ fn sync_units(
                 .unwrap_or(10)
                 .max(1);
             let frac = (unit.hp.max(0) as f32 / max as f32).clamp(0.0, 1.0);
-            sprite.custom_size = Some(Vec2::new(28.0 * frac, 3.0));
-            transform.translation.x = -14.0 * (1.0 - frac);
+            sprite.custom_size = Some(Vec2::new((28.0 * frac).round(), 3.0));
+            transform.translation.x = (-14.0 * (1.0 - frac)).round();
             sprite.color = if frac > 0.5 {
                 Color::srgb(0.3, 0.9, 0.3)
             } else if frac > 0.25 {

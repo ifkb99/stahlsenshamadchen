@@ -24,7 +24,7 @@ cargo test -p tactics_core          # headless engine tests
 | Enter / T | end day | end turn |
 | Q / E | rotate the view (6 perspectives) | same |
 | WASD / arrows / MMB drag | pan camera | same |
-| Wheel | zoom | same |
+| Wheel | zoom (whole-pixel steps, 1x–4x) | same |
 
 Moving an overworld army onto an enemy army starts a battle; survivors and
 casualties persist back to the campaign.
@@ -61,6 +61,12 @@ Two crates:
   `"ai": {"planner": "mcts", "difficulty": 4}`.
 - **Overworld**: armies, capturable objectives with income, softer fog
   (concealing terrain only), battles triggered by contact.
+- **Pixel-perfect rendering**: sprites are drawn at native size, so one texel
+  is one world unit. Hex faces are whole-texel sized (64x40, a 64x30 tiling
+  pitch), sprite and camera positions snap to the pixel grid, and zoom is
+  quantised to a whole number of physical pixels per texel. Without that
+  last part a fractional desktop scale factor (1.25, 1.5, ...) feeds
+  straight into the projection and smears the art.
 
 ## Modding
 

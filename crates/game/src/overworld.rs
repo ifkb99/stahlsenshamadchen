@@ -3,6 +3,7 @@
 
 use crate::battle::{BattleOutcome, PendingBattle};
 use crate::campaign::{self, Campaign, CampaignCommand};
+use crate::camera::CameraFocus;
 use crate::iso::{self, ArtCache, ViewCenter, ViewRotation};
 use crate::map_render::{self, CurrentMap};
 use crate::mods::Mods;
@@ -90,7 +91,7 @@ fn enter_overworld(
     existing: Option<ResMut<Overworld>>,
     outcome: Option<Res<BattleOutcome>>,
     campaign: Option<NonSendMut<Campaign>>,
-    mut camera: Query<&mut Transform, With<Camera2d>>,
+    mut focus: ResMut<CameraFocus>,
 ) {
     let registry = &mods.0;
 
@@ -115,7 +116,7 @@ fn enter_overworld(
         }
         ow.selected = None;
         spawn_world(&mut commands, registry, &art, rotation.0, &mut center, &ow.state);
-        center_camera(&mut camera, rotation.0, center.0);
+        center_camera(&mut focus, rotation.0, center.0);
         return;
     }
 
@@ -150,7 +151,7 @@ fn enter_overworld(
     }
 
     spawn_world(&mut commands, registry, &art, rotation.0, &mut center, &state);
-    center_camera(&mut camera, rotation.0, center.0);
+    center_camera(&mut focus, rotation.0, center.0);
 
     if let Some(campaign) = campaign {
         campaign::call_start_hook(&campaign, &state);
@@ -164,16 +165,9 @@ fn enter_overworld(
     });
 }
 
-fn center_camera(
-    camera: &mut Query<&mut Transform, With<Camera2d>>,
-    rotation: u32,
-    center: Hex,
-) {
-    if let Ok(mut cam) = camera.single_mut() {
-        let (pos, _) = iso::project(center, 0, rotation, center);
-        cam.translation.x = pos.x;
-        cam.translation.y = pos.y;
-    }
+fn center_camera(focus: &mut CameraFocus, rotation: u32, center: Hex) {
+    let (pos, _) = iso::project(center, 0, rotation, center);
+    focus.0 = pos;
 }
 
 /// Spawn the map tiles, army markers, owner dots, and UI for a state.
@@ -227,7 +221,8 @@ fn spawn_ui(commands: &mut Commands) {
             position_type: PositionType::Absolute,
             top: Val::Px(8.0),
             left: Val::Px(0.0),
-            right: Val::Px(0.0),
+            // Stop short of the side panel so the two never overlap.
+            right: Val::Px(264.0),
             justify_content: JustifyContent::Center,
             ..default()
         },
