@@ -1,13 +1,24 @@
 # TODO
+## Design Decisions to Lock Early
+Things that shape everything below them. Deciding late means rework; ordered by cost of delay.
+- IGOUGO vs WEGO: chain of command ("everything happens at once", Combat Mission style) replaces the whole turn model — active side, moved/acted flags, counterfire, both AI planners, most of the battle UI. every battle feature built on the current alternating-turn model gets rebuilt when switching. if WEGO is the game (and "Wargame Red Dragon but anime" says it is), decide now and do the rework early, before the battle layer accretes features. the Order/Event boundary makes it tractable: orders become queued intents, resolution becomes a tick loop emitting the same events
+- girls need to be instances, not just definitions: CharacterDef is static data and Unit.crew is id strings. wounds, xp, morale history, reserve membership all need a mutable per-girl campaign object that persists across battles. small refactor now, painful after the campaign layer grows
+- what happens to crew when a vehicle dies? right now the unit is just marked dead. bail out / wounded pool / permadeath is a core identity decision (GuP is famously non-lethal) that affects morale, the wound system, and how much players care about the girls
+- battle victory conditions: engine only knows eliminated and stalemate. campaigns and scenario variety want per-map objectives in map json ("hold the bridge 10 turns", "exit the map edge"). decide the shape before battle-flow assumptions (muster prompt, apply_battle_result) harden around "battle over = someone died"
+- one-unit-per-hex is assumed in a few places (unit_at returns first match). apc passengers will bend this — decide whether cargo lives "inside" the carrying unit (cleaner, keeps the invariant) before writing the apc
+- ammo selection changes the Attack order signature and adds per-unit inventory. if doing the WEGO rework, design the new order format with an ammo field from the start
+- need to find better name for "girls". cadets kind of works but feels out of theme. should be something like soldier but cute
+## Bugs
+- units should be able to move through friendlies on battle map. currently they get ambushed — root cause: apply_move traps on `unit_at(step).is_some()` with no side or spotted check, so a friendly in the path burns the whole action. fix should distinguish unspotted enemy (ambush) from friendly/spotted enemy (path around)
+- counterattacks never happen: return fire requires `!tgt.acted`, but acted only resets when the unit's own turn starts, so anything that acted last turn (including Wait) is defenseless all enemy turn. zero return-fire events across six AI-vs-AI test battles. needs a separate "can return fire this round" flag or an all-sides reset at round start. makes closing distance far too cheap (moot if WEGO rework lands first)
+- check out warning: `WARN bevy_render::view::window: Couldn't get swap chain texture after configuring. Cause: 'Outdated'`
 ## Immediate Goals
 ### Misc
-- units should be able to move through friendlies on battle map. currently they get ambushed
+- save/load: derive serde across BattleState/OverworldState/roster while the sim is still small (ChaCha8Rng supports serde). every field added from here on either serializes or becomes a migration problem
 - allow better control of units. choose/see pathing, reverse movement (penalized), and a face command (uses movement)
-- multiple girls in a vehicle, as it makes sense. can be wounded from hits to remove their bonuses
+- multiple girls in a vehicle, as it makes sense. can be wounded from hits to remove their bonuses (engine already supports multi-crew via crew_slots/crew_best; this is the roster-instance refactor + a wound model + UI)
 - ability to place units in a starting zone in battle prep phase; if ambushed spawn in a column
 - improve line of sight system, should be easier to hide while seeing enemy
-- check out warning: `WARN bevy_render::view::window: Couldn't get swap chain texture after configuring. Cause: 'Outdated'`
-- review the rest of this list, are there any structural changes that should be made? easier now than later
 ### Menus
 - ability to move girls around between tanks/reserve, and see stats
 - ability to move units between companies on campaign map
@@ -15,31 +26,21 @@
 ### Units
 - apc/ifv, can carry infantry that can dismount
 ## Mid Term Goals
-### Misc
+### Combat Sim
 - morale system, route/retreat when morale too low. affected by flanking and ambushes
 - ability to retreat from a battle, with lowered morale. maybe other penalties too
-- change overall theme to late 1970s tech
 - indirect fire option for artillery. rethink how this operates once implementing chain of command
-### Game Theme
-- late 1970s tech, with a cutesy anime vibe. going for "Wargame Red Dragon but anime"
-- stylize entire game. very "programmer graphics" at the moment
-- need to find better name for "girls". cadets kind of works but feels out of theme. should be something like soldier but cute
-### Sprites
-- worth contacting an actual artist and paying. but who?
-- everything pixelated, except for the girls and maybe some other important aspects
-- cute sprites for girls (this is vital)
-- individual vehicle sprites, with themes for different schools
-- animations for movement, idle, attacking, destruction, etc
-- tile sprites
 ### Realistic Ballistics
 - some sort of simulation for penetration, both for if penetrates and fragmentation once it does
 - depends on where vehicle was hit
+- (well contained: combat.rs is isolated and hit_breakdown extends naturally to a penetration breakdown)
 ### Ammo Types
 - start with AP and HE, limited amounts
 - easily moddable ammo types
 ### Chain of Command
+(depends on the IGOUGO vs WEGO decision above; if WEGO, this moves near the front of the queue)
 - change movement/orders to only take place at end of turn. everything should "happen at once", including enemy moves. this is a rather large change, should be done in isolation
-    - different order types ie: direct fire, move, 
+    - different order types ie: direct fire, move,
 - in battle, works similar to Combat Mission
 - on campaign map, can order units to conduct different types of missions. must be in radio range or have another unit relay instructions to modify their mission
 #### Units
@@ -49,6 +50,26 @@
 - radio unit. not able to fight well, but extends comms range on map. maybe can find some way to give bonus in battle
 - engineer unit to build roads/buildings, repair other units (or self). needs resources to repair, can carry a moderate amount
 - logistics unit to carry resources
+### Campaign
+- girl progression: xp, leveling, skills. fire emblem is a stated inspiration and this is the emotional engine of the genre. sketch the shape early since it lives on the girl-instance model
+- basic requisition flow: vehicle costs, side funds, and income all exist but nothing spends money until academy mode. a minimal buy/reinforce loop shouldn't wait for the 4x layer
+- battle objectives beyond elimination (see design decisions)
+### Game Theme
+- late 1970s tech, with a cutesy anime vibe. going for "Wargame Red Dragon but anime"
+- stylize entire game. very "programmer graphics" at the moment
+### Sprites
+- worth contacting an actual artist and paying. but who?
+- everything pixelated, except for the girls and maybe some other important aspects
+- cute sprites for girls (this is vital)
+- individual vehicle sprites, with themes for different schools
+- animations for movement, idle, attacking, destruction, etc
+- tile sprites
+### Audio
+- music, engine sounds, gun reports. even placeholder sfx changes game feel enormously
+- girl voice barks — cheap characterization for the cute side of the identity
+### Tooling
+- replay viewer: save the seed + order stream and re-watch. nearly free with the deterministic sim, great for debugging WEGO, doubles as a balance tool
+- balance harness: batch AI-vs-AI runs with stat summaries, for tuning ammo/ballistics/morale without playing 200 games by hand. starting point exists at crates/tactics_core/examples/playthrough.rs
 ## Long Term Goals
 ### Academy Mode
 - 4x territory capture mode
