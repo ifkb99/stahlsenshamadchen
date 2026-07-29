@@ -10,6 +10,7 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 - need to find better name for "girls". cadets kind of works but feels out of theme. should be something like soldier but cute
 ## Bugs
 - check out warning: `WARN bevy_render::view::window: Couldn't get swap chain texture after configuring. Cause: 'Outdated'`
+- warning: `WARN winit::platform_impl::linux::x11::xdisplay: error setting XSETTINGS; Xft options won't reload automatically`
 ## Immediate Goals
 ### Misc
 - save/load: derive serde across BattleState/OverworldState/roster while the sim is still small (ChaCha8Rng supports serde). every field added from here on either serializes or becomes a migration problem
