@@ -56,9 +56,26 @@ fn passable(state: &BattleState, unit: &Unit, hex: Hex) -> bool {
     }
 }
 
+/// Whether `unit` is barred from *finishing* its move on `hex`.
+///
+/// Friends and spotted enemies block: the moving side can see both, so
+/// refusing the order tells it nothing it did not already know. An unspotted
+/// enemy deliberately does not block — the order is accepted and resolves as
+/// an ambush. Refusing it instead would announce that someone is standing
+/// there, which is the fog leaking through the pathfinder.
+pub fn destination_blocked(state: &BattleState, unit: &Unit, hex: Hex) -> bool {
+    match state.unit_at(hex) {
+        None => false,
+        Some(other) if other.id == unit.id => false,
+        Some(other) if other.side == unit.side => true,
+        Some(other) => state.fog.side(unit.side).spotted.contains(&other.id),
+    }
+}
+
 /// All tiles the unit can end its move on, with the cheapest cost to reach
-/// each. Excludes tiles occupied by anything (you can pass friends, not park
-/// on them). Includes the unit's own tile at cost 0.
+/// each. You may pass through friends but not park on them; see
+/// [`destination_blocked`] for why unspotted enemies stay in the set.
+/// Includes the unit's own tile at cost 0.
 pub fn reachable(registry: &DataRegistry, state: &BattleState, id: UnitId) -> HashMap<Hex, u32> {
     let Some(unit) = state.unit(id) else {
         return HashMap::new();
@@ -94,8 +111,7 @@ pub fn reachable(registry: &DataRegistry, state: &BattleState, id: UnitId) -> Ha
         }
     }
 
-    // Can't end a move on an occupied tile (own tile excepted).
-    best.retain(|hex, _| *hex == unit.pos || state.unit_at(*hex).is_none());
+    best.retain(|hex, _| !destination_blocked(state, unit, *hex));
     best
 }
 
@@ -110,6 +126,9 @@ pub fn path_to(
     let unit = state.unit(id)?;
     if to == unit.pos {
         return Some((vec![unit.pos], 0));
+    }
+    if destination_blocked(state, unit, to) {
+        return None;
     }
     let (class, max_climb) = unit_movement(registry, unit);
     let budget = move_points(registry, unit);

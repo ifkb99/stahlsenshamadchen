@@ -310,12 +310,12 @@ pub fn preview_attack(
     .max(0);
 
     // Return fire mirrors the rule in `resolve_attack`: the target has to
-    // see the attacker, still have its action, and own a direct-fire weapon
-    // that reaches.
+    // see the attacker, still have opportunity fire this round, and own a
+    // direct-fire weapon that reaches.
     let counter = {
         let can_see = state.fog.side(tgt.side).spotted.contains(&attacker)
             && fog::los_clear(registry, &state.map, tgt.pos, att.pos);
-        if can_see && !tgt.acted {
+        if can_see && tgt.can_return_fire {
             tgt_vehicle
                 .weapons
                 .iter()
@@ -438,7 +438,7 @@ pub fn resolve_attack(
         let dist = tgt.pos.distance_to(att.pos);
         let can_see = state.fog.side(tgt.side).spotted.contains(&attacker)
             && fog::los_clear(registry, &state.map, tgt.pos, att.pos);
-        if can_see && !tgt.acted {
+        if can_see && tgt.can_return_fire {
             let counter_weapon = registry.vehicle(&tgt.vehicle).and_then(|v| {
                 v.weapons.iter().filter_map(|w| registry.weapon(w)).find(|w| {
                     !w.indirect && (w.range[0] as i32..=w.range[1] as i32).contains(&dist)
@@ -451,6 +451,7 @@ pub fn resolve_attack(
                     if t.pos != att_pos {
                         t.facing = t.pos.main_direction_to(att_pos);
                     }
+                    t.can_return_fire = false;
                 }
                 resolve_shot(registry, state, target, &weapon, attacker, false, true, &mut events);
                 fog::reveal_to_all(state, target);

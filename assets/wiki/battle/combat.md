@@ -35,3 +35,9 @@ target is facing. Terrain cover and elevation also reshape the result.
 
 Blind fire (`B`) is how you shell a suspicious forest without waiting for
 a spotter — or when you are the only eyes left.
+
+## Return fire
+
+A unit that can see its attacker may return fire once per round with a
+direct-fire weapon in range, even if it already spent its own turn. That
+opportunity resets at the start of each new round.

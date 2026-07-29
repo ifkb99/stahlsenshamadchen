@@ -62,6 +62,10 @@ pub struct Unit {
     pub hp: i32,
     pub moved: bool,
     pub acted: bool,
+    /// Opportunity fire left this round. Independent of [`Self::acted`] so a
+    /// unit that already spent its turn can still answer during the enemy's.
+    /// Cleared after returning fire; restored for everyone at round start.
+    pub can_return_fire: bool,
     pub alive: bool,
 }
 
@@ -221,6 +225,7 @@ impl BattleState {
             hp: vehicle.max_hp,
             moved: false,
             acted: false,
+            can_return_fire: true,
             alive: true,
         });
         id
@@ -236,6 +241,15 @@ impl BattleState {
 
     pub fn unit_at(&self, hex: Hex) -> Option<&Unit> {
         self.units.iter().find(|u| u.alive && u.pos == hex)
+    }
+
+    /// The unit at `hex` if `side` may act on it as a target: an enemy its
+    /// fog currently spots. Callers that would otherwise reach for
+    /// [`Self::unit_at`] should prefer this, so an order refusal never
+    /// betrays a unit the side cannot see.
+    pub fn spotted_enemy_at(&self, hex: Hex, side: u8) -> Option<&Unit> {
+        self.unit_at(hex)
+            .filter(|u| u.side != side && self.fog.side(side).spotted.contains(&u.id))
     }
 
     pub fn alive_units(&self) -> impl Iterator<Item = &Unit> {

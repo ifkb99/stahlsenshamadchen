@@ -498,3 +498,348 @@ fn overworld_ai_moves_armies() {
     }
     assert!(moved > 0, "overworld AI should move at least one army");
 }
+
+fn two_side_battle(
+    reg: &DataRegistry,
+    rows: &[&str],
+    placements: Vec<UnitPlacement>,
+    seed: u64,
+) -> BattleState {
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "test_map",
+        "palette": { "g": "grass" },
+        "rows": rows,
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    BattleState::from_placements(reg, map, sides, &placements, seed)
+}
+
+#[test]
+fn units_can_move_through_friendlies() {
+    let reg = registry();
+    let mut state = two_side_battle(
+        &reg,
+        &["gggg"],
+        vec![
+            UnitPlacement {
+                at: [0, 0],
+                side: 0,
+                vehicle: "medium_tank".into(),
+                crew: Vec::new(),
+                name: Some("Mover".into()),
+            },
+            UnitPlacement {
+                at: [1, 0],
+                side: 0,
+                vehicle: "medium_tank".into(),
+                crew: Vec::new(),
+                name: Some("Blocker".into()),
+            },
+            // An enemy far away so the battle has two sides.
+            UnitPlacement {
+                at: [3, 0],
+                side: 1,
+                vehicle: "medium_tank".into(),
+                crew: Vec::new(),
+                name: Some("Bystander".into()),
+            },
+        ],
+        1,
+    );
+    let mover = state
+        .side_units(0)
+        .find(|u| u.name == "Mover")
+        .unwrap()
+        .id;
+    let dest = tactics_core::offset_to_hex(2, 0);
+    let events = state
+        .apply(&reg, &Order::Move { unit: mover, to: dest })
+        .expect("moving through a friend should be legal");
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::UnitMoved { .. })),
+        "expected a move, got {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::UnitTrapped { .. })),
+        "a friend is not an ambush: {events:?}"
+    );
+    assert_eq!(state.unit(mover).unwrap().pos, dest);
+    assert!(
+        !state.unit(mover).unwrap().acted,
+        "passing through a friend must not burn the action"
+    );
+}
+
+#[test]
+fn unspotted_enemies_still_ambush() {
+    let reg = registry();
+    // Medium tank vision is 3; park the ambusher at distance 4 so the
+    // mover plans a path through a tile it cannot see.
+    let mut state = two_side_battle(
+        &reg,
+        &["ggggggg"],
+        vec![
+            UnitPlacement {
+                at: [0, 0],
+                side: 0,
+                vehicle: "medium_tank".into(),
+                crew: Vec::new(),
+                name: Some("Mover".into()),
+            },
+            UnitPlacement {
+                at: [4, 0],
+                side: 1,
+                vehicle: "medium_tank".into(),
+                crew: Vec::new(),
+                name: Some("Ambusher".into()),
+            },
+        ],
+        2,
+    );
+    let mover = state.side_units(0).next().unwrap().id;
+    let ambusher = state.side_units(1).next().unwrap().id;
+    assert!(
+        !state.fog.side(0).spotted.contains(&ambusher),
+        "ambusher must start unseen for this test"
+    );
+    let dest = tactics_core::offset_to_hex(5, 0);
+    let events = state
+        .apply(&reg, &Order::Move { unit: mover, to: dest })
+        .expect("pathing through fog should be attempted");
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::UnitTrapped { .. })),
+        "bumping an unspotted enemy must trap: {events:?}"
+    );
+    assert_eq!(
+        state.unit(mover).unwrap().pos,
+        tactics_core::offset_to_hex(3, 0),
+        "should stop on the tile before the ambusher, short of {dest:?}"
+    );
+    assert!(state.unit(mover).unwrap().acted, "an ambush spends the action");
+}
+
+#[test]
+fn hidden_enemies_do_not_show_up_as_holes_in_the_move_range() {
+    // Refusing a move because an unseen enemy stands there would announce
+    // its position, so the tile stays offered and the order becomes an
+    // ambush instead.
+    let reg = registry();
+    let mut state = two_side_battle(
+        &reg,
+        &["ggggggg"],
+        vec![
+            UnitPlacement {
+                at: [0, 0],
+                side: 0,
+                vehicle: "medium_tank".into(),
+                crew: Vec::new(),
+                name: Some("Mover".into()),
+            },
+            UnitPlacement {
+                at: [4, 0],
+                side: 1,
+                vehicle: "medium_tank".into(),
+                crew: Vec::new(),
+                name: Some("Hidden".into()),
+            },
+        ],
+        4,
+    );
+    let mover = state.side_units(0).next().unwrap().id;
+    let hidden = state.side_units(1).next().unwrap().id;
+    let hidden_pos = state.unit(hidden).unwrap().pos;
+    assert!(
+        !state.fog.side(0).spotted.contains(&hidden),
+        "precondition: the enemy is unseen"
+    );
+    assert!(
+        reachable(&reg, &state, mover).contains_key(&hidden_pos),
+        "an unseen enemy must not punch a hole in the move overlay"
+    );
+
+    // Ordering the move onto that tile is legal and resolves as an ambush.
+    let events = state
+        .apply(&reg, &Order::Move { unit: mover, to: hidden_pos })
+        .expect("the order must be accepted, not refused with NoPath");
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::UnitTrapped { .. })),
+        "expected an ambush, got {events:?}"
+    );
+    assert_ne!(state.unit(mover).unwrap().pos, hidden_pos);
+}
+
+#[test]
+fn spotted_enemies_still_block_a_destination() {
+    let reg = registry();
+    let mut state = two_side_battle(
+        &reg,
+        &["ggg"],
+        vec![
+            UnitPlacement {
+                at: [0, 0],
+                side: 0,
+                vehicle: "medium_tank".into(),
+                crew: Vec::new(),
+                name: Some("Mover".into()),
+            },
+            UnitPlacement {
+                at: [1, 0],
+                side: 1,
+                vehicle: "medium_tank".into(),
+                crew: Vec::new(),
+                name: Some("Seen".into()),
+            },
+        ],
+        5,
+    );
+    let mover = state.side_units(0).next().unwrap().id;
+    let seen = state.side_units(1).next().unwrap().id;
+    let seen_pos = state.unit(seen).unwrap().pos;
+    assert!(
+        state.fog.side(0).spotted.contains(&seen),
+        "precondition: the enemy is in plain sight"
+    );
+    assert_eq!(
+        state.apply(&reg, &Order::Move { unit: mover, to: seen_pos }),
+        Err(tactics_core::battle::OrderError::NoPath),
+        "you cannot drive onto an enemy you can see; that is an attack"
+    );
+}
+
+#[test]
+fn return_fire_comes_back_the_next_round() {
+    let reg = registry();
+    let mut state = two_side_battle(
+        &reg,
+        &["ggggg", "ggggg", "ggggg"],
+        vec![
+            UnitPlacement {
+                at: [0, 1],
+                side: 0,
+                vehicle: "medium_tank".into(),
+                crew: Vec::new(),
+                name: Some("Defender".into()),
+            },
+            UnitPlacement {
+                at: [2, 1],
+                side: 1,
+                vehicle: "medium_tank".into(),
+                crew: Vec::new(),
+                name: Some("Attacker".into()),
+            },
+        ],
+        6,
+    );
+    let defender = state.side_units(0).next().unwrap().id;
+
+    state.unit_mut(defender).unwrap().can_return_fire = false;
+    let turn_before = state.turn;
+    // Side 0 ends, side 1 ends: that wraps the round.
+    state.apply(&reg, &Order::EndTurn).unwrap();
+    assert!(
+        !state.unit(defender).unwrap().can_return_fire,
+        "mid-round hand-off must not refresh opportunity fire"
+    );
+    state.apply(&reg, &Order::EndTurn).unwrap();
+    assert!(
+        state.turn > turn_before,
+        "two hand-offs with two sides should start a new round"
+    );
+    assert!(
+        state.unit(defender).unwrap().can_return_fire,
+        "a new round restores opportunity fire"
+    );
+}
+
+#[test]
+fn units_return_fire_after_acting() {
+    let reg = registry();
+    let mut state = two_side_battle(
+        &reg,
+        &["ggggg", "ggggg", "ggggg"],
+        vec![
+            UnitPlacement {
+                at: [0, 1],
+                side: 0,
+                vehicle: "medium_tank".into(),
+                crew: Vec::new(),
+                name: Some("Defender".into()),
+            },
+            UnitPlacement {
+                at: [2, 1],
+                side: 1,
+                vehicle: "medium_tank".into(),
+                crew: Vec::new(),
+                name: Some("Attacker".into()),
+            },
+        ],
+        3,
+    );
+    let defender = state.side_units(0).next().unwrap().id;
+    let attacker = state.side_units(1).next().unwrap().id;
+    assert!(
+        state.fog.side(0).spotted.contains(&attacker)
+            && state.fog.side(1).spotted.contains(&defender),
+        "both need LoS for return fire"
+    );
+
+    // Spend the defender's action (the old bug: acted stayed true all enemy turn).
+    state
+        .apply(&reg, &Order::Wait { unit: defender })
+        .unwrap();
+    assert!(state.unit(defender).unwrap().acted);
+    assert!(state.unit(defender).unwrap().can_return_fire);
+
+    state.apply(&reg, &Order::EndTurn).unwrap();
+    assert_eq!(state.active_side, 1);
+    assert!(
+        state.unit(defender).unwrap().acted,
+        "acted only clears on the unit's own turn"
+    );
+
+    let events = state
+        .apply(
+            &reg,
+            &Order::Attack {
+                unit: attacker,
+                target: defender,
+                weapon: 0,
+            },
+        )
+        .expect("attack should resolve");
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            BattleEvent::ShotFired {
+                counter: true,
+                ..
+            }
+        )),
+        "a unit that already acted must still return fire: {events:?}"
+    );
+    if let Some(d) = state.unit(defender) {
+        assert!(
+            !d.can_return_fire,
+            "return fire is spent for the rest of the round"
+        );
+    }
+}

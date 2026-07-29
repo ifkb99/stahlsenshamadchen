@@ -9,8 +9,6 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 - ammo selection changes the Attack order signature and adds per-unit inventory. if doing the WEGO rework, design the new order format with an ammo field from the start
 - need to find better name for "girls". cadets kind of works but feels out of theme. should be something like soldier but cute
 ## Bugs
-- units should be able to move through friendlies on battle map. currently they get ambushed — root cause: apply_move traps on `unit_at(step).is_some()` with no side or spotted check, so a friendly in the path burns the whole action. fix should distinguish unspotted enemy (ambush) from friendly/spotted enemy (path around)
-- counterattacks never happen: return fire requires `!tgt.acted`, but acted only resets when the unit's own turn starts, so anything that acted last turn (including Wait) is defenseless all enemy turn. zero return-fire events across six AI-vs-AI test battles. needs a separate "can return fire this round" flag or an all-sides reset at round start. makes closing distance far too cheap (moot if WEGO rework lands first)
 - check out warning: `WARN bevy_render::view::window: Couldn't get swap chain texture after configuring. Cause: 'Outdated'`
 ## Immediate Goals
 ### Misc

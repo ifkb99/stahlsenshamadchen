@@ -179,22 +179,26 @@ impl BattleState {
             }
         }
         let (path, _cost) = movement::path_to(registry, self, id, to).ok_or(OrderError::NoPath)?;
-        if path.len() > 1 && self.unit_at(to).is_some() {
-            return Err(OrderError::NoPath);
-        }
+        let side = self.unit(id).expect("checked above").side;
 
-        // Walk the path; unspotted enemies ambush us (stop on the tile
-        // before them).
+        // Walk the path. Friends are transparent — driving past your own
+        // column costs nothing. Pathing already routes around enemies this
+        // side can see, so any enemy met here is one it could not: that is
+        // the ambush, and it stops the advance on the tile before them.
         let mut stopped_at = path[0];
         let mut walked = vec![path[0]];
         let mut trapped = false;
         for &step in &path[1..] {
-            if self.unit_at(step).is_some() {
-                trapped = true;
-                break;
+            match self.unit_at(step) {
+                Some(other) if other.side != side => {
+                    trapped = true;
+                    break;
+                }
+                _ => {
+                    stopped_at = step;
+                    walked.push(step);
+                }
             }
-            stopped_at = step;
-            walked.push(step);
         }
 
         let facing = walked
@@ -352,6 +356,10 @@ impl BattleState {
         }
         if next <= self.active_side {
             self.turn += 1;
+            // New round: everyone gets opportunity fire back.
+            for unit in self.units.iter_mut().filter(|u| u.alive) {
+                unit.can_return_fire = true;
+            }
         }
         self.active_side = next;
         for unit in self.units.iter_mut().filter(|u| u.alive && u.side == next) {

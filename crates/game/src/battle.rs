@@ -727,7 +727,7 @@ fn handle_input(
     // A = attack the hovered enemy with the best weapon.
     if keys.just_pressed(KeyCode::KeyA) {
         if let (Some(unit), Some(hex)) = (battle.selected, hovered) {
-            if let Some(target) = battle.state.unit_at(hex).filter(|t| t.side != side) {
+            if let Some(target) = battle.state.spotted_enemy_at(hex, side) {
                 let target_id = target.id;
                 attack_with_best(registry, &mut battle, unit, target_id, &mut log);
             }
@@ -776,8 +776,10 @@ fn handle_input(
         return;
     }
 
-    // Click spotted enemy: attack with the best weapon.
-    if let Some(target) = battle.state.unit_at(hex).filter(|u| u.side != side) {
+    // Click spotted enemy: attack with the best weapon. Unspotted enemies
+    // fall through to the move branch, so probing the fog by clicking is not
+    // a way to find them — you drive in and get ambushed like anyone else.
+    if let Some(target) = battle.state.spotted_enemy_at(hex, side) {
         let target_id = target.id;
         if let Some(unit) = battle.selected {
             attack_with_best(registry, &mut battle, unit, target_id, &mut log);

@@ -19,3 +19,13 @@ block sight; high ground sees over them.
 
 Firing reveals a unit until it moves. Stay quiet in cover if you need to
 vanish again.
+
+## Ambushes
+
+You may drive straight through your own units, but an enemy you have not
+spotted stops the advance: the unit halts on the tile before them and its
+turn ends.
+
+The move overlay will not warn you. Tiles holding hidden enemies still look
+like ordinary destinations, because a refused order would tell you exactly
+where the enemy is standing. Scouting is the only honest way to know.
