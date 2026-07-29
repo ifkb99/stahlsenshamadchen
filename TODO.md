@@ -25,6 +25,7 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 ### Units
 - apc/ifv, can carry infantry that can dismount
 ## Mid Term Goals
+- separate engine from game if needed. I want to use this for a roguelike in the future. make a clear deliniation for what is game vs engine in future
 ### Combat Sim
 - morale system, route/retreat when morale too low. affected by flanking and ambushes
 - ability to retreat from a battle, with lowered morale. maybe other penalties too
