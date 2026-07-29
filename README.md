@@ -21,13 +21,21 @@ cargo test -p tactics_core          # headless engine tests
 | A | — | attack the hovered enemy |
 | B | — | blind fire at a tile (accuracy penalty) |
 | V | — | selected unit waits |
-| Enter / T | end day | end turn |
+| Enter / T | end day (or confirm a muster) | end turn |
+| 1-9 / M / N | toggle / add all / drop all reinforcements | — |
 | Q / E | rotate the view (6 perspectives) | same |
 | WASD / arrows / MMB drag | pan camera | same |
 | Wheel | zoom (whole-pixel steps, 1x–4x) | same |
 
-Moving an overworld army onto an enemy army starts a battle; survivors and
-casualties persist back to the campaign.
+Selecting an army tints every tile it can reach this day and marks the
+enemies it could engage in red. Moving onto an enemy army starts a battle;
+survivors and casualties persist back to the campaign.
+
+The side panel always describes what is under the cursor: terrain effects
+and move costs for a bare tile, full stats for a unit, and — with one of
+your units selected and an enemy hovered — a shot preview showing the hit
+chance with every modifier that produced it, the damage against the armour
+facing it would strike, and whether the target can return fire.
 
 ## Architecture
 
@@ -61,6 +69,18 @@ Two crates:
   `"ai": {"planner": "mcts", "difficulty": 4}`.
 - **Overworld**: armies, capturable objectives with income, softer fog
   (concealing terrain only), battles triggered by contact.
+- **Massed battles**: a clash pulls in whoever is standing next to it. Any
+  army adjacent to the contested tile may join, so a battle can be five
+  armies rather than two. Attackers spend their turn to join; defenders
+  answer for free, since holding ground you already stand on is not an
+  action. The player picks from a muster prompt, the AI commits everything
+  eligible. Each army gets its own survivors back afterwards.
+- **Breaking off**: eight rounds with no damage dealt and nobody holding an
+  enemy in sight ends the battle as a draw, both sides keeping what they
+  have. Survivors who lose each other in the fog would otherwise wander
+  until they happened to collide — hundreds of rounds — with the campaign
+  stuck behind them. Contact counts as much as damage, so a long careful
+  approach under observation is never mistaken for a stalemate.
 - **Pixel-perfect rendering**: sprites are drawn at native size, so one texel
   is one world unit. Hex faces are whole-texel sized (64x40, a 64x30 tiling
   pitch), sprite and camera positions snap to the pixel grid, and zoom is

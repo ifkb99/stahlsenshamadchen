@@ -1,6 +1,6 @@
 //! Orders in, events out: the sim's single mutation boundary.
 
-use super::{combat, fog, movement, BattleResult, BattleState, UnitId};
+use super::{combat, fog, movement, BattleResult, BattleState, EndReason, UnitId, STALEMATE_TURNS};
 use crate::data::{ArmorFacing, DataRegistry, WeaponDef};
 use hexx::Hex;
 
@@ -72,6 +72,7 @@ pub enum Event {
     },
     BattleEnded {
         winner: Option<u8>,
+        reason: EndReason,
     },
 }
 
@@ -131,6 +132,10 @@ impl BattleState {
             }
             Order::EndTurn => self.apply_end_turn(registry),
         };
+        let hit = events.iter().any(|e| matches!(e, Event::ShotHit { .. }));
+        if hit || self.in_contact() {
+            self.last_contact_turn = self.turn;
+        }
         self.check_victory(&mut events);
         Ok(events)
     }
@@ -367,9 +372,19 @@ impl BattleState {
         }
         let living = self.living_sides();
         if living.len() <= 1 {
-            let winner = living.first().copied();
-            self.over = Some(BattleResult { winner });
-            events.push(Event::BattleEnded { winner });
+            self.finish(living.first().copied(), EndReason::Eliminated, events);
+        } else if self.turn.saturating_sub(self.last_contact_turn) >= STALEMATE_TURNS {
+            self.finish(None, EndReason::Stalemate, events);
         }
+    }
+
+    /// Does any side currently have an enemy in sight?
+    fn in_contact(&self) -> bool {
+        (0..self.sides.len() as u8).any(|side| !self.fog.side(side).spotted.is_empty())
+    }
+
+    fn finish(&mut self, winner: Option<u8>, reason: EndReason, events: &mut Vec<Event>) {
+        self.over = Some(BattleResult { winner, reason });
+        events.push(Event::BattleEnded { winner, reason });
     }
 }
