@@ -1,0 +1,83 @@
+{
+    "id": "frontier",
+    "name": "The Frontier",
+    "kind": "overworld",
+    "palette": {
+        "p": "plains",
+        "M": "mountains",
+        "F": "deep_forest",
+        "C": "city",
+        "I": "factory",
+        "r": "highway"
+    },
+    "rows": [
+        "ppppFFppMMpppp",
+        "pCppFppppMppCp",
+        "pprrrrrrrrrrpp",
+        "ppFppppMppFppp",
+        "pppIppppppIppp",
+        "ppFppMMppppFpp",
+        "pprrrrrrrrrrpp",
+        "pCppppFpppppCp",
+        "ppppMMppFFpppp"
+    ],
+    "elevation": [
+        "00001100220000",
+        "00001000020000",
+        "00000000000000",
+        "00100002000100",
+        "00000000000000",
+        "00000110000000",
+        "00000000000000",
+        "00000010000000",
+        "00001100110000"
+    ],
+    "sides": [
+        { "name": "Kuhlmann Academy", "funds": 20 },
+        { "name": "Iron Valkyries", "funds": 20, "ai": { "planner": "utility", "difficulty": 3 } }
+    ],
+    "armies": [
+        {
+            "at": [1, 1],
+            "side": 0,
+            "name": "1st Company",
+            "movement": 4,
+            "units": [
+                { "at": [2, 3], "side": 0, "vehicle": "medium_tank", "crew": ["anka", "rosa"] },
+                { "at": [1, 2], "side": 0, "vehicle": "recon_car", "crew": ["elsa"] },
+                { "at": [2, 5], "side": 0, "vehicle": "light_tank", "crew": ["juno", "mina"] }
+            ]
+        },
+        {
+            "at": [1, 7],
+            "side": 0,
+            "name": "2nd Company",
+            "movement": 3,
+            "units": [
+                { "at": [1, 4], "side": 0, "vehicle": "artillery", "crew": ["petra"] },
+                { "at": [2, 4], "side": 0, "vehicle": "light_tank", "crew": ["rosa"] }
+            ]
+        },
+        {
+            "at": [12, 1],
+            "side": 1,
+            "name": "Valkyrie Vanguard",
+            "movement": 4,
+            "units": [
+                { "at": [11, 3], "side": 1, "vehicle": "medium_tank", "crew": ["irma"] },
+                { "at": [12, 4], "side": 1, "vehicle": "light_tank", "crew": ["sofia"] },
+                { "at": [11, 5], "side": 1, "vehicle": "recon_car", "crew": ["greta"] }
+            ]
+        },
+        {
+            "at": [12, 7],
+            "side": 1,
+            "name": "Valkyrie Reserve",
+            "movement": 3,
+            "units": [
+                { "at": [12, 4], "side": 1, "vehicle": "tank_destroyer", "crew": ["nadja"] },
+                { "at": [11, 4], "side": 1, "vehicle": "heavy_tank", "crew": ["irma"] }
+            ]
+        }
+    ]
+}

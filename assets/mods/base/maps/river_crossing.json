@@ -1,0 +1,49 @@
+{
+    "id": "river_crossing",
+    "name": "River Crossing",
+    "kind": "battle",
+    "palette": {
+        "g": "grass",
+        "f": "forest",
+        "w": "water",
+        "R": "road",
+        "m": "mud",
+        "t": "town"
+    },
+    "rows": [
+        "ggggffwwgggg",
+        "ggffggwwgffg",
+        "ggfgggwwggfg",
+        "gggggmwwmggg",
+        "RRRRRRRRRRRR",
+        "gggggmwwmtgg",
+        "gfggggwwgggg",
+        "gffgggwwgfgg",
+        "ggggggwwgfgg"
+    ],
+    "elevation": [
+        "000000000112",
+        "000000000122",
+        "000000000012",
+        "000000000011",
+        "000000000001",
+        "000000000011",
+        "000000000111",
+        "000000000112",
+        "000000000112"
+    ],
+    "sides": [
+        { "name": "Kuhlmann Academy" },
+        { "name": "Iron Valkyries", "ai": { "planner": "utility", "difficulty": 3 } }
+    ],
+    "units": [
+        { "at": [2, 4], "side": 0, "vehicle": "medium_tank", "crew": ["anka", "rosa"] },
+        { "at": [1, 2], "side": 0, "vehicle": "recon_car", "crew": ["elsa"] },
+        { "at": [1, 6], "side": 0, "vehicle": "light_tank", "crew": ["juno", "mina"] },
+        { "at": [0, 4], "side": 0, "vehicle": "artillery", "crew": ["petra"] },
+        { "at": [10, 4], "side": 1, "vehicle": "medium_tank", "crew": ["irma"] },
+        { "at": [10, 2], "side": 1, "vehicle": "light_tank", "crew": ["sofia"] },
+        { "at": [10, 6], "side": 1, "vehicle": "tank_destroyer", "crew": ["nadja"] },
+        { "at": [8, 1], "side": 1, "vehicle": "recon_car", "crew": ["greta"] }
+    ]
+}

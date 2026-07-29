@@ -1,0 +1,74 @@
+[
+    {
+        "id": "recon_car",
+        "name": "Luchs Scout Car",
+        "class": "recon",
+        "max_hp": 8,
+        "movement": { "class": "wheeled", "points": 7, "max_climb": 1 },
+        "armor": { "front": 1, "side": 1, "rear": 1 },
+        "vision_range": 6,
+        "weapons": ["mg"],
+        "crew_slots": ["commander", "driver"],
+        "cost": 6
+    },
+    {
+        "id": "light_tank",
+        "name": "Wiesel Light Tank",
+        "class": "light_tank",
+        "max_hp": 10,
+        "movement": { "class": "tracked", "points": 6, "max_climb": 1 },
+        "armor": { "front": 3, "side": 2, "rear": 1 },
+        "vision_range": 4,
+        "weapons": ["gun_37", "mg"],
+        "crew_slots": ["commander", "driver", "gunner"],
+        "cost": 10
+    },
+    {
+        "id": "medium_tank",
+        "name": "Panther Medium Tank",
+        "class": "medium_tank",
+        "max_hp": 10,
+        "movement": { "class": "tracked", "points": 5, "max_climb": 1 },
+        "armor": { "front": 5, "side": 3, "rear": 2 },
+        "vision_range": 3,
+        "weapons": ["gun_75", "mg"],
+        "crew_slots": ["commander", "driver", "gunner", "loader"],
+        "cost": 16
+    },
+    {
+        "id": "heavy_tank",
+        "name": "Löwe Heavy Tank",
+        "class": "heavy_tank",
+        "max_hp": 12,
+        "movement": { "class": "tracked", "points": 3, "max_climb": 1 },
+        "armor": { "front": 8, "side": 5, "rear": 3 },
+        "vision_range": 3,
+        "weapons": ["gun_88", "mg"],
+        "crew_slots": ["commander", "driver", "gunner", "loader", "radio"],
+        "cost": 24
+    },
+    {
+        "id": "tank_destroyer",
+        "name": "Marder Tank Destroyer",
+        "class": "tank_destroyer",
+        "max_hp": 9,
+        "movement": { "class": "tracked", "points": 4, "max_climb": 1 },
+        "armor": { "front": 6, "side": 2, "rear": 1 },
+        "vision_range": 3,
+        "weapons": ["gun_88"],
+        "crew_slots": ["commander", "driver", "gunner"],
+        "cost": 18
+    },
+    {
+        "id": "artillery",
+        "name": "Hummel Self-Propelled Gun",
+        "class": "artillery",
+        "max_hp": 8,
+        "movement": { "class": "tracked", "points": 3, "max_climb": 1 },
+        "armor": { "front": 1, "side": 1, "rear": 1 },
+        "vision_range": 2,
+        "weapons": ["howitzer_105"],
+        "crew_slots": ["commander", "driver", "gunner", "loader"],
+        "cost": 18
+    }
+]

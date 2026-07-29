@@ -1,0 +1,16 @@
+[package]
+name = "tactics_core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+hexx = { version = "0.24.0", features = ["serde"] }
+rand = "0.10.2"
+rand_chacha = "0.10.0"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[[bin]]
+name = "validate-mods"
+path = "src/bin/validate_mods.rs"
