@@ -197,6 +197,7 @@ fn enter_overworld(
                 let cfg = tactics_core::ai::AiConfig {
                     planner: "simple".into(),
                     difficulty: 4,
+                    doctrine: None,
                 };
                 planners.insert(i as u8, make_overworld_planner(&cfg, 1337 + i as u64));
             }

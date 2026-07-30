@@ -1,7 +1,7 @@
 //! Combat resolution: accuracy, armor facings, terrain cover, elevation
-//! advantage, blind fire, and counterattacks.
+//! advantage, blind fire, and opportunity fire.
 
-use super::{fog, stats, BattleState, Event, UnitId};
+use super::{fog, stats, BattleState, Event, FireIntent, UnitId};
 use crate::data::{ArmorFacing, DamageType, DataRegistry, TerrainDef, WeaponDef};
 use hexx::Hex;
 use rand::RngExt;
@@ -267,12 +267,22 @@ pub struct AttackPreview {
     pub counter: Option<CounterPreview>,
 }
 
-/// The return fire a shot would invite.
+/// The return fire a shot would invite. Nothing special resolves this: it is
+/// ordinary opportunity fire from a target that can see you and has a loaded
+/// gun that reaches.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CounterPreview {
     pub weapon_name: String,
     pub hit_chance: i32,
     pub damage: i32,
+}
+
+/// Whether `unit`'s weapon at `index` has finished reloading.
+pub fn weapon_ready(state: &BattleState, unit: UnitId, index: usize) -> bool {
+    state
+        .unit(unit)
+        .and_then(|u| u.cooldowns.get(index).copied())
+        .is_some_and(|cd| cd == 0)
 }
 
 /// Work out what an attack would do, without touching the simulation.
@@ -309,21 +319,23 @@ pub fn preview_attack(
     }
     .max(0);
 
-    // Return fire mirrors the rule in `resolve_attack`: the target has to
-    // see the attacker, still have opportunity fire this round, and own a
-    // direct-fire weapon that reaches.
+    // Return fire is just opportunity fire: the target needs to see the
+    // attacker and own a loaded direct-fire weapon that reaches.
     let counter = {
         let can_see = state.fog.side(tgt.side).spotted.contains(&attacker)
             && fog::los_clear(registry, &state.map, tgt.pos, att.pos);
-        if can_see && tgt.can_return_fire {
+        if can_see {
             tgt_vehicle
                 .weapons
                 .iter()
-                .filter_map(|w| registry.weapon(w))
-                .find(|w| {
-                    !w.indirect && (w.range[0] as i32..=w.range[1] as i32).contains(&distance)
+                .enumerate()
+                .filter_map(|(i, w)| registry.weapon(w).map(|w| (i, w)))
+                .find(|(i, w)| {
+                    !w.indirect
+                        && (w.range[0] as i32..=w.range[1] as i32).contains(&distance)
+                        && weapon_ready(state, target, *i)
                 })
-                .map(|w| CounterPreview {
+                .map(|(_, w)| CounterPreview {
                     weapon_name: w.name.clone(),
                     hit_chance: hit_chance(registry, state, target, tgt.pos, w, att.pos, false),
                     damage: raw_damage(registry, state, w, tgt.pos, attacker),
@@ -357,9 +369,10 @@ pub fn preview_attack(
     })
 }
 
-/// Resolve one shot from `attacker` at `target` (which is known to be at
-/// `at`). Appends granular events; kills are marked here. Does not handle
-/// counterattacks -- see [`resolve_attack`].
+/// Resolve one shot from `attacker` at `target`. Damage lands immediately but
+/// death does not: see [`reap`]. Reloading and fog are handled by the callers
+/// below.
+#[allow(clippy::too_many_arguments)]
 fn resolve_shot(
     registry: &DataRegistry,
     state: &mut BattleState,
@@ -367,7 +380,7 @@ fn resolve_shot(
     weapon: &WeaponDef,
     target: UnitId,
     blind: bool,
-    counter: bool,
+    opportunity: bool,
     events: &mut Vec<Event>,
 ) {
     let (att_pos, tgt_pos) = match (state.unit(attacker), state.unit(target)) {
@@ -380,7 +393,7 @@ fn resolve_shot(
         at: tgt_pos,
         weapon: weapon.id.clone(),
         blind,
-        counter,
+        opportunity,
     });
 
     let chance = hit_chance(registry, state, attacker, att_pos, weapon, tgt_pos, blind);
@@ -408,56 +421,218 @@ fn resolve_shot(
         facing,
         remaining_hp: remaining.max(0),
     });
-    if remaining <= 0 {
-        let at = tgt.pos;
-        tgt.alive = false;
-        events.push(Event::UnitDestroyed { unit: target, at });
+}
+
+/// Take the wrecks off the board at the end of a tick.
+///
+/// Nothing is removed while a tick is still resolving, which is what lets two
+/// crews that fired at each other in the same instant both get their shot off
+/// — and both lose. Deciding it by whoever happened to be processed first
+/// would be an artefact of the loop order, not a rule of the game.
+pub fn reap(state: &mut BattleState, events: &mut Vec<Event>) {
+    for unit in state.units.iter_mut().filter(|u| u.alive && u.hp <= 0) {
+        unit.alive = false;
+        events.push(Event::UnitDestroyed {
+            unit: unit.id,
+            at: unit.pos,
+        });
     }
 }
 
-/// Full attack resolution: the shot, the muzzle-flash reveal, and the
-/// counterattack if the target survives and can answer.
-pub fn resolve_attack(
+/// Whether `weapon` fired from `from` can reach `target_pos` at all: inside
+/// the range band, and either in line of sight or indirect with a spotter.
+fn shot_exists(
+    registry: &DataRegistry,
+    state: &BattleState,
+    weapon: &WeaponDef,
+    from: Hex,
+    target_pos: Hex,
+    spotted: bool,
+) -> bool {
+    let dist = from.distance_to(target_pos);
+    if !(weapon.range[0] as i32..=weapon.range[1] as i32).contains(&dist) {
+        return false;
+    }
+    if weapon.indirect {
+        // Indirect fire needs somebody watching, not its own eyes.
+        spotted
+    } else {
+        fog::los_clear(registry, &state.map, from, target_pos)
+    }
+}
+
+fn weapon_at<'r>(
+    registry: &'r DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    index: usize,
+) -> Option<&'r WeaponDef> {
+    let u = state.unit(unit)?;
+    registry
+        .vehicle(&u.vehicle)
+        .and_then(|v| v.weapons.get(index))
+        .and_then(|w| registry.weapon(w))
+}
+
+/// Fire one weapon at a unit, spending its reload and giving away the
+/// shooter's position.
+fn fire_at_unit(
     registry: &DataRegistry,
     state: &mut BattleState,
     attacker: UnitId,
-    weapon: &WeaponDef,
+    weapon_index: usize,
     target: UnitId,
-    blind: bool,
-) -> Vec<Event> {
-    let mut events = Vec::new();
-    resolve_shot(registry, state, attacker, weapon, target, blind, false, &mut events);
-
-    // Firing gives away your position.
+    opportunity: bool,
+    events: &mut Vec<Event>,
+) {
+    let Some(weapon) = weapon_at(registry, state, attacker, weapon_index).cloned() else {
+        return;
+    };
+    let Some(tgt_pos) = state.unit(target).map(|t| t.pos) else {
+        return;
+    };
+    if let Some(att) = state.unit_mut(attacker) {
+        if att.pos != tgt_pos {
+            att.facing = att.pos.main_direction_to(tgt_pos);
+        }
+        if let Some(cd) = att.cooldowns.get_mut(weapon_index) {
+            *cd = weapon.reload_ticks.max(1);
+        }
+    }
+    resolve_shot(
+        registry, state, attacker, &weapon, target, false, opportunity, events,
+    );
     fog::reveal_to_all(state, attacker);
-    fog::recompute(registry, state);
+    events.extend(fog::recompute(registry, state));
+}
 
-    // Counterattack: the target answers with its first weapon that can
-    // reach, requiring line of sight (indirect weapons don't snap-fire).
-    if let (Some(att), Some(tgt)) = (state.unit(attacker), state.unit(target)) {
-        let dist = tgt.pos.distance_to(att.pos);
-        let can_see = state.fog.side(tgt.side).spotted.contains(&attacker)
-            && fog::los_clear(registry, &state.map, tgt.pos, att.pos);
-        if can_see && tgt.can_return_fire {
-            let counter_weapon = registry.vehicle(&tgt.vehicle).and_then(|v| {
-                v.weapons.iter().filter_map(|w| registry.weapon(w)).find(|w| {
-                    !w.indirect && (w.range[0] as i32..=w.range[1] as i32).contains(&dist)
-                })
+/// Shell a tile. Hits whoever happens to be standing there, at a heavy
+/// accuracy penalty.
+fn fire_at_tile(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    attacker: UnitId,
+    weapon_index: usize,
+    at: Hex,
+    events: &mut Vec<Event>,
+) {
+    let Some(weapon) = weapon_at(registry, state, attacker, weapon_index).cloned() else {
+        return;
+    };
+    let Some((att_pos, side)) = state.unit(attacker).map(|a| (a.pos, a.side)) else {
+        return;
+    };
+    if let Some(att) = state.unit_mut(attacker) {
+        if att.pos != at {
+            att.facing = att.pos.main_direction_to(at);
+        }
+        if let Some(cd) = att.cooldowns.get_mut(weapon_index) {
+            *cd = weapon.reload_ticks.max(1);
+        }
+    }
+    match state.unit_at(at).filter(|t| t.side != side).map(|t| t.id) {
+        Some(target) => resolve_shot(
+            registry, state, attacker, &weapon, target, true, false, events,
+        ),
+        None => {
+            events.push(Event::ShotFired {
+                attacker,
+                from: att_pos,
+                at,
+                weapon: weapon.id.clone(),
+                blind: true,
+                opportunity: false,
             });
-            if let Some(weapon) = counter_weapon.cloned() {
-                // Face the attacker before returning fire.
-                let (att_pos, tgt_id) = (att.pos, tgt.id);
-                if let Some(t) = state.unit_mut(tgt_id) {
-                    if t.pos != att_pos {
-                        t.facing = t.pos.main_direction_to(att_pos);
-                    }
-                    t.can_return_fire = false;
-                }
-                resolve_shot(registry, state, target, &weapon, attacker, false, true, &mut events);
-                fog::reveal_to_all(state, target);
-                fog::recompute(registry, state);
+            events.push(Event::ShotMissed { attacker, at });
+        }
+    }
+    fog::reveal_to_all(state, attacker);
+    events.extend(fog::recompute(registry, state));
+}
+
+/// The best shot this unit could take on its own initiative: the loaded
+/// direct-fire weapon and spotted enemy promising the most damage. Indirect
+/// weapons do not snap-fire, so artillery holds unless it was given a target.
+pub fn best_opportunity_shot(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+) -> Option<(usize, UnitId)> {
+    let att = state.unit(unit)?;
+    let vehicle = registry.vehicle(&att.vehicle)?;
+    let spotted = &state.fog.side(att.side).spotted;
+
+    let mut best: Option<(usize, UnitId, f32)> = None;
+    for (index, weapon_id) in vehicle.weapons.iter().enumerate() {
+        let Some(weapon) = registry.weapon(weapon_id) else {
+            continue;
+        };
+        if weapon.indirect || !weapon_ready(state, unit, index) {
+            continue;
+        }
+        // Enemies in id order, so ties resolve the same way in every replay.
+        for enemy in state.alive_units().filter(|e| e.side != att.side) {
+            if !spotted.contains(&enemy.id)
+                || !shot_exists(registry, state, weapon, att.pos, enemy.pos, true)
+            {
+                continue;
+            }
+            let value = expected_damage(registry, state, unit, att.pos, weapon, enemy.id, false);
+            if best.is_none_or(|(_, _, v)| value > v) {
+                best = Some((index, enemy.id, value));
             }
         }
     }
-    events
+    best.map(|(w, t, _)| (w, t))
+}
+
+/// Take this unit's shot for the current tick, if it has one.
+///
+/// The ordered target comes first. When there is no order, or the order
+/// cannot be carried out right now (target destroyed, lost in the fog, out of
+/// range, or the gun is still reloading), the crew falls back to opportunity
+/// fire. That fallback is what makes return fire happen without a special
+/// case for it.
+pub fn fire_if_able(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    unit: UnitId,
+    events: &mut Vec<Event>,
+) {
+    let Some(att) = state.unit(unit) else { return };
+    let (intent, att_pos, side) = (att.intent.fire, att.pos, att.side);
+
+    match intent {
+        FireIntent::Target { target, weapon } => {
+            let spotted = state.fog.side(side).spotted.contains(&target);
+            let ordered_shot = weapon_ready(state, unit, weapon)
+                && spotted
+                && state
+                    .unit(target)
+                    .filter(|t| t.side != side)
+                    .and_then(|t| {
+                        weapon_at(registry, state, unit, weapon)
+                            .map(|w| shot_exists(registry, state, w, att_pos, t.pos, spotted))
+                    })
+                    .unwrap_or(false);
+            if ordered_shot {
+                fire_at_unit(registry, state, unit, weapon, target, false, events);
+                return;
+            }
+        }
+        FireIntent::Area { at, weapon } => {
+            let can_shell = weapon_ready(state, unit, weapon)
+                && weapon_at(registry, state, unit, weapon)
+                    .is_some_and(|w| shot_exists(registry, state, w, att_pos, at, true));
+            if can_shell {
+                fire_at_tile(registry, state, unit, weapon, at, events);
+                return;
+            }
+        }
+        FireIntent::Hold => {}
+    }
+
+    if let Some((weapon, target)) = best_opportunity_shot(registry, state, unit) {
+        fire_at_unit(registry, state, unit, weapon, target, true, events);
+    }
 }

@@ -57,6 +57,7 @@ pub struct DataRegistry {
     pub vehicles: HashMap<String, VehicleDef>,
     pub weapons: HashMap<String, WeaponDef>,
     pub terrain: HashMap<String, TerrainDef>,
+    pub doctrines: HashMap<String, DoctrineDef>,
     pub maps: HashMap<String, MapFile>,
 }
 
@@ -110,6 +111,10 @@ impl DataRegistry {
         self.characters.get(id)
     }
 
+    pub fn doctrine(&self, id: &str) -> Option<&DoctrineDef> {
+        self.doctrines.get(id)
+    }
+
     pub fn map(&self, id: &str) -> Option<&MapFile> {
         self.maps.get(id)
     }
@@ -126,6 +131,9 @@ impl DataRegistry {
         })?;
         load_defs(&dir.join("terrain"), report, |d: TerrainDef| {
             self.terrain.insert(d.id.clone(), d);
+        })?;
+        load_defs(&dir.join("doctrines"), report, |d: DoctrineDef| {
+            self.doctrines.insert(d.id.clone(), d);
         })?;
         load_defs(&dir.join("maps"), report, |d: MapFile| {
             self.maps.insert(d.id.clone(), d);
@@ -160,6 +168,40 @@ impl DataRegistry {
             }
             if w.range[1] == 0 {
                 report.error(format!("weapon `{}` has max range 0", w.id));
+            }
+            if w.reload_ticks == 0 {
+                report.error(format!(
+                    "weapon `{}` has reload_ticks 0; a weapon must take at least one tick to reload",
+                    w.id
+                ));
+            } else if w.reload_ticks > crate::battle::TICKS_PER_ROUND {
+                report.warn(format!(
+                    "weapon `{}` reloads in {} ticks, longer than the {}-tick round, so it cannot fire every round",
+                    w.id,
+                    w.reload_ticks,
+                    crate::battle::TICKS_PER_ROUND
+                ));
+            }
+        }
+        for d in self.doctrines.values() {
+            // Weights are multipliers; wildly out-of-band numbers are more
+            // likely a typo than a design choice, so warn rather than reject.
+            let bounded: [(&str, f32, f32, f32); 7] = [
+                ("aggression", d.aggression, 0.0, 1.0),
+                ("cover_value", d.cover_value, 0.0, 5.0),
+                ("elevation_value", d.elevation_value, 0.0, 5.0),
+                ("concentration", d.concentration, 0.0, 5.0),
+                ("scouting", d.scouting, 0.0, 5.0),
+                ("indirect_appetite", d.indirect_appetite, 0.0, 5.0),
+                ("withdraw_threshold", d.withdraw_threshold, 0.0, 1.0),
+            ];
+            for (field, value, lo, hi) in bounded {
+                if !(lo..=hi).contains(&value) {
+                    report.warn(format!(
+                        "doctrine `{}` {field} is {value}, outside the usual {lo}..={hi}",
+                        d.id
+                    ));
+                }
             }
         }
         for t in self.terrain.values() {

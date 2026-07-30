@@ -7,7 +7,8 @@
         "damage_type": "small_arms",
         "range": [1, 2],
         "accuracy": 80,
-        "accuracy_falloff": 10
+        "accuracy_falloff": 10,
+        "reload_ticks": 3
     },
     {
         "id": "gun_37",
@@ -17,7 +18,8 @@
         "damage_type": "kinetic",
         "range": [1, 3],
         "accuracy": 70,
-        "accuracy_falloff": 8
+        "accuracy_falloff": 8,
+        "reload_ticks": 5
     },
     {
         "id": "gun_75",
@@ -27,7 +29,8 @@
         "damage_type": "kinetic",
         "range": [1, 4],
         "accuracy": 65,
-        "accuracy_falloff": 7
+        "accuracy_falloff": 7,
+        "reload_ticks": 6
     },
     {
         "id": "gun_88",
@@ -37,7 +40,8 @@
         "damage_type": "kinetic",
         "range": [1, 5],
         "accuracy": 65,
-        "accuracy_falloff": 5
+        "accuracy_falloff": 5,
+        "reload_ticks": 8
     },
     {
         "id": "howitzer_105",
@@ -48,6 +52,7 @@
         "range": [2, 8],
         "accuracy": 55,
         "accuracy_falloff": 3,
-        "indirect": true
+        "indirect": true,
+        "reload_ticks": 12
     }
 ]

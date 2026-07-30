@@ -34,7 +34,7 @@
     ],
     "sides": [
         { "name": "Kuhlmann Academy", "funds": 20 },
-        { "name": "Iron Valkyries", "funds": 20, "ai": { "planner": "utility", "difficulty": 3 } }
+        { "name": "Iron Valkyries", "funds": 20, "ai": { "planner": "utility", "difficulty": 3, "doctrine": "massed_armor" } }
     ],
     "armies": [
         {

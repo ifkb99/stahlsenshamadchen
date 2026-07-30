@@ -1,50 +1,163 @@
 //! Swappable AI planners.
 //!
-//! [`AiPlanner`] is generic over the state and order types, so the same
-//! trait drives battle units and overworld armies. Planners are handed the
-//! full state but must only act on what their side's fog allows -- the
-//! provided implementations go through [`visible_enemies`] and friends
-//! rather than peeking at hidden units.
+//! [`AiPlanner`] is generic over the state and order types, so the same trait
+//! drives battle units and overworld armies. Planners are handed the full
+//! state but must only act on what their side's fog allows -- the provided
+//! implementations go through [`visible_enemies`] and friends rather than
+//! peeking at hidden units.
+//!
+//! Three things are deliberately independent, because they answer different
+//! questions:
+//!
+//! - **Planner** — *how* a side thinks. [`UtilityPlanner`] scores candidates,
+//!   [`MctsPlanner`] searches. Chosen per side, and extensible through
+//!   [`PlannerRegistry`].
+//! - **Doctrine** — *what* it values. Mod data ([`DoctrineDef`]) read by the
+//!   shared [`Evaluator`], so two academies running the same algorithm still
+//!   fight differently.
+//! - **Difficulty** — *how well* it executes: scoring noise for the utility
+//!   planner, search budget for MCTS. Nothing else.
+//!
+//! That separation is the point: a weak opponent running massed-armour
+//! doctrine should still recognisably fight like massed armour, just badly.
 
+mod eval;
 mod mcts;
 mod utility;
 
-pub use mcts::MctsPlanner;
+pub use eval::{Evaluator, TileScore};
+pub use mcts::{determinize, MctsPlanner};
 pub use utility::UtilityPlanner;
 
 use crate::battle::{BattleState, Order, Unit, UnitId};
-use crate::data::DataRegistry;
+use crate::data::{DataRegistry, DoctrineDef};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-/// A decision maker for one side. Called repeatedly during that side's
-/// phase; each call returns the next order to apply. Returning
-/// [`Order::EndTurn`] (or the overworld equivalent) yields control.
+/// A decision maker for one side. Called repeatedly while that side has
+/// something to say; each call returns the next order to apply. Returning
+/// [`Order::Commit`] (or the overworld equivalent) yields control.
 pub trait AiPlanner<S, O>: Send + Sync {
     fn next_order(&mut self, registry: &DataRegistry, state: &S, side: u8) -> O;
 }
 
-/// JSON-configurable AI assignment, e.g. `{"planner": "utility", "difficulty": 3}`.
+/// JSON-configurable AI assignment, e.g.
+/// `{"planner": "mcts", "difficulty": 4, "doctrine": "massed_armor"}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiConfig {
     pub planner: String,
     #[serde(default = "default_difficulty")]
     pub difficulty: u8,
+    /// Doctrine id from mod data. Absent means the balanced default, so map
+    /// files written before doctrine existed keep working.
+    #[serde(default)]
+    pub doctrine: Option<String>,
 }
 
 fn default_difficulty() -> u8 {
     3
 }
 
-/// Build a battle planner from a config. Unknown planner names fall back to
-/// the utility planner so a typo in a mod degrades instead of crashing.
+/// Planner names the engine ships. Map validation warns about anything else,
+/// since planners are Rust rather than mod data.
+pub const BUILTIN_PLANNERS: &[&str] = &["utility", "mcts"];
+
+/// How a planner is built.
+///
+/// The registry is passed in so a planner can construct subordinates: a
+/// hierarchical commander needs child planners with their own doctrines.
+/// Threading it through now costs one parameter; adding it later would mean
+/// touching every planner.
+pub type BattlePlannerCtor =
+    fn(&AiConfig, u64, &DataRegistry, &PlannerRegistry) -> Box<dyn AiPlanner<BattleState, Order>>;
+
+/// Planner name to constructor. Built-ins are registered by
+/// [`Self::with_builtins`]; anything else can be added at startup.
+pub struct PlannerRegistry {
+    ctors: HashMap<String, BattlePlannerCtor>,
+}
+
+impl Default for PlannerRegistry {
+    fn default() -> Self {
+        Self::with_builtins()
+    }
+}
+
+impl PlannerRegistry {
+    pub fn empty() -> Self {
+        Self {
+            ctors: HashMap::new(),
+        }
+    }
+
+    pub fn with_builtins() -> Self {
+        let mut registry = Self::empty();
+        registry.register("utility", |config, seed, data, _planners| {
+            Box::new(UtilityPlanner::from_config(config, seed, data))
+        });
+        registry.register("mcts", |config, seed, data, planners| {
+            Box::new(MctsPlanner::from_config(config, seed, data, planners))
+        });
+        registry
+    }
+
+    pub fn register(&mut self, name: impl Into<String>, ctor: BattlePlannerCtor) {
+        self.ctors.insert(name.into(), ctor);
+    }
+
+    pub fn contains(&self, name: &str) -> bool {
+        self.ctors.contains_key(name)
+    }
+
+    /// Build the planner a side asked for. An unknown name degrades to the
+    /// utility planner: a typo in a mod should not crash a battle. Map
+    /// validation is where the typo gets reported.
+    pub fn build(
+        &self,
+        config: &AiConfig,
+        seed: u64,
+        data: &DataRegistry,
+    ) -> Box<dyn AiPlanner<BattleState, Order>> {
+        let ctor = self
+            .ctors
+            .get(config.planner.as_str())
+            .or_else(|| self.ctors.get("utility"));
+        match ctor {
+            Some(ctor) => ctor(config, seed, data, self),
+            None => Box::new(UtilityPlanner::from_config(config, seed, data)),
+        }
+    }
+}
+
+/// Build a battle planner from a config using the built-in registry.
 pub fn make_battle_planner(
     config: &AiConfig,
     seed: u64,
+    data: &DataRegistry,
 ) -> Box<dyn AiPlanner<BattleState, Order>> {
-    let difficulty = config.difficulty.clamp(1, 5);
-    match config.planner.as_str() {
-        "mcts" => Box::new(MctsPlanner::with_difficulty(difficulty, seed)),
-        _ => Box::new(UtilityPlanner::with_difficulty(difficulty, seed)),
+    PlannerRegistry::with_builtins().build(config, seed, data)
+}
+
+/// The doctrine a side fights by. An absent or unknown id falls back to the
+/// balanced default rather than refusing to field the side.
+pub fn resolve_doctrine(config: &AiConfig, data: &DataRegistry) -> DoctrineDef {
+    config
+        .doctrine
+        .as_deref()
+        .and_then(|id| data.doctrine(id).cloned())
+        .unwrap_or_default()
+}
+
+/// Scoring noise for a difficulty level. Low difficulty sees the same
+/// candidates through a blurrier lens, which plays badly in a humanlike way
+/// rather than following visibly dumb rules.
+pub fn difficulty_noise(difficulty: u8) -> f32 {
+    match difficulty.clamp(1, 5) {
+        1 => 6.0,
+        2 => 3.0,
+        3 => 1.5,
+        4 => 0.5,
+        _ => 0.0,
     }
 }
 
@@ -57,13 +170,9 @@ pub fn visible_enemies<'s>(state: &'s BattleState, side: u8) -> Vec<&'s Unit> {
         .collect()
 }
 
-/// The next unit of `side` that can still receive orders.
-pub fn next_idle_unit(state: &BattleState, side: u8) -> Option<UnitId> {
-    state
-        .side_units(side)
-        .filter(|u| !u.acted)
-        .map(|u| u.id)
-        .min()
+/// The next unit of `side` that has not been given orders this round.
+pub fn next_unplanned_unit(state: &BattleState, side: u8) -> Option<UnitId> {
+    state.unplanned_units(side).map(|u| u.id).min()
 }
 
 /// The best (weapon index, expected damage, would-kill) attack `unit` could
@@ -86,9 +195,7 @@ pub fn best_weapon_against(
         if !(weapon.range[0] as i32..=weapon.range[1] as i32).contains(&dist) {
             continue;
         }
-        if !weapon.indirect
-            && !crate::battle::los_clear(registry, &state.map, from, target.pos)
-        {
+        if !weapon.indirect && !crate::battle::los_clear(registry, &state.map, from, target.pos) {
             continue;
         }
         let dmg =

@@ -7,10 +7,10 @@ use crate::map_render::{self, CurrentMap, FogOverlay};
 use crate::mods::Mods;
 use crate::AppState;
 use bevy::prelude::*;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use tactics_core::ai::{make_battle_planner, AiPlanner};
 use tactics_core::battle::{
-    reachable, BattleState, EndReason, Event as BattleEvent, Order, SideState, UnitId,
+    reachable, BattleState, EndReason, Event as BattleEvent, FireIntent, Order, SideState, UnitId,
 };
 use tactics_core::map::UnitPlacement;
 use tactics_core::overworld::ArmyId;
@@ -68,7 +68,7 @@ struct FieldBattle {
 enum InputMode {
     #[default]
     Normal,
-    /// Next click blind-fires at the clicked tile.
+    /// Next click orders blind fire at the clicked tile.
     BlindFire,
 }
 
@@ -91,9 +91,28 @@ struct Battle {
 }
 
 impl Battle {
+    /// The side the player commands, if any. Simultaneous rounds mean this no
+    /// longer depends on whose turn it is; there is no such thing.
     fn human_side(&self) -> Option<u8> {
-        let side = self.state.active_side;
-        self.state.sides[side as usize].ai.is_none().then_some(side)
+        (0..self.state.sides.len() as u8).find(|side| {
+            self.state.sides[*side as usize].ai.is_none() && !self.planners.contains_key(side)
+        })
+    }
+
+    /// The side whose fog and orders the screen shows.
+    fn view_side(&self) -> u8 {
+        self.human_side().unwrap_or_else(|| {
+            self.state
+                .sides
+                .iter()
+                .position(|s| s.ai.is_none())
+                .unwrap_or(0) as u8
+        })
+    }
+
+    /// Whether the player may issue orders right now.
+    fn accepting_orders(&self) -> bool {
+        !self.state.is_over() && self.state.is_planning() && self.anim.is_empty()
     }
 }
 
@@ -110,6 +129,10 @@ struct HpBar(UnitId);
 
 #[derive(Component)]
 struct MoveHighlight;
+
+/// Overlay showing what your own units have been ordered to do this round.
+#[derive(Component)]
+struct PlanHighlight;
 
 #[derive(Component)]
 struct HoverHighlight;
@@ -133,7 +156,7 @@ struct Flash(Timer);
 struct Puff(Timer);
 
 #[derive(Component)]
-struct TurnBanner;
+struct RoundBanner;
 
 #[derive(Component)]
 struct LogText;
@@ -169,6 +192,7 @@ impl Plugin for BattlePlugin {
                     drive_movers,
                     pump_events,
                     drive_ai,
+                    advance_resolution,
                     handle_input,
                     sync_units,
                     update_fog,
@@ -251,14 +275,21 @@ fn setup_battle(
     for (i, side) in state.sides.iter().enumerate() {
         match &side.ai {
             Some(cfg) => {
-                planners.insert(i as u8, make_battle_planner(cfg, seed().wrapping_add(i as u64)));
+                planners.insert(
+                    i as u8,
+                    make_battle_planner(cfg, seed().wrapping_add(i as u64), registry),
+                );
             }
             None if autoplay => {
                 let cfg = tactics_core::ai::AiConfig {
                     planner: "utility".into(),
                     difficulty: 4,
+                    doctrine: None,
                 };
-                planners.insert(i as u8, make_battle_planner(&cfg, seed().wrapping_add(i as u64)));
+                planners.insert(
+                    i as u8,
+                    make_battle_planner(&cfg, seed().wrapping_add(i as u64), registry),
+                );
             }
             None => {}
         }
@@ -296,7 +327,11 @@ fn setup_battle(
 
     spawn_battle_ui(&mut commands);
     log.0.clear();
-    log.push("Battle started. LMB select/move, A attack hovered enemy, B blind fire, V wait, Enter end turn, Q/E rotate.");
+    log.push(
+        "Battle started. Both sides plan, then the round plays out at once. \
+         LMB select/move, A engage hovered enemy, B blind fire, V hold, C clear orders, \
+         Enter commit, Q/E rotate.",
+    );
 
     let (map_center, _) = iso::project(center.0, 0, rotation.0, center.0);
     focus.0 = map_center;
@@ -420,7 +455,7 @@ fn spawn_battle_ui(commands: &mut Commands) {
                 ..default()
             },
             TextColor(Color::WHITE),
-            TurnBanner,
+            RoundBanner,
         )],
     ));
     commands.spawn((
@@ -532,98 +567,118 @@ fn pump_events(
     if !movers.is_empty() || !battle.pace.just_finished() {
         return;
     }
-    let Some(event) = battle.anim.pop_front() else {
+    // One tick per beat, not one event: everything between two `TickStarted`
+    // markers happened at the same moment, so it has to be shown that way or
+    // simultaneous resolution looks alternating again.
+    let mut drained = Vec::new();
+    while let Some(event) = battle.anim.pop_front() {
+        drained.push(event);
+        if matches!(battle.anim.front(), Some(BattleEvent::TickStarted { .. }) | None) {
+            break;
+        }
+    }
+    if drained.is_empty() {
         return;
-    };
+    }
     let registry = &mods.0;
+    // Names are copied out rather than looked up through `battle`, so the
+    // loop below is free to touch the resource while logging.
+    let names: Vec<String> = battle.state.units.iter().map(|u| u.name.clone()).collect();
     let name = |id: UnitId| -> String {
-        battle
-            .state
-            .units
+        names
             .get(id.index())
-            .map(|u| u.name.clone())
+            .cloned()
             .unwrap_or_else(|| "???".into())
     };
     let entity_of = |id: UnitId| units.iter().find(|(_, u)| u.0 == id).map(|(e, _)| e);
 
-    match &event {
-        BattleEvent::TurnStarted { side, turn } => {
-            let side_name = &battle.state.sides[*side as usize].name;
-            log.push(format!("- Turn {turn}: {side_name} -"));
-        }
-        BattleEvent::UnitMoved { unit, path } => {
-            if let Some(entity) = entity_of(*unit) {
-                commands.entity(entity).insert(Mover {
-                    path: path.clone(),
-                    progress: 0.0,
-                });
+    for event in &drained {
+        match event {
+            BattleEvent::RoundStarted { round } => {
+                log.push(format!("- Round {round}: orders -"));
+                battle.range_dirty = true;
             }
-        }
-        BattleEvent::UnitTrapped { unit, .. } => {
-            log.push(format!("{} ran into an ambush!", name(*unit)));
-        }
-        BattleEvent::ShotFired {
-            attacker,
-            at,
-            weapon,
-            blind,
-            counter,
-            ..
-        } => {
-            let verb = if *counter {
-                "returns fire"
-            } else if *blind {
-                "fires blind"
-            } else {
-                "fires"
-            };
-            let weapon_name = registry.weapon(weapon).map(|w| w.name.clone()).unwrap_or_default();
-            log.push(format!("{} {verb} ({weapon_name})", name(*attacker)));
-            spawn_puff(&mut commands, *at, rotation.0, center.0, Color::srgb(1.0, 0.9, 0.4));
-        }
-        BattleEvent::ShotHit {
-            attacker,
-            target,
-            damage,
-            facing,
-            remaining_hp,
-        } => {
-            log.push(format!(
-                "{} hits {} in the {:?} for {damage} ({remaining_hp} hp left)",
-                name(*attacker),
-                name(*target),
-                facing
-            ));
-            if let Some(entity) = entity_of(*target) {
-                commands
-                    .entity(entity)
-                    .insert(Flash(Timer::from_seconds(0.35, TimerMode::Once)));
+            // The separator itself has nothing to show.
+            BattleEvent::TickStarted { .. } => {}
+            // Movers spawned in the same beat animate together, which is the
+            // whole point of resolving a tick at a time.
+            BattleEvent::UnitMoved { unit, path } => {
+                if let Some(entity) = entity_of(*unit) {
+                    commands.entity(entity).insert(Mover {
+                        path: path.clone(),
+                        progress: 0.0,
+                    });
+                }
             }
-        }
-        BattleEvent::ShotMissed { attacker, at } => {
-            log.push(format!("{} misses", name(*attacker)));
-            spawn_puff(&mut commands, *at, rotation.0, center.0, Color::srgba(0.8, 0.8, 0.8, 0.8));
-        }
-        BattleEvent::UnitDestroyed { unit, at } => {
-            log.push(format!("{} is destroyed!", name(*unit)));
-            spawn_puff(&mut commands, *at, rotation.0, center.0, Color::srgb(1.0, 0.4, 0.1));
-            if let Some(entity) = entity_of(*unit) {
-                commands.entity(entity).despawn();
+            BattleEvent::UnitTrapped { unit, .. } => {
+                log.push(format!("{} ran into an ambush!", name(*unit)));
             }
-        }
-        BattleEvent::UnitSpotted { unit, by_side, .. } => {
-            if battle.state.sides[*by_side as usize].ai.is_none() {
-                log.push(format!("Enemy spotted: {}", name(*unit)));
+            BattleEvent::ShotFired {
+                attacker,
+                at,
+                weapon,
+                blind,
+                opportunity,
+                ..
+            } => {
+                let verb = if *blind {
+                    "fires blind"
+                } else if *opportunity {
+                    "takes a shot of opportunity"
+                } else {
+                    "fires"
+                };
+                let weapon_name = registry
+                    .weapon(weapon)
+                    .map(|w| w.name.clone())
+                    .unwrap_or_default();
+                log.push(format!("{} {verb} ({weapon_name})", name(*attacker)));
+                spawn_puff(&mut commands, *at, rotation.0, center.0, Color::srgb(1.0, 0.9, 0.4));
             }
-        }
-        BattleEvent::BattleEnded { winner, reason } => {
-            let text = match (winner, reason) {
-                (Some(w), _) => format!("Victory: {}", battle.state.sides[*w as usize].name),
-                (None, EndReason::Stalemate) => "Contact lost. Both sides break off.".into(),
-                (None, EndReason::Eliminated) => "Mutual destruction.".into(),
-            };
-            log.push(text);
-            battle.exit_timer = Some(Timer::from_seconds(2.5, TimerMode::Once));
+            BattleEvent::ShotHit {
+                attacker,
+                target,
+                damage,
+                facing,
+                remaining_hp,
+            } => {
+                log.push(format!(
+                    "{} hits {} in the {:?} for {damage} ({remaining_hp} hp left)",
+                    name(*attacker),
+                    name(*target),
+                    facing
+                ));
+                if let Some(entity) = entity_of(*target) {
+                    commands
+                        .entity(entity)
+                        .insert(Flash(Timer::from_seconds(0.35, TimerMode::Once)));
+                }
+            }
+            BattleEvent::ShotMissed { attacker, at } => {
+                log.push(format!("{} misses", name(*attacker)));
+                spawn_puff(&mut commands, *at, rotation.0, center.0, Color::srgba(0.8, 0.8, 0.8, 0.8));
+            }
+            BattleEvent::UnitDestroyed { unit, at } => {
+                log.push(format!("{} is destroyed!", name(*unit)));
+                spawn_puff(&mut commands, *at, rotation.0, center.0, Color::srgb(1.0, 0.4, 0.1));
+                if let Some(entity) = entity_of(*unit) {
+                    commands.entity(entity).despawn();
+                }
+            }
+            BattleEvent::UnitSpotted { unit, by_side, .. } => {
+                if battle.state.sides[*by_side as usize].ai.is_none() {
+                    log.push(format!("Enemy spotted: {}", name(*unit)));
+                }
+            }
+            BattleEvent::BattleEnded { winner, reason } => {
+                let text = match (winner, reason) {
+                    (Some(w), _) => format!("Victory: {}", battle.state.sides[*w as usize].name),
+                    (None, EndReason::Stalemate) => "Contact lost. Both sides break off.".into(),
+                    (None, EndReason::Eliminated) => "Mutual destruction.".into(),
+                };
+                log.push(text);
+                battle.exit_timer = Some(Timer::from_seconds(2.5, TimerMode::Once));
+            }
         }
     }
 }
@@ -642,25 +697,54 @@ fn spawn_puff(commands: &mut Commands, at: Hex, rotation: u32, center: Hex, colo
     ));
 }
 
+/// Let every AI side that still owes orders make one decision. Planning is
+/// simultaneous, so this is not a turn: all of them write orders at once and
+/// nothing happens until the last one commits.
 fn drive_ai(mods: Res<Mods>, mut battle: ResMut<Battle>, movers: Query<&Mover>) {
     if battle.state.is_over() || !battle.anim.is_empty() || !movers.is_empty() {
         return;
     }
-    let side = battle.state.active_side;
-    let battle = &mut *battle;
-    let Some(planner) = battle.planners.get_mut(&side) else {
+    if !battle.state.is_planning() {
         return;
-    };
-    let order = planner.next_order(&mods.0, &battle.state, side);
-    match battle.state.apply(&mods.0, &order) {
-        Ok(events) => battle.anim.extend(events),
-        Err(_) => {
-            // Planner confusion: never wedge the battle, just pass.
-            if let Ok(events) = battle.state.apply(&mods.0, &Order::EndTurn) {
-                battle.anim.extend(events);
-            }
-        }
     }
+    let sides: Vec<u8> = battle
+        .state
+        .living_sides()
+        .into_iter()
+        .filter(|side| battle.planners.contains_key(side) && !battle.state.has_committed(*side))
+        .collect();
+    for side in sides {
+        let battle = &mut *battle;
+        if !battle.state.is_planning() {
+            break;
+        }
+        let Some(planner) = battle.planners.get_mut(&side) else {
+            continue;
+        };
+        let order = planner.next_order(&mods.0, &battle.state, side);
+        if battle.state.apply(&mods.0, &order).is_err() {
+            // Planner confusion: never wedge the battle, just commit what it
+            // has and let the round resolve.
+            let _ = battle.state.apply(&mods.0, &Order::Commit { side });
+        }
+        battle.range_dirty = true;
+    }
+}
+
+/// Play out one tick of the committed round, once the previous one has
+/// finished animating. Keeping the simulation at most a tick ahead of the
+/// sprites is what lets the screen show simultaneous action honestly.
+fn advance_resolution(mods: Res<Mods>, mut battle: ResMut<Battle>, movers: Query<&Mover>) {
+    if battle.state.is_over() || !battle.anim.is_empty() || !movers.is_empty() {
+        return;
+    }
+    if battle.state.resolving_tick().is_none() {
+        return;
+    }
+    let battle = &mut *battle;
+    let events = battle.state.step_tick(&mods.0);
+    battle.anim.extend(events);
+    battle.range_dirty = true;
 }
 
 fn handle_input(
@@ -675,20 +759,26 @@ fn handle_input(
     movers: Query<&Mover>,
 ) {
     let registry = &mods.0;
-    if battle.state.is_over() || !movers.is_empty() || !battle.anim.is_empty() {
+    if !movers.is_empty() || !battle.accepting_orders() {
         return;
     }
     let Some(side) = battle.human_side() else {
         return;
     };
+    if battle.state.has_committed(side) {
+        return;
+    }
 
+    // Enter closes this side's orders. The round only starts once every side
+    // has done the same.
     if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::KeyT) {
         battle.selected = None;
         battle.move_range.clear();
         battle.range_dirty = true;
         let battle = &mut *battle;
-        if let Ok(events) = battle.state.apply(registry, &Order::EndTurn) {
-            battle.anim.extend(events);
+        match battle.state.apply(registry, &Order::Commit { side }) {
+            Ok(events) => battle.anim.extend(events),
+            Err(e) => log.push(format!("Can't commit: {e}")),
         }
         return;
     }
@@ -699,15 +789,25 @@ fn handle_input(
         battle.mode = InputMode::Normal;
         return;
     }
+    // Hold: stay put and shoot at whatever appears.
     if keys.just_pressed(KeyCode::KeyV) {
         if let Some(unit) = battle.selected {
-            let battle = &mut *battle;
-            if let Ok(events) = battle.state.apply(registry, &Order::Wait { unit }) {
-                battle.anim.extend(events);
-            }
-            battle.selected = None;
-            battle.move_range.clear();
-            battle.range_dirty = true;
+            set_intent(
+                registry,
+                &mut battle,
+                &Order::SetFire {
+                    unit,
+                    fire: FireIntent::Hold,
+                },
+                &mut log,
+            );
+        }
+        return;
+    }
+    // Take back a unit's orders; nothing is locked in until the commit.
+    if keys.just_pressed(KeyCode::KeyC) {
+        if let Some(unit) = battle.selected {
+            set_intent(registry, &mut battle, &Order::ClearIntent { unit }, &mut log);
         }
         return;
     }
@@ -724,13 +824,13 @@ fn handle_input(
         rotation.0,
     );
 
-    // A = attack the hovered enemy with the best weapon.
+    // A = engage the hovered enemy with the best weapon.
     if keys.just_pressed(KeyCode::KeyA) {
-        if let (Some(unit), Some(hex)) = (battle.selected, hovered) {
-            if let Some(target) = battle.state.spotted_enemy_at(hex, side) {
-                let target_id = target.id;
-                attack_with_best(registry, &mut battle, unit, target_id, &mut log);
-            }
+        if let (Some(unit), Some(hex)) = (battle.selected, hovered)
+            && let Some(target) = battle.state.spotted_enemy_at(hex, side)
+        {
+            let target_id = target.id;
+            engage_with_best(registry, &mut battle, unit, target_id, &mut log);
         }
         return;
     }
@@ -744,62 +844,58 @@ fn handle_input(
         battle.mode = InputMode::Normal;
         if let Some(unit) = battle.selected {
             let weapon = best_weapon_for_tile(registry, &battle.state, unit, hex);
-            let battle = &mut *battle;
-            match battle
-                .state
-                .apply(registry, &Order::BlindFire { unit, at: hex, weapon })
-            {
-                Ok(events) => {
-                    battle.anim.extend(events);
-                    battle.selected = None;
-                    battle.move_range.clear();
-                    battle.range_dirty = true;
-                }
-                Err(e) => log.push(format!("Can't blind fire there: {e}")),
-            }
+            set_intent(
+                registry,
+                &mut battle,
+                &Order::SetFire {
+                    unit,
+                    fire: FireIntent::Area { at: hex, weapon },
+                },
+                &mut log,
+            );
         }
         return;
     }
 
-    // Click own unit: select it.
+    // Click own unit: select it. Every unit can be given orders during
+    // planning, including ones that already have some.
     if let Some(unit) = battle.state.unit_at(hex).filter(|u| u.side == side) {
         let id = unit.id;
-        let acted = unit.acted;
-        let moved = unit.moved;
         battle.selected = Some(id);
         battle.range_dirty = true;
-        battle.move_range = if acted || moved {
-            HashMap::new()
-        } else {
-            reachable(registry, &battle.state, id)
-        };
+        battle.move_range = reachable(registry, &battle.state, id);
         return;
     }
 
-    // Click spotted enemy: attack with the best weapon. Unspotted enemies
+    // Click spotted enemy: engage with the best weapon. Unspotted enemies
     // fall through to the move branch, so probing the fog by clicking is not
     // a way to find them — you drive in and get ambushed like anyone else.
     if let Some(target) = battle.state.spotted_enemy_at(hex, side) {
         let target_id = target.id;
         if let Some(unit) = battle.selected {
-            attack_with_best(registry, &mut battle, unit, target_id, &mut log);
+            engage_with_best(registry, &mut battle, unit, target_id, &mut log);
         }
         return;
     }
 
-    // Click a reachable tile: move.
-    if let Some(unit) = battle.selected {
-        if battle.move_range.contains_key(&hex) {
-            let battle = &mut *battle;
-            match battle.state.apply(registry, &Order::Move { unit, to: hex }) {
-                Ok(events) => {
-                    battle.anim.extend(events);
-                    battle.move_range.clear();
-                    battle.range_dirty = true;
-                }
-                Err(e) => log.push(format!("Can't move there: {e}")),
-            }
-        }
+    // Click a reachable tile: route the unit there for this round.
+    if let Some(unit) = battle.selected
+        && battle.move_range.contains_key(&hex)
+    {
+        set_intent(registry, &mut battle, &Order::SetMove { unit, to: hex }, &mut log);
+    }
+}
+
+/// Apply one planning order and refresh the overlays that show it.
+fn set_intent(
+    registry: &tactics_core::data::DataRegistry,
+    battle: &mut Battle,
+    order: &Order,
+    log: &mut BattleLog,
+) {
+    match battle.state.apply(registry, order) {
+        Ok(_) => battle.range_dirty = true,
+        Err(e) => log.push(format!("Order refused: {e}")),
     }
 }
 
@@ -809,11 +905,23 @@ fn best_weapon_for_tile(
     unit: UnitId,
     at: Hex,
 ) -> usize {
+    let from = state.unit(unit).map(|u| u.pos).unwrap_or_default();
+    best_weapon_from(registry, state, unit, from, at)
+}
+
+/// The heaviest weapon that reaches `at` from `from`.
+fn best_weapon_from(
+    registry: &tactics_core::data::DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    from: Hex,
+    at: Hex,
+) -> usize {
     let Some(u) = state.unit(unit) else { return 0 };
     let Some(vehicle) = registry.vehicle(&u.vehicle) else {
         return 0;
     };
-    let dist = u.pos.distance_to(at);
+    let dist = from.distance_to(at);
     vehicle
         .weapons
         .iter()
@@ -825,29 +933,35 @@ fn best_weapon_for_tile(
         .unwrap_or(0)
 }
 
-fn attack_with_best(
+/// Order a unit to engage a target with whatever gun suits the range best.
+/// The shot is taken during resolution, from wherever the unit ends up.
+fn engage_with_best(
     registry: &tactics_core::data::DataRegistry,
     battle: &mut Battle,
     unit: UnitId,
     target: UnitId,
     log: &mut BattleLog,
 ) {
-    let Some(tgt) = battle.state.unit(target) else {
+    // Judge the weapon from where the unit will be standing, since it may be
+    // driving into position this same round.
+    let from = battle
+        .state
+        .unit(unit)
+        .map(|u| u.planned_destination())
+        .unwrap_or_default();
+    let Some(tgt_pos) = battle.state.unit(target).map(|t| t.pos) else {
         return;
     };
-    let weapon = best_weapon_for_tile(registry, &battle.state, unit, tgt.pos);
-    match battle
-        .state
-        .apply(registry, &Order::Attack { unit, target, weapon })
-    {
-        Ok(events) => {
-            battle.anim.extend(events);
-            battle.selected = None;
-            battle.move_range.clear();
-            battle.range_dirty = true;
-        }
-        Err(e) => log.push(format!("Can't attack: {e}")),
-    }
+    let weapon = best_weapon_from(registry, &battle.state, unit, from, tgt_pos);
+    set_intent(
+        registry,
+        battle,
+        &Order::SetFire {
+            unit,
+            fire: FireIntent::Target { target, weapon },
+        },
+        log,
+    );
 }
 
 /// Keep unit sprites in sync with the sim (position, facing, visibility,
@@ -864,13 +978,18 @@ fn sync_units(
     mods: Res<Mods>,
 ) {
     let state = &battle.state;
-    // The fog we render is the first human side's view (or side 0).
-    let view_side = state
-        .sides
-        .iter()
-        .position(|s| s.ai.is_none())
-        .unwrap_or(0) as u8;
+    let view_side = battle.view_side();
     let fog = state.fog.side(view_side);
+    // A move already queued for animation belongs to the animator; snapping
+    // the sprite to the destination first would spoil the walk.
+    let animating: HashSet<UnitId> = battle
+        .anim
+        .iter()
+        .filter_map(|event| match event {
+            BattleEvent::UnitMoved { unit, .. } => Some(*unit),
+            _ => None,
+        })
+        .collect();
 
     for (marker, mut transform, mut visibility, mut sprite) in &mut units {
         let Some(unit) = state.unit(marker.0) else {
@@ -879,7 +998,9 @@ fn sync_units(
         };
         let elev = state.map.get(unit.pos).map(|t| t.elevation).unwrap_or(0);
         let (pos, z) = iso::project(unit.pos, elev, rotation.0, center.0);
-        transform.translation = Vec3::new(pos.x, pos.y + 10.0, z + 1.5);
+        if !animating.contains(&unit.id) {
+            transform.translation = Vec3::new(pos.x, pos.y + 10.0, z + 1.5);
+        }
         transform.rotation =
             Quat::from_rotation_z(iso::facing_angle(unit.pos, unit.facing, rotation.0, center.0));
         let seen = unit.side == view_side || fog.spotted.contains(&unit.id);
@@ -888,8 +1009,8 @@ fn sync_units(
         } else {
             Visibility::Hidden
         };
-        // Dim units that have finished acting on the active side.
-        let done = unit.side == state.active_side && unit.acted;
+        // Dim your own units once they have their orders for the round.
+        let done = state.is_planning() && unit.side == view_side && unit.planned;
         sprite.color = if done {
             Color::srgb(0.55, 0.55, 0.55)
         } else {
@@ -921,12 +1042,7 @@ fn sync_units(
 
 fn update_fog(battle: Res<Battle>, mut overlays: Query<(&FogOverlay, &mut Sprite, &mut Visibility)>) {
     let state = &battle.state;
-    let view_side = state
-        .sides
-        .iter()
-        .position(|s| s.ai.is_none())
-        .unwrap_or(0) as u8;
-    let fog = state.fog.side(view_side);
+    let fog = state.fog.side(battle.view_side());
     for (overlay, mut sprite, mut visibility) in &mut overlays {
         let alpha = if fog.visible.contains(&overlay.hex) {
             0.0
@@ -952,7 +1068,7 @@ fn update_highlights(
     windows: Query<&Window>,
     camera: Query<(&Camera, &GlobalTransform)>,
     art: Res<ArtCache>,
-    existing: Query<Entity, With<MoveHighlight>>,
+    existing: Query<Entity, Or<(With<MoveHighlight>, With<PlanHighlight>)>>,
     mut hover: Query<
         (&mut Transform, &mut Visibility),
         (With<HoverHighlight>, Without<SelectHighlight>),
@@ -990,24 +1106,63 @@ fn update_highlights(
         }
     }
 
-    // Move range tiles: rebuild when the range set changes.
-    if battle.range_dirty {
-        battle.range_dirty = false;
-        for entity in &existing {
-            commands.entity(entity).despawn();
+    // Move range and ordered plans: rebuild when either could have changed.
+    if !battle.range_dirty {
+        return;
+    }
+    battle.range_dirty = false;
+    for entity in &existing {
+        commands.entity(entity).despawn();
+    }
+    for hex in battle.move_range.keys() {
+        commands.spawn((
+            Sprite {
+                image: art.face.clone(),
+                color: Color::srgba(0.35, 0.55, 1.0, 0.4),
+                ..default()
+            },
+            Transform::from_translation(face_center(*hex)),
+            MoveHighlight,
+            BattleScope,
+        ));
+    }
+
+    // Your own orders, drawn so the whole round can be reviewed before it is
+    // committed: amber for routes, red for what each unit will shoot at.
+    if !battle.state.is_planning() {
+        return;
+    }
+    let view_side = battle.view_side();
+    let mut marks: Vec<(Hex, Color)> = Vec::new();
+    for unit in battle.state.side_units(view_side) {
+        for (i, hex) in unit.intent.path.iter().enumerate() {
+            let last = i + 1 == unit.intent.path.len();
+            let alpha = if last { 0.55 } else { 0.3 };
+            marks.push((*hex, Color::srgba(1.0, 0.8, 0.3, alpha)));
         }
-        for hex in battle.move_range.keys() {
-            commands.spawn((
-                Sprite {
-                    image: art.face.clone(),
-                    color: Color::srgba(0.35, 0.55, 1.0, 0.4),
-                    ..default()
-                },
-                Transform::from_translation(face_center(*hex)),
-                MoveHighlight,
-                BattleScope,
-            ));
+        let from = unit.planned_destination();
+        let at = match unit.intent.fire {
+            FireIntent::Hold => None,
+            FireIntent::Area { at, .. } => Some(at),
+            FireIntent::Target { target, .. } => battle.state.unit(target).map(|t| t.pos),
+        };
+        let Some(at) = at else { continue };
+        for hex in from.line_to(at) {
+            let alpha = if hex == at { 0.5 } else { 0.16 };
+            marks.push((hex, Color::srgba(1.0, 0.3, 0.25, alpha)));
         }
+    }
+    for (hex, color) in marks {
+        commands.spawn((
+            Sprite {
+                image: art.face.clone(),
+                color,
+                ..default()
+            },
+            Transform::from_translation(face_center(hex)),
+            PlanHighlight,
+            BattleScope,
+        ));
     }
 }
 
@@ -1019,24 +1174,33 @@ fn update_panel(
     rotation: Res<ViewRotation>,
     windows: Query<&Window>,
     camera: Query<(&Camera, &GlobalTransform)>,
-    mut banner: Query<&mut Text, (With<TurnBanner>, Without<LogText>, Without<PanelText>)>,
-    mut log_text: Query<&mut Text, (With<LogText>, Without<TurnBanner>, Without<PanelText>)>,
-    mut panel: Query<&mut Text, (With<PanelText>, Without<TurnBanner>, Without<LogText>)>,
+    mut banner: Query<&mut Text, (With<RoundBanner>, Without<LogText>, Without<PanelText>)>,
+    mut log_text: Query<&mut Text, (With<LogText>, Without<RoundBanner>, Without<PanelText>)>,
+    mut panel: Query<&mut Text, (With<PanelText>, Without<RoundBanner>, Without<LogText>)>,
     mut portrait: Query<&mut ImageNode, With<PanelPortrait>>,
 ) {
     let state = &battle.state;
     let registry = &mods.0;
+    let view_side = battle.view_side();
 
     if let Ok(mut text) = banner.single_mut() {
-        let side = &state.sides[state.active_side as usize];
-        let controller = if side.ai.is_some() { "AI" } else { "You" };
-        text.0 = format!("Turn {} - {} ({controller})", state.turn, side.name);
+        text.0 = match state.resolving_tick() {
+            Some(tick) => format!(
+                "Round {} - resolving ({}/{})",
+                state.round,
+                tick + 1,
+                tactics_core::battle::TICKS_PER_ROUND
+            ),
+            None if battle.human_side().is_some_and(|s| state.has_committed(s)) => {
+                format!("Round {} - waiting on the other side", state.round)
+            }
+            None => format!("Round {} - planning", state.round),
+        };
     }
     if let Ok(mut text) = log_text.single_mut() {
         text.0 = log.0.iter().cloned().collect::<Vec<_>>().join("\n");
     }
 
-    let view_side = state.sides.iter().position(|s| s.ai.is_none()).unwrap_or(0) as u8;
     let visible = |unit: &tactics_core::battle::Unit| {
         unit.side == view_side || state.fog.side(view_side).spotted.contains(&unit.id)
     };
@@ -1086,7 +1250,7 @@ fn update_panel(
         text.0 = format_tile(registry, state, hex);
         return;
     }
-    text.0 = "Hover a tile for terrain\n\nLMB: select/move\nA: attack hovered\nB: blind fire\nV: wait\nEnter: end turn\nQ/E: rotate view".into();
+    text.0 = "Hover a tile for terrain\n\nLMB: select / set route\nA: engage hovered enemy\nB: blind fire a tile\nV: hold and watch\nC: clear orders\nEnter: commit the round\nQ/E: rotate view".into();
 }
 
 fn set_portrait(

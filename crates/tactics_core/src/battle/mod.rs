@@ -1,9 +1,18 @@
-//! The turn-based battle simulation.
+//! The simultaneous (WEGO) battle simulation.
 //!
-//! The single mutation entry point is [`BattleState::apply`]: orders go in,
-//! a list of [`Event`]s comes out. The presentation layer animates events;
-//! AI planners and campaign scripts consume the same stream. Cloning a
-//! [`BattleState`] yields an independent simulation, which is what
+//! A round has two halves. During [`Phase::Planning`] every side sets
+//! intents for its units — where to drive, what to engage — and nothing on
+//! the board moves. Once all sides [`Order::Commit`], the round resolves in
+//! [`TICKS_PER_ROUND`] ticks during which everyone moves and shoots at once.
+//!
+//! There are two mutation entry points. [`BattleState::apply`] takes orders
+//! (intents and commits) and returns [`Event`]s; [`BattleState::step_tick`]
+//! advances resolution by one tick and returns the events it produced.
+//! Stepping one tick at a time is what lets the presentation layer animate a
+//! round without the simulation racing ahead of the sprites; headless callers
+//! can use [`BattleState::resolve_round`] to run the whole round at once.
+//!
+//! Cloning a [`BattleState`] yields an independent simulation, which is what
 //! search-based planners branch on.
 
 mod combat;
@@ -12,12 +21,14 @@ mod movement;
 mod orders;
 
 pub use combat::{
-    expected_damage, hit_breakdown, hit_chance, preview_attack, AttackPreview, CounterPreview,
-    HitBreakdown, HitFactor, HitModifier, MAX_HIT, MIN_HIT,
+    expected_damage, hit_breakdown, hit_chance, preview_attack, weapon_ready, AttackPreview,
+    CounterPreview, HitBreakdown, HitFactor, HitModifier, MAX_HIT, MIN_HIT,
 };
 pub use fog::{los_clear, unit_vision, FogMap, SideFog};
-pub use movement::{edge_cost as movement_edge_cost, move_points, path_to, reachable};
-pub use orders::{Event, Order, OrderError};
+pub use movement::{
+    destination_blocked, edge_cost as movement_edge_cost, move_points, path_to, reachable,
+};
+pub use orders::{Event, FireIntent, Order, OrderError, UnitIntent};
 
 use crate::ai::AiConfig;
 use crate::data::{DataRegistry, DataError, ValidationReport};
@@ -46,6 +57,21 @@ pub struct SideState {
     pub ai: Option<AiConfig>,
 }
 
+/// How many ticks one round resolves over. Movement points are still spent
+/// per round, but they are now spread across these ticks, so a faster
+/// vehicle covers ground *earlier* rather than merely going further.
+pub const TICKS_PER_ROUND: u32 = 12;
+
+/// Where a battle is in the plan/resolve cycle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Phase {
+    /// Sides are writing orders. Nothing on the board moves; one flag per
+    /// side records who has finished.
+    Planning { committed: Vec<bool> },
+    /// Orders are playing out. `tick` counts from 0 to [`TICKS_PER_ROUND`].
+    Resolving { tick: u32 },
+}
+
 /// A crewed vehicle on the battlefield.
 #[derive(Debug, Clone)]
 pub struct Unit {
@@ -60,13 +86,28 @@ pub struct Unit {
     pub pos: Hex,
     pub facing: EdgeDirection,
     pub hp: i32,
-    pub moved: bool,
-    pub acted: bool,
-    /// Opportunity fire left this round. Independent of [`Self::acted`] so a
-    /// unit that already spent its turn can still answer during the enemy's.
-    /// Cleared after returning fire; restored for everyone at round start.
-    pub can_return_fire: bool,
+    /// What this unit was told to do this round.
+    pub intent: UnitIntent,
+    /// Whether anyone has given this unit orders this round. Distinct from
+    /// an empty intent, which is the deliberate choice to sit still and
+    /// watch.
+    pub planned: bool,
+    /// Movement accrued but not yet spent, in `cost * TICKS_PER_ROUND`
+    /// units. Integer so resolution stays bit-for-bit reproducible.
+    pub move_credit: u32,
+    /// Ticks until each weapon can fire again, indexed like the vehicle's
+    /// weapon list. Carries across rounds, so a slow gun caught mid-reload
+    /// stays mid-reload.
+    pub cooldowns: Vec<u32>,
     pub alive: bool,
+}
+
+impl Unit {
+    /// Where this unit's orders will leave it, or where it stands if it has
+    /// nowhere to go.
+    pub fn planned_destination(&self) -> Hex {
+        self.intent.path.last().copied().unwrap_or(self.pos)
+    }
 }
 
 /// Why a battle stopped.
@@ -74,7 +115,7 @@ pub struct Unit {
 pub enum EndReason {
     /// One side (or every side) was wiped out.
     Eliminated,
-    /// The sides lost each other: [`STALEMATE_TURNS`] rounds passed with no
+    /// The sides lost each other: [`STALEMATE_ROUNDS`] rounds passed with no
     /// damage dealt and nobody holding an enemy in sight, so both disengage
     /// with whatever they have left. Without this, survivors who lose
     /// contact in the fog wander until they happen to collide — hundreds of
@@ -85,7 +126,7 @@ pub enum EndReason {
 /// Rounds without contact before the battle is called off. Contact means a
 /// hit landed or some side can see an enemy, so a long careful approach
 /// under observation is not mistaken for a stalemate.
-pub const STALEMATE_TURNS: u32 = 8;
+pub const STALEMATE_ROUNDS: u32 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BattleResult {
@@ -100,14 +141,14 @@ pub struct BattleState {
     pub map: Arc<HexMap>,
     pub sides: Vec<SideState>,
     pub units: Vec<Unit>,
-    pub turn: u32,
-    pub active_side: u8,
+    pub round: u32,
+    pub phase: Phase,
     pub fog: FogMap,
     pub rng: ChaCha8Rng,
     pub over: Option<BattleResult>,
     /// Round in which the sides were last in contact, for the stalemate
     /// check.
-    pub last_contact_turn: u32,
+    pub last_contact_round: u32,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -143,7 +184,7 @@ impl BattleState {
             return Err(BattleSetupError::Invalid(report.errors));
         }
         let map = HexMap::from_map_file(file)?;
-        let sides = file
+        let sides: Vec<SideState> = file
             .sides
             .iter()
             .map(|s| SideState {
@@ -151,16 +192,19 @@ impl BattleState {
                 ai: s.ai.clone(),
             })
             .collect();
+        let side_count = sides.len();
         let mut state = Self {
             map: Arc::new(map),
             sides,
             units: Vec::new(),
-            turn: 1,
-            active_side: 0,
+            round: 1,
+            phase: Phase::Planning {
+                committed: vec![false; side_count],
+            },
             fog: FogMap::default(),
             rng: ChaCha8Rng::seed_from_u64(seed),
             over: None,
-            last_contact_turn: 1,
+            last_contact_round: 1,
         };
         for placement in &file.units {
             state.spawn_unit(registry, placement);
@@ -179,16 +223,19 @@ impl BattleState {
         placements: &[UnitPlacement],
         seed: u64,
     ) -> Self {
+        let side_count = sides.len();
         let mut state = Self {
             map: Arc::new(map),
             sides,
             units: Vec::new(),
-            turn: 1,
-            active_side: 0,
+            round: 1,
+            phase: Phase::Planning {
+                committed: vec![false; side_count],
+            },
             fog: FogMap::default(),
             rng: ChaCha8Rng::seed_from_u64(seed),
             over: None,
-            last_contact_turn: 1,
+            last_contact_round: 1,
         };
         for placement in placements {
             state.spawn_unit(registry, placement);
@@ -223,9 +270,10 @@ impl BattleState {
             pos: crate::offset_to_hex(placement.at[0], placement.at[1]),
             facing: EdgeDirection::POINTY_EAST,
             hp: vehicle.max_hp,
-            moved: false,
-            acted: false,
-            can_return_fire: true,
+            intent: UnitIntent::default(),
+            planned: false,
+            move_credit: 0,
+            cooldowns: vec![0; vehicle.weapons.len()],
             alive: true,
         });
         id
@@ -270,6 +318,35 @@ impl BattleState {
         sides.sort_unstable();
         sides.dedup();
         sides
+    }
+
+    /// Whether sides are still writing orders.
+    pub fn is_planning(&self) -> bool {
+        matches!(self.phase, Phase::Planning { .. })
+    }
+
+    /// The tick being resolved, or `None` while planning.
+    pub fn resolving_tick(&self) -> Option<u32> {
+        match self.phase {
+            Phase::Resolving { tick } => Some(tick),
+            Phase::Planning { .. } => None,
+        }
+    }
+
+    /// Whether `side` has finished writing orders this round.
+    pub fn has_committed(&self, side: u8) -> bool {
+        match &self.phase {
+            Phase::Planning { committed } => {
+                committed.get(side as usize).copied().unwrap_or(false)
+            }
+            // Resolution means everybody committed.
+            Phase::Resolving { .. } => true,
+        }
+    }
+
+    /// Units of `side` still waiting for orders this round.
+    pub fn unplanned_units(&self, side: u8) -> impl Iterator<Item = &Unit> {
+        self.side_units(side).filter(|u| !u.planned)
     }
 }
 

@@ -8,7 +8,8 @@ use hexx::Hex;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
-/// Movement points for a unit this turn (vehicle base + driving bonus).
+/// Movement points for a unit per round (vehicle base + driving bonus).
+/// Resolution spreads these across [`super::TICKS_PER_ROUND`] ticks.
 pub fn move_points(registry: &DataRegistry, unit: &Unit) -> u32 {
     let base = registry
         .vehicle(&unit.vehicle)
@@ -43,6 +44,19 @@ fn unit_movement(registry: &DataRegistry, unit: &Unit) -> (MovementClass, i32) {
         .unwrap_or((MovementClass::Tracked, 1))
 }
 
+/// Cost for `unit` to step from `from` onto `to`, using its own movement
+/// class and climb limit. The tick resolver prices each step with this.
+pub fn edge_cost_for(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: &Unit,
+    from: Hex,
+    to: Hex,
+) -> Option<u32> {
+    let (class, max_climb) = unit_movement(registry, unit);
+    edge_cost(registry, &state.map, class, max_climb, from, to)
+}
+
 /// Whether `unit` may pass through (not stop on) `hex`.
 ///
 /// Friendly units can be passed through; visible enemies block. Enemies the
@@ -59,17 +73,29 @@ fn passable(state: &BattleState, unit: &Unit, hex: Hex) -> bool {
 /// Whether `unit` is barred from *finishing* its move on `hex`.
 ///
 /// Friends and spotted enemies block: the moving side can see both, so
-/// refusing the order tells it nothing it did not already know. An unspotted
-/// enemy deliberately does not block — the order is accepted and resolves as
-/// an ambush. Refusing it instead would announce that someone is standing
-/// there, which is the fog leaking through the pathfinder.
+/// refusing the order tells it nothing it did not already know. That includes
+/// a hex a friend has merely *planned* to occupy, so two units are never
+/// ordered onto the same tile. An unspotted enemy deliberately does not block
+/// — the order is accepted and resolves as an ambush. Refusing it instead
+/// would announce that someone is standing there, which is the fog leaking
+/// through the pathfinder.
 pub fn destination_blocked(state: &BattleState, unit: &Unit, hex: Hex) -> bool {
-    match state.unit_at(hex) {
+    let occupied = match state.unit_at(hex) {
         None => false,
         Some(other) if other.id == unit.id => false,
         Some(other) if other.side == unit.side => true,
         Some(other) => state.fog.side(unit.side).spotted.contains(&other.id),
-    }
+    };
+    occupied || claimed_by_friend(state, unit, hex)
+}
+
+/// Whether a friendly unit's orders already send it to `hex` this round.
+fn claimed_by_friend(state: &BattleState, unit: &Unit, hex: Hex) -> bool {
+    state
+        .units
+        .iter()
+        .filter(|other| other.alive && other.id != unit.id && other.side == unit.side)
+        .any(|other| !other.intent.path.is_empty() && other.planned_destination() == hex)
 }
 
 /// All tiles the unit can end its move on, with the cheapest cost to reach

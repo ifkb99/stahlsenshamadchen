@@ -1,10 +1,10 @@
 //! End-to-end tests against the real `assets/mods` content.
 
 use std::path::PathBuf;
-use tactics_core::ai::{make_battle_planner, AiConfig};
+use tactics_core::ai::{make_battle_planner, AiConfig, AiPlanner, Evaluator, UtilityPlanner};
 use tactics_core::battle::{
-    los_clear, reachable, BattleState, EndReason, Event as BattleEvent, Order, SideState,
-    STALEMATE_TURNS,
+    los_clear, reachable, BattleState, EndReason, Event as BattleEvent, FireIntent, Order,
+    SideState, UnitId, STALEMATE_ROUNDS, TICKS_PER_ROUND,
 };
 use tactics_core::data::DataRegistry;
 use tactics_core::map::{HexMap, UnitPlacement};
@@ -20,6 +20,18 @@ fn registry() -> DataRegistry {
     registry
 }
 
+/// Close every side's planning and play the round out.
+fn play_round(reg: &DataRegistry, state: &mut BattleState) -> Vec<BattleEvent> {
+    let mut events = Vec::new();
+    for side in state.living_sides() {
+        if !state.has_committed(side) {
+            events.extend(state.apply(reg, &Order::Commit { side }).expect("commit"));
+        }
+    }
+    events.extend(state.resolve_round(reg));
+    events
+}
+
 #[test]
 fn base_mod_loads_and_validates() {
     let reg = registry();
@@ -27,6 +39,34 @@ fn base_mod_loads_and_validates() {
     assert!(reg.characters.len() >= 8);
     assert!(reg.maps.contains_key("river_crossing"));
     assert!(reg.maps.contains_key("frontier"));
+    // Doctrines are mod data like everything else.
+    for id in ["massed_armor", "elastic_defense", "recon_pull"] {
+        assert!(reg.doctrine(id).is_some(), "base mod should ship `{id}`");
+    }
+    // Every weapon has a reload cadence, whether or not it states one.
+    assert!(reg.weapons.values().all(|w| w.reload_ticks > 0));
+    assert_eq!(reg.weapon("mg").unwrap().reload_ticks, 3);
+    assert_eq!(reg.weapon("gun_88").unwrap().reload_ticks, 8);
+}
+
+#[test]
+fn an_unknown_doctrine_is_a_validation_error() {
+    let reg = registry();
+    let file: tactics_core::map::MapFile = serde_json::from_str(
+        r##"{
+            "id": "bad_doctrine",
+            "palette": { "g": "grass" },
+            "rows": ["gg"],
+            "sides": [{ "name": "Them", "ai": { "planner": "utility", "doctrine": "nope" } }]
+        }"##,
+    )
+    .unwrap();
+    let mut report = tactics_core::data::ValidationReport::default();
+    file.validate_into(&reg, &mut report);
+    assert!(
+        report.errors.iter().any(|e| e.contains("nope")),
+        "a doctrine that does not exist must not silently become the default: {report:?}"
+    );
 }
 
 #[test]
@@ -101,36 +141,71 @@ fn movement_respects_water_and_reaches_bridge() {
 }
 
 #[test]
-fn battle_orders_are_deterministic_per_seed() {
+fn battle_resolution_is_deterministic_per_seed() {
     let reg = registry();
     let run = |seed: u64| -> Vec<String> {
         let mut state = BattleState::from_map(&reg, "river_crossing", seed).unwrap();
         let cfg = AiConfig {
             planner: "utility".into(),
             difficulty: 5,
+            doctrine: None,
         };
         let mut planners = [
-            make_battle_planner(&cfg, seed),
-            make_battle_planner(&cfg, seed + 1),
+            make_battle_planner(&cfg, seed, &reg),
+            make_battle_planner(&cfg, seed + 1, &reg),
         ];
         let mut log = Vec::new();
-        for _ in 0..400 {
+        for _ in 0..40 {
             if state.is_over() {
                 break;
             }
-            let side = state.active_side;
-            let order = planners[side as usize].next_order(&reg, &state, side);
-            match state.apply(&reg, &order) {
-                Ok(events) => log.extend(events.iter().map(|e| format!("{e:?}"))),
-                Err(_) => {
-                    // A planner asked for something stale; skip the unit.
-                    let _ = state.apply(&reg, &Order::EndTurn);
+            // Both sides write orders, then the round plays out at once.
+            for side in [0u8, 1u8] {
+                for _ in 0..64 {
+                    if state.has_committed(side) || !state.is_planning() {
+                        break;
+                    }
+                    let order = planners[side as usize].next_order(&reg, &state, side);
+                    if state.apply(&reg, &order).is_err() {
+                        let _ = state.apply(&reg, &Order::Commit { side });
+                    }
                 }
             }
+            log.extend(state.resolve_round(&reg).iter().map(|e| format!("{e:?}")));
         }
         log
     };
-    assert_eq!(run(1234), run(1234), "same seed, same battle");
+    let first = run(1234);
+    assert!(!first.is_empty(), "the battle should actually do something");
+    assert_eq!(first, run(1234), "same seed, same battle");
+}
+
+#[test]
+fn the_same_intents_replay_the_same_way() {
+    // Determinism at the level the replay system will need: identical orders
+    // on an identically seeded battle produce an identical event stream.
+    let reg = registry();
+    let run = || -> Vec<String> {
+        let mut state = duel(&reg, 77);
+        let (west, east) = (UnitId(0), UnitId(1));
+        state
+            .apply(&reg, &Order::SetMove { unit: west, to: tactics_core::offset_to_hex(1, 1) })
+            .unwrap();
+        state
+            .apply(
+                &reg,
+                &Order::SetFire {
+                    unit: east,
+                    fire: FireIntent::Target { target: west, weapon: 0 },
+                },
+            )
+            .unwrap();
+        play_round(&reg, &mut state)
+            .iter()
+            .map(|e| format!("{e:?}"))
+            .collect()
+    };
+    assert_eq!(run(), run());
 }
 
 #[test]
@@ -140,20 +215,31 @@ fn ai_vs_ai_battle_finishes() {
     let cfg = AiConfig {
         planner: "utility".into(),
         difficulty: 4,
+        doctrine: None,
     };
-    let mut planners = [make_battle_planner(&cfg, 5), make_battle_planner(&cfg, 6)];
-    for step in 0..2000 {
+    let mut planners = [
+        make_battle_planner(&cfg, 5, &reg),
+        make_battle_planner(&cfg, 6, &reg),
+    ];
+    for round in 0..200 {
         if state.is_over() {
-            println!("battle over after {step} orders: {:?}", state.over);
+            println!("battle over after {round} rounds: {:?}", state.over);
             return;
         }
-        let side = state.active_side;
-        let order = planners[side as usize].next_order(&reg, &state, side);
-        if state.apply(&reg, &order).is_err() {
-            let _ = state.apply(&reg, &Order::EndTurn);
+        for side in [0u8, 1u8] {
+            for _ in 0..64 {
+                if state.has_committed(side) || !state.is_planning() {
+                    break;
+                }
+                let order = planners[side as usize].next_order(&reg, &state, side);
+                if state.apply(&reg, &order).is_err() {
+                    let _ = state.apply(&reg, &Order::Commit { side });
+                }
+            }
         }
+        state.resolve_round(&reg);
     }
-    panic!("battle did not finish; final state: turn {}", state.turn);
+    panic!("battle did not finish; final state: round {}", state.round);
 }
 
 #[test]
@@ -163,10 +249,8 @@ fn a_battle_with_no_shots_fired_is_called_off() {
     let alive_before = state.alive_units().count();
 
     let mut ended = None;
-    for _ in 0..(STALEMATE_TURNS as usize + 2) * 2 {
-        let Ok(events) = state.apply(&reg, &Order::EndTurn) else {
-            break;
-        };
+    for _ in 0..(STALEMATE_ROUNDS as usize + 2) {
+        let events = play_round(&reg, &mut state);
         if let Some(BattleEvent::BattleEnded { winner, reason }) = events
             .iter()
             .find(|e| matches!(e, BattleEvent::BattleEnded { .. }))
@@ -187,9 +271,9 @@ fn a_battle_with_no_shots_fired_is_called_off() {
         "a stalemate costs nobody their tanks"
     );
     assert!(
-        state.turn <= STALEMATE_TURNS + 1,
+        state.round <= STALEMATE_ROUNDS + 1,
         "the call should come promptly, not after {} rounds",
-        state.turn
+        state.round
     );
 }
 
@@ -239,14 +323,19 @@ fn sides_that_can_see_each_other_are_never_called_off() {
         "test needs the two units to start in sight of one another"
     );
 
-    for _ in 0..(STALEMATE_TURNS as usize + 4) * 2 {
-        state.apply(&reg, &Order::EndTurn).unwrap();
+    for _ in 0..(STALEMATE_ROUNDS as usize + 4) {
+        if state.is_over() {
+            break;
+        }
+        play_round(&reg, &mut state);
     }
     assert!(
-        state.over.is_none(),
-        "a battle under observation is not a stalemate, but ended as {:?} on turn {}",
+        // They shoot each other on sight now, so either the fight is still
+        // going or somebody won it -- what must never happen is a stalemate.
+        !matches!(state.over.map(|r| r.reason), Some(EndReason::Stalemate)),
+        "a battle under observation is not a stalemate, but ended as {:?} on round {}",
         state.over,
-        state.turn
+        state.round
     );
 }
 
@@ -257,22 +346,27 @@ fn mcts_planner_produces_legal_orders() {
     let cfg = AiConfig {
         planner: "mcts".into(),
         difficulty: 1,
+        doctrine: Some("massed_armor".into()),
     };
-    let mut planner = make_battle_planner(&cfg, 3);
-    // Play a few orders for side 0 and require they all apply cleanly.
-    for _ in 0..6 {
-        if state.is_over() || state.active_side != 0 {
+    let mut planner = make_battle_planner(&cfg, 3, &reg);
+    // Plan a whole round for side 0 and require every order to apply cleanly.
+    for _ in 0..64 {
+        if state.is_over() || !state.is_planning() || state.has_committed(0) {
             break;
         }
         let order = planner.next_order(&reg, &state, 0);
-        let is_end = order == Order::EndTurn;
+        let commits = order == Order::Commit { side: 0 };
         state
             .apply(&reg, &order)
             .unwrap_or_else(|e| panic!("mcts produced illegal order {order:?}: {e}"));
-        if is_end {
+        if commits {
             break;
         }
     }
+    assert!(
+        state.has_committed(0),
+        "the planner should finish its round rather than stall"
+    );
 }
 
 #[test]
@@ -480,6 +574,7 @@ fn overworld_ai_moves_armies() {
     let cfg = AiConfig {
         planner: "simple".into(),
         difficulty: 3,
+        doctrine: None,
     };
     let mut planner = make_overworld_planner(&cfg, 42);
     // Skip to side 1 and let the AI issue orders.
@@ -507,7 +602,7 @@ fn two_side_battle(
 ) -> BattleState {
     let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
         "id": "test_map",
-        "palette": { "g": "grass" },
+        "palette": { "g": "grass", "f": "forest" },
         "rows": rows,
     }))
     .unwrap();
@@ -525,114 +620,199 @@ fn two_side_battle(
     BattleState::from_placements(reg, map, sides, &placements, seed)
 }
 
+fn unit_at(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> UnitPlacement {
+    UnitPlacement {
+        at,
+        side,
+        vehicle: vehicle.into(),
+        crew: Vec::new(),
+        name: Some(name.into()),
+    }
+}
+
+/// Two medium tanks three hexes apart in the open, in plain sight of each
+/// other. Unit 0 is West, unit 1 is East.
+fn duel(reg: &DataRegistry, seed: u64) -> BattleState {
+    let state = two_side_battle(
+        reg,
+        &["ggggg", "ggggg", "ggggg"],
+        vec![
+            unit_at([0, 1], 0, "medium_tank", "West"),
+            unit_at([3, 1], 1, "medium_tank", "East"),
+        ],
+        seed,
+    );
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1))
+            && state.fog.side(1).spotted.contains(&UnitId(0)),
+        "the duel needs both crews to see each other"
+    );
+    state
+}
+
 #[test]
-fn units_can_move_through_friendlies() {
+fn a_column_advances_without_ambushing_itself() {
+    // One hex holds one unit, so a friend in the way is traffic rather than an
+    // enemy: the unit behind waits a tick and follows, and nothing about it
+    // resembles an ambush.
     let reg = registry();
     let mut state = two_side_battle(
         &reg,
-        &["gggg"],
+        &["gggggg"],
         vec![
-            UnitPlacement {
-                at: [0, 0],
-                side: 0,
-                vehicle: "medium_tank".into(),
-                crew: Vec::new(),
-                name: Some("Mover".into()),
-            },
-            UnitPlacement {
-                at: [1, 0],
-                side: 0,
-                vehicle: "medium_tank".into(),
-                crew: Vec::new(),
-                name: Some("Blocker".into()),
-            },
-            // An enemy far away so the battle has two sides.
-            UnitPlacement {
-                at: [3, 0],
-                side: 1,
-                vehicle: "medium_tank".into(),
-                crew: Vec::new(),
-                name: Some("Bystander".into()),
-            },
+            unit_at([0, 0], 0, "medium_tank", "Rear"),
+            unit_at([1, 0], 0, "medium_tank", "Lead"),
+            unit_at([5, 0], 1, "medium_tank", "Bystander"),
         ],
         1,
     );
-    let mover = state
-        .side_units(0)
-        .find(|u| u.name == "Mover")
-        .unwrap()
-        .id;
-    let dest = tactics_core::offset_to_hex(2, 0);
-    let events = state
-        .apply(&reg, &Order::Move { unit: mover, to: dest })
-        .expect("moving through a friend should be legal");
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, BattleEvent::UnitMoved { .. })),
-        "expected a move, got {events:?}"
-    );
+    let (rear, lead) = (UnitId(0), UnitId(1));
+    let start = state.unit(rear).unwrap().pos;
+    state
+        .apply(&reg, &Order::SetMove { unit: lead, to: tactics_core::offset_to_hex(3, 0) })
+        .expect("the lead tank has open ground");
+    state
+        .apply(&reg, &Order::SetMove { unit: rear, to: tactics_core::offset_to_hex(2, 0) })
+        .expect("routing behind a friend is legal");
+
+    let events = play_round(&reg, &mut state);
     assert!(
         !events
             .iter()
             .any(|e| matches!(e, BattleEvent::UnitTrapped { .. })),
-        "a friend is not an ambush: {events:?}"
+        "a friend is never an ambush: {events:?}"
     );
-    assert_eq!(state.unit(mover).unwrap().pos, dest);
+    assert_ne!(
+        state.unit(rear).unwrap().pos,
+        start,
+        "the rear tank should have followed the lead one up the road"
+    );
+}
+
+#[test]
+fn friendlies_are_never_ordered_onto_the_same_hex() {
+    let reg = registry();
+    let mut state = two_side_battle(
+        &reg,
+        &["ggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "First"),
+            unit_at([1, 0], 0, "medium_tank", "Second"),
+            unit_at([4, 0], 1, "medium_tank", "Bystander"),
+        ],
+        1,
+    );
+    let (first, second) = (UnitId(0), UnitId(1));
+    let contested = tactics_core::offset_to_hex(3, 0);
+    state
+        .apply(&reg, &Order::SetMove { unit: first, to: contested })
+        .expect("an empty hex is a fine destination");
     assert!(
-        !state.unit(mover).unwrap().acted,
-        "passing through a friend must not burn the action"
+        !reachable(&reg, &state, second).contains_key(&contested),
+        "a hex a friend is already driving to is taken"
+    );
+    assert_eq!(
+        state.apply(&reg, &Order::SetMove { unit: second, to: contested }),
+        Err(tactics_core::battle::OrderError::NoPath),
+        "two units must not be ordered into the same hex"
     );
 }
 
 #[test]
 fn unspotted_enemies_still_ambush() {
+    // Crews look between ticks, not between hexes. A unit crossing several
+    // hexes in one tick outruns its own eyes and can drive into somebody it
+    // never saw; a unit ambling along a hex at a time normally spots the
+    // enemy the tick before contact and simply stops.
     let reg = registry();
-    // Medium tank vision is 3; park the ambusher at distance 4 so the
-    // mover plans a path through a tile it cannot see.
+    // Medium tank vision is 3; park the ambusher at distance 4 so the mover
+    // plans a route through ground it cannot see.
     let mut state = two_side_battle(
         &reg,
         &["ggggggg"],
         vec![
-            UnitPlacement {
-                at: [0, 0],
-                side: 0,
-                vehicle: "medium_tank".into(),
-                crew: Vec::new(),
-                name: Some("Mover".into()),
-            },
-            UnitPlacement {
-                at: [4, 0],
-                side: 1,
-                vehicle: "medium_tank".into(),
-                crew: Vec::new(),
-                name: Some("Ambusher".into()),
-            },
+            unit_at([0, 0], 0, "medium_tank", "Mover"),
+            unit_at([4, 0], 1, "medium_tank", "Ambusher"),
         ],
         2,
     );
-    let mover = state.side_units(0).next().unwrap().id;
-    let ambusher = state.side_units(1).next().unwrap().id;
+    let mover = UnitId(0);
+    let ambusher = UnitId(1);
     assert!(
         !state.fog.side(0).spotted.contains(&ambusher),
         "ambusher must start unseen for this test"
     );
     let dest = tactics_core::offset_to_hex(5, 0);
-    let events = state
-        .apply(&reg, &Order::Move { unit: mover, to: dest })
+    state
+        .apply(&reg, &Order::SetMove { unit: mover, to: dest })
         .expect("pathing through fog should be attempted");
+    for side in state.living_sides() {
+        state.apply(&reg, &Order::Commit { side }).unwrap();
+    }
+    // Enough banked movement to run the whole leg inside the first tick,
+    // before any fog recompute can warn the driver.
+    state.unit_mut(mover).unwrap().move_credit = 64 * TICKS_PER_ROUND;
+
+    let events = state.step_tick(&reg);
+    let trapped = events.iter().find_map(|e| match e {
+        BattleEvent::UnitTrapped { unit, at } if *unit == mover => Some(*at),
+        _ => None,
+    });
+    assert_eq!(
+        trapped,
+        Some(tactics_core::offset_to_hex(3, 0)),
+        "the advance should stop on the tile before the ambusher, short of {dest:?}: {events:?}"
+    );
+    let mover = state.unit(mover).expect("the mover survives one tick");
+    assert_eq!(mover.pos, tactics_core::offset_to_hex(3, 0));
     assert!(
-        events
+        mover.intent.path.is_empty(),
+        "the rest of the route is abandoned"
+    );
+}
+
+#[test]
+fn an_enemy_you_can_see_halts_the_advance_without_surprising_anyone() {
+    // The other half of the same rule: contact with a spotted enemy ends the
+    // route, but nobody was ambushed, so no `UnitTrapped`.
+    let reg = registry();
+    let mut state = two_side_battle(
+        &reg,
+        &["gggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "Mover"),
+            unit_at([2, 0], 1, "medium_tank", "Seen"),
+        ],
+        3,
+    );
+    let mover = UnitId(0);
+    assert!(state.fog.side(0).spotted.contains(&UnitId(1)));
+    state
+        .apply(&reg, &Order::SetMove { unit: mover, to: tactics_core::offset_to_hex(1, 0) })
+        .unwrap();
+    for side in state.living_sides() {
+        state.apply(&reg, &Order::Commit { side }).unwrap();
+    }
+    // Point the route at the enemy the way a resolved tick would find it,
+    // then hand the mover the fuel to try to drive through.
+    state.unit_mut(mover).unwrap().intent.path = vec![
+        tactics_core::offset_to_hex(1, 0),
+        tactics_core::offset_to_hex(2, 0),
+    ];
+    state.unit_mut(mover).unwrap().move_credit = 64 * TICKS_PER_ROUND;
+
+    let events = state.step_tick(&reg);
+    assert!(
+        !events
             .iter()
             .any(|e| matches!(e, BattleEvent::UnitTrapped { .. })),
-        "bumping an unspotted enemy must trap: {events:?}"
+        "an enemy in plain sight is a roadblock, not an ambush: {events:?}"
     );
     assert_eq!(
-        state.unit(mover).unwrap().pos,
-        tactics_core::offset_to_hex(3, 0),
-        "should stop on the tile before the ambusher, short of {dest:?}"
+        state.unit(mover).map(|u| u.pos),
+        Some(tactics_core::offset_to_hex(1, 0)),
+        "the mover stops on the tile before the enemy"
     );
-    assert!(state.unit(mover).unwrap().acted, "an ambush spends the action");
 }
 
 #[test]
@@ -645,25 +825,13 @@ fn hidden_enemies_do_not_show_up_as_holes_in_the_move_range() {
         &reg,
         &["ggggggg"],
         vec![
-            UnitPlacement {
-                at: [0, 0],
-                side: 0,
-                vehicle: "medium_tank".into(),
-                crew: Vec::new(),
-                name: Some("Mover".into()),
-            },
-            UnitPlacement {
-                at: [4, 0],
-                side: 1,
-                vehicle: "medium_tank".into(),
-                crew: Vec::new(),
-                name: Some("Hidden".into()),
-            },
+            unit_at([0, 0], 0, "medium_tank", "Mover"),
+            unit_at([4, 0], 1, "medium_tank", "Hidden"),
         ],
         4,
     );
-    let mover = state.side_units(0).next().unwrap().id;
-    let hidden = state.side_units(1).next().unwrap().id;
+    let mover = UnitId(0);
+    let hidden = UnitId(1);
     let hidden_pos = state.unit(hidden).unwrap().pos;
     assert!(
         !state.fog.side(0).spotted.contains(&hidden),
@@ -674,17 +842,16 @@ fn hidden_enemies_do_not_show_up_as_holes_in_the_move_range() {
         "an unseen enemy must not punch a hole in the move overlay"
     );
 
-    // Ordering the move onto that tile is legal and resolves as an ambush.
-    let events = state
-        .apply(&reg, &Order::Move { unit: mover, to: hidden_pos })
+    // Ordering the move onto that tile is legal; the advance simply stops
+    // when it runs into whoever is standing there.
+    state
+        .apply(&reg, &Order::SetMove { unit: mover, to: hidden_pos })
         .expect("the order must be accepted, not refused with NoPath");
+    let events = play_round(&reg, &mut state);
     assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, BattleEvent::UnitTrapped { .. })),
-        "expected an ambush, got {events:?}"
+        state.unit(mover).is_none_or(|u| u.pos != hidden_pos),
+        "nobody drives through an occupied hex: {events:?}"
     );
-    assert_ne!(state.unit(mover).unwrap().pos, hidden_pos);
 }
 
 #[test]
@@ -694,152 +861,428 @@ fn spotted_enemies_still_block_a_destination() {
         &reg,
         &["ggg"],
         vec![
-            UnitPlacement {
-                at: [0, 0],
-                side: 0,
-                vehicle: "medium_tank".into(),
-                crew: Vec::new(),
-                name: Some("Mover".into()),
-            },
-            UnitPlacement {
-                at: [1, 0],
-                side: 1,
-                vehicle: "medium_tank".into(),
-                crew: Vec::new(),
-                name: Some("Seen".into()),
-            },
+            unit_at([0, 0], 0, "medium_tank", "Mover"),
+            unit_at([1, 0], 1, "medium_tank", "Seen"),
         ],
         5,
     );
-    let mover = state.side_units(0).next().unwrap().id;
-    let seen = state.side_units(1).next().unwrap().id;
+    let mover = UnitId(0);
+    let seen = UnitId(1);
     let seen_pos = state.unit(seen).unwrap().pos;
     assert!(
         state.fog.side(0).spotted.contains(&seen),
         "precondition: the enemy is in plain sight"
     );
     assert_eq!(
-        state.apply(&reg, &Order::Move { unit: mover, to: seen_pos }),
+        state.apply(&reg, &Order::SetMove { unit: mover, to: seen_pos }),
         Err(tactics_core::battle::OrderError::NoPath),
         "you cannot drive onto an enemy you can see; that is an attack"
     );
 }
 
 #[test]
-fn return_fire_comes_back_the_next_round() {
+fn faster_units_arrive_earlier_in_the_same_round() {
+    // Movement points buy time, not just distance: both tanks cover three
+    // hexes this round, but the light one is there long before the heavy one.
+    // The enemy sits far out of sight, so the round runs its full length
+    // instead of ending in a shootout.
     let reg = registry();
     let mut state = two_side_battle(
         &reg,
-        &["ggggg", "ggggg", "ggggg"],
+        &["gggggggggggg", "gggggggggggg", "gggggggggggg"],
         vec![
-            UnitPlacement {
-                at: [0, 1],
-                side: 0,
-                vehicle: "medium_tank".into(),
-                crew: Vec::new(),
-                name: Some("Defender".into()),
-            },
-            UnitPlacement {
-                at: [2, 1],
-                side: 1,
-                vehicle: "medium_tank".into(),
-                crew: Vec::new(),
-                name: Some("Attacker".into()),
-            },
+            unit_at([0, 0], 0, "light_tank", "Quick"),
+            unit_at([0, 2], 0, "heavy_tank", "Slow"),
+            unit_at([11, 1], 1, "medium_tank", "Bystander"),
         ],
-        6,
+        8,
     );
-    let defender = state.side_units(0).next().unwrap().id;
+    assert!(
+        state.fog.side(0).spotted.is_empty() && state.fog.side(1).spotted.is_empty(),
+        "nobody should be in contact; this test is about the clock"
+    );
+    let (quick, slow) = (UnitId(0), UnitId(1));
+    let targets = [
+        (quick, tactics_core::offset_to_hex(3, 0)),
+        (slow, tactics_core::offset_to_hex(3, 2)),
+    ];
+    for (unit, to) in targets {
+        state.apply(&reg, &Order::SetMove { unit, to }).unwrap();
+    }
+    for side in state.living_sides() {
+        state.apply(&reg, &Order::Commit { side }).unwrap();
+    }
 
-    state.unit_mut(defender).unwrap().can_return_fire = false;
-    let turn_before = state.turn;
-    // Side 0 ends, side 1 ends: that wraps the round.
-    state.apply(&reg, &Order::EndTurn).unwrap();
+    let mut arrived: Vec<(UnitId, u32)> = Vec::new();
+    for tick in 0..TICKS_PER_ROUND {
+        state.step_tick(&reg);
+        for (unit, to) in targets {
+            if state.unit(unit).is_some_and(|u| u.pos == to)
+                && !arrived.iter().any(|(u, _)| *u == unit)
+            {
+                arrived.push((unit, tick));
+            }
+        }
+    }
+    let at = |unit: UnitId| arrived.iter().find(|(u, _)| *u == unit).map(|(_, t)| *t);
+    let (quick_tick, slow_tick) = (at(quick), at(slow));
     assert!(
-        !state.unit(defender).unwrap().can_return_fire,
-        "mid-round hand-off must not refresh opportunity fire"
+        quick_tick.is_some() && slow_tick.is_some(),
+        "both should complete a three-hex move inside one round: {arrived:?}"
     );
-    state.apply(&reg, &Order::EndTurn).unwrap();
     assert!(
-        state.turn > turn_before,
-        "two hand-offs with two sides should start a new round"
-    );
-    assert!(
-        state.unit(defender).unwrap().can_return_fire,
-        "a new round restores opportunity fire"
+        quick_tick < slow_tick,
+        "the faster tank should get there first, but arrived at {quick_tick:?} against {slow_tick:?}"
     );
 }
 
 #[test]
-fn units_return_fire_after_acting() {
+fn reload_time_sets_the_rate_of_fire() {
+    // An MG chatters through a round; an 88 gets a couple of shots off. The
+    // targets are artillery, which never answers: indirect guns do not
+    // snap-fire, so the cadence is measured undisturbed.
     let reg = registry();
     let mut state = two_side_battle(
         &reg,
-        &["ggggg", "ggggg", "ggggg"],
+        &["gggggggg"],
         vec![
-            UnitPlacement {
-                at: [0, 1],
-                side: 0,
-                vehicle: "medium_tank".into(),
-                crew: Vec::new(),
-                name: Some("Defender".into()),
-            },
-            UnitPlacement {
-                at: [2, 1],
-                side: 1,
-                vehicle: "medium_tank".into(),
-                crew: Vec::new(),
-                name: Some("Attacker".into()),
-            },
+            unit_at([0, 0], 0, "recon_car", "Gunner"),
+            unit_at([1, 0], 1, "artillery", "Near"),
+            unit_at([4, 0], 0, "tank_destroyer", "Sniper"),
+            unit_at([7, 0], 1, "artillery", "Far"),
         ],
-        3,
+        12,
     );
-    let defender = state.side_units(0).next().unwrap().id;
-    let attacker = state.side_units(1).next().unwrap().id;
-    assert!(
-        state.fog.side(0).spotted.contains(&attacker)
-            && state.fog.side(1).spotted.contains(&defender),
-        "both need LoS for return fire"
-    );
+    let (mg_carrier, sniper) = (UnitId(0), UnitId(2));
+    let (near, far) = (UnitId(1), UnitId(3));
+    for (unit, target) in [(mg_carrier, near), (sniper, far)] {
+        state
+            .apply(
+                &reg,
+                &Order::SetFire {
+                    unit,
+                    fire: FireIntent::Target { target, weapon: 0 },
+                },
+            )
+            .expect("both targets are spotted and in range");
+    }
 
-    // Spend the defender's action (the old bug: acted stayed true all enemy turn).
+    let events = play_round(&reg, &mut state);
+    let shots = |weapon: &str| {
+        events
+            .iter()
+            .filter(|e| matches!(e, BattleEvent::ShotFired { weapon: w, .. } if w == weapon))
+            .count()
+    };
+    // 12 ticks a round: an MG reloads in 3, the 88 in 8.
+    assert_eq!(shots("mg"), 4, "an MG should fire every third tick");
+    assert_eq!(shots("gun_88"), 2, "an 88 gets two shots at best");
+}
+
+#[test]
+fn two_crews_can_kill_each_other_in_the_same_tick() {
+    // Shots inside one tick happen together, so being processed first is not
+    // an advantage. Both wrecks burn and the battle is a draw.
+    let reg = registry();
+    let mut drawn = false;
+    for seed in 0..40 {
+        let mut state = duel(&reg, seed);
+        let (west, east) = (UnitId(0), UnitId(1));
+        for unit in [west, east] {
+            state.unit_mut(unit).unwrap().hp = 1;
+        }
+        for (unit, target) in [(west, east), (east, west)] {
+            state
+                .apply(
+                    &reg,
+                    &Order::SetFire {
+                        unit,
+                        fire: FireIntent::Target { target, weapon: 0 },
+                    },
+                )
+                .unwrap();
+        }
+        for side in state.living_sides() {
+            state.apply(&reg, &Order::Commit { side }).unwrap();
+        }
+        let events = state.step_tick(&reg);
+        let dead = events
+            .iter()
+            .filter(|e| matches!(e, BattleEvent::UnitDestroyed { .. }))
+            .count();
+        if dead == 2 {
+            assert_eq!(
+                state.over.map(|r| (r.winner, r.reason)),
+                Some((None, EndReason::Eliminated)),
+                "if everyone dies at once nobody won"
+            );
+            drawn = true;
+            break;
+        }
+    }
+    assert!(
+        drawn,
+        "in forty tries, two tanks shooting each other point blank never both died"
+    );
+}
+
+#[test]
+fn a_unit_that_spent_the_round_driving_still_shoots_back() {
+    // What used to be a hard-coded counterattack is now ordinary opportunity
+    // fire, and it costs nothing to have been busy: the crew answers whoever
+    // shoots at them, even mid-move.
+    let reg = registry();
+    let mut state = duel(&reg, 21);
+    let (west, east) = (UnitId(0), UnitId(1));
     state
-        .apply(&reg, &Order::Wait { unit: defender })
-        .unwrap();
-    assert!(state.unit(defender).unwrap().acted);
-    assert!(state.unit(defender).unwrap().can_return_fire);
-
-    state.apply(&reg, &Order::EndTurn).unwrap();
-    assert_eq!(state.active_side, 1);
-    assert!(
-        state.unit(defender).unwrap().acted,
-        "acted only clears on the unit's own turn"
-    );
-
-    let events = state
+        .apply(&reg, &Order::SetMove { unit: west, to: tactics_core::offset_to_hex(0, 0) })
+        .expect("west has room to reposition");
+    state
         .apply(
             &reg,
-            &Order::Attack {
-                unit: attacker,
-                target: defender,
-                weapon: 0,
+            &Order::SetFire {
+                unit: east,
+                fire: FireIntent::Target { target: west, weapon: 0 },
             },
         )
-        .expect("attack should resolve");
+        .unwrap();
+
+    let events = play_round(&reg, &mut state);
     assert!(
         events.iter().any(|e| matches!(
             e,
             BattleEvent::ShotFired {
-                counter: true,
+                attacker,
+                opportunity: true,
                 ..
-            }
+            } if *attacker == west
         )),
-        "a unit that already acted must still return fire: {events:?}"
+        "a unit under orders to move should still answer fire: {events:?}"
     );
-    if let Some(d) = state.unit(defender) {
-        assert!(
-            !d.can_return_fire,
-            "return fire is spent for the rest of the round"
-        );
+}
+
+#[test]
+fn holding_fire_means_watching_not_idling() {
+    // `Hold` is overwatch, not passivity: the crew shoots at whatever their
+    // fog turns up without being told to.
+    let reg = registry();
+    let mut state = duel(&reg, 5);
+    let west = UnitId(0);
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: west,
+                fire: FireIntent::Hold,
+            },
+        )
+        .unwrap();
+    let events = play_round(&reg, &mut state);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            BattleEvent::ShotFired { attacker, opportunity: true, .. } if *attacker == west
+        )),
+        "a unit holding fire should engage a visible enemy: {events:?}"
+    );
+}
+
+#[test]
+fn orders_are_closed_once_the_round_is_resolving() {
+    let reg = registry();
+    let mut state = duel(&reg, 9);
+    let west = UnitId(0);
+    assert_eq!(
+        state.apply(&reg, &Order::Commit { side: 0 }),
+        Ok(Vec::new()),
+        "one side committing is not enough to start the round"
+    );
+    assert!(state.is_planning(), "still waiting on the other side");
+    assert_eq!(
+        state.apply(&reg, &Order::SetFire { unit: west, fire: FireIntent::Hold }),
+        Err(tactics_core::battle::OrderError::AlreadyCommitted),
+        "a side cannot rewrite orders it has already handed in"
+    );
+    state.apply(&reg, &Order::Commit { side: 1 }).unwrap();
+    assert_eq!(state.resolving_tick(), Some(0), "now the round runs");
+    assert_eq!(
+        state.apply(&reg, &Order::SetMove { unit: west, to: tactics_core::offset_to_hex(1, 1) }),
+        Err(tactics_core::battle::OrderError::NotPlanningPhase),
+    );
+}
+
+#[test]
+fn a_round_clears_last_round_orders() {
+    let reg = registry();
+    let mut state = duel(&reg, 13);
+    let west = UnitId(0);
+    state
+        .apply(&reg, &Order::SetMove { unit: west, to: tactics_core::offset_to_hex(0, 0) })
+        .unwrap();
+    assert!(state.unit(west).unwrap().planned);
+    let round_before = state.round;
+
+    play_round(&reg, &mut state);
+    if let Some(unit) = state.unit(west) {
+        assert!(state.round > round_before, "the round should have turned over");
+        assert!(!unit.planned, "orders do not carry into the next round");
+        assert!(unit.intent.path.is_empty());
+        assert_eq!(unit.move_credit, 0, "unspent movement does not bank");
     }
 }
+
+/// How far side 0's plan leaves it from the nearest enemy, averaged over
+/// seeds. Lower means it closed the distance; higher means it kept its
+/// distance. Used to show that doctrine changes behaviour.
+///
+/// The ground is chosen to pose the question: two tanks in the open with a
+/// visible enemy ahead of them and a belt of woods behind. Closing and
+/// digging in are both available, and the doctrine decides which.
+fn mean_approach(reg: &DataRegistry, doctrine: &str, difficulty: u8) -> f32 {
+    let mut total = 0.0;
+    let seeds = 0u64..8;
+    let count = (seeds.end - seeds.start) as f32;
+    for seed in seeds {
+        let mut state = two_side_battle(
+            reg,
+            &["ffgggggg", "ffgggggg", "ffgggggg"],
+            vec![
+                unit_at([2, 0], 0, "medium_tank", "Ours"),
+                unit_at([2, 2], 0, "medium_tank", "Theirs"),
+                unit_at([4, 1], 1, "medium_tank", "Enemy"),
+            ],
+            seed,
+        );
+        assert_eq!(
+            state.fog.side(0).spotted.len(),
+            1,
+            "the doctrines are being asked what to do about an enemy they can see"
+        );
+        let cfg = AiConfig {
+            planner: "utility".into(),
+            difficulty,
+            doctrine: Some(doctrine.into()),
+        };
+        let mut planner = make_battle_planner(&cfg, seed, reg);
+        for _ in 0..32 {
+            if state.has_committed(0) {
+                break;
+            }
+            let order = planner.next_order(reg, &state, 0);
+            let _ = state.apply(reg, &order);
+        }
+        let enemies: Vec<_> = state.side_units(1).map(|u| u.pos).collect();
+        for unit in state.side_units(0) {
+            let dest = unit.planned_destination();
+            total += enemies
+                .iter()
+                .map(|e| dest.distance_to(*e))
+                .min()
+                .unwrap_or(0) as f32;
+        }
+    }
+    total / count
+}
+
+#[test]
+fn doctrine_changes_how_a_side_fights() {
+    let reg = registry();
+    let massed = mean_approach(&reg, "massed_armor", 5);
+    let elastic = mean_approach(&reg, "elastic_defense", 5);
+    assert!(
+        massed < elastic,
+        "massed armour should close ({massed}) where elastic defence holds back ({elastic})"
+    );
+}
+
+#[test]
+fn doctrine_survives_a_bad_commander() {
+    // Difficulty is competence, doctrine is character. A clumsy massed-armour
+    // opponent still comes at you; it just does it badly.
+    let reg = registry();
+    let massed = mean_approach(&reg, "massed_armor", 1);
+    let elastic = mean_approach(&reg, "elastic_defense", 1);
+    assert!(
+        massed < elastic,
+        "dropping difficulty must not turn one doctrine into the other: {massed} against {elastic}"
+    );
+}
+
+#[test]
+fn the_evaluator_reads_doctrine_rather_than_hard_coded_weights() {
+    let reg = registry();
+    let state = duel(&reg, 4);
+    let tile = state.unit(UnitId(0)).unwrap().pos;
+    let score = |doctrine: &str| {
+        let eval = Evaluator::new(reg.doctrine(doctrine).unwrap().clone());
+        eval.score_tile(&reg, &state, UnitId(0), tile).score
+    };
+    assert_ne!(
+        score("massed_armor"),
+        score("elastic_defense"),
+        "two doctrines should not value the same ground identically"
+    );
+}
+
+#[test]
+fn an_unknown_planner_falls_back_instead_of_crashing() {
+    let reg = registry();
+    let state = duel(&reg, 6);
+    let cfg = AiConfig {
+        planner: "does_not_exist".into(),
+        difficulty: 3,
+        doctrine: None,
+    };
+    let mut planner = make_battle_planner(&cfg, 1, &reg);
+    let order = planner.next_order(&reg, &state, 0);
+    assert!(
+        matches!(
+            order,
+            Order::SetMove { .. } | Order::SetFire { .. } | Order::Commit { .. }
+        ),
+        "a typo in a mod should degrade to a working planner, got {order:?}"
+    );
+}
+
+#[test]
+fn a_searching_planner_cannot_read_the_enemys_orders() {
+    // Planning is simultaneous, so nobody's orders are knowable while they
+    // are being written. Search runs on a determinized copy of the battle:
+    // unspotted enemies are gone, and the other side's plan is blank even
+    // when it has already been written down and committed.
+    let reg = registry();
+    let mut state = duel(&reg, 21);
+    let east = UnitId(1);
+    state
+        .apply(&reg, &Order::SetMove { unit: east, to: tactics_core::offset_to_hex(4, 1) })
+        .expect("the east tank has open ground behind it");
+    state.apply(&reg, &Order::Commit { side: 1 }).unwrap();
+    assert!(state.unit(east).unwrap().planned, "precondition: side 1 has a plan");
+
+    let known = tactics_core::ai::determinize(&state, 0, 7);
+    let seen = known.unit(east).expect("a spotted enemy is still on the board");
+    assert!(
+        !seen.planned && seen.intent.path.is_empty(),
+        "side 0 must not see what side 1 was ordered to do"
+    );
+    assert!(
+        !known.has_committed(1),
+        "and must not treat the enemy as done planning, or it would expect them to stand still"
+    );
+    assert!(
+        known.unit(UnitId(0)).is_some_and(|u| u.side == 0),
+        "its own units are untouched"
+    );
+}
+
+#[test]
+fn the_policy_planner_is_usable_on_its_own() {
+    // MCTS leans on a plain utility planner to stand in for the enemy, so
+    // that planner has to be constructible without any mod data at all.
+    let reg = registry();
+    let state = duel(&reg, 15);
+    let mut planner = UtilityPlanner::with_difficulty(3, 99);
+    let order = planner.next_order(&reg, &state, 1);
+    assert!(!matches!(order, Order::ClearIntent { .. }));
+}
+

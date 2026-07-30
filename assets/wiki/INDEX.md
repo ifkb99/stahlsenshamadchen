@@ -10,11 +10,12 @@ frontmatter (`id`, `title`, `category`) for loading by id.
 
 ## Battle
 
+- [The Battle Round](battle/the-round.md) — planning, ticks, and simultaneous resolution
 - [Fog of War](battle/fog-of-war.md) — unseen, explored, and visible tiles
-- [Combat](battle/combat.md) — hit chance, armour, fire modes
+- [Combat](battle/combat.md) — hit chance, armour, fire modes, rate of fire
 - [Massed Battles](battle/massed-battles.md) — neighbouring armies joining a clash
 - [Breaking Off](battle/breaking-off.md) — when a fight ends as a draw
-- [Commanders](battle/commanders.md) — how opposing sides plan their turns
+- [Commanders](battle/commanders.md) — planner, doctrine, and difficulty
 
 ## Campaign
 

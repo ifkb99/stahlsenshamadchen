@@ -239,6 +239,27 @@ impl MapFile {
                 self.id
             ));
         }
+        for (i, side) in self.sides.iter().enumerate() {
+            let Some(ai) = &side.ai else { continue };
+            // A doctrine that does not exist would silently become the
+            // balanced default, quietly discarding the side's character.
+            if let Some(doctrine) = &ai.doctrine
+                && registry.doctrine(doctrine).is_none()
+            {
+                report.errors.push(format!(
+                    "map `{}`: side {i} references missing doctrine `{doctrine}`",
+                    self.id
+                ));
+            }
+            // Planners are Rust, not data, so an unknown name is a typo. It
+            // degrades to the utility planner rather than failing the load.
+            if !crate::ai::BUILTIN_PLANNERS.contains(&ai.planner.as_str()) {
+                report.warnings.push(format!(
+                    "map `{}`: side {i} asks for unknown planner `{}`; falling back to `utility`",
+                    self.id, ai.planner
+                ));
+            }
+        }
         fn check_placement(
             file: &MapFile,
             map: &HexMap,

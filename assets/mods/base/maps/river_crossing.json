@@ -34,7 +34,7 @@
     ],
     "sides": [
         { "name": "Kuhlmann Academy" },
-        { "name": "Iron Valkyries", "ai": { "planner": "utility", "difficulty": 3 } }
+        { "name": "Iron Valkyries", "ai": { "planner": "utility", "difficulty": 3, "doctrine": "elastic_defense" } }
     ],
     "units": [
         { "at": [2, 4], "side": 0, "vehicle": "medium_tank", "crew": ["anka", "rosa"] },

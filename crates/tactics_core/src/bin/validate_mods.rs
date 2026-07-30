@@ -32,11 +32,12 @@ fn main() -> ExitCode {
             .join(", ")
     );
     println!(
-        "  {} characters, {} vehicles, {} weapons, {} terrain, {} maps",
+        "  {} characters, {} vehicles, {} weapons, {} terrain, {} doctrines, {} maps",
         registry.characters.len(),
         registry.vehicles.len(),
         registry.weapons.len(),
         registry.terrain.len(),
+        registry.doctrines.len(),
         registry.maps.len()
     );
 

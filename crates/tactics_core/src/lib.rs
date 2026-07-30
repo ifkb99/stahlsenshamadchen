@@ -9,7 +9,8 @@
 //!   terrain) and the mod registry that loads and validates them.
 //! - [`map`]: the CDDA-inspired hex map format (palette + ASCII rows +
 //!   elevation) and the runtime [`map::HexMap`].
-//! - [`battle`]: the turn-based battle simulation: orders in, events out.
+//! - [`battle`]: the WEGO battle simulation. Both sides plan a round, then a
+//!   tick loop resolves it: intents in, events out.
 //! - [`overworld`]: the strategic layer simulation.
 //! - [`ai`]: the swappable [`ai::AiPlanner`] trait and its implementations.
 

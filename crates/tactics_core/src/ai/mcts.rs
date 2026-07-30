@@ -2,27 +2,58 @@
 //!
 //! Runs UCT over cloned battle states -- this is why the sim core is plain
 //! data. Fog honesty is enforced by *determinization*: the search runs on a
-//! copy of the battle where every enemy this side has not spotted simply
-//! does not exist, so the planner cannot exploit hidden information.
+//! copy of the battle where every enemy this side has not spotted simply does
+//! not exist, so the planner cannot exploit hidden information.
+//!
+//! Simultaneous turns make a round a matrix game: both sides move at once, so
+//! there is no "opponent to move" for the tree to alternate on. Rather than
+//! search that properly, the enemy's intents are filled in by an ordinary
+//! [`UtilityPlanner`] before each round resolves, and the tree searches only
+//! this side's choices against that fixed policy. It is a deliberate
+//! approximation: the search may be optimistic against an opponent who plays
+//! very differently from the policy, which is the price of keeping the branch
+//! factor to one side's decisions.
 
-use super::{best_weapon_against, next_idle_unit, visible_enemies, AiPlanner};
-use crate::battle::{reachable, BattleState, Order};
+use super::{
+    difficulty_noise, next_unplanned_unit, resolve_doctrine, AiConfig, AiPlanner, Evaluator,
+    PlannerRegistry, UtilityPlanner,
+};
+use crate::battle::{reachable, BattleState, FireIntent, Order, Phase, UnitId, UnitIntent};
 use crate::data::DataRegistry;
+use hexx::Hex;
 use rand::seq::IndexedRandom;
 use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use std::collections::VecDeque;
 
 pub struct MctsPlanner {
     pub iterations: u32,
+    /// How many further decisions to play out past a leaf.
     pub rollout_depth: u32,
     pub exploration: f32,
     /// Cap on children per node to keep branching sane.
     pub max_actions: usize,
+    evaluator: Evaluator,
+    /// Stands in for the enemy while searching. Doctrine-neutral: we do not
+    /// know how the other side thinks, so guessing would be worse than not.
+    policy: UtilityPlanner,
+    /// Used when there is nothing to search: no contact means no tree worth
+    /// building, and the greedy planner already knows how to go looking.
+    fallback: UtilityPlanner,
     rng: ChaCha8Rng,
+    /// Orders decided for a unit but not yet handed out.
+    pending: VecDeque<Order>,
 }
 
 impl MctsPlanner {
-    pub fn with_difficulty(difficulty: u8, seed: u64) -> Self {
+    pub fn from_config(
+        config: &AiConfig,
+        seed: u64,
+        data: &DataRegistry,
+        _planners: &PlannerRegistry,
+    ) -> Self {
+        let difficulty = config.difficulty.clamp(1, 5);
+        let doctrine = resolve_doctrine(config, data);
         Self {
             iterations: match difficulty {
                 1 => 60,
@@ -34,130 +65,131 @@ impl MctsPlanner {
             rollout_depth: 20,
             exploration: 1.2,
             max_actions: 16,
+            evaluator: Evaluator::new(doctrine.clone()),
+            policy: UtilityPlanner::with_difficulty(3, seed ^ 0x9E37_79B9),
+            fallback: UtilityPlanner::new(
+                Evaluator::new(doctrine),
+                difficulty_noise(difficulty),
+                seed ^ 0x85EB_CA6B,
+            ),
             rng: ChaCha8Rng::seed_from_u64(seed),
-        }
-    }
-}
-
-struct Node {
-    parent: Option<usize>,
-    action: Option<Order>,
-    /// Side that benefits from this node's action (the side to move at the
-    /// parent).
-    acting_side: u8,
-    children: Vec<usize>,
-    untried: Vec<Order>,
-    visits: f32,
-    /// Total value accumulated from `acting_side`'s perspective.
-    value: f32,
-}
-
-/// Remove every enemy unit `side` has not spotted: the search may only plan
-/// against what it knows about.
-fn determinize(state: &BattleState, side: u8, seed: u64) -> BattleState {
-    let mut known = state.clone();
-    let spotted = known.fog.side(side).spotted.clone();
-    for unit in &mut known.units {
-        if unit.alive && unit.side != side && !spotted.contains(&unit.id) {
-            unit.alive = false;
-        }
-    }
-    // Fresh RNG: the planner must not be able to predict the real battle's
-    // future dice.
-    known.rng = ChaCha8Rng::seed_from_u64(seed);
-    known
-}
-
-/// Candidate orders for the side to move, capped and roughly ordered.
-fn candidate_orders(
-    registry: &DataRegistry,
-    state: &BattleState,
-    side: u8,
-    cap: usize,
-    rng: &mut ChaCha8Rng,
-) -> Vec<Order> {
-    let Some(unit_id) = next_idle_unit(state, side) else {
-        return vec![Order::EndTurn];
-    };
-    let unit = state.unit(unit_id).expect("idle unit is alive");
-    let mut orders = Vec::new();
-
-    // Attacks from where we stand.
-    for enemy in visible_enemies(state, side) {
-        if let Some((weapon, _, _)) = best_weapon_against(registry, state, unit_id, unit.pos, enemy)
-        {
-            orders.push(Order::Attack {
-                unit: unit_id,
-                target: enemy.id,
-                weapon,
-            });
+            pending: VecDeque::new(),
         }
     }
 
-    if !unit.moved {
-        let mut tiles: Vec<_> = reachable(registry, state, unit_id)
+    pub fn with_difficulty(difficulty: u8, seed: u64) -> Self {
+        Self::from_config(
+            &AiConfig {
+                planner: "mcts".into(),
+                difficulty,
+                doctrine: None,
+            },
+            seed,
+            &DataRegistry::default(),
+            &PlannerRegistry::empty(),
+        )
+    }
+
+    /// Candidate decisions for the next unit that needs orders, or the commit
+    /// that ends this side's planning.
+    fn candidate_steps(
+        &mut self,
+        registry: &DataRegistry,
+        state: &BattleState,
+        side: u8,
+    ) -> Vec<Step> {
+        let Some(unit) = next_unplanned_unit(state, side) else {
+            return vec![Step::Commit];
+        };
+        let Some(pos) = state.unit(unit).map(|u| u.pos) else {
+            return vec![Step::Commit];
+        };
+
+        let mut tiles: Vec<Hex> = reachable(registry, state, unit)
             .into_keys()
-            .filter(|h| *h != unit.pos)
+            .filter(|h| *h != pos)
             .collect();
         tiles.sort_unstable_by_key(|h| (h.x, h.y));
-        // Sample destinations if there are too many.
-        while tiles.len() > cap.saturating_sub(orders.len() + 1).max(3) {
-            let i = rng.random_range(0..tiles.len());
+        // Sample destinations when there are too many to expand.
+        let room = self.max_actions.saturating_sub(1).max(2);
+        while tiles.len() > room {
+            let i = self.rng.random_range(0..tiles.len());
             tiles.swap_remove(i);
         }
-        for tile in tiles {
-            orders.push(Order::Move {
-                unit: unit_id,
-                to: tile,
-            });
+        // Holding position is always an option worth considering.
+        tiles.push(pos);
+
+        tiles
+            .into_iter()
+            .map(|tile| {
+                let attack = self.evaluator.score_tile(registry, state, unit, tile).attack;
+                Step::Plan {
+                    unit,
+                    dest: (tile != pos).then_some(tile),
+                    fire: match attack {
+                        Some((target, weapon)) => FireIntent::Target { target, weapon },
+                        None => FireIntent::Hold,
+                    },
+                }
+            })
+            .collect()
+    }
+
+    /// Play one decision out on a cloned battle. Committing also fills in the
+    /// enemy's intents and resolves the round, which is where simultaneity is
+    /// approximated.
+    fn advance(
+        &mut self,
+        registry: &DataRegistry,
+        sim: &mut BattleState,
+        side: u8,
+        step: &Step,
+    ) {
+        for order in step.orders(side) {
+            let _ = sim.apply(registry, &order);
+        }
+        if matches!(step, Step::Commit) {
+            self.fill_other_sides(registry, sim, side);
+            sim.resolve_round(registry);
         }
     }
 
-    orders.push(Order::Wait { unit: unit_id });
-    orders.truncate(cap.max(1));
-    orders
-}
-
-/// Terminal/heuristic evaluation in [-1, 1] from `side`'s perspective.
-fn evaluate(state: &BattleState, side: u8) -> f32 {
-    if let Some(result) = state.over {
-        return match result.winner {
-            Some(w) if w == side => 1.0,
-            Some(_) => -1.0,
-            None => 0.0,
-        };
-    }
-    let mut ours = 0.0;
-    let mut theirs = 0.0;
-    for unit in state.alive_units() {
-        if unit.side == side {
-            ours += unit.hp as f32;
-        } else {
-            theirs += unit.hp as f32;
+    fn fill_other_sides(&mut self, registry: &DataRegistry, sim: &mut BattleState, side: u8) {
+        let others: Vec<u8> = sim
+            .living_sides()
+            .into_iter()
+            .filter(|s| *s != side)
+            .collect();
+        // Bounded so a planner that somehow never commits cannot hang the
+        // search.
+        let budget = sim.units.len() * 2 + 4;
+        for other in others {
+            for _ in 0..budget {
+                if !sim.is_planning() || sim.has_committed(other) {
+                    break;
+                }
+                let order = self.policy.next_order(registry, sim, other);
+                let commits = matches!(order, Order::Commit { .. });
+                let _ = sim.apply(registry, &order);
+                if commits {
+                    break;
+                }
+            }
         }
     }
-    let total = ours + theirs;
-    if total <= 0.0 {
-        0.0
-    } else {
-        (ours - theirs) / total
-    }
-}
 
-impl AiPlanner<BattleState, Order> for MctsPlanner {
-    fn next_order(&mut self, registry: &DataRegistry, state: &BattleState, side: u8) -> Order {
+    fn search(&mut self, registry: &DataRegistry, state: &BattleState, side: u8) -> Option<Step> {
         let root_seed: u64 = self.rng.random();
         let known = determinize(state, side, root_seed);
 
-        let root_actions = candidate_orders(registry, &known, side, self.max_actions, &mut self.rng);
-        if root_actions.len() == 1 {
-            return root_actions.into_iter().next().unwrap();
+        let root_actions = self.candidate_steps(registry, &known, side);
+        if root_actions.len() <= 1 {
+            return root_actions.into_iter().next();
         }
 
         let mut nodes = vec![Node {
             parent: None,
             action: None,
-            acting_side: side,
             children: Vec::new(),
             untried: root_actions,
             visits: 0.0,
@@ -188,7 +220,7 @@ impl AiPlanner<BattleState, Order> for MctsPlanner {
                     })
                     .expect("children not empty");
                 if let Some(action) = nodes[best].action.clone() {
-                    let _ = sim.apply(registry, &action);
+                    self.advance(registry, &mut sim, side, &action);
                 }
                 current = best;
             }
@@ -197,10 +229,9 @@ impl AiPlanner<BattleState, Order> for MctsPlanner {
             if !nodes[current].untried.is_empty() && sim.over.is_none() {
                 let i = self.rng.random_range(0..nodes[current].untried.len());
                 let action = nodes[current].untried.swap_remove(i);
-                let acting_side = sim.active_side;
-                let _ = sim.apply(registry, &action);
+                self.advance(registry, &mut sim, side, &action);
                 let untried = if sim.over.is_none() {
-                    candidate_orders(registry, &sim, sim.active_side, self.max_actions, &mut self.rng)
+                    self.candidate_steps(registry, &sim, side)
                 } else {
                     Vec::new()
                 };
@@ -208,7 +239,6 @@ impl AiPlanner<BattleState, Order> for MctsPlanner {
                 nodes.push(Node {
                     parent: Some(current),
                     action: Some(action),
-                    acting_side,
                     children: Vec::new(),
                     untried,
                     visits: 0.0,
@@ -223,32 +253,132 @@ impl AiPlanner<BattleState, Order> for MctsPlanner {
                 if sim.over.is_some() {
                     break;
                 }
-                let mover = sim.active_side;
-                let options = candidate_orders(registry, &sim, mover, 8, &mut self.rng);
+                let options = self.candidate_steps(registry, &sim, side);
                 let Some(action) = options.choose(&mut self.rng).cloned() else {
                     break;
                 };
-                if sim.apply(registry, &action).is_err() {
-                    let _ = sim.apply(registry, &Order::EndTurn);
-                }
+                self.advance(registry, &mut sim, side, &action);
             }
 
-            // Backpropagation: each node scores from its actor's view.
+            // Backpropagation. Every node is scored from the searching side's
+            // view, because the opponent is a fixed policy rather than a
+            // player in the tree.
+            let score = self.evaluator.position_value(&sim, side);
             let mut at = Some(current);
             while let Some(i) = at {
-                let score = evaluate(&sim, nodes[i].acting_side);
                 nodes[i].visits += 1.0;
                 nodes[i].value += score;
                 at = nodes[i].parent;
             }
         }
 
-        // Most-visited root child is the answer.
         nodes[0]
             .children
             .iter()
             .max_by(|&&a, &&b| nodes[a].visits.total_cmp(&nodes[b].visits))
             .and_then(|&i| nodes[i].action.clone())
-            .unwrap_or(Order::EndTurn)
+    }
+}
+
+/// One decision in the tree: everything a single unit will do this round, or
+/// the end of this side's planning.
+#[derive(Debug, Clone, PartialEq)]
+enum Step {
+    Plan {
+        unit: UnitId,
+        dest: Option<Hex>,
+        fire: FireIntent,
+    },
+    Commit,
+}
+
+impl Step {
+    fn orders(&self, side: u8) -> Vec<Order> {
+        match self {
+            Step::Commit => vec![Order::Commit { side }],
+            Step::Plan { unit, dest, fire } => {
+                let mut orders = Vec::new();
+                if let Some(to) = dest {
+                    orders.push(Order::SetMove { unit: *unit, to: *to });
+                }
+                orders.push(Order::SetFire {
+                    unit: *unit,
+                    fire: *fire,
+                });
+                orders
+            }
+        }
+    }
+}
+
+struct Node {
+    parent: Option<usize>,
+    action: Option<Step>,
+    children: Vec<usize>,
+    untried: Vec<Step>,
+    visits: f32,
+    value: f32,
+}
+
+/// Remove every enemy unit `side` has not spotted, and forget what the other
+/// sides have been told to do: the search may only plan against what it knows
+/// about. Since planning is simultaneous, nobody's orders are knowable while
+/// they are being written, so the policy opponent has to guess them again.
+pub fn determinize(state: &BattleState, side: u8, seed: u64) -> BattleState {
+    let mut known = state.clone();
+    let spotted = known.fog.side(side).spotted.clone();
+    for unit in &mut known.units {
+        if unit.side == side {
+            continue;
+        }
+        if unit.alive && !spotted.contains(&unit.id) {
+            unit.alive = false;
+        }
+        unit.intent = UnitIntent::default();
+        unit.planned = false;
+    }
+    if let Phase::Planning { committed } = &mut known.phase {
+        for (other, done) in committed.iter_mut().enumerate() {
+            if other as u8 != side {
+                *done = false;
+            }
+        }
+    }
+    // Fresh RNG: the planner must not be able to predict the real battle's
+    // future dice.
+    known.rng = ChaCha8Rng::seed_from_u64(seed);
+    known
+}
+
+impl AiPlanner<BattleState, Order> for MctsPlanner {
+    fn next_order(&mut self, registry: &DataRegistry, state: &BattleState, side: u8) -> Order {
+        while let Some(order) = self.pending.pop_front() {
+            let unit = match &order {
+                Order::SetMove { unit, .. } | Order::SetFire { unit, .. } => Some(*unit),
+                _ => None,
+            };
+            if unit.is_none_or(|u| state.unit(u).is_some()) {
+                return order;
+            }
+        }
+        if next_unplanned_unit(state, side).is_none() {
+            return Order::Commit { side };
+        }
+        // With nobody in sight, determinization leaves an empty battlefield
+        // and every branch looks like a win. Scouting is the greedy planner's
+        // job anyway.
+        if super::visible_enemies(state, side).is_empty() {
+            return self.fallback.next_order(registry, state, side);
+        }
+
+        match self.search(registry, state, side) {
+            Some(step) => {
+                self.pending = step.orders(side).into();
+                self.pending
+                    .pop_front()
+                    .unwrap_or(Order::Commit { side })
+            }
+            None => Order::Commit { side },
+        }
     }
 }

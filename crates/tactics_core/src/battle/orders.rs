@@ -1,43 +1,79 @@
-//! Orders in, events out: the sim's single mutation boundary.
+//! Intents in, events out: the planning and resolution boundary.
+//!
+//! During planning, [`BattleState::apply`] records what units are told to do
+//! without moving anything. When every side has committed, resolution runs in
+//! ticks via [`BattleState::step_tick`], and everyone's orders play out
+//! together.
 
-use super::{combat, fog, movement, BattleResult, BattleState, EndReason, UnitId, STALEMATE_TURNS};
-use crate::data::{ArmorFacing, DataRegistry, WeaponDef};
+use super::{combat, fog, movement, BattleResult, BattleState, EndReason, Phase, UnitId};
+use super::{STALEMATE_ROUNDS, TICKS_PER_ROUND};
+use crate::data::{ArmorFacing, DataRegistry};
 use hexx::Hex;
 
-/// Everything a side can ask the simulation to do.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Order {
-    /// Move a unit along the cheapest path to `to`.
-    Move { unit: UnitId, to: Hex },
-    /// Fire at a spotted enemy unit.
-    Attack {
-        unit: UnitId,
-        target: UnitId,
-        /// Index into the vehicle's weapon list.
-        weapon: usize,
-    },
-    /// Fire at a tile without a confirmed target, at a heavy accuracy
-    /// penalty. Hits whatever happens to be there.
-    BlindFire { unit: UnitId, at: Hex, weapon: usize },
-    /// End the unit's turn without acting.
-    Wait { unit: UnitId },
-    /// Pass play to the next side.
-    EndTurn,
+/// What a unit will do with its guns this round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FireIntent {
+    /// Shoot at whatever presents itself. This covers overwatch and what used
+    /// to be a special-cased counterattack: a unit holding fire answers
+    /// anyone who shows up in its sights.
+    #[default]
+    Hold,
+    /// Engage a specific enemy as soon as the shot exists. The shot is not
+    /// range-checked when ordered, because the unit may be driving into
+    /// position as part of the same round.
+    Target { target: UnitId, weapon: usize },
+    /// Shell a tile without a confirmed target, at a heavy accuracy penalty.
+    Area { at: Hex, weapon: usize },
 }
 
-/// Everything that can happen as a result of an order. The presentation
-/// layer animates these; AI and campaign scripts observe them.
+/// Everything a unit was told to do this round.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UnitIntent {
+    /// Hexes still to be walked, excluding the tile the unit stands on.
+    pub path: Vec<Hex>,
+    pub fire: FireIntent,
+}
+
+impl UnitIntent {
+    pub fn is_empty(&self) -> bool {
+        self.path.is_empty() && self.fire == FireIntent::Hold
+    }
+}
+
+/// Everything a side can ask the simulation to do while planning.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Order {
+    /// Route a unit to `to` along the cheapest path it can afford this round.
+    SetMove { unit: UnitId, to: Hex },
+    /// Tell a unit what to shoot at.
+    SetFire { unit: UnitId, fire: FireIntent },
+    /// Forget a unit's orders; it reverts to unplanned and holds fire.
+    ClearIntent { unit: UnitId },
+    /// This side is done planning. When every side with units has committed,
+    /// the round starts resolving.
+    Commit { side: u8 },
+}
+
+/// Everything that can happen as a result of orders. The presentation layer
+/// animates these; AI and campaign scripts observe them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
-    TurnStarted {
-        side: u8,
-        turn: u32,
+    /// A new round opened and sides may plan again.
+    RoundStarted {
+        round: u32,
     },
+    /// One slice of simultaneous resolution is about to play out. Events
+    /// between two of these happened at the same moment.
+    TickStarted {
+        tick: u32,
+    },
+    /// Hexes this unit crossed during the current tick.
     UnitMoved {
         unit: UnitId,
         path: Vec<Hex>,
     },
-    /// The unit ran into an unspotted enemy mid-path and stopped short.
+    /// The unit ran into an unspotted enemy and stopped short; the rest of
+    /// its route is abandoned.
     UnitTrapped {
         unit: UnitId,
         at: Hex,
@@ -48,7 +84,9 @@ pub enum Event {
         at: Hex,
         weapon: String,
         blind: bool,
-        counter: bool,
+        /// Fired on the unit's own initiative rather than at an ordered
+        /// target: overwatch, or an answer to being shot at.
+        opportunity: bool,
     },
     ShotHit {
         attacker: UnitId,
@@ -82,22 +120,18 @@ pub enum OrderError {
     BattleOver,
     #[error("unit does not exist or is destroyed")]
     NoSuchUnit,
-    #[error("it is not that side's turn")]
-    NotYourTurn,
-    #[error("unit has already moved")]
-    AlreadyMoved,
-    #[error("unit has already acted")]
-    AlreadyActed,
+    #[error("orders are closed while the round resolves")]
+    NotPlanningPhase,
+    #[error("this side has already committed its orders")]
+    AlreadyCommitted,
+    #[error("no such side in this battle")]
+    NoSuchSide,
     #[error("no valid path to the destination")]
     NoPath,
     #[error("no such weapon on this vehicle")]
     NoSuchWeapon,
     #[error("target is not spotted")]
     TargetNotSpotted,
-    #[error("target is out of range")]
-    OutOfRange,
-    #[error("no line of sight to the target")]
-    NoLineOfSight,
     #[error("cannot target a friendly unit")]
     FriendlyTarget,
     #[error("tile is not on the map")]
@@ -105,7 +139,8 @@ pub enum OrderError {
 }
 
 impl BattleState {
-    /// Apply one order, mutating the state and returning what happened.
+    /// Record one planning order. Nothing on the board moves here: orders
+    /// only take effect once the round resolves.
     pub fn apply(
         &mut self,
         registry: &DataRegistry,
@@ -114,47 +149,97 @@ impl BattleState {
         if self.is_over() {
             return Err(OrderError::BattleOver);
         }
-        let mut events = match order {
-            Order::Move { unit, to } => self.apply_move(registry, *unit, *to)?,
-            Order::Attack {
-                unit,
-                target,
-                weapon,
-            } => self.apply_attack(registry, *unit, *target, *weapon)?,
-            Order::BlindFire { unit, at, weapon } => {
-                self.apply_blind_fire(registry, *unit, *at, *weapon)?
-            }
-            Order::Wait { unit } => {
-                let u = self.active_unit_mut(*unit)?;
-                u.moved = true;
-                u.acted = true;
-                Vec::new()
-            }
-            Order::EndTurn => self.apply_end_turn(registry),
-        };
-        let hit = events.iter().any(|e| matches!(e, Event::ShotHit { .. }));
-        if hit || self.in_contact() {
-            self.last_contact_turn = self.turn;
+        if !self.is_planning() {
+            return Err(OrderError::NotPlanningPhase);
         }
-        self.check_victory(&mut events);
-        Ok(events)
+        match order {
+            Order::SetMove { unit, to } => {
+                self.set_move(registry, *unit, *to)?;
+                Ok(Vec::new())
+            }
+            Order::SetFire { unit, fire } => {
+                self.set_fire(registry, *unit, *fire)?;
+                Ok(Vec::new())
+            }
+            Order::ClearIntent { unit } => {
+                let side = self.planning_unit_side(*unit)?;
+                let _ = side;
+                let u = self.unit_mut(*unit).ok_or(OrderError::NoSuchUnit)?;
+                u.intent = UnitIntent::default();
+                u.planned = false;
+                Ok(Vec::new())
+            }
+            Order::Commit { side } => self.commit(*side),
+        }
     }
 
-    fn active_unit_mut(&mut self, id: UnitId) -> Result<&mut super::Unit, OrderError> {
-        let active = self.active_side;
+    /// The side owning `unit`, rejecting orders from a side that already
+    /// closed its planning.
+    fn planning_unit_side(&self, unit: UnitId) -> Result<u8, OrderError> {
+        let side = self.unit(unit).ok_or(OrderError::NoSuchUnit)?.side;
+        if self.has_committed(side) {
+            return Err(OrderError::AlreadyCommitted);
+        }
+        Ok(side)
+    }
+
+    fn set_move(
+        &mut self,
+        registry: &DataRegistry,
+        id: UnitId,
+        to: Hex,
+    ) -> Result<(), OrderError> {
+        self.planning_unit_side(id)?;
+        let (path, _cost) = movement::path_to(registry, self, id, to).ok_or(OrderError::NoPath)?;
         let unit = self.unit_mut(id).ok_or(OrderError::NoSuchUnit)?;
-        if unit.side != active {
-            return Err(OrderError::NotYourTurn);
-        }
-        Ok(unit)
+        // path includes the starting tile; the intent is what remains to walk.
+        unit.intent.path = path.into_iter().skip(1).collect();
+        unit.planned = true;
+        Ok(())
     }
 
-    fn weapon_of<'r>(
+    fn set_fire(
+        &mut self,
+        registry: &DataRegistry,
+        id: UnitId,
+        fire: FireIntent,
+    ) -> Result<(), OrderError> {
+        let side = self.planning_unit_side(id)?;
+        // Validate only what cannot change as the round plays out. Range and
+        // line of sight are deliberately not checked here: a unit may be
+        // ordered to drive into a firing position and engage in the same
+        // round, and the crew shoots on the tick the shot appears.
+        match fire {
+            FireIntent::Hold => {}
+            FireIntent::Target { target, weapon } => {
+                let tgt = self.unit(target).ok_or(OrderError::NoSuchUnit)?;
+                if tgt.side == side {
+                    return Err(OrderError::FriendlyTarget);
+                }
+                if !self.fog.side(side).spotted.contains(&target) {
+                    return Err(OrderError::TargetNotSpotted);
+                }
+                self.weapon_def(registry, id, weapon)?;
+            }
+            FireIntent::Area { at, weapon } => {
+                if !self.map.contains(at) {
+                    return Err(OrderError::NotOnMap);
+                }
+                self.weapon_def(registry, id, weapon)?;
+            }
+        }
+        let unit = self.unit_mut(id).ok_or(OrderError::NoSuchUnit)?;
+        unit.intent.fire = fire;
+        unit.planned = true;
+        Ok(())
+    }
+
+    fn weapon_def<'r>(
         &self,
         registry: &'r DataRegistry,
         unit: UnitId,
         index: usize,
-    ) -> Result<&'r WeaponDef, OrderError> {
+    ) -> Result<&'r crate::data::WeaponDef, OrderError> {
         let u = self.unit(unit).ok_or(OrderError::NoSuchUnit)?;
         registry
             .vehicle(&u.vehicle)
@@ -163,215 +248,179 @@ impl BattleState {
             .ok_or(OrderError::NoSuchWeapon)
     }
 
-    fn apply_move(
-        &mut self,
-        registry: &DataRegistry,
-        id: UnitId,
-        to: Hex,
-    ) -> Result<Vec<Event>, OrderError> {
-        {
-            let unit = self.active_unit_mut(id)?;
-            if unit.moved {
-                return Err(OrderError::AlreadyMoved);
-            }
-            if unit.acted {
-                return Err(OrderError::AlreadyActed);
+    fn commit(&mut self, side: u8) -> Result<Vec<Event>, OrderError> {
+        if side as usize >= self.sides.len() {
+            return Err(OrderError::NoSuchSide);
+        }
+        let living = self.living_sides();
+        match &mut self.phase {
+            Phase::Resolving { .. } => return Err(OrderError::NotPlanningPhase),
+            Phase::Planning { committed } => {
+                if committed[side as usize] {
+                    return Err(OrderError::AlreadyCommitted);
+                }
+                committed[side as usize] = true;
+                // Sides with nothing left on the board have nothing to say.
+                let all_in = living
+                    .iter()
+                    .all(|s| committed.get(*s as usize).copied().unwrap_or(true));
+                if all_in {
+                    self.phase = Phase::Resolving { tick: 0 };
+                }
             }
         }
-        let (path, _cost) = movement::path_to(registry, self, id, to).ok_or(OrderError::NoPath)?;
-        let side = self.unit(id).expect("checked above").side;
+        Ok(Vec::new())
+    }
 
-        // Walk the path. Friends are transparent — driving past your own
-        // column costs nothing. Pathing already routes around enemies this
-        // side can see, so any enemy met here is one it could not: that is
-        // the ambush, and it stops the advance on the tile before them.
-        let mut stopped_at = path[0];
-        let mut walked = vec![path[0]];
-        let mut trapped = false;
-        for &step in &path[1..] {
-            match self.unit_at(step) {
-                Some(other) if other.side != side => {
-                    trapped = true;
+    /// Advance resolution by one tick, returning what happened in it.
+    /// Returns nothing while planning or once the battle is over.
+    pub fn step_tick(&mut self, registry: &DataRegistry) -> Vec<Event> {
+        let Phase::Resolving { tick } = self.phase else {
+            return Vec::new();
+        };
+        if self.is_over() {
+            return Vec::new();
+        }
+
+        let mut events = vec![Event::TickStarted { tick }];
+        for unit in self.units.iter_mut().filter(|u| u.alive) {
+            for cd in &mut unit.cooldowns {
+                *cd = cd.saturating_sub(1);
+            }
+        }
+
+        self.resolve_movement(registry, &mut events);
+        events.extend(fog::recompute(registry, self));
+        self.resolve_fire(registry, &mut events);
+        events.extend(fog::recompute(registry, self));
+
+        if self.in_contact() || events.iter().any(|e| matches!(e, Event::ShotHit { .. })) {
+            self.last_contact_round = self.round;
+        }
+        self.check_victory(&mut events);
+        if self.is_over() {
+            return events;
+        }
+
+        let next = tick + 1;
+        if next >= TICKS_PER_ROUND {
+            self.begin_round(&mut events);
+        } else {
+            self.phase = Phase::Resolving { tick: next };
+        }
+        events
+    }
+
+    /// Run the rest of the round in one go. Convenient for headless callers;
+    /// the presentation layer steps tick by tick instead so it can animate.
+    pub fn resolve_round(&mut self, registry: &DataRegistry) -> Vec<Event> {
+        let mut events = Vec::new();
+        while !self.is_over() && self.resolving_tick().is_some() {
+            events.extend(self.step_tick(registry));
+        }
+        events
+    }
+
+    /// Everyone advances along their ordered route as far as this tick's
+    /// movement credit allows.
+    fn resolve_movement(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
+        let ids: Vec<UnitId> = self.units.iter().filter(|u| u.alive).map(|u| u.id).collect();
+        for id in ids {
+            let Some(unit) = self.unit(id) else { continue };
+            if unit.intent.path.is_empty() {
+                continue;
+            }
+            let (side, start) = (unit.side, unit.pos);
+            let gained = movement::move_points(registry, unit);
+            {
+                let unit = self.unit_mut(id).expect("alive above");
+                unit.move_credit += gained;
+            }
+
+            // The leg starts where the unit stands, so the presentation layer
+            // can animate straight from the sprite's current tile.
+            let mut walked = vec![start];
+            let mut trapped_at = None;
+            let mut blocked = false;
+            while let Some(unit) = self.unit(id) {
+                let Some(&next) = unit.intent.path.first() else {
+                    break;
+                };
+                let Some(cost) = movement::edge_cost_for(registry, self, unit, unit.pos, next)
+                else {
+                    // The route stopped being walkable (terrain lookup gone).
+                    break;
+                };
+                let price = cost * TICKS_PER_ROUND;
+                if unit.move_credit < price {
                     break;
                 }
-                _ => {
-                    stopped_at = step;
-                    walked.push(step);
+                // One unit per hex. A friend in the way is traffic: it will
+                // probably have driven on by the next tick, so hold and try
+                // again. An enemy is the end of the advance either way, but
+                // only one nobody had spotted counts as an ambush.
+                if let Some(other) = self.unit_at(next) {
+                    if other.side != side {
+                        if self.fog.side(side).spotted.contains(&other.id) {
+                            blocked = true;
+                        } else {
+                            trapped_at = Some(unit.pos);
+                        }
+                    }
+                    break;
+                }
+                let unit = self.unit_mut(id).expect("alive above");
+                unit.move_credit -= price;
+                let facing = unit.pos.neighbor_direction(next);
+                unit.pos = next;
+                if let Some(dir) = facing {
+                    unit.facing = dir;
+                }
+                unit.intent.path.remove(0);
+                walked.push(next);
+            }
+
+            if walked.len() > 1 {
+                fog::clear_reveal(self, id);
+                events.push(Event::UnitMoved {
+                    unit: id,
+                    path: walked,
+                });
+            }
+            if blocked || trapped_at.is_some() {
+                // The route ran into somebody; the rest of it is off.
+                if let Some(unit) = self.unit_mut(id) {
+                    unit.intent.path.clear();
                 }
             }
-        }
-
-        let facing = walked
-            .windows(2)
-            .last()
-            .and_then(|w| w[0].neighbor_direction(w[1]));
-        {
-            let unit = self.unit_mut(id).expect("checked above");
-            unit.pos = stopped_at;
-            if let Some(dir) = facing {
-                unit.facing = dir;
-            }
-            unit.moved = true;
-            if trapped {
-                unit.acted = true;
+            if let Some(at) = trapped_at {
+                events.push(Event::UnitTrapped { unit: id, at });
             }
         }
-        fog::clear_reveal(self, id);
-
-        let mut events = vec![Event::UnitMoved {
-            unit: id,
-            path: walked,
-        }];
-        if trapped {
-            events.push(Event::UnitTrapped {
-                unit: id,
-                at: stopped_at,
-            });
-        }
-        events.extend(fog::recompute(registry, self));
-        Ok(events)
     }
 
-    fn apply_attack(
-        &mut self,
-        registry: &DataRegistry,
-        id: UnitId,
-        target: UnitId,
-        weapon_index: usize,
-    ) -> Result<Vec<Event>, OrderError> {
-        {
-            let unit = self.active_unit_mut(id)?;
-            if unit.acted {
-                return Err(OrderError::AlreadyActed);
-            }
+    /// Everyone who has a shot takes it. Wrecks are cleared only once every
+    /// gun has spoken, so a tick's shots are genuinely simultaneous.
+    fn resolve_fire(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
+        let ids: Vec<UnitId> = self.units.iter().filter(|u| u.alive).map(|u| u.id).collect();
+        for id in ids {
+            combat::fire_if_able(registry, self, id, events);
         }
-        let weapon = self.weapon_of(registry, id, weapon_index)?.clone();
-        let (att_pos, att_side) = {
-            let u = self.unit(id).expect("checked above");
-            (u.pos, u.side)
-        };
-        let tgt = self.unit(target).ok_or(OrderError::NoSuchUnit)?;
-        if tgt.side == att_side {
-            return Err(OrderError::FriendlyTarget);
-        }
-        let tgt_pos = tgt.pos;
-        if !self.fog.side(att_side).spotted.contains(&target) {
-            return Err(OrderError::TargetNotSpotted);
-        }
-        let dist = att_pos.distance_to(tgt_pos);
-        if !(weapon.range[0] as i32..=weapon.range[1] as i32).contains(&dist) {
-            return Err(OrderError::OutOfRange);
-        }
-        // Direct-fire weapons need line of sight; indirect ones only need
-        // the target spotted (checked above), i.e. a friendly spotter.
-        if !weapon.indirect && !fog::los_clear(registry, &self.map, att_pos, tgt_pos) {
-            return Err(OrderError::NoLineOfSight);
-        }
-
-        {
-            let unit = self.unit_mut(id).expect("checked above");
-            if unit.pos != tgt_pos {
-                unit.facing = unit.pos.main_direction_to(tgt_pos);
-            }
-            unit.moved = true;
-            unit.acted = true;
-        }
-        Ok(combat::resolve_attack(registry, self, id, &weapon, target, false))
+        combat::reap(self, events);
     }
 
-    fn apply_blind_fire(
-        &mut self,
-        registry: &DataRegistry,
-        id: UnitId,
-        at: Hex,
-        weapon_index: usize,
-    ) -> Result<Vec<Event>, OrderError> {
-        {
-            let unit = self.active_unit_mut(id)?;
-            if unit.acted {
-                return Err(OrderError::AlreadyActed);
-            }
+    /// Open a new round: clear last round's orders and let sides plan again.
+    fn begin_round(&mut self, events: &mut Vec<Event>) {
+        self.round += 1;
+        for unit in self.units.iter_mut() {
+            unit.intent = UnitIntent::default();
+            unit.planned = false;
+            unit.move_credit = 0;
         }
-        if !self.map.contains(at) {
-            return Err(OrderError::NotOnMap);
-        }
-        let weapon = self.weapon_of(registry, id, weapon_index)?.clone();
-        let (att_pos, att_side) = {
-            let u = self.unit(id).expect("checked above");
-            (u.pos, u.side)
+        self.phase = Phase::Planning {
+            committed: vec![false; self.sides.len()],
         };
-        let dist = att_pos.distance_to(at);
-        if !(weapon.range[0] as i32..=weapon.range[1] as i32).contains(&dist) {
-            return Err(OrderError::OutOfRange);
-        }
-        if !weapon.indirect && !fog::los_clear(registry, &self.map, att_pos, at) {
-            return Err(OrderError::NoLineOfSight);
-        }
-
-        {
-            let unit = self.unit_mut(id).expect("checked above");
-            if unit.pos != at {
-                unit.facing = unit.pos.main_direction_to(at);
-            }
-            unit.moved = true;
-            unit.acted = true;
-        }
-
-        let target = self
-            .unit_at(at)
-            .filter(|t| t.side != att_side)
-            .map(|t| t.id);
-        let events = match target {
-            Some(target) => combat::resolve_attack(registry, self, id, &weapon, target, true),
-            None => {
-                let mut ev = vec![
-                    Event::ShotFired {
-                        attacker: id,
-                        from: att_pos,
-                        at,
-                        weapon: weapon.id.clone(),
-                        blind: true,
-                        counter: false,
-                    },
-                    Event::ShotMissed { attacker: id, at },
-                ];
-                fog::reveal_to_all(self, id);
-                ev.extend(fog::recompute(registry, self));
-                ev
-            }
-        };
-        Ok(events)
-    }
-
-    fn apply_end_turn(&mut self, registry: &DataRegistry) -> Vec<Event> {
-        let side_count = self.sides.len() as u8;
-        let living = self.living_sides();
-        // Advance to the next side that still has units.
-        let mut next = self.active_side;
-        for _ in 0..side_count {
-            next = (next + 1) % side_count;
-            if living.contains(&next) {
-                break;
-            }
-        }
-        if next <= self.active_side {
-            self.turn += 1;
-            // New round: everyone gets opportunity fire back.
-            for unit in self.units.iter_mut().filter(|u| u.alive) {
-                unit.can_return_fire = true;
-            }
-        }
-        self.active_side = next;
-        for unit in self.units.iter_mut().filter(|u| u.alive && u.side == next) {
-            unit.moved = false;
-            unit.acted = false;
-        }
-        let mut events = vec![Event::TurnStarted {
-            side: next,
-            turn: self.turn,
-        }];
-        events.extend(fog::recompute(registry, self));
-        events
+        events.push(Event::RoundStarted { round: self.round });
     }
 
     fn check_victory(&mut self, events: &mut Vec<Event>) {
@@ -381,7 +430,7 @@ impl BattleState {
         let living = self.living_sides();
         if living.len() <= 1 {
             self.finish(living.first().copied(), EndReason::Eliminated, events);
-        } else if self.turn.saturating_sub(self.last_contact_turn) >= STALEMATE_TURNS {
+        } else if self.round.saturating_sub(self.last_contact_round) >= STALEMATE_ROUNDS {
             self.finish(None, EndReason::Stalemate, events);
         }
     }

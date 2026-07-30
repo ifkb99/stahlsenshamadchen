@@ -23,12 +23,22 @@ fn main() {
     let mut state = BattleState::from_map(&registry, "river_crossing", seed).expect("battle");
     let mut planners = [
         make_battle_planner(
-            &AiConfig { planner: "mcts".into(), difficulty: 4 },
+            &AiConfig {
+                planner: "mcts".into(),
+                difficulty: 4,
+                doctrine: Some("massed_armor".into()),
+            },
             seed,
+            &registry,
         ),
         make_battle_planner(
-            &AiConfig { planner: "utility".into(), difficulty: 4 },
+            &AiConfig {
+                planner: "utility".into(),
+                difficulty: 4,
+                doctrine: Some("elastic_defense".into()),
+            },
             seed + 1,
+            &registry,
         ),
     ];
 
@@ -37,22 +47,38 @@ fn main() {
         format!("[{}] {} ({})", st.sides[u.side as usize].name, u.name, u.vehicle)
     };
 
-    let mut orders = 0usize;
-    while !state.is_over() && orders < 2000 {
-        let side = state.active_side;
-        let order = planners[side as usize].next_order(&registry, &state, side);
-        orders += 1;
-        let events = match state.apply(&registry, &order) {
-            Ok(ev) => ev,
-            Err(e) => {
-                println!("!! side {side} illegal order {order:?}: {e}");
-                state.apply(&registry, &Order::EndTurn).unwrap()
+    let mut rounds = 0usize;
+    while !state.is_over() && rounds < 200 {
+        // Planning: every side writes orders for all of its units.
+        for side in state.living_sides() {
+            for _ in 0..64 {
+                if state.has_committed(side) || !state.is_planning() {
+                    break;
+                }
+                let order = planners[side as usize].next_order(&registry, &state, side);
+                if let Err(e) = state.apply(&registry, &order) {
+                    println!("!! side {side} illegal order {order:?}: {e}");
+                    let _ = state.apply(&registry, &Order::Commit { side });
+                }
             }
-        };
-        for ev in &events {
+        }
+        rounds += 1;
+
+        // Resolution: everyone moves and shoots at once. Ticks are only
+        // announced when something actually happened in them, so a quiet
+        // approach march does not bury the fighting.
+        let mut tick = 0;
+        let mut announced = true;
+        for ev in &state.resolve_round(&registry) {
+            if !matches!(ev, Event::TickStarted { .. }) && !announced {
+                println!("  tick {tick}");
+                announced = true;
+            }
             match ev {
-                Event::TurnStarted { side, turn } => {
-                    println!("--- round {turn}: {} ---", state.sides[*side as usize].name)
+                Event::RoundStarted { round } => println!("--- round {round} ---"),
+                Event::TickStarted { tick: t } => {
+                    tick = *t;
+                    announced = false;
                 }
                 Event::UnitMoved { unit, path } => println!(
                     "{} moves {} hexes to {:?}",
@@ -63,11 +89,11 @@ fn main() {
                 Event::UnitTrapped { unit, .. } => {
                     println!("{} AMBUSHED mid-move!", name(&state, *unit))
                 }
-                Event::ShotFired { attacker, weapon, blind, counter, at, .. } => println!(
+                Event::ShotFired { attacker, weapon, blind, opportunity, at, .. } => println!(
                     "{} fires {weapon}{}{} at {at:?}",
                     name(&state, *attacker),
                     if *blind { " (blind)" } else { "" },
-                    if *counter { " (return fire)" } else { "" },
+                    if *opportunity { " (opportunity)" } else { "" },
                 ),
                 Event::ShotHit { target, damage, facing, remaining_hp, .. } => println!(
                     "   HIT {} on the {facing:?} for {damage}, {remaining_hp} hp left",
@@ -83,8 +109,7 @@ fn main() {
                     state.sides[*by_side as usize].name
                 ),
                 Event::BattleEnded { winner, reason } => println!(
-                    "=== battle over after {} orders: {:?} wins ({reason:?}) ===",
-                    orders,
+                    "=== battle over after {rounds} rounds: {:?} wins ({reason:?}) ===",
                     winner.map(|w| state.sides[w as usize].name.clone())
                 ),
             }

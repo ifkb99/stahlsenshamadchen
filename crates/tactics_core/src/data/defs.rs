@@ -155,6 +155,77 @@ pub struct WeaponDef {
     /// unit spots the target.
     #[serde(default)]
     pub indirect: bool,
+    /// Ticks before this weapon can fire again. The default is a full round,
+    /// so a weapon that says nothing keeps the one-shot-per-round cadence.
+    /// Anything faster fires several times while a round plays out.
+    #[serde(default = "default_reload_ticks")]
+    pub reload_ticks: u32,
+}
+
+fn default_reload_ticks() -> u32 {
+    crate::battle::TICKS_PER_ROUND
+}
+
+/// How a side fights, as opposed to how well it thinks.
+///
+/// Doctrine is the identity knob: two academies running the same planner at
+/// the same difficulty should still be recognisable opponents, one massing
+/// armour and trading fire while the other cedes ground and shoots from
+/// cover. Planners read these weights instead of hard-coding coefficients,
+/// which is what lets a mod add a new fighting style without Rust.
+///
+/// Every field is defaulted, so a doctrine file may set only what it cares
+/// about. Weights are multipliers around 1.0 unless noted.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DoctrineDef {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    /// 0..=1: how much expected damage outweighs self-preservation.
+    pub aggression: f32,
+    /// Worth of terrain cover when choosing where to sit.
+    pub cover_value: f32,
+    /// Worth of high ground.
+    pub elevation_value: f32,
+    /// Preference for staying near friends and concentrating fire, rather
+    /// than spreading across the map.
+    pub concentration: f32,
+    /// Appetite for advancing into ground nobody has scouted.
+    pub scouting: f32,
+    /// Willingness to spend indirect fire rather than hold it.
+    pub indirect_appetite: f32,
+    /// Fraction of starting strength lost before the side looks for a way
+    /// out. Reserved until morale and withdrawal exist.
+    pub withdraw_threshold: f32,
+    /// Reserved for chain of command: acting without orders when out of
+    /// contact with a commander.
+    pub initiative: f32,
+    /// Reserved for chain of command: how much a commander devolves
+    /// decisions to subordinates.
+    pub delegation: f32,
+}
+
+impl Default for DoctrineDef {
+    /// The balanced doctrine, used when a side names none. These are the
+    /// coefficients the utility planner used before doctrine existed, so
+    /// behaviour without a doctrine file is unchanged.
+    fn default() -> Self {
+        Self {
+            id: "balanced".into(),
+            name: "Balanced".into(),
+            description: "No pronounced style.".into(),
+            aggression: 0.6,
+            cover_value: 1.0,
+            elevation_value: 1.0,
+            concentration: 1.0,
+            scouting: 1.0,
+            indirect_appetite: 1.0,
+            withdraw_threshold: 0.7,
+            initiative: 0.5,
+            delegation: 0.5,
+        }
+    }
 }
 
 /// A terrain type occupying one hex tile.

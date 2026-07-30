@@ -11,20 +11,24 @@ Two crates make up the project.
 ## `tactics_core`
 
 The pure simulation. No Bevy dependency: battle state is plain data,
-cloned and stepped headlessly. Orders go in, events come out:
+cloned and stepped headlessly. Battles are WEGO, so the boundary has two
+halves: orders record intent, and ticks resolve it. Both return events.
 
 ```text
-BattleState::apply(Order) -> Vec<Event>
+BattleState::apply(Order) -> Vec<Event>      // planning: record an intent
+BattleState::step_tick(registry) -> Vec<Event> // resolution: one tick
 ```
 
-That boundary is what makes search-based AI (MCTS), deterministic replays,
-and fast tests possible. The crate owns:
+Resolving a tick at a time is what lets the presentation layer animate a
+round without the simulation racing ahead of the sprites; headless callers
+use `resolve_round` instead. That boundary is what makes search-based AI
+(MCTS), deterministic replays, and fast tests possible. The crate owns:
 
 - The data / mod registry
 - Map format
 - Movement, fog of war, line of sight, combat
-- The overworld sim
-- AI planners
+- The overworld sim (still turn-based: one side acts per day)
+- AI planners, and the doctrine-weighted evaluator they share
 
 ## `game`
 
