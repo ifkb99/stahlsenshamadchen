@@ -22,6 +22,7 @@ pub enum AppState {
 }
 
 fn main() {
+    let is_debug = std::env::var("STAHL_DEBUG").is_ok();
     App::new()
         .add_plugins(
             DefaultPlugins
@@ -43,7 +44,8 @@ fn main() {
             battle::BattlePlugin,
             overworld::OverworldPlugin,
         ))
-        .add_systems(Update, (map_render::reposition_tiles, dev_screenshot))
+        .add_systems(Update, map_render::reposition_tiles)
+        .add_systems(Update, dev_screenshot.run_if(move || is_debug))
         .run();
 }
 
