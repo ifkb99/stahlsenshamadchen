@@ -3,7 +3,7 @@
 
 use crate::camera::CameraFocus;
 use crate::iso::{self, ArtCache, ViewCenter, ViewRotation};
-use crate::map_render::{self, CurrentMap, FogOverlay};
+use crate::map_render::{self, CurrentMap, FogOverlay, HexOverlay};
 use crate::mods::Mods;
 use crate::AppState;
 use bevy::prelude::*;
@@ -1040,7 +1040,10 @@ fn sync_units(
     }
 }
 
-fn update_fog(battle: Res<Battle>, mut overlays: Query<(&FogOverlay, &mut Sprite, &mut Visibility)>) {
+fn update_fog(
+    battle: Res<Battle>,
+    mut overlays: Query<(&HexOverlay, &mut Sprite, &mut Visibility), With<FogOverlay>>,
+) {
     let state = &battle.state;
     let fog = state.fog.side(battle.view_side());
     for (overlay, mut sprite, mut visibility) in &mut overlays {
@@ -1079,17 +1082,13 @@ fn update_highlights(
     >,
 ) {
     let map = battle.state.map.clone();
-    let face_center = |hex: Hex| -> Vec3 {
-        let elev = map.get(hex).map(|t| t.elevation).unwrap_or(0);
-        let (pos, z) = iso::project(hex, elev, rotation.0, center.0);
-        Vec3::new(pos.x, pos.y, z + 0.6)
-    };
+    let face_at = |hex: Hex| HexOverlay::face(hex).translation(&map, rotation.0, center.0);
 
     // Hover marker.
     if let Ok((mut transform, mut visibility)) = hover.single_mut() {
         match map_render::hovered_tile(&windows, &camera, &map, rotation.0) {
             Some(hex) => {
-                transform.translation = face_center(hex);
+                transform.translation = face_at(hex);
                 *visibility = Visibility::Inherited;
             }
             None => *visibility = Visibility::Hidden,
@@ -1099,7 +1098,7 @@ fn update_highlights(
     if let Ok((mut transform, mut visibility)) = select.single_mut() {
         match battle.selected.and_then(|id| battle.state.unit(id)) {
             Some(unit) => {
-                transform.translation = face_center(unit.pos);
+                transform.translation = face_at(unit.pos);
                 *visibility = Visibility::Inherited;
             }
             None => *visibility = Visibility::Hidden,
@@ -1115,13 +1114,15 @@ fn update_highlights(
         commands.entity(entity).despawn();
     }
     for hex in battle.move_range.keys() {
+        let overlay = HexOverlay::face(*hex);
         commands.spawn((
             Sprite {
                 image: art.face.clone(),
                 color: Color::srgba(0.35, 0.55, 1.0, 0.4),
                 ..default()
             },
-            Transform::from_translation(face_center(*hex)),
+            Transform::from_translation(overlay.translation(&map, rotation.0, center.0)),
+            overlay,
             MoveHighlight,
             BattleScope,
         ));
@@ -1153,13 +1154,15 @@ fn update_highlights(
         }
     }
     for (hex, color) in marks {
+        let overlay = HexOverlay::face(hex);
         commands.spawn((
             Sprite {
                 image: art.face.clone(),
                 color,
                 ..default()
             },
-            Transform::from_translation(face_center(hex)),
+            Transform::from_translation(overlay.translation(&map, rotation.0, center.0)),
+            overlay,
             PlanHighlight,
             BattleScope,
         ));

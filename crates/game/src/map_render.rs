@@ -12,11 +12,59 @@ pub struct MapTile {
     pub elevation: i32,
 }
 
+/// Where a hex overlay sits relative to the tile prism.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Anchor {
+    /// Centered on the tile's top face (range markers, plan routes).
+    Face,
+    /// Aligned with the prism silhouette (fog).
+    Prism,
+}
+
+/// Shared data for any sprite anchored to a hex. Kind-specific markers
+/// (`FogOverlay`, battle plan/move highlights, …) live alongside this.
+#[derive(Component, Clone, Copy)]
+pub struct HexOverlay {
+    pub hex: Hex,
+    pub anchor: Anchor,
+    pub z_bias: f32,
+}
+
+impl HexOverlay {
+    /// Top-face marker, slightly above the tile so it draws over the prism.
+    pub fn face(hex: Hex) -> Self {
+        Self {
+            hex,
+            anchor: Anchor::Face,
+            z_bias: 0.6,
+        }
+    }
+
+    /// Fog-style marker, sitting on the prism body.
+    pub fn fog(hex: Hex) -> Self {
+        Self {
+            hex,
+            anchor: Anchor::Prism,
+            z_bias: 0.4,
+        }
+    }
+
+    /// World translation for this overlay under the current view.
+    pub fn translation(&self, map: &HexMap, rotation: u32, center: Hex) -> Vec3 {
+        let elevation = map.get(self.hex).map(|t| t.elevation).unwrap_or(0);
+        let (pos, z) = iso::project(self.hex, elevation, rotation, center);
+        match self.anchor {
+            Anchor::Face => Vec3::new(pos.x, pos.y, z + self.z_bias),
+            Anchor::Prism => {
+                Vec3::new(pos.x, pos.y + prism_offset(elevation), z + self.z_bias)
+            }
+        }
+    }
+}
+
 /// The fog overlay covering a tile (same silhouette, tinted black).
 #[derive(Component)]
-pub struct FogOverlay {
-    pub hex: Hex,
-}
+pub struct FogOverlay;
 
 /// Vertical pixel offset from a tile's top-face center for the fog/tile
 /// sprite: the prism image is taller than the face, so the sprite center
@@ -56,30 +104,28 @@ pub fn spawn_map<B: Bundle + Clone>(
             scope.clone(),
         ));
         if with_fog {
+            let overlay = HexOverlay::fog(hex);
             commands.spawn((
                 Sprite {
                     image,
                     color: Color::srgba(0.02, 0.02, 0.05, 1.0),
                     ..default()
                 },
-                Transform::from_translation(Vec3::new(
-                    pos.x,
-                    pos.y + prism_offset(tile.elevation),
-                    z + 0.4,
-                )),
-                FogOverlay { hex },
+                Transform::from_translation(overlay.translation(map, rotation, center)),
+                overlay,
+                FogOverlay,
                 scope.clone(),
             ));
         }
     }
 }
 
-/// Re-project every tile and fog overlay when the view rotates.
-pub fn reposition_tiles(
+/// Re-project every tile and hex-anchored overlay when the view rotates.
+pub fn reposition_map(
     rotation: Res<ViewRotation>,
     center: Res<ViewCenter>,
-    mut tiles: Query<(&MapTile, &mut Transform), Without<FogOverlay>>,
-    mut fog: Query<(&FogOverlay, &mut Transform), With<FogOverlay>>,
+    mut tiles: Query<(&MapTile, &mut Transform), Without<HexOverlay>>,
+    mut overlays: Query<(&HexOverlay, &mut Transform)>,
     maps: Option<Res<CurrentMap>>,
 ) {
     if !rotation.is_changed() && !center.is_changed() {
@@ -90,10 +136,8 @@ pub fn reposition_tiles(
         let (pos, z) = iso::project(tile.hex, tile.elevation, rotation.0, center.0);
         transform.translation = Vec3::new(pos.x, pos.y + prism_offset(tile.elevation), z);
     }
-    for (overlay, mut transform) in &mut fog {
-        let elevation = maps.0.get(overlay.hex).map(|t| t.elevation).unwrap_or(0);
-        let (pos, z) = iso::project(overlay.hex, elevation, rotation.0, center.0);
-        transform.translation = Vec3::new(pos.x, pos.y + prism_offset(elevation), z + 0.4);
+    for (overlay, mut transform) in &mut overlays {
+        transform.translation = overlay.translation(&maps.0, rotation.0, center.0);
     }
 }
 

@@ -9,11 +9,11 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 - need to find better name for "girls". cadets kind of works but feels out of theme. should be something like soldier but cute
 - determine scale of a tile and a unit. this will determine the size of the maps, how far units can shoot and move, and much of the rest of the gameplay will follow
 ## Bugs
-- projected movement tiles do not roate with map
 - check out warning: `WARN bevy_render::view::window: Couldn't get swap chain texture after configuring. Cause: 'Outdated'`
 - warning: `WARN winit::platform_impl::linux::x11::xdisplay: error setting XSETTINGS; Xft options won't reload automatically`
 ## Immediate Goals
 ### Misc
+- overlays currently reproject via HexOverlay + reposition_map on view rotate. alternative: parent each overlay to its MapTile entity and let Bevy transform propagation carry them (more robust as overlay kinds grow; needs a Hex→Entity index when spawning highlights)
 - save/load: derive serde across BattleState/OverworldState/roster while the sim is still small (ChaCha8Rng supports serde). every field added from here on either serializes or becomes a migration problem
 - allow better control of units. planned routes are drawn now, but they cannot be shaped: waypoints, reverse movement (penalized), and a face command (uses movement)
 - multiple girls in a vehicle, as it makes sense. can be wounded from hits to remove their bonuses (engine already supports multi-crew via crew_slots/crew_best; this is the roster-instance refactor + a wound model + UI)

@@ -44,7 +44,7 @@ fn main() {
             battle::BattlePlugin,
             overworld::OverworldPlugin,
         ))
-        .add_systems(Update, map_render::reposition_tiles)
+        .add_systems(Update, map_render::reposition_map)
         .add_systems(Update, dev_screenshot.run_if(move || is_debug))
         .run();
 }

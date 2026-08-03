@@ -5,7 +5,7 @@ use crate::battle::{BattleForce, BattleOutcome, PendingBattle};
 use crate::campaign::{self, Campaign, CampaignCommand};
 use crate::camera::CameraFocus;
 use crate::iso::{self, ArtCache, ViewCenter, ViewRotation};
-use crate::map_render::{self, CurrentMap};
+use crate::map_render::{self, CurrentMap, HexOverlay};
 use crate::mods::Mods;
 use crate::AppState;
 use bevy::prelude::*;
@@ -841,16 +841,12 @@ fn update_range_highlights(
     mut hover: Query<(&mut Transform, &mut Visibility), With<OwHoverTile>>,
 ) {
     let map = overworld.state.map.clone();
-    let face_center = |hex: Hex| -> Vec3 {
-        let elev = map.get(hex).map(|t| t.elevation).unwrap_or(0);
-        let (pos, z) = iso::project(hex, elev, rotation.0, center.0);
-        Vec3::new(pos.x, pos.y, z + 0.6)
-    };
+    let face_at = |hex: Hex| HexOverlay::face(hex).translation(&map, rotation.0, center.0);
 
     if let Ok((mut transform, mut visibility)) = hover.single_mut() {
         match map_render::hovered_tile(&windows, &camera, &map, rotation.0) {
             Some(hex) => {
-                transform.translation = face_center(hex);
+                transform.translation = face_at(hex);
                 *visibility = Visibility::Inherited;
             }
             None => *visibility = Visibility::Hidden,
@@ -866,13 +862,15 @@ fn update_range_highlights(
     }
 
     let mut tint = |hex: Hex, color: Color| {
+        let overlay = HexOverlay::face(hex);
         commands.spawn((
             Sprite {
                 image: art.face.clone(),
                 color,
                 ..default()
             },
-            Transform::from_translation(face_center(hex)),
+            Transform::from_translation(overlay.translation(&map, rotation.0, center.0)),
+            overlay,
             OwRangeTile,
             OverworldScope,
         ));
