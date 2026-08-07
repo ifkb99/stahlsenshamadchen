@@ -950,7 +950,8 @@ fn update_ui(
             army.name.clone(),
             format!("Side: {}", state.sides[army.side as usize].name),
             format!(
-                "Movement: {}{}",
+                "Movement: {} ({} hexes){}",
+                mods.0.scale.format_overworld_distance(army.movement),
                 army.movement,
                 if army.moved { " (spent)" } else { "" }
             ),

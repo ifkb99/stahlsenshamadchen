@@ -6,7 +6,7 @@
 //! together.
 
 use super::{combat, fog, movement, BattleResult, BattleState, EndReason, Phase, UnitId};
-use super::{STALEMATE_ROUNDS, TICKS_PER_ROUND};
+use super::STALEMATE_ROUNDS;
 use crate::data::{ArmorFacing, DataRegistry};
 use hexx::Hex;
 
@@ -303,7 +303,7 @@ impl BattleState {
         }
 
         let next = tick + 1;
-        if next >= TICKS_PER_ROUND {
+        if next >= registry.scale.ticks_per_round {
             self.begin_round(&mut events);
         } else {
             self.phase = Phase::Resolving { tick: next };
@@ -351,7 +351,7 @@ impl BattleState {
                     // The route stopped being walkable (terrain lookup gone).
                     break;
                 };
-                let price = cost * TICKS_PER_ROUND;
+                let price = cost * registry.scale.ticks_per_round;
                 if unit.move_credit < price {
                     break;
                 }

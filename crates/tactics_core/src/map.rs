@@ -19,6 +19,26 @@ pub enum MapKind {
     Overworld,
 }
 
+/// What shape a map's tiles are expected to form.
+///
+/// A battle is fought on the ground an overworld tile depicts, and the
+/// overworld draws that tile as a hexagon — so a battle map is a hexagon
+/// too, sized by the scale. Shaping it that way is what stops "one overworld
+/// hex = one battle map" from being a slogan the rectangle quietly violated
+/// by 20%.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MapShape {
+    /// One overworld tile: the hexagon of [`crate::data::Scale::battle_map_radius`].
+    /// The default for battle maps, and checked during validation.
+    #[default]
+    Tile,
+    /// Whatever the rows happen to describe. For scenario maps that are
+    /// deliberately not a whole tile, for overworld maps, and for the small
+    /// fixtures tests build by hand.
+    Free,
+}
+
 /// A side participating in the scenario a map describes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SideSpec {
@@ -71,6 +91,12 @@ pub struct MapFile {
     pub name: String,
     #[serde(default)]
     pub kind: MapKind,
+    /// Expected tile shape. Absent means "whatever suits the kind" — see
+    /// [`Self::shape`] — so an ordinary field battle says nothing and gets
+    /// checked against the scale, while a map that means to be some other
+    /// shape says `"free"` and is left alone.
+    #[serde(default)]
+    pub shape: Option<MapShape>,
     /// Single-character glyph -> terrain id.
     pub palette: HashMap<String, String>,
     pub rows: Vec<String>,
@@ -167,7 +193,14 @@ impl HexMap {
         self.tiles.is_empty()
     }
 
-    /// Center of mass, used as the pivot for view rotation.
+    /// Centre of mass, used as the pivot for view rotation.
+    ///
+    /// Averaged in floating point and rounded through [`Hex::round`], which
+    /// respects the cube constraint `x + y + z == 0`. The previous version
+    /// averaged `x` and `y` with integer division and ignored `z`, which was
+    /// merely cosmetic on a rectangle and is not on a hexagon: truncating
+    /// each axis independently can name a hex that is not the centre and, on
+    /// a sparse map, is not on the map at all.
     pub fn center(&self) -> Hex {
         if self.tiles.is_empty() {
             return Hex::ZERO;
@@ -176,8 +209,8 @@ impl HexMap {
             .tiles
             .keys()
             .fold((0i64, 0i64), |(sx, sy), h| (sx + h.x as i64, sy + h.y as i64));
-        let n = self.tiles.len() as i64;
-        Hex::new((sx / n) as i32, (sy / n) as i32)
+        let n = self.tiles.len() as f32;
+        Hex::round([sx as f32 / n, sy as f32 / n])
     }
 }
 
@@ -195,6 +228,46 @@ impl MapFile {
             out.insert(c, terrain.clone());
         }
         Ok(out)
+    }
+
+    /// The shape this map's tiles are expected to form.
+    ///
+    /// A battle map is one overworld tile unless it says otherwise; an
+    /// overworld map is a region of them and has no such constraint.
+    pub fn shape(&self) -> MapShape {
+        self.shape.unwrap_or(match self.kind {
+            MapKind::Battle => MapShape::Tile,
+            MapKind::Overworld => MapShape::Free,
+        })
+    }
+
+    /// Check that a tile-shaped map really is the scale's hexagon.
+    ///
+    /// Both halves matter. A map with the right number of tiles in the wrong
+    /// arrangement is still not a tile, and a hexagon of the wrong radius is
+    /// the exact drift this shape exists to prevent — so this compares the
+    /// tile set against the hexagon centred on the map's own centroid rather
+    /// than just counting.
+    fn validate_shape(&self, map: &HexMap, registry: &DataRegistry, report: &mut ValidationReport) {
+        if self.shape() != MapShape::Tile {
+            return;
+        }
+        let radius = registry.scale.battle_map_radius();
+        let expected: std::collections::HashSet<Hex> = map.center().range(radius).collect();
+        let actual: std::collections::HashSet<Hex> = map.iter().map(|(h, _)| h).collect();
+        if actual == expected {
+            return;
+        }
+        let missing = expected.difference(&actual).count();
+        let extra = actual.difference(&expected).count();
+        report.errors.push(format!(
+            "map `{}` is a battle map, so its tiles must form the hexagon of one overworld tile \
+             (radius {radius}, {} tiles at the current scale) — it has {} tiles, {missing} short \
+             and {extra} outside. Set `\"shape\": \"free\"` if it is deliberately not a whole tile.",
+            self.id,
+            registry.scale.battle_map_tiles(),
+            map.len(),
+        ));
     }
 
     /// Validate this map against loaded terrain/vehicle/character defs.
@@ -224,6 +297,7 @@ impl MapFile {
         if map.is_empty() {
             report.errors.push(format!("map `{}` has no tiles", self.id));
         }
+        self.validate_shape(&map, registry, report);
         for (i, row) in self.elevation.iter().enumerate() {
             match self.rows.get(i) {
                 Some(r) if r.chars().count() == row.chars().count() => {}

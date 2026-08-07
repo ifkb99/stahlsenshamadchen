@@ -1,3 +1,4 @@
+use super::{Balance, Scale};
 use serde::{Deserialize, Serialize};
 
 /// `mod.json` at the root of every mod directory.
@@ -13,4 +14,17 @@ pub struct ModManifest {
     /// definitions with the same id.
     #[serde(default)]
     pub dependencies: Vec<String>,
+    /// What the engine's hexes, rounds and ticks mean in metres and seconds.
+    ///
+    /// Unlike a vehicle or a weapon, scale is a property of the game rather
+    /// than of one definition, so there is exactly one in effect at a time:
+    /// the last mod in load order that declares a block wins outright. A mod
+    /// that only adds content says nothing here and inherits whatever the
+    /// game it is extending decided.
+    #[serde(default)]
+    pub scale: Option<Scale>,
+    /// What a point of crew skill is worth. Same one-in-effect rule as
+    /// [`Self::scale`].
+    #[serde(default)]
+    pub balance: Option<Balance>,
 }

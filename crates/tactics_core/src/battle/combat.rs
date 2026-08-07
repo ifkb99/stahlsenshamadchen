@@ -2,7 +2,7 @@
 //! advantage, blind fire, and opportunity fire.
 
 use super::{fog, stats, BattleState, Event, FireIntent, UnitId};
-use crate::data::{ArmorFacing, DamageType, DataRegistry, TerrainDef, WeaponDef};
+use crate::data::{ArmorFacing, DamageType, DataRegistry, Scale, TerrainDef, WeaponDef};
 use hexx::Hex;
 use rand::RngExt;
 
@@ -71,14 +71,21 @@ pub enum HitFactor<'a> {
     Blind,
 }
 
-impl std::fmt::Display for HitFactor<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl HitFactor<'_> {
+    /// Render this factor for a player. Takes the scale rather than
+    /// implementing `Display` so that a range can be stated in metres: a
+    /// breakdown reading "Range (12 hexes)" tells the player nothing about
+    /// whether the shot is a long one, and there is deliberately no
+    /// scale-free way to format it.
+    pub fn label(&self, scale: &Scale) -> String {
         match self {
-            HitFactor::Range { hexes } => write!(f, "Range ({hexes} hexes)"),
-            HitFactor::Gunnery => write!(f, "Crew gunnery"),
-            HitFactor::Downhill => write!(f, "Firing downhill"),
-            HitFactor::Cover { terrain } => write!(f, "{terrain} cover"),
-            HitFactor::Blind => write!(f, "Blind fire"),
+            HitFactor::Range { hexes } => {
+                format!("Range ({}, {hexes} hexes)", scale.format_distance(*hexes))
+            }
+            HitFactor::Gunnery => "Crew gunnery".to_string(),
+            HitFactor::Downhill => "Firing downhill".to_string(),
+            HitFactor::Cover { terrain } => format!("{terrain} cover"),
+            HitFactor::Blind => "Blind fire".to_string(),
         }
     }
 }
@@ -126,7 +133,7 @@ pub fn hit_breakdown(
         |factor, delta| {
             if delta != 0 {
                 modifiers.push(HitModifier {
-                    label: factor.to_string(),
+                    label: factor.label(&registry.scale),
                     delta,
                 });
             }
@@ -164,7 +171,7 @@ fn hit_chance_inner(
     note(HitFactor::Range { hexes: dist }, falloff);
     chance += falloff;
 
-    let gunnery = stats::gunnery(registry, att) * 3;
+    let gunnery = registry.balance.accuracy(stats::gunnery(registry, att));
     note(HitFactor::Gunnery, gunnery);
     chance += gunnery;
 
@@ -496,7 +503,7 @@ fn fire_at_unit(
             att.facing = att.pos.main_direction_to(tgt_pos);
         }
         if let Some(cd) = att.cooldowns.get_mut(weapon_index) {
-            *cd = weapon.reload_ticks.max(1);
+            *cd = weapon.reload(&registry.scale);
         }
     }
     resolve_shot(
@@ -527,7 +534,7 @@ fn fire_at_tile(
             att.facing = att.pos.main_direction_to(at);
         }
         if let Some(cd) = att.cooldowns.get_mut(weapon_index) {
-            *cd = weapon.reload_ticks.max(1);
+            *cd = weapon.reload(&registry.scale);
         }
     }
     match state.unit_at(at).filter(|t| t.side != side).map(|t| t.id) {

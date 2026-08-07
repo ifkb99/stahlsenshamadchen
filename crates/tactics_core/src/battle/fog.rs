@@ -14,12 +14,18 @@ use crate::map::HexMap;
 use hexx::Hex;
 use std::collections::HashSet;
 
-/// Height of one elevation step, in the abstract units LoS math runs in.
-const ELEVATION_STEP: f32 = 2.0;
-/// Observer eye height above their own tile surface.
-const EYE_HEIGHT: f32 = 1.5;
+// LoS runs in metres. Only the vertical unit matters: the sight line is
+// interpolated by its position along the hex line, which is already the
+// horizontal parameter, so how wide a hex is never enters the geometry.
+
+/// Height of one elevation level, in metres. One map elevation digit.
+const ELEVATION_STEP: f32 = 10.0;
+/// Observer eye height above their own tile surface: a commander's cupola.
+const EYE_HEIGHT: f32 = 2.5;
 /// How far above the target tile surface we must see to "see" the target.
-const TARGET_HEIGHT: f32 = 1.0;
+/// Lower than [`EYE_HEIGHT`], so looking out is fractionally easier than
+/// being looked at — which is what makes a reverse slope worth taking.
+const TARGET_HEIGHT: f32 = 2.0;
 
 /// What one side knows about the battlefield.
 #[derive(Debug, Clone, Default)]
@@ -70,13 +76,16 @@ pub fn los_clear(registry: &DataRegistry, map: &HexMap, from: Hex, to: Hex) -> b
     let eye = from_tile.elevation as f32 * ELEVATION_STEP + EYE_HEIGHT;
     let target = to_tile.elevation as f32 * ELEVATION_STEP + TARGET_HEIGHT;
 
-    let line: Vec<Hex> = from.line_to(to).collect();
-    let last = (line.len() - 1) as f32;
-    for (i, hex) in line.iter().enumerate() {
-        if i == 0 || i == line.len() - 1 {
+    // Walked as an iterator rather than collected. The line is as long as the
+    // sight range, so a scout with 2 km of vision runs this over a thousand
+    // times per look; there is no reason for each one to build a Vec first.
+    let steps = from.distance_to(to) as usize;
+    let last = steps as f32;
+    for (i, hex) in from.line_to(to).enumerate() {
+        if i == 0 || i == steps {
             continue;
         }
-        let Some(tile) = map.get(*hex) else {
+        let Some(tile) = map.get(hex) else {
             // Off-map gaps don't block sight.
             continue;
         };
@@ -118,22 +127,24 @@ pub fn recompute(registry: &DataRegistry, state: &mut BattleState) -> Vec<Event>
 
         let previously_spotted = state.fog.side(side).spotted.clone();
         let revealed = state.fog.side(side).revealed.clone();
-        let spotted: HashSet<UnitId> = state
-            .alive_units()
-            .filter(|u| u.side != side)
-            .filter(|u| visible.contains(&u.pos) || revealed.contains(&u.id))
-            .map(|u| u.id)
-            .collect();
 
-        for &id in &spotted {
-            if !previously_spotted.contains(&id) {
-                if let Some(unit) = state.unit(id) {
-                    events.push(Event::UnitSpotted {
-                        unit: id,
-                        by_side: side,
-                        at: unit.pos,
-                    });
-                }
+        // Units are visited in id order and events pushed in that order, so
+        // the same seed always yields the same event stream. Iterating the
+        // spotted set instead would not: a HashSet's order varies run to
+        // run, and a replay cannot survive that. It only stayed hidden while
+        // vision was short enough that two enemies rarely appeared at once.
+        let mut spotted = HashSet::new();
+        for unit in state.alive_units().filter(|u| u.side != side) {
+            if !(visible.contains(&unit.pos) || revealed.contains(&unit.id)) {
+                continue;
+            }
+            spotted.insert(unit.id);
+            if !previously_spotted.contains(&unit.id) {
+                events.push(Event::UnitSpotted {
+                    unit: unit.id,
+                    by_side: side,
+                    at: unit.pos,
+                });
             }
         }
 

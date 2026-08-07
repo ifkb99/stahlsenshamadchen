@@ -2,6 +2,7 @@
 
 use super::defs::*;
 use super::manifest::ModManifest;
+use super::{Balance, Scale};
 use crate::map::MapFile;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -53,6 +54,11 @@ impl ValidationReport {
 #[derive(Debug, Default, Clone)]
 pub struct DataRegistry {
     pub mods: Vec<ModManifest>,
+    /// What hexes, rounds and ticks mean. Unlike the definition maps this is
+    /// a single value rather than a merge: see [`Self::load_dir`].
+    pub scale: Scale,
+    /// What a point of crew skill is worth. Single value, as [`Self::scale`].
+    pub balance: Balance,
     pub characters: HashMap<String, CharacterDef>,
     pub vehicles: HashMap<String, VehicleDef>,
     pub weapons: HashMap<String, WeaponDef>,
@@ -81,6 +87,12 @@ impl<T> OneOrMany<T> {
 impl DataRegistry {
     /// Load every mod under `root` (each subdirectory containing a
     /// `mod.json`), in dependency order, then validate cross-references.
+    ///
+    /// Definitions merge by id — a later mod overriding one vehicle leaves
+    /// the rest alone. Scale and balance do not merge, because they describe
+    /// the game rather than a piece of content: the last mod in load order
+    /// that declares a block replaces the previous one wholesale, and a mod
+    /// that declares neither inherits what it is extending.
     pub fn load_dir(root: &Path) -> Result<(Self, ValidationReport), DataError> {
         let manifests = discover_mods(root)?;
         let ordered = topo_sort(manifests)?;
@@ -89,6 +101,12 @@ impl DataRegistry {
         let mut report = ValidationReport::default();
         for (dir, manifest) in ordered {
             registry.load_mod_dir(&dir, &mut report)?;
+            if let Some(scale) = manifest.scale {
+                registry.scale = scale;
+            }
+            if let Some(balance) = manifest.balance {
+                registry.balance = balance;
+            }
             registry.mods.push(manifest);
         }
         registry.validate_into(&mut report);
@@ -143,6 +161,7 @@ impl DataRegistry {
 
     /// Cross-reference every definition and record problems in `report`.
     pub fn validate_into(&self, report: &mut ValidationReport) {
+        self.validate_scale(report);
         for v in self.vehicles.values() {
             if v.weapons.is_empty() {
                 report.warn(format!("vehicle `{}` has no weapons", v.id));
@@ -169,18 +188,19 @@ impl DataRegistry {
             if w.range[1] == 0 {
                 report.error(format!("weapon `{}` has max range 0", w.id));
             }
-            if w.reload_ticks == 0 {
-                report.error(format!(
+            match w.reload_ticks {
+                Some(0) => report.error(format!(
                     "weapon `{}` has reload_ticks 0; a weapon must take at least one tick to reload",
                     w.id
-                ));
-            } else if w.reload_ticks > crate::battle::TICKS_PER_ROUND {
-                report.warn(format!(
-                    "weapon `{}` reloads in {} ticks, longer than the {}-tick round, so it cannot fire every round",
+                )),
+                Some(ticks) if ticks > self.scale.ticks_per_round => report.warn(format!(
+                    "weapon `{}` reloads in {} ticks ({}), longer than the {}-tick round, so it cannot fire every round",
                     w.id,
-                    w.reload_ticks,
-                    crate::battle::TICKS_PER_ROUND
-                ));
+                    ticks,
+                    self.scale.format_duration(ticks),
+                    self.scale.ticks_per_round
+                )),
+                _ => {}
             }
         }
         for d in self.doctrines.values() {
@@ -217,6 +237,53 @@ impl DataRegistry {
         }
         for m in self.maps.values() {
             m.validate_into(self, report);
+        }
+    }
+
+    /// Check the scale block for values that would make the derived
+    /// quantities meaningless, and the balance block for coefficients so
+    /// large that crew skill would outweigh the vehicle.
+    ///
+    /// The battle-hexes-per-overworld-hex check is the one that earns its
+    /// keep: the contract says an overworld hex *is* a battle map, and
+    /// nothing else in the codebase would ever notice the two drifting apart.
+    fn validate_scale(&self, report: &mut ValidationReport) {
+        let s = &self.scale;
+        for (field, value) in [
+            ("hex_meters", s.hex_meters),
+            ("round_seconds", s.round_seconds),
+            ("elevation_meters", s.elevation_meters),
+            ("overworld_hex_meters", s.overworld_hex_meters),
+            ("overworld_turn_hours", s.overworld_turn_hours),
+        ] {
+            if !(value.is_finite() && value > 0.0) {
+                report.error(format!("scale {field} must be a positive number, got {value}"));
+            }
+        }
+        if s.ticks_per_round == 0 {
+            report.error("scale ticks_per_round must be at least 1".to_string());
+        }
+
+        let per_hex = s.battle_hexes_per_overworld_hex();
+        if per_hex.is_finite() && !(16.0..=64.0).contains(&per_hex) {
+            report.warn(format!(
+                "one overworld hex is {per_hex:.0} battle hexes across, which is not a plausible battle map; \
+                 the contract is that an overworld hex is one map, so hex_meters and overworld_hex_meters have drifted apart"
+            ));
+        }
+
+        for (field, value) in [
+            ("vision_per_awareness", self.balance.vision_per_awareness),
+            ("speed_per_driving", self.balance.speed_per_driving),
+            ("accuracy_per_gunnery", self.balance.accuracy_per_gunnery),
+        ] {
+            // Stats run 0..=5, so anything past 20 lets a crew more than
+            // double their vehicle and makes the hardware decorative.
+            if !(0..=20).contains(&value) {
+                report.warn(format!(
+                    "balance {field} is {value}; crew stats run 0-5, so this is outside the usual 0-20"
+                ));
+            }
         }
     }
 
@@ -374,6 +441,8 @@ mod tests {
                     version: String::new(),
                     description: String::new(),
                     dependencies: deps.iter().map(|s| s.to_string()).collect(),
+                    scale: None,
+                    balance: None,
                 },
             )
         };

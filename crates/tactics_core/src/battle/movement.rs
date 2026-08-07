@@ -8,15 +8,20 @@ use hexx::Hex;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
-/// Movement points for a unit per round (vehicle base + driving bonus).
-/// Resolution spreads these across [`super::TICKS_PER_ROUND`] ticks.
+/// Movement points for a unit per round: the vehicle's base, scaled by the
+/// crew's driving. Resolution spreads these across the scale's
+/// `ticks_per_round` ticks.
+///
+/// One point is one hex of clear terrain per round, so this is a speed —
+/// at the shipped scale, 5 points is 30 km/h.
 pub fn move_points(registry: &DataRegistry, unit: &Unit) -> u32 {
     let base = registry
         .vehicle(&unit.vehicle)
         .map(|v| v.movement.points)
         .unwrap_or(0);
-    let bonus = super::stats::driving(registry, unit) / 5;
-    (base as i32 + bonus).max(1) as u32
+    registry
+        .balance
+        .speed(base, super::stats::driving(registry, unit))
 }
 
 /// Cost of stepping from `from` onto `to`, or `None` if that step is

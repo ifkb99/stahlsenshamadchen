@@ -44,7 +44,7 @@
         "color": "#8d7f70",
         "move_cost": { "foot": 1, "wheeled": 1, "tracked": 1, "air": 1 },
         "cover": 40,
-        "vision_block": 3
+        "vision_block": 2
     },
     {
         "id": "plains",
@@ -67,7 +67,7 @@
         "glyph": "F",
         "color": "#40653a",
         "move_cost": { "foot": 1, "wheeled": 3, "tracked": 2, "air": 1 },
-        "vision_block": 2,
+        "vision_block": 3,
         "concealing": true
     },
     {

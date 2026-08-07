@@ -4,6 +4,7 @@
 //! Mods loaded later (in dependency order) may override earlier definitions
 //! by re-declaring the same id.
 
+use super::Scale;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -155,15 +156,26 @@ pub struct WeaponDef {
     /// unit spots the target.
     #[serde(default)]
     pub indirect: bool,
-    /// Ticks before this weapon can fire again. The default is a full round,
-    /// so a weapon that says nothing keeps the one-shot-per-round cadence.
-    /// Anything faster fires several times while a round plays out.
-    #[serde(default = "default_reload_ticks")]
-    pub reload_ticks: u32,
+    /// Ticks before this weapon can fire again, as a practical aimed rate of
+    /// fire rather than a mechanical reload — at the default scale a tick is
+    /// 5 s, so 4 is a shot every 20 s.
+    ///
+    /// `None` means a full round, so a weapon that says nothing keeps the
+    /// one-shot-per-round cadence; anything faster fires several times while
+    /// a round plays out. This is an `Option` rather than a serde default
+    /// because "a full round" is now [`Scale::ticks_per_round`], which lives
+    /// in the mod being loaded and is not reachable from a `fn() -> u32`.
+    /// Read it through [`Self::reload`].
+    #[serde(default)]
+    pub reload_ticks: Option<u32>,
 }
 
-fn default_reload_ticks() -> u32 {
-    crate::battle::TICKS_PER_ROUND
+impl WeaponDef {
+    /// Ticks between shots, resolving the "a full round" default against the
+    /// scale in force.
+    pub fn reload(&self, scale: &Scale) -> u32 {
+        self.reload_ticks.unwrap_or(scale.ticks_per_round).max(1)
+    }
 }
 
 /// How a side fights, as opposed to how well it thinks.

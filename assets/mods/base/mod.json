@@ -3,5 +3,18 @@
     "name": "Stahlsenshamädchen Base",
     "version": "0.1.0",
     "description": "Core content: starter characters, vehicles, weapons, terrain and demo maps.",
-    "dependencies": []
+    "dependencies": [],
+    "scale": {
+        "hex_meters": 100,
+        "round_seconds": 60,
+        "ticks_per_round": 12,
+        "elevation_meters": 10,
+        "overworld_hex_meters": 4000,
+        "overworld_turn_hours": 24
+    },
+    "balance": {
+        "vision_per_awareness": 5,
+        "speed_per_driving": 5,
+        "accuracy_per_gunnery": 3
+    }
 }

@@ -1187,12 +1187,17 @@ fn update_panel(
     let view_side = battle.view_side();
 
     if let Ok(mut text) = banner.single_mut() {
+        let scale = &registry.scale;
         text.0 = match state.resolving_tick() {
+            // The elapsed clock is the point of the tick counter: a round is
+            // a minute of battle, and seeing "t+25 s" while the shells are
+            // still in the air is what makes the ranges believable.
             Some(tick) => format!(
-                "Round {} - resolving ({}/{})",
+                "Round {} - resolving {} ({}/{})",
                 state.round,
+                scale.format_duration(tick + 1),
                 tick + 1,
-                tactics_core::battle::TICKS_PER_ROUND
+                scale.ticks_per_round
             ),
             None if battle.human_side().is_some_and(|s| state.has_committed(s)) => {
                 format!("Round {} - waiting on the other side", state.round)
@@ -1232,7 +1237,7 @@ fn update_panel(
         if let Some(preview) =
             tactics_core::battle::preview_attack(registry, state, attacker, weapon, target, false)
         {
-            text.0 = format_attack(&preview);
+            text.0 = format_attack(&registry.scale, &preview);
             set_portrait(&mut portrait, &art, state, target);
             return;
         }
@@ -1273,18 +1278,34 @@ fn set_portrait(
 }
 
 /// The shot the player is contemplating, with the arithmetic spelled out.
-fn format_attack(preview: &tactics_core::battle::AttackPreview) -> String {
+///
+/// Distances lead with the real-world figure and keep the hex count in
+/// parentheses: the metre value is what tells the player whether this is a
+/// long shot, the hex count is what they need to count tiles on the board.
+fn format_attack(
+    scale: &tactics_core::data::Scale,
+    preview: &tactics_core::battle::AttackPreview,
+) -> String {
     let mut lines = vec![
         format!("Attack: {}", preview.target_name),
         format!("{} - {}", preview.target_vehicle, preview.target_side),
         format!(
-            "HP {}/{}  at {} hexes",
-            preview.target_hp, preview.target_max_hp, preview.distance
+            "HP {}/{}  at {} ({} hexes)",
+            preview.target_hp,
+            preview.target_max_hp,
+            scale.format_distance(preview.distance),
+            preview.distance
         ),
         String::new(),
+        preview.weapon_name.clone(),
+        // On its own line: the panel is 240 px wide and wraps at roughly
+        // thirty characters, so a metric range and a hex range do not fit
+        // beside a weapon name.
         format!(
-            "{} (range {}-{})",
-            preview.weapon_name, preview.weapon_range[0], preview.weapon_range[1]
+            "  rng {} ({}-{})",
+            scale.format_range(preview.weapon_range),
+            preview.weapon_range[0],
+            preview.weapon_range[1]
         ),
     ];
     if !preview.in_range {
@@ -1338,15 +1359,38 @@ fn format_unit(
         format!("HP {}/{}", unit.hp.max(0), vehicle.map(|v| v.max_hp).unwrap_or(10)),
         format!("Side: {}", state.sides[unit.side as usize].name),
     ];
+    let scale = &registry.scale;
     if let Some(v) = vehicle {
         lines.push(format!(
-            "Armor F{}/S{}/R{}  Move {}",
-            v.armor.front, v.armor.side, v.armor.rear, v.movement.points
+            "Armor F{}/S{}/R{}",
+            v.armor.front, v.armor.side, v.armor.rear
+        ));
+        // The crewed figures, not the vehicle's paper ones: what this unit
+        // actually does with these girls aboard is the interesting number,
+        // and it is the only place the player can see the crew bonus land.
+        let speed = tactics_core::battle::move_points(registry, unit);
+        let vision = tactics_core::battle::stats::vision_range(registry, unit);
+        lines.push(format!(
+            "Move {} ({})",
+            scale.format_speed(speed),
+            speed
+        ));
+        lines.push(format!(
+            "Sight {} ({})",
+            scale.format_distance(vision as i32),
+            vision
         ));
         for weapon in v.weapons.iter().filter_map(|w| registry.weapon(w)) {
+            lines.push(format!("  {} dmg {}", weapon.name, weapon.damage));
             lines.push(format!(
-                "  {} dmg {} rng {}-{}",
-                weapon.name, weapon.damage, weapon.range[0], weapon.range[1]
+                "    {} ({}-{})",
+                scale.format_range(weapon.range),
+                weapon.range[0],
+                weapon.range[1]
+            ));
+            lines.push(format!(
+                "    a shot every {}",
+                scale.format_duration(weapon.reload(scale))
             ));
         }
     }
@@ -1376,7 +1420,12 @@ fn format_tile(
     let Some(terrain) = registry.terrain(&tile.terrain) else {
         return tile.terrain.clone();
     };
-    let mut lines = vec![format!("{} (elev {})", terrain.name, tile.elevation)];
+    let scale = &registry.scale;
+    let mut lines = vec![format!(
+        "{} (elev {})",
+        terrain.name,
+        scale.format_elevation(tile.elevation)
+    )];
     if terrain.cover > 0 {
         lines.push(format!(
             "Cover {}%: -{}% to be hit",
@@ -1387,7 +1436,12 @@ fn format_tile(
         lines.push("No cover".into());
     }
     if terrain.vision_block > 0 {
-        lines.push(format!("Blocks sight (+{})", terrain.vision_block));
+        // Sight blocking is priced in elevation steps, so it is a height:
+        // forest stands 20 m over the ground it grows on.
+        lines.push(format!(
+            "Blocks sight (+{})",
+            scale.format_elevation(terrain.vision_block)
+        ));
     }
     let costs: Vec<String> = [
         (tactics_core::data::MovementClass::Tracked, "trk"),
@@ -1400,7 +1454,9 @@ fn format_tile(
         None => format!("{label}-"),
     })
     .collect();
-    lines.push(format!("Move {}", costs.join(" ")));
+    // Costs are multipliers on a vehicle's speed rather than speeds
+    // themselves, so they stay in movement points: "trk2" is half pace.
+    lines.push(format!("Move cost {}", costs.join(" ")));
     lines.join("\n")
 }
 

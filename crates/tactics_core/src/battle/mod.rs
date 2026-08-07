@@ -3,7 +3,9 @@
 //! A round has two halves. During [`Phase::Planning`] every side sets
 //! intents for its units — where to drive, what to engage — and nothing on
 //! the board moves. Once all sides [`Order::Commit`], the round resolves in
-//! [`TICKS_PER_ROUND`] ticks during which everyone moves and shoots at once.
+//! [`crate::data::Scale::ticks_per_round`] ticks during which everyone moves
+//! and shoots at once. How long a round and a tick *are* is mod data, not a
+//! constant, which is why almost everything here takes a registry.
 //!
 //! There are two mutation entry points. [`BattleState::apply`] takes orders
 //! (intents and commits) and returns [`Event`]s; [`BattleState::step_tick`]
@@ -57,18 +59,14 @@ pub struct SideState {
     pub ai: Option<AiConfig>,
 }
 
-/// How many ticks one round resolves over. Movement points are still spent
-/// per round, but they are now spread across these ticks, so a faster
-/// vehicle covers ground *earlier* rather than merely going further.
-pub const TICKS_PER_ROUND: u32 = 12;
-
 /// Where a battle is in the plan/resolve cycle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Phase {
     /// Sides are writing orders. Nothing on the board moves; one flag per
     /// side records who has finished.
     Planning { committed: Vec<bool> },
-    /// Orders are playing out. `tick` counts from 0 to [`TICKS_PER_ROUND`].
+    /// Orders are playing out. `tick` counts from 0 to the scale's
+    /// `ticks_per_round`.
     Resolving { tick: u32 },
 }
 
@@ -92,7 +90,7 @@ pub struct Unit {
     /// an empty intent, which is the deliberate choice to sit still and
     /// watch.
     pub planned: bool,
-    /// Movement accrued but not yet spent, in `cost * TICKS_PER_ROUND`
+    /// Movement accrued but not yet spent, in `cost * ticks_per_round`
     /// units. Integer so resolution stays bit-for-bit reproducible.
     pub move_credit: u32,
     /// Ticks until each weapon can fire again, indexed like the vehicle's
@@ -351,6 +349,12 @@ impl BattleState {
 }
 
 /// Derived stats: crew quality modifies vehicle hardware.
+///
+/// Every bonus here is a percentage of the vehicle's own base, read from the
+/// mod's [`crate::data::Balance`] block. The flat divisors these replaced
+/// were tuned when a tank saw three hexes, and the scale decision quietly
+/// devalued them to nothing; scaling against the base means retuning vision
+/// or speed never silently retunes what a crew is worth again.
 pub mod stats {
     use super::*;
 
@@ -359,14 +363,15 @@ pub mod stats {
         crew_best(registry, unit, |s| s.gunnery)
     }
 
-    /// Vision range in hexes: vehicle base + awareness bonus.
+    /// Vision range in hexes: vehicle base scaled by the crew's awareness.
     pub fn vision_range(registry: &DataRegistry, unit: &Unit) -> u32 {
         let base = registry
             .vehicle(&unit.vehicle)
             .map(|v| v.vision_range)
             .unwrap_or(3);
-        let bonus = crew_best(registry, unit, |s| s.awareness) / 4;
-        (base as i32 + bonus).max(1) as u32
+        registry
+            .balance
+            .vision(base, crew_best(registry, unit, |s| s.awareness))
     }
 
     fn crew_best(registry: &DataRegistry, unit: &Unit, f: impl Fn(&crate::data::CrewStats) -> i32) -> i32 {
