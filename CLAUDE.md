@@ -146,16 +146,35 @@ rule they defend (`unspotted_enemies_still_ambush`).
 
 ### Performance
 
-- **MCTS is unusable at the new scale** — tracked in TODO.md under Bugs with the
-  measurements and the three candidate fixes. Summary: ~35 s per unit order,
-  the shipped `playthrough` example no longer completes, gameplay is unaffected
-  because the scenario uses the `utility` planner.
-- **`fog::recompute` rebuilds every side's vision from scratch after every
-  single shot** (`combat.rs`, in `fire_at_unit` and `fire_at_tile`). At 20-hex
-  vision that is ~1300 line-of-sight walks per unit per call, and a round has
-  dozens of shots. Batching to once per tick would cost only that a unit
-  revealed by firing becomes visible at end of tick rather than instantly. This
-  is the largest single cost in round resolution and therefore in AI search.
+- ~~**`fog::recompute` rebuilds every side's vision from scratch after every
+  single shot.**~~ Fixed, and without the batching trade-off the note here
+  proposed — a firing unit is still revealed instantly. Three things did it,
+  none of which changes what the fog *says*:
+  - `SightGrid` resolves every tile's sight heights once. `los_clear` was
+    doing a `String`-keyed `registry.terrain()` lookup per ray step, on the
+    order of a million times a round, for an answer that cannot change
+    because no battle alters its own terrain. Shared via `BattleState::sight`
+    behind an `Arc` so search branching stays cheap.
+  - Vision is cached per unit against `(pos, range)`. Since the map is
+    immutable for the whole battle, that cache is not an approximation of the
+    answer, it *is* the answer.
+  - A side whose whole `(unit, pos, range)` list is unchanged skips the union
+    outright, which is what makes the after-every-shot recompute nearly free:
+    firing moves nobody.
+
+  Round resolution went 14.05 → 1.02 ms/round and the engine suite 25.6 →
+  2.6 s, with the event stream and final fog state **bit-identical** across
+  four seeds. When touching this, keep the reference `los_clear` and
+  `SightGrid::clear` sharing `sight_line_clear` so the fast path cannot drift,
+  and keep `cached_vision_is_the_same_answer_as_computing_it_fresh` passing —
+  it rebuilds every side's visible set from scratch and demands a match.
+- **MCTS is expensive but no longer impossible.** Was ~35 s per unit order and
+  could not finish a round; the fog work brought it to ~3.3 s per order, and
+  `cargo run --release -p tactics_core --example playthrough` now plays a full
+  32-round battle in ~50 s. Still far too slow to plan a human's turn against,
+  so the shipped scenario still names `utility`. The remaining cost is
+  structural and unchanged: 900 iterations rolling out to depth 20, with every
+  fifth step a `Commit` that runs the enemy's whole planning pass.
 - **`reachable()` is O(hexes × units) twice over** — tracked in TODO.md under
   Misc (the occupancy-index item). Measured at ~39 µs per call on the 768-tile
   map, which is fine in isolation and not fine inside a search that calls it

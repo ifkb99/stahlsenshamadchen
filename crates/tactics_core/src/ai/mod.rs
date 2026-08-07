@@ -195,7 +195,7 @@ pub fn best_weapon_against(
         if !(weapon.range[0] as i32..=weapon.range[1] as i32).contains(&dist) {
             continue;
         }
-        if !weapon.indirect && !crate::battle::los_clear(registry, &state.map, from, target.pos) {
+        if !weapon.indirect && !state.sight.clear(from, target.pos) {
             continue;
         }
         let dmg =

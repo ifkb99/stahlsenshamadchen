@@ -203,6 +203,63 @@ fn an_unknown_doctrine_is_a_validation_error() {
 }
 
 #[test]
+fn the_sight_grid_answers_exactly_what_the_reference_does() {
+    // The grid exists only to stop line of sight re-deriving tile heights
+    // through a String-keyed registry lookup on every step of every ray. It
+    // is allowed to be faster; it is not allowed to see anything different.
+    let reg = registry();
+    let state = BattleState::from_map(&reg, "river_crossing", 1).unwrap();
+    let mut hexes: Vec<_> = state.map.iter().map(|(h, _)| h).collect();
+    hexes.sort_unstable_by_key(|h| (h.x, h.y));
+
+    let mut checked = 0;
+    for a in hexes.iter().step_by(29) {
+        for b in hexes.iter().step_by(31) {
+            assert_eq!(
+                state.sight.clear(*a, *b),
+                los_clear(&reg, &state.map, *a, *b),
+                "sight grid disagrees about {a:?} -> {b:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 1000, "sampled too little of the map: {checked}");
+}
+
+#[test]
+fn cached_vision_is_the_same_answer_as_computing_it_fresh() {
+    // Vision is cached per unit against (position, range) because the map
+    // cannot change under a unit mid-battle. That makes the cache the real
+    // answer rather than an approximation of it — and this is the test that
+    // says so, by rebuilding every side's visible set from scratch after
+    // several rounds of movement and shooting and demanding it match.
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 42).unwrap();
+    for _ in 0..6 {
+        if state.is_over() {
+            break;
+        }
+        play_round(&reg, &mut state);
+    }
+
+    for side in 0..state.sides.len() as u8 {
+        let mut fresh = std::collections::HashSet::new();
+        for unit in state.side_units(side) {
+            fresh.extend(tactics_core::battle::unit_vision(&reg, &state, unit.id));
+        }
+        assert_eq!(
+            state.fog.side(side).visible,
+            fresh,
+            "side {side}'s cached visible set drifted from a fresh computation"
+        );
+        assert!(
+            fresh.is_subset(&state.fog.side(side).explored),
+            "everything visible must also be remembered as explored"
+        );
+    }
+}
+
+#[test]
 fn fog_hides_unseen_enemies() {
     let reg = registry();
     let state = BattleState::from_map(&reg, "river_crossing", 42).unwrap();

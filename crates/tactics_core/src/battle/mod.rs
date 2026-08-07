@@ -26,7 +26,7 @@ pub use combat::{
     expected_damage, hit_breakdown, hit_chance, preview_attack, weapon_ready, AttackPreview,
     CounterPreview, HitBreakdown, HitFactor, HitModifier, MAX_HIT, MIN_HIT,
 };
-pub use fog::{los_clear, unit_vision, FogMap, SideFog};
+pub use fog::{los_clear, unit_vision, FogMap, SideFog, SightGrid};
 pub use movement::{
     destination_blocked, edge_cost as movement_edge_cost, move_points, path_to, reachable,
 };
@@ -137,6 +137,12 @@ pub struct BattleResult {
 #[derive(Debug, Clone)]
 pub struct BattleState {
     pub map: Arc<HexMap>,
+    /// Sight heights for every tile, resolved once from the map and the
+    /// registry. Shared rather than recomputed because line of sight is the
+    /// hottest thing the simulation does and terrain never changes during a
+    /// battle. `Arc` keeps state cloning — which search planners do
+    /// constantly — cheap.
+    pub sight: Arc<SightGrid>,
     pub sides: Vec<SideState>,
     pub units: Vec<Unit>,
     pub round: u32,
@@ -191,8 +197,10 @@ impl BattleState {
             })
             .collect();
         let side_count = sides.len();
+        let sight = Arc::new(SightGrid::build(registry, &map));
         let mut state = Self {
             map: Arc::new(map),
+            sight,
             sides,
             units: Vec::new(),
             round: 1,
@@ -222,8 +230,10 @@ impl BattleState {
         seed: u64,
     ) -> Self {
         let side_count = sides.len();
+        let sight = Arc::new(SightGrid::build(registry, &map));
         let mut state = Self {
             map: Arc::new(map),
+            sight,
             sides,
             units: Vec::new(),
             round: 1,

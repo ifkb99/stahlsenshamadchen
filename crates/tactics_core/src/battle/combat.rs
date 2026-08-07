@@ -330,7 +330,7 @@ pub fn preview_attack(
     // attacker and own a loaded direct-fire weapon that reaches.
     let counter = {
         let can_see = state.fog.side(tgt.side).spotted.contains(&attacker)
-            && fog::los_clear(registry, &state.map, tgt.pos, att.pos);
+            && state.sight.clear(tgt.pos, att.pos);
         if can_see {
             tgt_vehicle
                 .weapons
@@ -449,7 +449,6 @@ pub fn reap(state: &mut BattleState, events: &mut Vec<Event>) {
 /// Whether `weapon` fired from `from` can reach `target_pos` at all: inside
 /// the range band, and either in line of sight or indirect with a spotter.
 fn shot_exists(
-    registry: &DataRegistry,
     state: &BattleState,
     weapon: &WeaponDef,
     from: Hex,
@@ -464,7 +463,7 @@ fn shot_exists(
         // Indirect fire needs somebody watching, not its own eyes.
         spotted
     } else {
-        fog::los_clear(registry, &state.map, from, target_pos)
+        state.sight.clear(from, target_pos)
     }
 }
 
@@ -580,7 +579,7 @@ pub fn best_opportunity_shot(
         // Enemies in id order, so ties resolve the same way in every replay.
         for enemy in state.alive_units().filter(|e| e.side != att.side) {
             if !spotted.contains(&enemy.id)
-                || !shot_exists(registry, state, weapon, att.pos, enemy.pos, true)
+                || !shot_exists(state, weapon, att.pos, enemy.pos, true)
             {
                 continue;
             }
@@ -619,7 +618,7 @@ pub fn fire_if_able(
                     .filter(|t| t.side != side)
                     .and_then(|t| {
                         weapon_at(registry, state, unit, weapon)
-                            .map(|w| shot_exists(registry, state, w, att_pos, t.pos, spotted))
+                            .map(|w| shot_exists(state, w, att_pos, t.pos, spotted))
                     })
                     .unwrap_or(false);
             if ordered_shot {
@@ -630,7 +629,7 @@ pub fn fire_if_able(
         FireIntent::Area { at, weapon } => {
             let can_shell = weapon_ready(state, unit, weapon)
                 && weapon_at(registry, state, unit, weapon)
-                    .is_some_and(|w| shot_exists(registry, state, w, att_pos, at, true));
+                    .is_some_and(|w| shot_exists(state, w, att_pos, at, true));
             if can_shell {
                 fire_at_tile(registry, state, unit, weapon, at, events);
                 return;
