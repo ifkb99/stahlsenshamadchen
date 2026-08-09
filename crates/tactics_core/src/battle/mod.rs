@@ -24,7 +24,7 @@ mod orders;
 
 pub use combat::{
     AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, MAX_HIT, MIN_HIT,
-    expected_damage, hit_breakdown, hit_chance, preview_attack, weapon_ready,
+    expected_damage, hit_breakdown, hit_chance, preview_attack, struck_facing, weapon_ready,
 };
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
@@ -35,6 +35,7 @@ pub use orders::{Event, FireIntent, Order, OrderError, UnitIntent};
 use crate::ai::AiConfig;
 use crate::data::{DataError, DataRegistry, ValidationReport};
 use crate::map::{HexMap, MapKind, UnitPlacement};
+use crate::roster::{GirlId, Roster};
 use hexx::{EdgeDirection, Hex};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -77,8 +78,10 @@ pub struct Unit {
     pub side: u8,
     /// Vehicle definition id.
     pub vehicle: String,
-    /// Character definition ids.
-    pub crew: Vec<String>,
+    /// Who is riding in it. Handles into [`BattleState::roster`], not
+    /// definition ids: a crew member is a person with a history, and the
+    /// battle needs to be able to mark her.
+    pub crew: Vec<GirlId>,
     /// Display name (commander name unless overridden by the scenario).
     pub name: String,
     pub pos: Hex,
@@ -97,6 +100,9 @@ pub struct Unit {
     /// weapon list. Carries across rounds, so a slow gun caught mid-reload
     /// stays mid-reload.
     pub cooldowns: Vec<u32>,
+    /// Damage type of the last hit this unit took, if any. Read by the
+    /// campaign when working out what became of the crew.
+    pub last_hit_by: Option<crate::data::DamageType>,
     pub alive: bool,
 }
 
@@ -144,6 +150,14 @@ pub struct BattleState {
     /// constantly — cheap.
     pub sight: Arc<SightGrid>,
     pub sides: Vec<SideState>,
+    /// The girls crewing the vehicles in this battle.
+    ///
+    /// Shared behind an `Arc` for the same reason the map is: search planners
+    /// clone the whole state constantly and nothing in a battle rewrites the
+    /// roster in place. Campaign battles are handed the campaign's roster, so
+    /// the girls who fight are the same objects that carry their scars out
+    /// again; scenario battles get one stamped from mod data on the spot.
+    pub roster: Arc<Roster>,
     pub units: Vec<Unit>,
     pub round: u32,
     pub phase: Phase,
@@ -198,10 +212,14 @@ impl BattleState {
             .collect();
         let side_count = sides.len();
         let sight = Arc::new(SightGrid::build(registry, &map));
+        // A scenario battle has no campaign behind it, so its girls are
+        // stamped fresh from mod data and forgotten afterwards.
+        let (roster, crews) = Roster::stamp_for(registry, &file.units);
         let mut state = Self {
             map: Arc::new(map),
             sight,
             sides,
+            roster: Arc::new(roster),
             units: Vec::new(),
             round: 1,
             phase: Phase::Planning {
@@ -212,9 +230,10 @@ impl BattleState {
             over: None,
             last_contact_round: 1,
         };
-        for placement in &file.units {
-            state.spawn_unit(registry, placement);
+        for (placement, crew) in file.units.iter().zip(&crews) {
+            state.spawn_unit(registry, placement, crew.clone());
         }
+        state.face_units_at_enemies(&file.units);
         state.fog = FogMap::new(state.sides.len());
         fog::recompute(registry, &mut state);
         Ok(state)
@@ -227,6 +246,8 @@ impl BattleState {
         map: HexMap,
         sides: Vec<SideState>,
         placements: &[UnitPlacement],
+        crews: &[Vec<GirlId>],
+        roster: Arc<Roster>,
         seed: u64,
     ) -> Self {
         let side_count = sides.len();
@@ -235,6 +256,7 @@ impl BattleState {
             map: Arc::new(map),
             sight,
             sides,
+            roster,
             units: Vec::new(),
             round: 1,
             phase: Phase::Planning {
@@ -245,15 +267,73 @@ impl BattleState {
             over: None,
             last_contact_round: 1,
         };
-        for placement in placements {
-            state.spawn_unit(registry, placement);
+        for (i, placement) in placements.iter().enumerate() {
+            state.spawn_unit(
+                registry,
+                placement,
+                crews.get(i).cloned().unwrap_or_default(),
+            );
         }
+        state.face_units_at_enemies(placements);
         state.fog = FogMap::new(state.sides.len());
         fog::recompute(registry, &mut state);
         state
     }
 
-    pub fn spawn_unit(&mut self, registry: &DataRegistry, placement: &UnitPlacement) -> UnitId {
+    /// Turn every unit that was not given an explicit facing towards the enemy.
+    ///
+    /// Units used to spawn facing due east unconditionally, which on a map
+    /// where the sides deploy east and west meant the eastern side presented
+    /// its *rear* armour until it happened to move or fire. That is a real
+    /// asymmetry — a Panther is armour 5 from the front and 2 from behind, and
+    /// the damage formula divides by it — and it fell on one side only.
+    ///
+    /// This runs after every unit exists, because spawning one placement at a
+    /// time cannot know where the other side ended up. Enemy centroids are
+    /// averaged in floating point and rounded through [`Hex::round`], the same
+    /// way [`crate::map::HexMap::center`] does, so the result respects the cube
+    /// constraint and does not depend on iteration order.
+    fn face_units_at_enemies(&mut self, placements: &[UnitPlacement]) {
+        // Resolved for every side up front, so the mutation pass below does not
+        // borrow the unit list while writing to it.
+        let centroids: Vec<Option<Hex>> = (0..self.sides.len() as u8)
+            .map(|side| {
+                let (mut sx, mut sy, mut n) = (0i64, 0i64, 0i64);
+                for unit in self.units.iter().filter(|u| u.side != side) {
+                    sx += unit.pos.x as i64;
+                    sy += unit.pos.y as i64;
+                    n += 1;
+                }
+                (n > 0).then(|| Hex::round([sx as f32 / n as f32, sy as f32 / n as f32]))
+            })
+            .collect();
+
+        // `placements` lines up with `units` by index: both setup paths spawn
+        // in placement order into an empty unit list.
+        for i in 0..self.units.len() {
+            if placements.get(i).is_some_and(|p| p.facing.is_some()) {
+                continue;
+            }
+            let unit = &self.units[i];
+            let Some(target) = centroids.get(unit.side as usize).copied().flatten() else {
+                continue;
+            };
+            // A unit standing exactly on the enemy centroid has no direction to
+            // face; leave it as it is rather than picking one arbitrarily.
+            if target == unit.pos {
+                continue;
+            }
+            let facing = unit.pos.main_direction_to(target);
+            self.units[i].facing = facing;
+        }
+    }
+
+    pub fn spawn_unit(
+        &mut self,
+        registry: &DataRegistry,
+        placement: &UnitPlacement,
+        crew: Vec<GirlId>,
+    ) -> UnitId {
         let id = UnitId(self.units.len() as u32);
         let vehicle = registry
             .vehicle(&placement.vehicle)
@@ -262,26 +342,31 @@ impl BattleState {
             .name
             .clone()
             .or_else(|| {
-                placement
-                    .crew
-                    .first()
-                    .and_then(|c| registry.character(c))
-                    .map(|c| c.name.clone())
+                crew.first()
+                    .and_then(|id| self.roster.get(*id))
+                    .map(|g| g.name.clone())
             })
             .unwrap_or_else(|| vehicle.name.clone());
         self.units.push(Unit {
             id,
             side: placement.side,
             vehicle: placement.vehicle.clone(),
-            crew: placement.crew.clone(),
+            crew,
             name,
             pos: crate::offset_to_hex(placement.at[0], placement.at[1]),
-            facing: EdgeDirection::POINTY_EAST,
+            // An explicit facing wins; otherwise this is a placeholder that
+            // `face_units_at_enemies` replaces once every unit exists, since
+            // spawning one at a time cannot know where the other side is.
+            facing: placement
+                .facing
+                .map(EdgeDirection::from)
+                .unwrap_or(EdgeDirection::POINTY_EAST),
             hp: vehicle.max_hp,
             intent: UnitIntent::default(),
             planned: false,
             move_credit: 0,
             cooldowns: vec![0; vehicle.weapons.len()],
+            last_hit_by: None,
             alive: true,
         });
         id
@@ -367,36 +452,23 @@ pub mod stats {
     use super::*;
 
     /// Best gunnery among the crew.
-    pub fn gunnery(registry: &DataRegistry, unit: &Unit) -> i32 {
-        crew_best(registry, unit, |s| s.gunnery)
+    pub fn gunnery(roster: &Roster, unit: &Unit) -> i32 {
+        roster.best(&unit.crew, |s| s.gunnery)
     }
 
     /// Vision range in hexes: vehicle base scaled by the crew's awareness.
-    pub fn vision_range(registry: &DataRegistry, unit: &Unit) -> u32 {
+    pub fn vision_range(registry: &DataRegistry, roster: &Roster, unit: &Unit) -> u32 {
         let base = registry
             .vehicle(&unit.vehicle)
             .map(|v| v.vision_range)
             .unwrap_or(3);
         registry
             .balance
-            .vision(base, crew_best(registry, unit, |s| s.awareness))
-    }
-
-    fn crew_best(
-        registry: &DataRegistry,
-        unit: &Unit,
-        f: impl Fn(&crate::data::CrewStats) -> i32,
-    ) -> i32 {
-        unit.crew
-            .iter()
-            .filter_map(|c| registry.character(c))
-            .map(|c| f(&c.stats))
-            .max()
-            .unwrap_or(0)
+            .vision(base, roster.best(&unit.crew, |s| s.awareness))
     }
 
     /// Driving bonus used by [`super::move_points`].
-    pub fn driving(registry: &DataRegistry, unit: &Unit) -> i32 {
-        crew_best(registry, unit, |s| s.driving)
+    pub fn driving(roster: &Roster, unit: &Unit) -> i32 {
+        roster.best(&unit.crew, |s| s.driving)
     }
 }

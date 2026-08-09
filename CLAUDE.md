@@ -29,6 +29,11 @@ STAHL_DEBUG=1 STAHL_BATTLE=river_crossing \
   STAHL_SCRIPT=scripts/dev/battle-tour.txt cargo run -p stahlsenshamädchen
 ```
 
+On this project's Linux box the game needs `STAHL_PRESENT=immediate` or it
+loses the GPU a few seconds in — an NVIDIA Vulkan driver bug, not ours, proved
+with `cargo run -p stahlsenshamädchen --example minimal_window` (a stock Bevy
+window that reproduces it with no game code). See TODO.md under Bugs.
+
 `scripts/dev/` holds a tour of each screen; the module doc lists every action.
 Two things about it are load-bearing:
 

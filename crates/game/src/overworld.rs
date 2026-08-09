@@ -155,9 +155,11 @@ fn enter_overworld(
         // Returning from a battle: fold the outcome into the campaign.
         if let Some(outcome) = outcome {
             let events = ow.state.apply_battle_result(
+                registry,
                 outcome.attacker,
                 outcome.defender,
                 &outcome.survivors,
+                &outcome.losses,
             );
             ow.anim.extend(events);
             match (outcome.winner, outcome.stalemate) {
@@ -186,7 +188,7 @@ fn enter_overworld(
         .find(|m| m.kind == MapKind::Overworld)
         .map(|m| m.id.clone())
         .expect("base mod provides an overworld map");
-    let state = OverworldState::from_map(registry, &map_id).expect("overworld builds");
+    let state = OverworldState::from_map(registry, &map_id, 1337).expect("overworld builds");
     log.push("Campaign started. LMB select army / move, Enter end turn, Q/E rotate.");
 
     // Dev tool: STAHL_AUTOPLAY=1 puts every side under AI control.
@@ -420,6 +422,25 @@ fn pump_events(
             log.push(format!("{name} collects {amount} funds."));
         }
         OverworldEvent::ArmyMoved { .. } => {}
+        OverworldEvent::CrewCasualty { girl, fate } => {
+            let name = overworld
+                .state
+                .roster
+                .get(*girl)
+                .map(|g| g.name.clone())
+                .unwrap_or_else(|| "A crew member".into());
+            use tactics_core::roster::CrewFate;
+            log.push(match fate {
+                CrewFate::Unharmed => format!("{name} bailed out and made it back."),
+                CrewFate::Wounded { days } => {
+                    format!("{name} is hurt - out for {days} day(s).")
+                }
+                CrewFate::Lost { days } => {
+                    format!("{name} is missing behind the lines; walking back ({days} day(s)).")
+                }
+                CrewFate::Killed => format!("{name} did not make it."),
+            });
+        }
         OverworldEvent::ObjectiveCaptured { at, side } => {
             let name = &overworld.state.sides[*side as usize].name;
             let terrain = overworld
@@ -575,6 +596,9 @@ fn launch_battle(
 
     commands.insert_resource(PendingBattle::Field {
         map_id,
+        // Snapshot of the campaign's girls. The battle reads it; casualties
+        // come back as events and are applied to the campaign's own copy.
+        roster: std::sync::Arc::new(state.roster.clone()),
         attacker,
         defender,
         sides,
@@ -973,8 +997,8 @@ fn update_ui(
             let commander = u
                 .crew
                 .first()
-                .and_then(|c| mods.0.character(c))
-                .map(|c| c.name.clone())
+                .and_then(|id| state.roster.get(*id))
+                .map(|girl| girl.name.clone())
                 .unwrap_or_default();
             lines.push(format!("  {vehicle} - {commander}"));
         }

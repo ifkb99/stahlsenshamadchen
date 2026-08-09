@@ -4,6 +4,7 @@
 use super::{BattleState, Unit, UnitId};
 use crate::data::{DataRegistry, MovementClass};
 use crate::map::HexMap;
+use crate::roster::Roster;
 use hexx::Hex;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
@@ -14,14 +15,14 @@ use std::collections::{BinaryHeap, HashMap};
 ///
 /// One point is one hex of clear terrain per round, so this is a speed —
 /// at the shipped scale, 5 points is 30 km/h.
-pub fn move_points(registry: &DataRegistry, unit: &Unit) -> u32 {
+pub fn move_points(registry: &DataRegistry, roster: &Roster, unit: &Unit) -> u32 {
     let base = registry
         .vehicle(&unit.vehicle)
         .map(|v| v.movement.points)
         .unwrap_or(0);
     registry
         .balance
-        .speed(base, super::stats::driving(registry, unit))
+        .speed(base, super::stats::driving(roster, unit))
 }
 
 /// Cost of stepping from `from` onto `to`, or `None` if that step is
@@ -112,7 +113,7 @@ pub fn reachable(registry: &DataRegistry, state: &BattleState, id: UnitId) -> Ha
         return HashMap::new();
     };
     let (class, max_climb) = unit_movement(registry, unit);
-    let budget = move_points(registry, unit);
+    let budget = move_points(registry, &state.roster, unit);
 
     let mut best: HashMap<Hex, u32> = HashMap::new();
     let mut heap = BinaryHeap::new();
@@ -162,7 +163,7 @@ pub fn path_to(
         return None;
     }
     let (class, max_climb) = unit_movement(registry, unit);
-    let budget = move_points(registry, unit);
+    let budget = move_points(registry, &state.roster, unit);
 
     let path = hexx::algorithms::a_star(unit.pos, to, |from, next| {
         if from == next {

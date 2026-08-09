@@ -118,6 +118,15 @@ pub struct VehicleDef {
     /// Crew roles this vehicle needs ("commander", "driver", "gunner", ...).
     #[serde(default)]
     pub crew_slots: Vec<String>,
+    /// How survivable this vehicle is for the girls inside it, 0-5.
+    ///
+    /// Separate from armour on purpose: armour decides whether the vehicle
+    /// dies, safety decides what that costs its crew. A thinly armoured car
+    /// everyone can jump out of and a heavy tank whose ammunition sits under
+    /// the turret floor are different problems, and the roster is where the
+    /// difference shows up. See [`crate::roster::resolve_crew_fate`].
+    #[serde(default = "default_safety")]
+    pub safety: i32,
     /// Requisition cost on the overworld.
     #[serde(default)]
     pub cost: i32,
@@ -132,6 +141,11 @@ pub enum DamageType {
     Explosive,
     /// Small arms / MG: poor against any armor.
     SmallArms,
+}
+
+/// Middling protection, for content written before `safety` existed.
+fn default_safety() -> i32 {
+    3
 }
 
 /// A weapon mounted on a vehicle.

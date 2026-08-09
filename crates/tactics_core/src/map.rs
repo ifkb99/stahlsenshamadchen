@@ -51,6 +51,37 @@ pub struct SideSpec {
     pub funds: i32,
 }
 
+/// Which way a vehicle is pointing, in compass terms.
+///
+/// Hexes are pointy-top, so a vehicle faces one of six edges: due east and
+/// west, and four diagonals. This exists rather than serialising hexx's
+/// `EdgeDirection` directly because that is an index, and `"facing": 4` in a
+/// map file tells a modder nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Facing {
+    East,
+    NorthEast,
+    NorthWest,
+    West,
+    SouthWest,
+    SouthEast,
+}
+
+impl From<Facing> for hexx::EdgeDirection {
+    fn from(facing: Facing) -> Self {
+        use hexx::EdgeDirection as D;
+        match facing {
+            Facing::East => D::POINTY_EAST,
+            Facing::NorthEast => D::POINTY_NORTH_EAST,
+            Facing::NorthWest => D::POINTY_NORTH_WEST,
+            Facing::West => D::POINTY_WEST,
+            Facing::SouthWest => D::POINTY_SOUTH_WEST,
+            Facing::SouthEast => D::POINTY_SOUTH_EAST,
+        }
+    }
+}
+
 /// A unit placed by a battle map (scenario-style).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UnitPlacement {
@@ -64,6 +95,11 @@ pub struct UnitPlacement {
     /// Display name override; defaults to the first crew member's name.
     #[serde(default)]
     pub name: Option<String>,
+    /// Which way this vehicle starts pointing. Absent means "at the enemy",
+    /// which is what a unit deployed to fight would do; set it explicitly for
+    /// a scenario that wants someone caught looking the wrong way.
+    #[serde(default)]
+    pub facing: Option<Facing>,
 }
 
 /// An army placed by an overworld map.

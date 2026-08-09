@@ -529,6 +529,7 @@ fn sides_that_can_see_each_other_are_never_called_off() {
             vehicle: "medium_tank".into(),
             crew: Vec::new(),
             name: Some("Watcher".into()),
+            facing: None,
         },
         UnitPlacement {
             at: [2, 1],
@@ -536,9 +537,19 @@ fn sides_that_can_see_each_other_are_never_called_off() {
             vehicle: "medium_tank".into(),
             crew: Vec::new(),
             name: Some("Watched".into()),
+            facing: None,
         },
     ];
-    let mut state = BattleState::from_placements(&reg, map, sides, &placements, 1);
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(&reg, &placements);
+    let mut state = BattleState::from_placements(
+        &reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        1,
+    );
     assert!(
         !state.fog.side(0).spotted.is_empty(),
         "test needs the two units to start in sight of one another"
@@ -593,7 +604,7 @@ fn mcts_planner_produces_legal_orders() {
 #[test]
 fn overworld_income_capture_and_battle_trigger() {
     let reg = registry();
-    let mut state = OverworldState::from_map(&reg, "frontier").unwrap();
+    let mut state = OverworldState::from_map(&reg, "frontier", 1).unwrap();
     assert_eq!(state.armies.len(), 4);
 
     // March 1st Company onto the nearby city and check capture.
@@ -627,7 +638,7 @@ fn overworld_income_capture_and_battle_trigger() {
 #[test]
 fn overworld_reachability_respects_budget_and_blockers() {
     let reg = registry();
-    let state = OverworldState::from_map(&reg, "frontier").unwrap();
+    let state = OverworldState::from_map(&reg, "frontier", 1).unwrap();
     let army = state.side_armies(0).next().unwrap();
 
     let reach = state.reachable(&reg, army.id);
@@ -657,7 +668,7 @@ fn overworld_reachability_respects_budget_and_blockers() {
 #[test]
 fn reinforcements_are_adjacent_and_attackers_must_be_fresh() {
     let reg = registry();
-    let mut state = OverworldState::from_map(&reg, "frontier").unwrap();
+    let mut state = OverworldState::from_map(&reg, "frontier", 1).unwrap();
     let ids: Vec<_> = state.side_armies(0).map(|a| a.id).collect();
     assert!(ids.len() >= 2, "frontier gives side 0 two armies");
     let (principal, neighbour) = (ids[0], ids[1]);
@@ -699,7 +710,7 @@ fn reinforcements_are_adjacent_and_attackers_must_be_fresh() {
 #[test]
 fn battle_results_are_returned_to_each_army() {
     let reg = registry();
-    let mut state = OverworldState::from_map(&reg, "frontier").unwrap();
+    let mut state = OverworldState::from_map(&reg, "frontier", 1).unwrap();
     let attacker = state.side_armies(0).next().unwrap().id;
     let helper = state.side_armies(0).nth(1).unwrap().id;
     let defender = state.side_armies(1).next().unwrap().id;
@@ -710,6 +721,7 @@ fn battle_results_are_returned_to_each_army() {
     let survivor = state.army(attacker).unwrap().units[..1].to_vec();
     let helper_units = state.army(helper).unwrap().units.clone();
     let events = state.apply_battle_result(
+        &reg,
         attacker,
         defender,
         &[
@@ -717,6 +729,7 @@ fn battle_results_are_returned_to_each_army() {
             (helper, helper_units.clone()),
             (defender, Vec::new()),
         ],
+        &[],
     );
 
     assert_eq!(state.army(attacker).unwrap().units.len(), survivor.len());
@@ -811,7 +824,7 @@ fn attack_preview_describes_the_target() {
 #[test]
 fn overworld_ai_moves_armies() {
     let reg = registry();
-    let mut state = OverworldState::from_map(&reg, "frontier").unwrap();
+    let mut state = OverworldState::from_map(&reg, "frontier", 1).unwrap();
     let cfg = AiConfig {
         planner: "simple".into(),
         difficulty: 3,
@@ -858,7 +871,16 @@ fn two_side_battle(
             ai: None,
         },
     ];
-    BattleState::from_placements(reg, map, sides, &placements, seed)
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    )
 }
 
 fn unit_at(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> UnitPlacement {
@@ -868,6 +890,7 @@ fn unit_at(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> UnitPlacement {
         vehicle: vehicle.into(),
         crew: Vec::new(),
         name: Some(name.into()),
+        facing: None,
     }
 }
 
@@ -1650,4 +1673,160 @@ fn the_policy_planner_is_usable_on_its_own() {
     let mut planner = UtilityPlanner::with_difficulty(3, 99);
     let order = planner.next_order(&reg, &state, 1);
     assert!(!matches!(order, Order::ClearIntent { .. }));
+}
+
+/// Units used to spawn facing due east no matter where the enemy was, which on
+/// a map where the sides deploy east and west handed the eastern side's rear
+/// armour to its opponent until it happened to move or turn. A Panther is
+/// armour 5 from the front and 2 from behind and the damage formula divides by
+/// that number, so the bias was real and it fell on one side only.
+#[test]
+fn units_spawn_facing_the_enemy_rather_than_due_east() {
+    let reg = registry();
+    let state = duel(&reg, 7);
+    let west = state.unit(UnitId(0)).expect("west alive");
+    let east = state.unit(UnitId(1)).expect("east alive");
+
+    assert_eq!(
+        west.facing,
+        west.pos.main_direction_to(east.pos),
+        "the western unit should be looking at its enemy"
+    );
+    assert_eq!(
+        east.facing,
+        east.pos.main_direction_to(west.pos),
+        "the eastern unit should be looking at its enemy, not away from it"
+    );
+
+    // The specific regression: the two must not be pointing the same way.
+    assert_ne!(
+        west.facing, east.facing,
+        "two units facing each other cannot share a facing"
+    );
+
+    // And what actually matters: a head-on shot lands on front armour.
+    assert_eq!(
+        tactics_core::battle::struck_facing(east.pos, east.facing, west.pos),
+        tactics_core::data::ArmorFacing::Front,
+        "a head-on shot should strike the front, not the rear"
+    );
+}
+
+/// A scenario may still say which way someone is looking — that is what makes
+/// an ambush placeable rather than something the engine decides for you.
+#[test]
+fn a_map_can_place_a_unit_looking_the_wrong_way() {
+    use tactics_core::map::Facing;
+    let reg = registry();
+    let mut placements = vec![
+        unit_at([0, 1], 0, "medium_tank", "West"),
+        unit_at([3, 1], 1, "medium_tank", "East"),
+    ];
+    placements[1].facing = Some(Facing::East);
+    let state = two_side_battle(&reg, &["ggggg", "ggggg", "ggggg"], placements, 7);
+
+    let east = state.unit(UnitId(1)).expect("east alive");
+    assert_eq!(
+        east.facing,
+        hexx::EdgeDirection::POINTY_EAST,
+        "an explicit facing must survive the point-at-the-enemy pass"
+    );
+    let west = state.unit(UnitId(0)).expect("west alive");
+    assert_eq!(
+        tactics_core::battle::struck_facing(east.pos, east.facing, west.pos),
+        tactics_core::data::ArmorFacing::Rear,
+        "a unit told to look away presents its rear, which is the point"
+    );
+}
+
+/// The point of the roster: a girl is the same person on either side of a
+/// battle. Before this she was a lookup into static mod data, so nothing that
+/// happened to her could be recorded anywhere.
+#[test]
+fn girls_persist_across_battles_and_recover_over_days() {
+    use tactics_core::roster::{CasualtyRules, CrewFate, GirlStatus};
+
+    let reg = registry();
+    let mut state = OverworldState::from_map(&reg, "frontier", 9).expect("overworld");
+
+    // The map named crews by definition id; the world turned them into people.
+    assert!(
+        state.roster.len() >= 3,
+        "frontier's armies should have enlisted their crews"
+    );
+    let army = state.side_armies(0).next().unwrap();
+    let girl = army.units[0].crew[0];
+    assert_eq!(
+        state.roster.get(girl).unwrap().owner,
+        0,
+        "a girl belongs to the academy whose army she rides with"
+    );
+    assert_eq!(state.roster.get(girl).unwrap().battles, 0);
+
+    // Surviving a battle is recorded on her, not on the vehicle.
+    let attacker = state.side_armies(0).next().unwrap().id;
+    let defender = state.side_armies(1).next().unwrap().id;
+    let survivors = vec![(attacker, state.army(attacker).unwrap().units.clone())];
+    state.apply_battle_result(&reg, attacker, defender, &survivors, &[]);
+    assert_eq!(state.roster.get(girl).unwrap().battles, 1);
+
+    // And so is being shot out of it. With permadeath off, the worst case is
+    // a long recovery rather than a funeral.
+    state.rules = CasualtyRules { permadeath: false };
+    let loss = tactics_core::overworld::CrewLoss {
+        girl,
+        vehicle: state.army(attacker).unwrap().units[0].vehicle.clone(),
+        killed_by: Some(tactics_core::data::DamageType::Kinetic),
+    };
+    let events = state.apply_battle_result(&reg, attacker, defender, &[], &[loss]);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            OverworldEvent::CrewCasualty { fate, .. } if !matches!(fate, CrewFate::Killed)
+        )),
+        "permadeath is off, so nobody should die: {events:?}"
+    );
+
+    // Whatever befell her, it is temporary, and the campaign clock resolves it.
+    let status = state.roster.get(girl).unwrap().status;
+    assert!(
+        !status.is_permanent(),
+        "no permanent losses with the rule off"
+    );
+    if let Some(days) = status.days_out().filter(|d| *d > 0) {
+        for _ in 0..days {
+            state.roster.advance_day();
+        }
+        assert_eq!(
+            state.roster.get(girl).unwrap().status,
+            GirlStatus::Ready,
+            "she should come back after her days are served"
+        );
+    }
+}
+
+/// `Lost` is not a euphemism: she bailed out, could not reach her own side
+/// before the shooting stopped, and is walking home.
+#[test]
+fn a_lost_girl_walks_back_rather_than_being_gone() {
+    use tactics_core::roster::{GirlStatus, Roster};
+    let mut roster = Roster::new();
+    let reg = registry();
+    let girl = roster
+        .enlist_from_registry(&reg, 0, "anka")
+        .expect("anka exists");
+    roster.get_mut(girl).unwrap().status = GirlStatus::Lost { days: 2 };
+
+    assert!(!roster.get(girl).unwrap().status.is_permanent());
+    roster.advance_day();
+    assert_eq!(
+        roster.get(girl).unwrap().status,
+        GirlStatus::Lost { days: 1 },
+        "still walking"
+    );
+    roster.advance_day();
+    assert!(
+        roster.get(girl).unwrap().status.is_ready(),
+        "she made it back"
+    );
 }

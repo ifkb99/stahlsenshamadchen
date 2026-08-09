@@ -6,7 +6,8 @@
 
 use crate::ai::{AiConfig, AiPlanner};
 use crate::data::{DataRegistry, MovementClass};
-use crate::map::{HexMap, MapFile, MapKind, UnitPlacement};
+use crate::map::{HexMap, MapFile, MapKind};
+use crate::roster::{CasualtyRules, GirlId, Roster, resolve_crew_fate};
 use hexx::Hex;
 use rand::seq::IndexedRandom;
 use rand::{RngExt, SeedableRng};
@@ -32,6 +33,34 @@ pub struct OverworldSide {
     pub ai: Option<AiConfig>,
 }
 
+/// One crewed vehicle travelling with an army.
+///
+/// Distinct from [`crate::map::UnitPlacement`], which is *map file data*: a
+/// placement names crew by definition id and carries a map coordinate that a
+/// unit inside an army has no use for. This is live state — the crew are
+/// [`GirlId`]s into the world's roster, so the same girls come out of a battle
+/// as went in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArmyUnit {
+    pub vehicle: String,
+    /// Who is aboard, as handles into [`OverworldState::roster`].
+    pub crew: Vec<GirlId>,
+    /// Display name override; otherwise the commander's name is used.
+    pub name: Option<String>,
+}
+
+/// A girl who was aboard a vehicle when it was destroyed, and what destroyed
+/// it — enough for the campaign to work out what became of her.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CrewLoss {
+    pub girl: GirlId,
+    /// The vehicle she was in, for its [`crate::data::VehicleDef::safety`].
+    pub vehicle: String,
+    /// The damage type of the last hit the vehicle took, if the battle
+    /// recorded one.
+    pub killed_by: Option<crate::data::DamageType>,
+}
+
 /// A stack of units moving as one piece on the strategic map.
 #[derive(Debug, Clone)]
 pub struct Army {
@@ -43,7 +72,7 @@ pub struct Army {
     pub moved: bool,
     /// Units that spawn into battles this army fights. Battle casualties
     /// are written back here.
-    pub units: Vec<UnitPlacement>,
+    pub units: Vec<ArmyUnit>,
     pub alive: bool,
 }
 
@@ -74,6 +103,12 @@ pub enum OverworldEvent {
     ObjectiveCaptured {
         at: Hex,
         side: u8,
+    },
+    /// What became of a girl whose vehicle was destroyed. The campaign layer
+    /// shows these; the roster has already been updated.
+    CrewCasualty {
+        girl: GirlId,
+        fate: crate::roster::CrewFate,
     },
     /// Two armies met; the game layer should run a battle and report the
     /// outcome back via [`OverworldState::apply_battle_result`].
@@ -108,12 +143,23 @@ pub enum OverworldError {
 pub struct OverworldState {
     pub map: Arc<HexMap>,
     pub sides: Vec<OverworldSide>,
+    /// Every girl in the world, whichever academy she belongs to.
+    ///
+    /// One roster rather than one per side, so a [`GirlId`] means the same
+    /// thing everywhere and girls can change hands without anything being
+    /// renumbered — which is what an academy-scale mode will want.
+    pub roster: Roster,
+    /// Whether this campaign is willing to kill its characters.
+    pub rules: CasualtyRules,
     pub armies: Vec<Army>,
     /// Owner side of each captured objective tile.
     pub owners: HashMap<Hex, u8>,
     pub turn: u32,
     pub active_side: u8,
     pub over: Option<Option<u8>>,
+    /// Drives casualty resolution. Seeded, and consumed in a fixed order, so
+    /// a campaign replays identically.
+    pub rng: ChaCha8Rng,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -131,7 +177,11 @@ const ARMY_CLASS: MovementClass = MovementClass::Tracked;
 const ARMY_CLIMB: i32 = 9;
 
 impl OverworldState {
-    pub fn from_map(registry: &DataRegistry, map_id: &str) -> Result<Self, OverworldSetupError> {
+    pub fn from_map(
+        registry: &DataRegistry,
+        map_id: &str,
+        seed: u64,
+    ) -> Result<Self, OverworldSetupError> {
         let file: &MapFile = registry
             .map(map_id)
             .ok_or_else(|| OverworldSetupError::MissingMap(map_id.to_string()))?;
@@ -148,6 +198,10 @@ impl OverworldState {
                 ai: s.ai.clone(),
             })
             .collect();
+        // Enlisting as the armies are built is what turns map data into
+        // people: every crew id named by the file becomes a girl belonging to
+        // that army's academy, and nothing refers to a definition again.
+        let mut roster = Roster::new();
         let armies = file
             .armies
             .iter()
@@ -159,18 +213,35 @@ impl OverworldState {
                 pos: crate::offset_to_hex(a.at[0], a.at[1]),
                 movement: a.movement,
                 moved: false,
-                units: a.units.clone(),
+                units: a
+                    .units
+                    .iter()
+                    .map(|u| ArmyUnit {
+                        vehicle: u.vehicle.clone(),
+                        crew: u
+                            .crew
+                            .iter()
+                            .filter_map(|def_id| {
+                                roster.enlist_from_registry(registry, a.side, def_id)
+                            })
+                            .collect(),
+                        name: u.name.clone(),
+                    })
+                    .collect(),
                 alive: true,
             })
             .collect();
         Ok(Self {
             map: Arc::new(map),
             sides,
+            roster,
+            rules: CasualtyRules::default(),
             armies,
             owners: HashMap::new(),
             turn: 1,
             active_side: 0,
             over: None,
+            rng: ChaCha8Rng::seed_from_u64(seed),
         })
     }
 
@@ -425,6 +496,10 @@ impl OverworldState {
         }
         if next <= self.active_side {
             self.turn += 1;
+            // A new day: wounds heal and girls walking back from a wreck get
+            // one day closer. Once per day rather than once per side's phase,
+            // or a two-academy campaign would heal twice as fast as a four.
+            self.roster.advance_day();
         }
         self.active_side = next;
         for army in self.armies.iter_mut().filter(|a| a.alive && a.side == next) {
@@ -456,12 +531,44 @@ impl OverworldState {
     /// contested tile.
     pub fn apply_battle_result(
         &mut self,
+        registry: &DataRegistry,
         attacker: ArmyId,
         defender: ArmyId,
-        survivors: &[(ArmyId, Vec<UnitPlacement>)],
+        survivors: &[(ArmyId, Vec<ArmyUnit>)],
+        losses: &[CrewLoss],
     ) -> Vec<OverworldEvent> {
         let mut events = Vec::new();
         let defender_pos = self.army(defender).map(|a| a.pos);
+
+        // Casualties first, so a girl's fate is settled before the surviving
+        // rosters are written back. Resolved in girl-id order rather than the
+        // order the battle happened to report them, because the rng is shared
+        // and the campaign has to replay identically.
+        let mut losses: Vec<&CrewLoss> = losses.iter().collect();
+        losses.sort_by_key(|loss| loss.girl);
+        for loss in losses {
+            let safety = registry
+                .vehicle(&loss.vehicle)
+                .map(|v| v.safety)
+                .unwrap_or(3);
+            let fate = resolve_crew_fate(self.rules, safety, loss.killed_by, &mut self.rng);
+            if let Some(girl) = self.roster.get_mut(loss.girl) {
+                girl.status = fate.into();
+            }
+            events.push(OverworldEvent::CrewCasualty {
+                girl: loss.girl,
+                fate,
+            });
+        }
+
+        // Everyone who came through it has one more battle behind her.
+        for (_, units) in survivors {
+            for unit in units {
+                for girl in &unit.crew {
+                    self.roster.credit_battle(*girl);
+                }
+            }
+        }
 
         for (id, units) in survivors {
             let id = *id;

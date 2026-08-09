@@ -11,6 +11,8 @@
 //!   elevation) and the runtime [`map::HexMap`].
 //! - [`battle`]: the WEGO battle simulation. Both sides plan a round, then a
 //!   tick loop resolves it: intents in, events out.
+//! - [`roster`]: girls as mutable per-campaign instances, as opposed to the
+//!   immutable [`data`] definitions they are stamped from.
 //! - [`overworld`]: the strategic layer simulation.
 //! - [`ai`]: the swappable [`ai::AiPlanner`] trait and its implementations.
 
@@ -19,6 +21,7 @@ pub mod battle;
 pub mod data;
 pub mod map;
 pub mod overworld;
+pub mod roster;
 
 pub use hexx;
 pub use hexx::{EdgeDirection, Hex};
