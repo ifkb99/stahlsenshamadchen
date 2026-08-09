@@ -483,7 +483,7 @@ fn spawn_unit_sprite(commands: &mut Commands, art: &ArtCache, id: UnitId, side: 
         .spawn((
             Sprite {
                 image: art
-                    .vehicle_sprite(vehicle, side % iso::SIDE_COLORS.len() as u8)
+                    .vehicle_sprite(vehicle, side % iso::SIDE_COLORS.len() as u8, 0)
                     .unwrap_or_else(|| art.face.clone()),
                 ..default()
             },
@@ -1072,6 +1072,7 @@ fn engage_with_best(
 /// hp bars) except while a Mover animation owns them.
 fn sync_units(
     battle: Res<Battle>,
+    art: Res<ArtCache>,
     view: map_render::View,
     mut units: UnitSprites,
     mut bars: HpBars,
@@ -1101,12 +1102,23 @@ fn sync_units(
         if !animating.contains(&unit.id) {
             transform.translation = Vec3::new(pos.x, pos.y + 10.0, z + 1.5);
         }
-        transform.rotation = Quat::from_rotation_z(iso::facing_angle(
-            unit.pos,
-            unit.facing,
-            view.rotation(),
-            view.center(),
-        ));
+        // Facing is either a sheet frame or a bodily rotation, depending on
+        // whether this vehicle ships art. A drawn isometric vehicle must not
+        // be spun — it would tip over — so it swaps to the frame for its
+        // direction and mirrors for the three western ones. The generated
+        // blob has no frames and is symmetric enough to just rotate.
+        let angle = iso::facing_angle(unit.pos, unit.facing, view.rotation(), view.center());
+        let side = unit.side % iso::SIDE_COLORS.len() as u8;
+        if art.has_vehicle_frames(&unit.vehicle, side) {
+            let (frame, flip) = iso::facing_frame(angle);
+            if let Some(image) = art.vehicle_sprite(&unit.vehicle, side, frame) {
+                sprite.image = image;
+            }
+            sprite.flip_x = flip;
+            transform.rotation = Quat::IDENTITY;
+        } else {
+            transform.rotation = Quat::from_rotation_z(angle);
+        }
         let seen = unit.side == view_side || fog.spotted.contains(&unit.id);
         *visibility = if seen {
             Visibility::Inherited

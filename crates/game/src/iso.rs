@@ -114,23 +114,54 @@ pub struct ArtCache {
     pub face: Handle<Image>,
     /// side index -> tank blob sprite, used when a vehicle ships no art.
     pub units: HashMap<u8, Handle<Image>>,
-    /// (vehicle id, side index) -> the vehicle's own sprite, recoloured for
-    /// that academy. Absent for vehicles whose definition names no sprite.
-    pub vehicles: HashMap<(String, u8), Handle<Image>>,
+    /// (vehicle id, side index) -> the vehicle's three facing frames,
+    /// recoloured for that academy. Absent for vehicles whose definition
+    /// names no sprite.
+    pub vehicles: HashMap<(String, u8), Vec<Handle<Image>>>,
     /// side index -> army banner sprite.
     pub armies: HashMap<u8, Handle<Image>>,
     /// character/vehicle id -> generated portrait.
     pub portraits: HashMap<String, Handle<Image>>,
 }
 
+/// Frames in a vehicle sheet: east, north-east, south-east, left to right.
+///
+/// Three rather than six because the other three directions are these
+/// mirrored — west is east flipped, and so on round the hex. See
+/// [`facing_frame`].
+pub const VEHICLE_FRAMES: u32 = 3;
+
 impl ArtCache {
-    /// This vehicle's own art for a side, or the generated blob if it has
-    /// none.
-    pub fn vehicle_sprite(&self, vehicle: &str, side: u8) -> Option<Handle<Image>> {
-        self.vehicles
-            .get(&(vehicle.to_string(), side))
-            .or_else(|| self.units.get(&side))
-            .cloned()
+    /// This vehicle's art for a side and facing frame, or the generated blob
+    /// if it ships none.
+    pub fn vehicle_sprite(&self, vehicle: &str, side: u8, frame: usize) -> Option<Handle<Image>> {
+        match self.vehicles.get(&(vehicle.to_string(), side)) {
+            Some(frames) => frames.get(frame).or_else(|| frames.first()).cloned(),
+            None => self.units.get(&side).cloned(),
+        }
+    }
+
+    /// Whether this vehicle has facing frames at all. Vehicles still on the
+    /// generated blob keep the old behaviour of being rotated bodily.
+    pub fn has_vehicle_frames(&self, vehicle: &str, side: u8) -> bool {
+        self.vehicles.contains_key(&(vehicle.to_string(), side))
+    }
+}
+
+/// Which sheet frame draws a unit facing `angle` on screen, and whether it
+/// needs mirroring.
+///
+/// The six pointy-top directions land exactly 60 degrees apart, so rounding to
+/// the nearest sixth of a turn is exact rather than a nearest-match.
+pub fn facing_frame(angle: f32) -> (usize, bool) {
+    let sixth = std::f32::consts::FRAC_PI_3;
+    match ((angle / sixth).round() as i32).rem_euclid(6) {
+        0 => (0, false), // east
+        1 => (1, false), // north-east
+        2 => (1, true),  // north-west, mirrored
+        3 => (0, true),  // west, mirrored
+        4 => (2, true),  // south-west, mirrored
+        _ => (2, false), // south-east
     }
 }
 
@@ -155,6 +186,12 @@ fn load_vehicle_sprite(asset_path: &str) -> Result<RawSprite, String> {
     // asset the game names.
     let full = std::path::Path::new("assets").join(asset_path);
     let img = image::open(&full).map_err(|e| e.to_string())?.to_rgba8();
+    if img.width() % VEHICLE_FRAMES != 0 {
+        return Err(format!(
+            "sheet is {} px wide, which is not divisible into {VEHICLE_FRAMES} frames",
+            img.width()
+        ));
+    }
     Ok(RawSprite {
         width: img.width(),
         height: img.height(),
@@ -162,17 +199,23 @@ fn load_vehicle_sprite(asset_path: &str) -> Result<RawSprite, String> {
     })
 }
 
-/// Swap the team key for one side's colour, keeping two shades so the flash
-/// has the same top-lit reading as the rest of the vehicle.
-fn team_recolored(src: &RawSprite, color: [u8; 3]) -> Image {
-    let mut data = src.data.clone();
-    for px in data.chunks_exact_mut(4) {
-        if px[0] == TEAM_KEY[0] && px[1] == TEAM_KEY[1] && px[2] == TEAM_KEY[2] {
-            let lit = shade(color, 1.15);
-            px[..3].copy_from_slice(&lit[..3]);
+/// Cut one frame out of a sheet and swap the team key for a side's colour.
+fn team_recolored(src: &RawSprite, frame: u32, color: [u8; 3]) -> Image {
+    let fw = src.width / VEHICLE_FRAMES;
+    let mut data = Vec::with_capacity((fw * src.height * 4) as usize);
+    let lit = shade(color, 1.15);
+    for y in 0..src.height {
+        for x in 0..fw {
+            let i = (((y * src.width) + frame * fw + x) * 4) as usize;
+            let px = &src.data[i..i + 4];
+            if px[0] == TEAM_KEY[0] && px[1] == TEAM_KEY[1] && px[2] == TEAM_KEY[2] {
+                data.extend_from_slice(&[lit[0], lit[1], lit[2], px[3]]);
+            } else {
+                data.extend_from_slice(px);
+            }
         }
     }
-    make_image(src.width, src.height, data)
+    make_image(fw, src.height, data)
 }
 
 fn inside_hex(px: f32, py: f32) -> bool {
@@ -437,12 +480,12 @@ impl ArtCache {
                 continue;
             };
             match load_vehicle_sprite(path) {
-                Ok(rgba) => {
+                Ok(sheet) => {
                     for (i, color) in SIDE_COLORS.iter().enumerate() {
-                        cache.vehicles.insert(
-                            (vehicle.id.clone(), i as u8),
-                            images.add(team_recolored(&rgba, *color)),
-                        );
+                        let frames = (0..VEHICLE_FRAMES)
+                            .map(|f| images.add(team_recolored(&sheet, f, *color)))
+                            .collect();
+                        cache.vehicles.insert((vehicle.id.clone(), i as u8), frames);
                     }
                 }
                 // A missing or broken sprite falls back to the generated blob
@@ -470,5 +513,56 @@ impl ArtCache {
             .get(&(terrain.to_string(), elevation))
             .cloned()
             .unwrap_or_else(|| self.face.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f32::consts::PI;
+
+    /// The six pointy-top directions have to land on three frames and a
+    /// mirror, with nothing falling between two frames — which is what makes
+    /// three drawings enough for six facings.
+    #[test]
+    fn every_hex_direction_maps_to_a_frame_and_a_flip() {
+        let sixth = PI / 3.0;
+        let expected = [
+            (0, false), // east
+            (1, false), // north-east
+            (1, true),  // north-west
+            (0, true),  // west
+            (2, true),  // south-west
+            (2, false), // south-east
+        ];
+        for (i, want) in expected.iter().enumerate() {
+            assert_eq!(facing_frame(i as f32 * sixth), *want, "direction {i}");
+            // Angles are computed from projected positions, so they arrive
+            // with float slop and in either winding; both must round home.
+            assert_eq!(facing_frame(i as f32 * sixth + 0.2), *want);
+            assert_eq!(facing_frame(i as f32 * sixth - 0.2), *want);
+            assert_eq!(facing_frame(i as f32 * sixth - 2.0 * PI), *want);
+        }
+    }
+
+    /// Each drawing is shared by a pair of directions that mirror about the
+    /// vertical axis, which is what makes three frames cover six facings.
+    ///
+    /// Note those pairs are *mirrors*, not opposites: the mirror of north-east
+    /// is north-west, while its opposite is south-west and needs a different
+    /// drawing entirely. Getting that backwards was the first version of this
+    /// test, and it failed against correct code.
+    #[test]
+    fn mirrored_directions_share_a_drawing() {
+        let sixth = PI / 3.0;
+        for (a, b) in [(0, 3), (1, 2), (5, 4)] {
+            let (fa, flip_a) = facing_frame(a as f32 * sixth);
+            let (fb, flip_b) = facing_frame(b as f32 * sixth);
+            assert_eq!(fa, fb, "directions {a} and {b} should share a drawing");
+            assert_ne!(flip_a, flip_b, "one of {a}/{b} must be mirrored");
+        }
+        // ...and opposites genuinely differ, since a vehicle driving away is
+        // not a mirror of one driving towards you.
+        assert_ne!(facing_frame(sixth), facing_frame(4.0 * sixth));
     }
 }
