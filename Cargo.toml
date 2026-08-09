@@ -8,7 +8,9 @@ edition = "2024"
 
 [workspace.dependencies]
 tactics_core = { path = "crates/tactics_core" }
-serde = { version = "1", features = ["derive"] }
+# `rc` so `Arc<HexMap>` and friends serialize; the sim shares several
+# immutable structures behind an Arc to keep search-branching clones cheap.
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 thiserror = "2"
 

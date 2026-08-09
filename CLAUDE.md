@@ -16,6 +16,22 @@ cargo run -p tactics_core --example playthrough [seed]   # narrated AI battle
 cargo run --release -p tactics_core --example perf       # hot-path timings
 ```
 
+### Saving
+
+`tactics_core::save` serialises a game in progress; F5/F9 on the campaign map
+drive it. The property that matters is not that the fields round-trip but that
+**the future does**: `tests/save.rs` forks a battle in progress, sends one copy
+through a save file, and requires both to produce the same events for the rest
+of the fight. That is why the rng's stream position is saved rather than its
+seed.
+
+Two structures are `#[serde(skip)]` because they are caches: `SightGrid` and
+the per-unit vision inside `FogMap`. They are pure functions of the map, and
+the sight grid alone would be a thousand entries per save. The price is that
+`save::rehydrate` *must* rebuild them — an empty sight grid answers every
+line-of-sight question wrongly rather than loudly, and an empty `visible_key`
+panics because recompute indexes it by side.
+
 ### Seeing the game without playing it
 
 The presentation layer used to be checkable only by running the game and

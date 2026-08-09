@@ -6,7 +6,10 @@ edition.workspace = true
 [dependencies]
 hexx = { version = "0.24.0", features = ["serde"] }
 rand = "0.10.2"
-rand_chacha = "0.10.0"
+# `serde` so a saved game restores the exact rng stream position: a save
+# that resumed with a fresh rng would replay differently from the run that
+# produced it, which is the one property this engine is built around.
+rand_chacha = { version = "0.10.0", features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

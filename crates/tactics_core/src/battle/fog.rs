@@ -12,6 +12,7 @@ use super::{BattleState, Event, UnitId, stats};
 use crate::data::DataRegistry;
 use crate::map::HexMap;
 use hexx::Hex;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -29,7 +30,7 @@ const EYE_HEIGHT: f32 = 2.5;
 const TARGET_HEIGHT: f32 = 2.0;
 
 /// What one side knows about the battlefield.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SideFog {
     /// Tiles currently observed by this side's units.
     pub visible: HashSet<Hex>,
@@ -59,15 +60,25 @@ struct VisionCache {
     tiles: Arc<HashSet<Hex>>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FogMap {
     sides: Vec<SideFog>,
     /// Per-unit vision, indexed by unit id.
+    ///
+    /// Not saved: it is a pure function of the map and each unit's position
+    /// and range, so it rebuilds itself on the first recompute after a load.
+    /// Writing it out would bloat a save with thousands of hexes that carry no
+    /// information.
+    #[serde(skip)]
     vision: Vec<Option<VisionCache>>,
     /// The `(unit, pos, range)` list that produced each side's `visible` set.
     /// A side's visible set is a pure function of this list, so when the list
     /// is unchanged the union can be skipped outright — which is what makes
     /// the recompute after every shot nearly free, since firing moves nobody.
+    ///
+    /// Also not saved, for the same reason. Coming back empty costs one extra
+    /// recompute after a load, which is the correct answer anyway.
+    #[serde(skip)]
     visible_key: Vec<Vec<(UnitId, Hex, u32)>>,
 }
 
@@ -86,6 +97,17 @@ impl FogMap {
 
     pub fn side_mut(&mut self, side: u8) -> &mut SideFog {
         &mut self.sides[side as usize]
+    }
+
+    /// Put back the caches a save leaves out.
+    ///
+    /// `vision` and `visible_key` are `#[serde(skip)]`, so a deserialized fog
+    /// map carries empty ones — and `visible_key` is *indexed* by side during
+    /// recompute, so an empty one panics rather than merely recomputing. The
+    /// sizes cannot come from serde because they depend on the side count.
+    pub fn rehydrate(&mut self) {
+        self.vision.clear();
+        self.visible_key = vec![Vec::new(); self.sides.len()];
     }
 
     /// This unit's cached vision, if it was computed for exactly this
@@ -130,9 +152,26 @@ struct Heights {
 ///
 /// Shared through [`BattleState`] behind an `Arc`, so cloning a state for
 /// search branching does not copy it.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SightGrid {
+    /// Not saved: derived entirely from the map and the terrain definitions,
+    /// so a loaded game rebuilds it rather than carrying a copy. It is the
+    /// single biggest structure in a battle — one entry per tile — and it
+    /// holds no state a player could have changed.
+    ///
+    /// The consequence is that [`crate::save`] *must* rebuild it after
+    /// deserializing; an empty grid answers every sight question wrongly
+    /// rather than loudly.
+    #[serde(skip)]
     tiles: HashMap<Hex, Heights>,
+}
+
+impl SightGrid {
+    /// Whether this grid has been built. A deserialized battle carries an
+    /// empty one until [`crate::save`] refills it.
+    pub fn is_empty(&self) -> bool {
+        self.tiles.is_empty()
+    }
 }
 
 impl SightGrid {

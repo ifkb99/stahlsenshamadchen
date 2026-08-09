@@ -117,7 +117,8 @@ pub struct CasualtyRules {
 }
 
 /// What became of one crew member when her vehicle was destroyed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CrewFate {
     /// Got out and reached her own lines.
     Unharmed,

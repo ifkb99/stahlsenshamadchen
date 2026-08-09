@@ -14,6 +14,8 @@
 //! - [`roster`]: girls as mutable per-campaign instances, as opposed to the
 //!   immutable [`data`] definitions they are stamped from.
 //! - [`overworld`]: the strategic layer simulation.
+//! - [`save`]: serialising a game in progress, such that reloading it
+//!   produces the same future as not having saved.
 //! - [`ai`]: the swappable [`ai::AiPlanner`] trait and its implementations.
 
 pub mod ai;
@@ -22,6 +24,7 @@ pub mod data;
 pub mod map;
 pub mod overworld;
 pub mod roster;
+pub mod save;
 
 pub use hexx;
 pub use hexx::{EdgeDirection, Hex};

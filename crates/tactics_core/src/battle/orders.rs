@@ -9,9 +9,10 @@ use super::STALEMATE_ROUNDS;
 use super::{BattleResult, BattleState, EndReason, Phase, UnitId, combat, fog, movement};
 use crate::data::{ArmorFacing, DataRegistry};
 use hexx::Hex;
+use serde::{Deserialize, Serialize};
 
 /// What a unit will do with its guns this round.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum FireIntent {
     /// Shoot at whatever presents itself. This covers overwatch and what used
     /// to be a special-cased counterattack: a unit holding fire answers
@@ -27,7 +28,7 @@ pub enum FireIntent {
 }
 
 /// Everything a unit was told to do this round.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnitIntent {
     /// Hexes still to be walked, excluding the tile the unit stands on.
     pub path: Vec<Hex>,
@@ -41,7 +42,7 @@ impl UnitIntent {
 }
 
 /// Everything a side can ask the simulation to do while planning.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Order {
     /// Route a unit to `to` along the cheapest path it can afford this round.
     SetMove { unit: UnitId, to: Hex },
@@ -56,7 +57,7 @@ pub enum Order {
 
 /// Everything that can happen as a result of orders. The presentation layer
 /// animates these; AI and campaign scripts observe them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Event {
     /// A new round opened and sides may plan again.
     RoundStarted {
