@@ -238,7 +238,11 @@ pub fn unit_vision(registry: &DataRegistry, state: &BattleState, id: UnitId) -> 
     let Some(unit) = state.unit(id) else {
         return HashSet::new();
     };
-    look(state, unit.pos, stats::vision_range(registry, unit))
+    look(
+        state,
+        unit.pos,
+        stats::vision_range(registry, &state.roster, unit),
+    )
 }
 
 /// Recompute all sides' fog. Returns `UnitSpotted` events for enemies that
@@ -262,7 +266,7 @@ pub fn recompute(registry: &DataRegistry, state: &mut BattleState) -> Vec<Event>
         // event order that follows from it — never depends on hash ordering.
         let key: Vec<(UnitId, Hex, u32)> = state
             .side_units(side)
-            .map(|u| (u.id, u.pos, stats::vision_range(registry, u)))
+            .map(|u| (u.id, u.pos, stats::vision_range(registry, &state.roster, u)))
             .collect();
 
         if state.fog.visible_key.get(side as usize) != Some(&key) {

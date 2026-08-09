@@ -540,7 +540,16 @@ fn sides_that_can_see_each_other_are_never_called_off() {
             facing: None,
         },
     ];
-    let mut state = BattleState::from_placements(&reg, map, sides, &placements, 1);
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(&reg, &placements);
+    let mut state = BattleState::from_placements(
+        &reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        1,
+    );
     assert!(
         !state.fog.side(0).spotted.is_empty(),
         "test needs the two units to start in sight of one another"
@@ -860,7 +869,16 @@ fn two_side_battle(
             ai: None,
         },
     ];
-    BattleState::from_placements(reg, map, sides, &placements, seed)
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    )
 }
 
 fn unit_at(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> UnitPlacement {

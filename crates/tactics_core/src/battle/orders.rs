@@ -325,13 +325,16 @@ impl BattleState {
             .filter(|u| u.alive)
             .map(|u| u.id)
             .collect();
+        // Held across the loop because the body takes `&mut self`; cloning the
+        // `Arc` is a refcount bump, not a copy of the roster.
+        let roster = self.roster.clone();
         for id in ids {
             let Some(unit) = self.unit(id) else { continue };
             if unit.intent.path.is_empty() {
                 continue;
             }
             let (side, start) = (unit.side, unit.pos);
-            let gained = movement::move_points(registry, unit);
+            let gained = movement::move_points(registry, &roster, unit);
             {
                 let unit = self.unit_mut(id).expect("alive above");
                 unit.move_credit += gained;

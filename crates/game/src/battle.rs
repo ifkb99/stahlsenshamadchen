@@ -295,8 +295,20 @@ fn setup_battle(
             let file = registry.map(map_id).expect("field battle map exists");
             let map = tactics_core::map::HexMap::from_map_file(file).expect("map parses");
             let (placements, origins) = deploy(registry, &map, forces, *attacker_side);
-            let state =
-                BattleState::from_placements(registry, map, sides.clone(), &placements, seed());
+            // Stamped per battle for now. The seam to make these girls persist
+            // is here: once the overworld owns a `Roster` and armies carry
+            // `GirlId`s, this hands that roster over instead and nothing in
+            // the battle layer changes.
+            let (roster, crews) = tactics_core::roster::Roster::stamp_for(registry, &placements);
+            let state = BattleState::from_placements(
+                registry,
+                map,
+                sides.clone(),
+                &placements,
+                &crews,
+                std::sync::Arc::new(roster),
+                seed(),
+            );
             (
                 state,
                 Some(FieldBattle {
@@ -1339,7 +1351,8 @@ fn set_portrait(
     let key = unit
         .crew
         .first()
-        .map(String::as_str)
+        .and_then(|id| state.roster.get(*id))
+        .map(|girl| girl.def.as_str())
         .unwrap_or(&unit.vehicle);
     if let Some(handle) = art.portraits.get(key) {
         image.image = handle.clone();
@@ -1443,8 +1456,8 @@ fn format_unit(
         // The crewed figures, not the vehicle's paper ones: what this unit
         // actually does with these girls aboard is the interesting number,
         // and it is the only place the player can see the crew bonus land.
-        let speed = tactics_core::battle::move_points(registry, unit);
-        let vision = tactics_core::battle::stats::vision_range(registry, unit);
+        let speed = tactics_core::battle::move_points(registry, &state.roster, unit);
+        let vision = tactics_core::battle::stats::vision_range(registry, &state.roster, unit);
         lines.push(format!("Move {} ({})", scale.format_speed(speed), speed));
         lines.push(format!(
             "Sight {} ({})",
@@ -1467,10 +1480,10 @@ fn format_unit(
     }
     lines.push("Crew:".into());
     for c in &unit.crew {
-        if let Some(ch) = registry.character(c) {
+        if let Some(girl) = state.roster.get(*c) {
             lines.push(format!(
                 "  {} (G{} D{} A{})",
-                ch.name, ch.stats.gunnery, ch.stats.driving, ch.stats.awareness
+                girl.name, girl.stats.gunnery, girl.stats.driving, girl.stats.awareness
             ));
         }
     }
@@ -1594,7 +1607,12 @@ fn finish_battle(
                 at: [0, 0],
                 side: unit.side,
                 vehicle: unit.vehicle.clone(),
-                crew: unit.crew.clone(),
+                crew: unit
+                    .crew
+                    .iter()
+                    .filter_map(|id| battle.state.roster.get(*id))
+                    .map(|girl| girl.def.clone())
+                    .collect(),
                 name: Some(unit.name.clone()),
                 // Survivors are redeployed by the next battle's own setup, so
                 // where they were pointing when this one ended means nothing.
