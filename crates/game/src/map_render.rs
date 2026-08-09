@@ -233,6 +233,32 @@ pub type TextSlot<'w, 's, A, B, C> =
 pub type MarkerQuery<'w, 's, A, B> =
     Query<'w, 's, (&'static mut Transform, &'static mut Visibility), (With<A>, Without<B>)>;
 
+/// Complain, once, if a HUD widget has been spawned more than once.
+///
+/// Every HUD system reads its widgets with `single_mut()`, which returns `Err`
+/// for *both* "not spawned yet" and "spawned twice" — and the systems treat
+/// that as "nothing to do". A missing widget is normal for a frame or two
+/// during setup; a duplicated one means the HUD has quietly stopped updating
+/// and will never start again.
+///
+/// That exact failure cost a long debugging session: loading a save respawned
+/// the world without despawning it, so there were two banners, and the
+/// campaign loaded perfectly while appearing frozen on the old day. The fix
+/// was elsewhere, but the reason it was slow to find was that nothing said
+/// anything.
+/// Takes a count rather than the query itself: the widget queries all have
+/// different filter types, and threading those through a generic buys nothing
+/// over `query.iter().count()` at the call site.
+pub fn warn_if_duplicated(count: usize, what: &str, warned: &mut bool) {
+    if !*warned && count > 1 {
+        *warned = true;
+        warn!(
+            "{what} exists {count} times; HUD systems read it with single_mut() and will \
+             silently stop updating. Something spawned the UI without despawning the old one."
+        );
+    }
+}
+
 /// UI color for a side index.
 pub fn side_color(side: u8) -> Color {
     let c = iso::SIDE_COLORS[(side as usize) % iso::SIDE_COLORS.len()];

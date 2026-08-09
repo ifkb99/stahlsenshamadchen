@@ -1283,11 +1283,13 @@ fn update_panel(
     log: Res<BattleLog>,
     view: map_render::View,
     mut hud: BattleHud,
+    mut warned: Local<bool>,
 ) {
     let state = &battle.state;
     let registry = &mods.0;
     let view_side = battle.view_side();
 
+    map_render::warn_if_duplicated(hud.banner.iter().count(), "battle banner", &mut warned);
     if let Ok(mut text) = hud.banner.single_mut() {
         let scale = &registry.scale;
         text.0 = match state.resolving_tick() {

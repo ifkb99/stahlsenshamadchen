@@ -8,6 +8,7 @@ use crate::campaign::{self, Campaign, CampaignCommand};
 use crate::iso::{self, ArtCache, ViewCenter};
 use crate::map_render::{self, CurrentMap, HexOverlay};
 use crate::mods::Mods;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use tactics_core::Hex;
@@ -94,6 +95,17 @@ struct OwPanel;
 
 #[derive(Component)]
 struct MusterPanel;
+
+/// The campaign HUD's three text widgets, bundled for the same reason
+/// `battle::BattleHud` is: they are one thing conceptually, and the mutual
+/// `Without` filters exist only so Bevy can prove the `&mut Text` queries do
+/// not alias.
+#[derive(SystemParam)]
+struct OverworldHud<'w, 's> {
+    banner: map_render::TextSlot<'w, 's, OwBanner, OwLog, OwPanel>,
+    log_text: map_render::TextSlot<'w, 's, OwLog, OwBanner, OwPanel>,
+    panel: map_render::TextSlot<'w, 's, OwPanel, OwBanner, OwLog>,
+}
 
 #[derive(Resource, Default)]
 struct OwLogLines(VecDeque<String>);
@@ -1000,12 +1012,13 @@ fn update_ui(
     mods: Res<Mods>,
     log: Res<OwLogLines>,
     view: map_render::View,
-    mut banner: map_render::TextSlot<OwBanner, OwLog, OwPanel>,
-    mut log_text: map_render::TextSlot<OwLog, OwBanner, OwPanel>,
-    mut panel: map_render::TextSlot<OwPanel, OwBanner, OwLog>,
+    mut hud: OverworldHud,
+    mut warned: Local<bool>,
 ) {
+    map_render::warn_if_duplicated(hud.banner.iter().count(), "overworld banner", &mut warned);
+
     let state = &overworld.state;
-    if let Ok(mut text) = banner.single_mut() {
+    if let Ok(mut text) = hud.banner.single_mut() {
         let side = &state.sides[state.active_side as usize];
         let controller = if side.ai.is_some() { "AI" } else { "You" };
         text.0 = format!(
@@ -1013,10 +1026,10 @@ fn update_ui(
             state.turn, side.name, side.funds
         );
     }
-    if let Ok(mut text) = log_text.single_mut() {
+    if let Ok(mut text) = hud.log_text.single_mut() {
         text.0 = log.0.iter().cloned().collect::<Vec<_>>().join("\n");
     }
-    let Ok(mut text) = panel.single_mut() else {
+    let Ok(mut text) = hud.panel.single_mut() else {
         return;
     };
     let view_side = state.sides.iter().position(|s| s.ai.is_none()).unwrap_or(0) as u8;
