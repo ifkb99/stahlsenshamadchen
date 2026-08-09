@@ -62,6 +62,35 @@ fn primary_window() -> Window {
     Window {
         title: "Stahlsenshamädchen".into(),
         resolution,
+        present_mode: present_mode(),
         ..default()
+    }
+}
+
+/// How frames are handed to the compositor. Vsync by default, because this is
+/// pixel art and tearing is the one artefact it cannot hide.
+///
+/// `STAHL_PRESENT=immediate|mailbox|no_vsync|fifo` overrides it, and exists
+/// because of a driver bug rather than a preference. On this project's Linux
+/// box — two RTX A4500s, NVIDIA 580.126.20, X11 — the Vulkan FIFO present path
+/// loses the device after a few seconds:
+///
+/// ```text
+/// Caught DeviceLost error: Unknown Unexpected error variant
+///   (driver implementation is at fault)
+/// ```
+///
+/// It is not this game's bug: a stock Bevy app with none of our systems
+/// reproduces it 3 runs out of 3, and the same app under `immediate` survives
+/// 3 out of 3. `crates/game/examples/minimal_window.rs` is that experiment if
+/// it needs re-running after a driver update.
+fn present_mode() -> bevy::window::PresentMode {
+    use bevy::window::PresentMode;
+    match std::env::var("STAHL_PRESENT").as_deref() {
+        Ok("immediate") => PresentMode::Immediate,
+        Ok("mailbox") => PresentMode::Mailbox,
+        Ok("no_vsync") => PresentMode::AutoNoVsync,
+        Ok("fifo") => PresentMode::Fifo,
+        _ => PresentMode::AutoVsync,
     }
 }
