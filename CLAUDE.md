@@ -14,7 +14,20 @@ cargo run --bin validate-mods       # validate assets/mods; prints the scale tab
 cargo test -p tactics_core          # headless engine tests (the real suite)
 cargo run -p tactics_core --example playthrough [seed]   # narrated AI battle
 cargo run --release -p tactics_core --example perf       # hot-path timings
+cargo run --release -p tactics_core --example balance    # what the data does
+cargo run --release -p tactics_core --example balance -- --sim   # ...fought out
 ```
+
+`balance` is the content-iteration loop. The analytic pass is instant and
+answers "what did that number just do" by standing two vehicles on an empty
+field and asking the *real* combat code — `preview_attack`, not a reimplemented
+formula, so the report cannot drift from the game. `--sim` fights whole battles
+and reports what happened, which is the check at the end: the analytic numbers
+can all look sensible while the fights they produce are terrible.
+
+It earns its keep immediately. It states the `.max(1)` damage floor as "mg
+kills heavy_tank in 3 rounds" — the same as a 37 mm gun — and reports that most
+battles currently end in stalemate rather than a decision.
 
 ### Saving
 

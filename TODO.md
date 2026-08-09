@@ -99,7 +99,8 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 - girl voice barks — cheap characterization for the cute side of the identity
 ### Tooling
 - replay viewer: save the seed + order stream and re-watch. nearly free with the deterministic sim (the same intents replay tick for tick), doubles as a balance tool
-- balance harness: batch AI-vs-AI runs with stat summaries, for tuning ammo/ballistics/morale without playing 200 games by hand. starting point exists at crates/tactics_core/examples/playthrough.rs, and `examples/perf.rs` is the shape to copy. **wanted before the ballistics rewrite, not after** — see Realistic Ballistics
+- ~~balance harness~~ DONE: `examples/balance.rs`, and it is two harnesses on purpose. the analytic pass is instant — it stands two vehicles on an empty field and asks `preview_attack` what one shot does, so it is the loop to sit in while editing json — and `--sim` fights whole battles for the check at the end. everything goes through the real combat code rather than reimplemented formulas, so the report cannot drift from the game.
+  first run already said two useful things: `mg kills heavy_tank in 3 rounds`, which is the `.max(1)` floor stated as a number rather than a worry, and **69% of battles end in stalemate** — the sides lose each other rather than fighting, which needs looking at before any of the rest of the numbers can be read as balance
 - the game crate is nearly untested: 73 tests, 4 of them in `crates/game`, and those are devtools/iso unit tests. `deploy`, `finish_battle`'s survivor accounting and the `apply_battle_result` wiring have no coverage, which is the seam where campaign state can corrupt silently. the determinism snapshot guards `tactics_core` and nothing guards this side of the boundary. a headless test that runs a field battle end to end and checks the roster afterwards would cover most of it
 ## Long Term Goals
 ### Academy Mode
