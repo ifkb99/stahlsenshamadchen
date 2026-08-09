@@ -23,7 +23,8 @@
             "driver"
         ],
         "cost": 6,
-        "safety": 4
+        "safety": 4,
+        "sprite": "mods/base/sprites/recon_car.png"
     },
     {
         "id": "light_tank",
@@ -80,7 +81,8 @@
             "loader"
         ],
         "cost": 16,
-        "safety": 3
+        "safety": 3,
+        "sprite": "mods/base/sprites/medium_tank.png"
     },
     {
         "id": "heavy_tank",

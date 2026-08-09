@@ -85,7 +85,8 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 - worth contacting an actual artist and paying. but who?
 - everything pixelated, except for the girls and maybe some other important aspects
 - cute sprites for girls (this is vital)
-- individual vehicle sprites, with themes for different schools
+- individual vehicle sprites, with themes for different schools. STARTED: `VehicleDef.sprite` is now actually loaded (it was a declared-but-unread field), and `medium_tank` and `recon_car` have art. `tools/make_vehicle_sprites.py` draws them — a script rather than hand-painted files so the roster stays consistent in palette, light direction and proportion while it is still placeholder-grade.
+  three constraints an artist needs to be told: **top-down pointing east**, because `sync_units` free-rotates the sprite by facing and a 3/4 view would only be right at one of six directions; **squashed vertically** to match the isometric `SQUASH` of 40/64; and **magenta `#FF00FF` is a key colour** replaced at load with the academy's colour, which is what keeps the world drab and the sides legible. remaining four vehicles still fall back to the generated blob
 - animations for movement, idle, attacking, destruction, etc
 - tile sprites
 ### Audio

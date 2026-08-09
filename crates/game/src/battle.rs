@@ -369,7 +369,7 @@ fn setup_battle(
     commands.insert_resource(CurrentMap(state.map.clone()));
 
     for unit in state.alive_units() {
-        spawn_unit_sprite(&mut commands, &art, unit.id, unit.side);
+        spawn_unit_sprite(&mut commands, &art, unit.id, unit.side, &unit.vehicle);
     }
 
     // Highlight sprites for hover and selection, hidden until used.
@@ -478,14 +478,12 @@ fn deploy(
     (placements, crews, origins)
 }
 
-fn spawn_unit_sprite(commands: &mut Commands, art: &ArtCache, id: UnitId, side: u8) {
+fn spawn_unit_sprite(commands: &mut Commands, art: &ArtCache, id: UnitId, side: u8, vehicle: &str) {
     commands
         .spawn((
             Sprite {
                 image: art
-                    .units
-                    .get(&(side % iso::SIDE_COLORS.len() as u8))
-                    .cloned()
+                    .vehicle_sprite(vehicle, side % iso::SIDE_COLORS.len() as u8)
                     .unwrap_or_else(|| art.face.clone()),
                 ..default()
             },

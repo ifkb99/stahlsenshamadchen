@@ -112,12 +112,67 @@ pub struct ArtCache {
     pub tiles: HashMap<(String, i32), Handle<Image>>,
     /// Bare hex face used for highlights and fog, elevation 0.
     pub face: Handle<Image>,
-    /// side index -> tank blob sprite.
+    /// side index -> tank blob sprite, used when a vehicle ships no art.
     pub units: HashMap<u8, Handle<Image>>,
+    /// (vehicle id, side index) -> the vehicle's own sprite, recoloured for
+    /// that academy. Absent for vehicles whose definition names no sprite.
+    pub vehicles: HashMap<(String, u8), Handle<Image>>,
     /// side index -> army banner sprite.
     pub armies: HashMap<u8, Handle<Image>>,
     /// character/vehicle id -> generated portrait.
     pub portraits: HashMap<String, Handle<Image>>,
+}
+
+impl ArtCache {
+    /// This vehicle's own art for a side, or the generated blob if it has
+    /// none.
+    pub fn vehicle_sprite(&self, vehicle: &str, side: u8) -> Option<Handle<Image>> {
+        self.vehicles
+            .get(&(vehicle.to_string(), side))
+            .or_else(|| self.units.get(&side))
+            .cloned()
+    }
+}
+
+/// The magenta a sprite paints where its academy's colour belongs.
+///
+/// Pure magenta appears nowhere in the palette these are drawn from, which is
+/// what makes it usable as a key. The alternative — tinting the whole sprite —
+/// would wash out the muted military colours the art is built on, and the
+/// point of the split is that the world stays drab while the sides stay
+/// legible.
+const TEAM_KEY: [u8; 3] = [255, 0, 255];
+
+/// Decoded RGBA plus its dimensions.
+struct RawSprite {
+    width: u32,
+    height: u32,
+    data: Vec<u8>,
+}
+
+fn load_vehicle_sprite(asset_path: &str) -> Result<RawSprite, String> {
+    // Sprite paths in mod data are relative to `assets/`, like every other
+    // asset the game names.
+    let full = std::path::Path::new("assets").join(asset_path);
+    let img = image::open(&full).map_err(|e| e.to_string())?.to_rgba8();
+    Ok(RawSprite {
+        width: img.width(),
+        height: img.height(),
+        data: img.into_raw(),
+    })
+}
+
+/// Swap the team key for one side's colour, keeping two shades so the flash
+/// has the same top-lit reading as the rest of the vehicle.
+fn team_recolored(src: &RawSprite, color: [u8; 3]) -> Image {
+    let mut data = src.data.clone();
+    for px in data.chunks_exact_mut(4) {
+        if px[0] == TEAM_KEY[0] && px[1] == TEAM_KEY[1] && px[2] == TEAM_KEY[2] {
+            let lit = shade(color, 1.15);
+            px[..3].copy_from_slice(&lit[..3]);
+        }
+    }
+    make_image(src.width, src.height, data)
 }
 
 fn inside_hex(px: f32, py: f32) -> bool {
@@ -376,6 +431,25 @@ impl ArtCache {
         for (i, color) in SIDE_COLORS.iter().enumerate() {
             cache.units.insert(i as u8, images.add(unit_image(*color)));
             cache.armies.insert(i as u8, images.add(army_image(*color)));
+        }
+        for vehicle in registry.vehicles.values() {
+            let Some(path) = &vehicle.sprite else {
+                continue;
+            };
+            match load_vehicle_sprite(path) {
+                Ok(rgba) => {
+                    for (i, color) in SIDE_COLORS.iter().enumerate() {
+                        cache.vehicles.insert(
+                            (vehicle.id.clone(), i as u8),
+                            images.add(team_recolored(&rgba, *color)),
+                        );
+                    }
+                }
+                // A missing or broken sprite falls back to the generated blob
+                // rather than failing the boot: art is the most likely thing
+                // for a mod to get wrong, and the game is still playable.
+                Err(err) => warn!("vehicle `{}` sprite `{path}`: {err}", vehicle.id),
+            }
         }
         for character in registry.characters.values() {
             cache.portraits.insert(

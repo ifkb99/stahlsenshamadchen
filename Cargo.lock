@@ -4837,6 +4837,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_rand",
+ "image",
  "mlua",
  "rand_core",
  "serde",
