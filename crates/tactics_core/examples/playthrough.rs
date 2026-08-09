@@ -8,7 +8,7 @@
 //!   cargo run -p tactics_core --example playthrough            # seed 42
 //!   cargo run -p tactics_core --example playthrough 1234       # custom seed
 
-use tactics_core::ai::{make_battle_planner, AiConfig};
+use tactics_core::ai::{AiConfig, make_battle_planner};
 use tactics_core::battle::{BattleState, Event, Order};
 use tactics_core::data::DataRegistry;
 
@@ -44,7 +44,10 @@ fn main() {
 
     let name = |st: &BattleState, id: tactics_core::battle::UnitId| -> String {
         let u = &st.units[id.index()];
-        format!("[{}] {} ({})", st.sides[u.side as usize].name, u.name, u.vehicle)
+        format!(
+            "[{}] {} ({})",
+            st.sides[u.side as usize].name, u.name, u.vehicle
+        )
     };
 
     let mut rounds = 0usize;
@@ -89,13 +92,26 @@ fn main() {
                 Event::UnitTrapped { unit, .. } => {
                     println!("{} AMBUSHED mid-move!", name(&state, *unit))
                 }
-                Event::ShotFired { attacker, weapon, blind, opportunity, at, .. } => println!(
+                Event::ShotFired {
+                    attacker,
+                    weapon,
+                    blind,
+                    opportunity,
+                    at,
+                    ..
+                } => println!(
                     "{} fires {weapon}{}{} at {at:?}",
                     name(&state, *attacker),
                     if *blind { " (blind)" } else { "" },
                     if *opportunity { " (opportunity)" } else { "" },
                 ),
-                Event::ShotHit { target, damage, facing, remaining_hp, .. } => println!(
+                Event::ShotHit {
+                    target,
+                    damage,
+                    facing,
+                    remaining_hp,
+                    ..
+                } => println!(
                     "   HIT {} on the {facing:?} for {damage}, {remaining_hp} hp left",
                     name(&state, *target)
                 ),

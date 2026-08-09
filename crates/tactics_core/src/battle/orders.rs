@@ -5,8 +5,8 @@
 //! ticks via [`BattleState::step_tick`], and everyone's orders play out
 //! together.
 
-use super::{combat, fog, movement, BattleResult, BattleState, EndReason, Phase, UnitId};
 use super::STALEMATE_ROUNDS;
+use super::{BattleResult, BattleState, EndReason, Phase, UnitId, combat, fog, movement};
 use crate::data::{ArmorFacing, DataRegistry};
 use hexx::Hex;
 
@@ -183,12 +183,7 @@ impl BattleState {
         Ok(side)
     }
 
-    fn set_move(
-        &mut self,
-        registry: &DataRegistry,
-        id: UnitId,
-        to: Hex,
-    ) -> Result<(), OrderError> {
+    fn set_move(&mut self, registry: &DataRegistry, id: UnitId, to: Hex) -> Result<(), OrderError> {
         self.planning_unit_side(id)?;
         let (path, _cost) = movement::path_to(registry, self, id, to).ok_or(OrderError::NoPath)?;
         let unit = self.unit_mut(id).ok_or(OrderError::NoSuchUnit)?;
@@ -324,7 +319,12 @@ impl BattleState {
     /// Everyone advances along their ordered route as far as this tick's
     /// movement credit allows.
     fn resolve_movement(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
-        let ids: Vec<UnitId> = self.units.iter().filter(|u| u.alive).map(|u| u.id).collect();
+        let ids: Vec<UnitId> = self
+            .units
+            .iter()
+            .filter(|u| u.alive)
+            .map(|u| u.id)
+            .collect();
         for id in ids {
             let Some(unit) = self.unit(id) else { continue };
             if unit.intent.path.is_empty() {
@@ -402,7 +402,12 @@ impl BattleState {
     /// Everyone who has a shot takes it. Wrecks are cleared only once every
     /// gun has spoken, so a tick's shots are genuinely simultaneous.
     fn resolve_fire(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
-        let ids: Vec<UnitId> = self.units.iter().filter(|u| u.alive).map(|u| u.id).collect();
+        let ids: Vec<UnitId> = self
+            .units
+            .iter()
+            .filter(|u| u.alive)
+            .map(|u| u.id)
+            .collect();
         for id in ids {
             combat::fire_if_able(registry, self, id, events);
         }

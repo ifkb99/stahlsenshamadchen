@@ -15,10 +15,10 @@
 //! factor to one side's decisions.
 
 use super::{
-    difficulty_noise, next_unplanned_unit, resolve_doctrine, AiConfig, AiPlanner, Evaluator,
-    PlannerRegistry, UtilityPlanner,
+    AiConfig, AiPlanner, Evaluator, PlannerRegistry, UtilityPlanner, difficulty_noise,
+    next_unplanned_unit, resolve_doctrine,
 };
-use crate::battle::{reachable, BattleState, FireIntent, Order, Phase, UnitId, UnitIntent};
+use crate::battle::{BattleState, FireIntent, Order, Phase, UnitId, UnitIntent, reachable};
 use crate::data::DataRegistry;
 use hexx::Hex;
 use rand::seq::IndexedRandom;
@@ -122,7 +122,10 @@ impl MctsPlanner {
         tiles
             .into_iter()
             .map(|tile| {
-                let attack = self.evaluator.score_tile(registry, state, unit, tile).attack;
+                let attack = self
+                    .evaluator
+                    .score_tile(registry, state, unit, tile)
+                    .attack;
                 Step::Plan {
                     unit,
                     dest: (tile != pos).then_some(tile),
@@ -138,13 +141,7 @@ impl MctsPlanner {
     /// Play one decision out on a cloned battle. Committing also fills in the
     /// enemy's intents and resolves the round, which is where simultaneity is
     /// approximated.
-    fn advance(
-        &mut self,
-        registry: &DataRegistry,
-        sim: &mut BattleState,
-        side: u8,
-        step: &Step,
-    ) {
+    fn advance(&mut self, registry: &DataRegistry, sim: &mut BattleState, side: u8, step: &Step) {
         for order in step.orders(side) {
             let _ = sim.apply(registry, &order);
         }
@@ -299,7 +296,10 @@ impl Step {
             Step::Plan { unit, dest, fire } => {
                 let mut orders = Vec::new();
                 if let Some(to) = dest {
-                    orders.push(Order::SetMove { unit: *unit, to: *to });
+                    orders.push(Order::SetMove {
+                        unit: *unit,
+                        to: *to,
+                    });
                 }
                 orders.push(Order::SetFire {
                     unit: *unit,
@@ -374,9 +374,7 @@ impl AiPlanner<BattleState, Order> for MctsPlanner {
         match self.search(registry, state, side) {
             Some(step) => {
                 self.pending = step.orders(side).into();
-                self.pending
-                    .pop_front()
-                    .unwrap_or(Order::Commit { side })
+                self.pending.pop_front().unwrap_or(Order::Commit { side })
             }
             None => Order::Commit { side },
         }

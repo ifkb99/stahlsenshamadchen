@@ -1,7 +1,7 @@
 //! Combat resolution: accuracy, armor facings, terrain cover, elevation
 //! advantage, blind fire, and opportunity fire.
 
-use super::{fog, stats, BattleState, Event, FireIntent, UnitId};
+use super::{BattleState, Event, FireIntent, UnitId, fog, stats};
 use crate::data::{ArmorFacing, DamageType, DataRegistry, Scale, TerrainDef, WeaponDef};
 use hexx::Hex;
 use rand::RngExt;
@@ -22,7 +22,11 @@ pub fn struck_facing(
     }
 }
 
-fn terrain_at<'r>(registry: &'r DataRegistry, state: &BattleState, pos: Hex) -> Option<&'r TerrainDef> {
+fn terrain_at<'r>(
+    registry: &'r DataRegistry,
+    state: &BattleState,
+    pos: Hex,
+) -> Option<&'r TerrainDef> {
     state
         .map
         .get(pos)
@@ -51,7 +55,16 @@ pub fn hit_chance(
 ) -> i32 {
     // The no-op closure compiles away, keeping this the allocation-free
     // path that AI search hammers.
-    hit_chance_inner(registry, state, attacker, from, weapon, target_pos, blind, |_, _| {})
+    hit_chance_inner(
+        registry,
+        state,
+        attacker,
+        from,
+        weapon,
+        target_pos,
+        blind,
+        |_, _| {},
+    )
 }
 
 /// Where one accuracy adjustment came from. An enum rather than a string so
@@ -181,7 +194,12 @@ fn hit_chance_inner(
     }
     if let Some(terrain) = terrain_at(registry, state, target_pos) {
         let cover = -(terrain.cover / 2);
-        note(HitFactor::Cover { terrain: &terrain.name }, cover);
+        note(
+            HitFactor::Cover {
+                terrain: &terrain.name,
+            },
+            cover,
+        );
         chance += cover;
     }
     if blind {
@@ -506,7 +524,14 @@ fn fire_at_unit(
         }
     }
     resolve_shot(
-        registry, state, attacker, &weapon, target, false, opportunity, events,
+        registry,
+        state,
+        attacker,
+        &weapon,
+        target,
+        false,
+        opportunity,
+        events,
     );
     fog::reveal_to_all(state, attacker);
     events.extend(fog::recompute(registry, state));
@@ -578,8 +603,7 @@ pub fn best_opportunity_shot(
         }
         // Enemies in id order, so ties resolve the same way in every replay.
         for enemy in state.alive_units().filter(|e| e.side != att.side) {
-            if !spotted.contains(&enemy.id)
-                || !shot_exists(state, weapon, att.pos, enemy.pos, true)
+            if !spotted.contains(&enemy.id) || !shot_exists(state, weapon, att.pos, enemy.pos, true)
             {
                 continue;
             }

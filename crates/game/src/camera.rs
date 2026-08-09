@@ -15,15 +15,8 @@ use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
 
 /// Zoom, in physical pixels per texel. Always a whole number.
-#[derive(Resource, Clone, Copy)]
+#[derive(Resource, Clone, Copy, Default)]
 pub struct PixelZoom(pub u32);
-
-impl Default for PixelZoom {
-    fn default() -> Self {
-        // Replaced on the first frame by a scale-factor-appropriate default.
-        Self(0)
-    }
-}
 
 pub const MAX_ZOOM: u32 = 4;
 

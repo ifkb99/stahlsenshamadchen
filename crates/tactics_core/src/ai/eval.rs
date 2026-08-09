@@ -52,8 +52,7 @@ impl Evaluator {
         // values a howitzer opportunity less than one that spends them.
         let mut best_attack: Option<(UnitId, usize, f32)> = None;
         for enemy in &enemies {
-            let Some((weapon, dmg, kill)) =
-                best_weapon_against(registry, state, unit, tile, enemy)
+            let Some((weapon, dmg, kill)) = best_weapon_against(registry, state, unit, tile, enemy)
             else {
                 continue;
             };

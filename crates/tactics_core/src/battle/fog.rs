@@ -8,7 +8,7 @@
 //! Enemy units are *spotted* while they stand on a visible tile, or while
 //! `revealed` (they fired recently and haven't moved since).
 
-use super::{stats, BattleState, Event, UnitId};
+use super::{BattleState, Event, UnitId, stats};
 use crate::data::DataRegistry;
 use crate::map::HexMap;
 use hexx::Hex;

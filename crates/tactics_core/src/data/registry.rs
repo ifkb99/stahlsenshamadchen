@@ -4,8 +4,8 @@ use super::defs::*;
 use super::manifest::ModManifest;
 use super::{Balance, Scale};
 use crate::map::MapFile;
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -168,7 +168,10 @@ impl DataRegistry {
             }
             for w in &v.weapons {
                 if !self.weapons.contains_key(w) {
-                    report.error(format!("vehicle `{}` references missing weapon `{}`", v.id, w));
+                    report.error(format!(
+                        "vehicle `{}` references missing weapon `{}`",
+                        v.id, w
+                    ));
                 }
             }
             if v.movement.points == 0 {
@@ -257,7 +260,9 @@ impl DataRegistry {
             ("overworld_turn_hours", s.overworld_turn_hours),
         ] {
             if !(value.is_finite() && value > 0.0) {
-                report.error(format!("scale {field} must be a positive number, got {value}"));
+                report.error(format!(
+                    "scale {field} must be a positive number, got {value}"
+                ));
             }
         }
         if s.ticks_per_round == 0 {
@@ -326,9 +331,7 @@ fn discover_mods(root: &Path) -> Result<Vec<(PathBuf, ModManifest)>, DataError> 
 }
 
 /// Order mods so that dependencies load before dependents.
-fn topo_sort(
-    mods: Vec<(PathBuf, ModManifest)>,
-) -> Result<Vec<(PathBuf, ModManifest)>, DataError> {
+fn topo_sort(mods: Vec<(PathBuf, ModManifest)>) -> Result<Vec<(PathBuf, ModManifest)>, DataError> {
     let index: HashMap<String, usize> = mods
         .iter()
         .enumerate()

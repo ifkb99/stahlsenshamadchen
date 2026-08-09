@@ -89,7 +89,8 @@ impl Campaign {
         game.set(
             "set_funds",
             lua.create_function(move |_, (side, amount): (u8, i32)| {
-                q.borrow_mut().push(CampaignCommand::SetFunds { side, amount });
+                q.borrow_mut()
+                    .push(CampaignCommand::SetFunds { side, amount });
                 Ok(())
             })?,
         )?;
@@ -97,7 +98,8 @@ impl Campaign {
         game.set(
             "give_funds",
             lua.create_function(move |_, (side, amount): (u8, i32)| {
-                q.borrow_mut().push(CampaignCommand::GiveFunds { side, amount });
+                q.borrow_mut()
+                    .push(CampaignCommand::GiveFunds { side, amount });
                 Ok(())
             })?,
         )?;
@@ -114,7 +116,9 @@ impl Campaign {
         lua.globals().set("campaign", lua.create_table()?)?;
 
         let source = std::fs::read_to_string(path).map_err(mlua::Error::external)?;
-        lua.load(&source).set_name(path.display().to_string()).exec()?;
+        lua.load(&source)
+            .set_name(path.display().to_string())
+            .exec()?;
 
         Ok(Self {
             lua,
@@ -154,7 +158,10 @@ impl Campaign {
             hook.call::<()>(args)
         })();
         if let Err(err) = result {
-            warn!("campaign hook `{name}` ({}) failed: {err}", self.path.display());
+            warn!(
+                "campaign hook `{name}` ({}) failed: {err}",
+                self.path.display()
+            );
         }
     }
 }

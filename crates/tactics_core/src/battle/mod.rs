@@ -23,17 +23,17 @@ mod movement;
 mod orders;
 
 pub use combat::{
-    expected_damage, hit_breakdown, hit_chance, preview_attack, weapon_ready, AttackPreview,
-    CounterPreview, HitBreakdown, HitFactor, HitModifier, MAX_HIT, MIN_HIT,
+    AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, MAX_HIT, MIN_HIT,
+    expected_damage, hit_breakdown, hit_chance, preview_attack, weapon_ready,
 };
-pub use fog::{los_clear, unit_vision, FogMap, SideFog, SightGrid};
+pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
     destination_blocked, edge_cost as movement_edge_cost, move_points, path_to, reachable,
 };
 pub use orders::{Event, FireIntent, Order, OrderError, UnitIntent};
 
 use crate::ai::AiConfig;
-use crate::data::{DataRegistry, DataError, ValidationReport};
+use crate::data::{DataError, DataRegistry, ValidationReport};
 use crate::map::{HexMap, MapKind, UnitPlacement};
 use hexx::{EdgeDirection, Hex};
 use rand::SeedableRng;
@@ -344,9 +344,7 @@ impl BattleState {
     /// Whether `side` has finished writing orders this round.
     pub fn has_committed(&self, side: u8) -> bool {
         match &self.phase {
-            Phase::Planning { committed } => {
-                committed.get(side as usize).copied().unwrap_or(false)
-            }
+            Phase::Planning { committed } => committed.get(side as usize).copied().unwrap_or(false),
             // Resolution means everybody committed.
             Phase::Resolving { .. } => true,
         }
@@ -384,7 +382,11 @@ pub mod stats {
             .vision(base, crew_best(registry, unit, |s| s.awareness))
     }
 
-    fn crew_best(registry: &DataRegistry, unit: &Unit, f: impl Fn(&crate::data::CrewStats) -> i32) -> i32 {
+    fn crew_best(
+        registry: &DataRegistry,
+        unit: &Unit,
+        f: impl Fn(&crate::data::CrewStats) -> i32,
+    ) -> i32 {
         unit.crew
             .iter()
             .filter_map(|c| registry.character(c))

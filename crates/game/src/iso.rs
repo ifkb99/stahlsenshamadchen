@@ -6,15 +6,15 @@
 //! 60 degrees around the map center before projection, so the same
 //! projection math serves all six perspectives.
 
-use bevy::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::image::Image;
+use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use std::collections::HashMap;
-use tactics_core::data::{parse_color, DataRegistry};
+use tactics_core::Hex;
+use tactics_core::data::{DataRegistry, parse_color};
 use tactics_core::hexx;
 use tactics_core::map::HexMap;
-use tactics_core::Hex;
 
 // Sprites are drawn at their native size, so one texel is one world unit.
 // The hex is sized in whole texels — and, because a pointy-top hex tiles at
@@ -215,16 +215,30 @@ pub fn tile_image(color: [u8; 3], elevation: i32) -> Image {
                 || !filled(x as i64 + 1, y as i64)
                 || !filled(x as i64, y as i64 - 1)
                 || !filled(x as i64, y as i64 + 1);
-            put(&mut data, w, x, y, shade(color, if rim { 0.82 } else { 1.0 }));
+            put(
+                &mut data,
+                w,
+                x,
+                y,
+                shade(color, if rim { 0.82 } else { 1.0 }),
+            );
         }
     }
     // Extrude walls below the face; left side darker than right for a fake
     // light direction.
     for x in 0..w {
         if let Some(b) = bottom[x as usize] {
-            let f = if (x as f32) < w as f32 / 2.0 { 0.45 } else { 0.6 };
+            let f = if (x as f32) < w as f32 / 2.0 {
+                0.45
+            } else {
+                0.6
+            };
             for y in (b + 1)..(b + 1 + extra).min(h) {
-                let stripe = if (y - b) % ELEV_PX as u32 == 0 { 0.8 } else { 1.0 };
+                let stripe = if (y - b) % ELEV_PX as u32 == 0 {
+                    0.8
+                } else {
+                    1.0
+                };
                 put(&mut data, w, x, y, shade(color, f * stripe));
             }
         }
@@ -256,7 +270,13 @@ pub fn unit_image(color: [u8; 3]) -> Image {
                 put(&mut data, w, x, y, shade(color, 1.25));
             } else if hull < 1.0 {
                 let edge = hull > 0.72;
-                put(&mut data, w, x, y, shade(color, if edge { 0.5 } else { 0.9 }));
+                put(
+                    &mut data,
+                    w,
+                    x,
+                    y,
+                    shade(color, if edge { 0.5 } else { 0.9 }),
+                );
             }
         }
     }
@@ -269,13 +289,19 @@ pub fn army_image(color: [u8; 3]) -> Image {
     let mut data = vec![0u8; (w * h * 4) as usize];
     for y in 0..h {
         for x in 0..w {
-            let pole = x >= 4 && x < 7 && y > 4;
-            let flag = x >= 7 && y >= 6 && y < 20 && (x as i32 - 7) < (26 - y as i32);
+            let pole = (4..7).contains(&x) && y > 4;
+            let flag = x >= 7 && (6..20).contains(&y) && (x as i32 - 7) < (26 - y as i32);
             if pole {
                 put(&mut data, w, x, y, [70, 60, 50, 255]);
             } else if flag {
-                let edge = y < 8 || y >= 18;
-                put(&mut data, w, x, y, shade(color, if edge { 0.7 } else { 1.1 }));
+                let edge = !(8..18).contains(&y);
+                put(
+                    &mut data,
+                    w,
+                    x,
+                    y,
+                    shade(color, if edge { 0.7 } else { 1.1 }),
+                );
             }
         }
     }
@@ -325,10 +351,10 @@ pub fn portrait_image(id: &str) -> Image {
 }
 
 pub const SIDE_COLORS: [[u8; 3]; 4] = [
-    [64, 120, 200],  // player blue
-    [204, 70, 60],   // enemy red
-    [220, 180, 60],  // yellow
-    [90, 170, 90],   // green
+    [64, 120, 200], // player blue
+    [204, 70, 60],  // enemy red
+    [220, 180, 60], // yellow
+    [90, 170, 90],  // green
 ];
 
 impl ArtCache {
@@ -352,9 +378,10 @@ impl ArtCache {
             cache.armies.insert(i as u8, images.add(army_image(*color)));
         }
         for character in registry.characters.values() {
-            cache
-                .portraits
-                .insert(character.id.clone(), images.add(portrait_image(&character.id)));
+            cache.portraits.insert(
+                character.id.clone(),
+                images.add(portrait_image(&character.id)),
+            );
         }
         for vehicle in registry.vehicles.values() {
             cache

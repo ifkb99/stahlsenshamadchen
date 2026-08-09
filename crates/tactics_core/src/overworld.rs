@@ -50,7 +50,10 @@ pub struct Army {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OverworldOrder {
     /// Move toward `to`; moving onto a visible enemy army attacks it.
-    MoveArmy { army: ArmyId, to: Hex },
+    MoveArmy {
+        army: ArmyId,
+        to: Hex,
+    },
     EndTurn,
 }
 
@@ -184,7 +187,9 @@ impl OverworldState {
     }
 
     pub fn side_armies(&self, side: u8) -> impl Iterator<Item = &Army> {
-        self.armies.iter().filter(move |a| a.alive && a.side == side)
+        self.armies
+            .iter()
+            .filter(move |a| a.alive && a.side == side)
     }
 
     /// Soft fog: an army is hidden from `observer` only while it sits in
@@ -205,11 +210,7 @@ impl OverworldState {
             .any(|a| a.pos.distance_to(army.pos) <= 1)
     }
 
-    pub fn visible_armies<'s>(
-        &'s self,
-        registry: &DataRegistry,
-        observer: u8,
-    ) -> Vec<&'s Army> {
+    pub fn visible_armies<'s>(&'s self, registry: &DataRegistry, observer: u8) -> Vec<&'s Army> {
         self.armies
             .iter()
             .filter(|a| a.alive && self.army_visible_to(registry, a, observer))
@@ -385,30 +386,30 @@ impl OverworldState {
         });
 
         // Capture objectives by standing on them.
-        if let Some(tile) = self.map.get(destination) {
-            if registry
+        if let Some(tile) = self.map.get(destination)
+            && registry
                 .terrain(&tile.terrain)
                 .is_some_and(|t| t.capturable)
-                && self.owners.get(&destination) != Some(&side)
-            {
-                self.owners.insert(destination, side);
-                events.push(OverworldEvent::ObjectiveCaptured {
-                    at: destination,
-                    side,
-                });
-            }
+            && self.owners.get(&destination) != Some(&side)
+        {
+            self.owners.insert(destination, side);
+            events.push(OverworldEvent::ObjectiveCaptured {
+                at: destination,
+                side,
+            });
         }
 
         // If we stopped adjacent to the ordered destination because an
         // enemy holds it, that's an attack.
-        if let Some(defender) = self.army_at(to) {
-            if defender.side != side && destination.distance_to(to) == 1 {
-                events.push(OverworldEvent::BattleTriggered {
-                    attacker: id,
-                    defender: defender.id,
-                    at: to,
-                });
-            }
+        if let Some(defender) = self.army_at(to)
+            && defender.side != side
+            && destination.distance_to(to) == 1
+        {
+            events.push(OverworldEvent::BattleTriggered {
+                attacker: id,
+                defender: defender.id,
+                at: to,
+            });
         }
         Ok(events)
     }
@@ -473,12 +474,12 @@ impl OverworldState {
             }
         }
 
-        if let (Some(pos), Some(att)) = (defender_pos, self.army(attacker)) {
-            if self.army(defender).is_none() {
-                let att_id = att.id;
-                if let Some(a) = self.army_mut(att_id) {
-                    a.pos = pos;
-                }
+        if let (Some(pos), Some(att)) = (defender_pos, self.army(attacker))
+            && self.army(defender).is_none()
+        {
+            let att_id = att.id;
+            if let Some(a) = self.army_mut(att_id) {
+                a.pos = pos;
             }
         }
         self.check_victory(&mut events);
@@ -489,7 +490,12 @@ impl OverworldState {
         if self.over.is_some() {
             return;
         }
-        let mut living: Vec<u8> = self.armies.iter().filter(|a| a.alive).map(|a| a.side).collect();
+        let mut living: Vec<u8> = self
+            .armies
+            .iter()
+            .filter(|a| a.alive)
+            .map(|a| a.side)
+            .collect();
         living.sort_unstable();
         living.dedup();
         if living.len() <= 1 {

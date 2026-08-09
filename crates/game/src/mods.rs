@@ -1,7 +1,7 @@
 //! Loads the mod registry at boot and builds the placeholder art cache.
 
-use crate::iso::ArtCache;
 use crate::AppState;
+use crate::iso::ArtCache;
 use bevy::prelude::*;
 use std::sync::Arc;
 use tactics_core::data::DataRegistry;

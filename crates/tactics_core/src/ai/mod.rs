@@ -26,7 +26,7 @@ mod mcts;
 mod utility;
 
 pub use eval::{Evaluator, TileScore};
-pub use mcts::{determinize, MctsPlanner};
+pub use mcts::{MctsPlanner, determinize};
 pub use utility::UtilityPlanner;
 
 use crate::battle::{BattleState, Order, Unit, UnitId};
@@ -162,7 +162,7 @@ pub fn difficulty_noise(difficulty: u8) -> f32 {
 }
 
 /// Enemies of `side` that its fog currently allows it to target.
-pub fn visible_enemies<'s>(state: &'s BattleState, side: u8) -> Vec<&'s Unit> {
+pub fn visible_enemies(state: &BattleState, side: u8) -> Vec<&Unit> {
     let fog = state.fog.side(side);
     state
         .alive_units()

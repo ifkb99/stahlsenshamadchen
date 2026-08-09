@@ -124,7 +124,11 @@ fn report_scale(registry: &DataRegistry) {
     for m in maps {
         let cols = m.rows.iter().map(|r| r.chars().count()).max().unwrap_or(0);
         let rows = m.rows.len();
-        let tiles: usize = m.rows.iter().map(|r| r.chars().filter(|c| *c != ' ').count()).sum();
+        let tiles: usize = m
+            .rows
+            .iter()
+            .map(|r| r.chars().filter(|c| *c != ' ').count())
+            .sum();
         // Battle maps measure in battle hexes, overworld maps in overworld
         // hexes: the same grid at two very different zooms. A tile-shaped
         // battle map is a hexagon, so quoting its bounding box would suggest

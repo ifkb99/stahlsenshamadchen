@@ -6,8 +6,10 @@
 //! planner buffers the pair and hands them over one call at a time, keeping
 //! [`AiPlanner::next_order`] the only entry point the callers need.
 
-use super::{difficulty_noise, next_unplanned_unit, resolve_doctrine, AiConfig, AiPlanner, Evaluator};
-use crate::battle::{reachable, BattleState, FireIntent, Order, UnitId};
+use super::{
+    AiConfig, AiPlanner, Evaluator, difficulty_noise, next_unplanned_unit, resolve_doctrine,
+};
+use crate::battle::{BattleState, FireIntent, Order, UnitId, reachable};
 use crate::data::DataRegistry;
 use hexx::Hex;
 use rand::{RngExt, SeedableRng};

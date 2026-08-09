@@ -1,14 +1,16 @@
 //! End-to-end tests against the real `assets/mods` content.
 
 use std::path::PathBuf;
-use tactics_core::ai::{make_battle_planner, AiConfig, AiPlanner, Evaluator, UtilityPlanner};
+use tactics_core::ai::{AiConfig, AiPlanner, Evaluator, UtilityPlanner, make_battle_planner};
 use tactics_core::battle::{
-    los_clear, reachable, BattleState, EndReason, Event as BattleEvent, FireIntent, Order,
-    SideState, UnitId, STALEMATE_ROUNDS,
+    BattleState, EndReason, Event as BattleEvent, FireIntent, Order, STALEMATE_ROUNDS, SideState,
+    UnitId, los_clear, reachable,
 };
 use tactics_core::data::DataRegistry;
 use tactics_core::map::{HexMap, UnitPlacement};
-use tactics_core::overworld::{make_overworld_planner, OverworldEvent, OverworldOrder, OverworldState};
+use tactics_core::overworld::{
+    OverworldEvent, OverworldOrder, OverworldState, make_overworld_planner,
+};
 
 fn mods_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods")
@@ -16,7 +18,11 @@ fn mods_root() -> PathBuf {
 
 fn registry() -> DataRegistry {
     let (registry, report) = DataRegistry::load_dir(&mods_root()).expect("mods load");
-    assert!(report.is_ok(), "base mod must validate: {:?}", report.errors);
+    assert!(
+        report.is_ok(),
+        "base mod must validate: {:?}",
+        report.errors
+    );
     registry
 }
 
@@ -74,7 +80,11 @@ fn the_base_mod_declares_the_scale_contract() {
     // Consequences that are easy to violate by accident when adding content.
     let medium = reg.vehicle("medium_tank").unwrap();
     assert_eq!(reg.scale.format_speed(medium.movement.points), "30 km/h");
-    assert_eq!(reg.scale.format_distance(reg.weapon("gun_88").unwrap().range[1] as i32), "1.6 km");
+    assert_eq!(
+        reg.scale
+            .format_distance(reg.weapon("gun_88").unwrap().range[1] as i32),
+        "1.6 km"
+    );
     // Gun tanks shoot further than they see on purpose: the tank destroyer
     // reaches 1.6 km and sees 1 km, because needing a spotter is its
     // character. Preserve this when adding vehicles.
@@ -122,7 +132,10 @@ fn a_battle_map_that_is_not_a_tile_is_rejected() {
     let mut report = tactics_core::data::ValidationReport::default();
     file.validate_into(&reg, &mut report);
     assert!(
-        report.errors.iter().any(|e| e.contains("one overworld tile")),
+        report
+            .errors
+            .iter()
+            .any(|e| e.contains("one overworld tile")),
         "a rectangular battle map must not pass validation: {report:?}"
     );
 
@@ -131,7 +144,10 @@ fn a_battle_map_that_is_not_a_tile_is_rejected() {
     let file: tactics_core::map::MapFile = serde_json::from_value(freed).unwrap();
     let mut report = tactics_core::data::ValidationReport::default();
     file.validate_into(&reg, &mut report);
-    assert!(report.is_ok(), "`shape: free` must opt out cleanly: {report:?}");
+    assert!(
+        report.is_ok(),
+        "`shape: free` must opt out cleanly: {report:?}"
+    );
 }
 
 #[test]
@@ -140,7 +156,9 @@ fn a_mod_may_retune_the_whole_games_tempo() {
     // together leaves every vehicle's speed intact while doubling the
     // resolution of the battlefield, and nothing in Rust has to know.
     let mut reg = registry();
-    let before = reg.scale.kph(reg.vehicle("medium_tank").unwrap().movement.points);
+    let before = reg
+        .scale
+        .kph(reg.vehicle("medium_tank").unwrap().movement.points);
     reg.scale = tactics_core::data::Scale {
         hex_meters: 50.0,
         round_seconds: 30.0,
@@ -148,7 +166,8 @@ fn a_mod_may_retune_the_whole_games_tempo() {
         ..reg.scale
     };
     assert_eq!(
-        reg.scale.kph(reg.vehicle("medium_tank").unwrap().movement.points),
+        reg.scale
+            .kph(reg.vehicle("medium_tank").unwrap().movement.points),
         before
     );
     assert_eq!(reg.scale.tick_seconds(), 5.0);
@@ -313,7 +332,10 @@ fn forests_block_sight_at_range() {
     let b = tactics_core::offset_to_hex(4, 0);
     assert!(!los_clear(&reg, &map, a, b), "forest curtain blocks sight");
     let edge = tactics_core::offset_to_hex(2, 0);
-    assert!(los_clear(&reg, &map, a, edge), "the forest tile itself is visible");
+    assert!(
+        los_clear(&reg, &map, a, edge),
+        "the forest tile itself is visible"
+    );
 }
 
 #[test]
@@ -324,7 +346,7 @@ fn movement_respects_water_and_reaches_bridge() {
     let unit = state.side_units(0).next().unwrap().id;
     let tiles = reachable(&reg, &state, unit);
     assert!(!tiles.is_empty());
-    for (hex, _) in &tiles {
+    for hex in tiles.keys() {
         let tile = state.map.get(*hex).unwrap();
         assert_ne!(tile.terrain, "water", "tracked vehicles cannot enter water");
     }
@@ -379,14 +401,23 @@ fn the_same_intents_replay_the_same_way() {
         let mut state = duel(&reg, 77);
         let (west, east) = (UnitId(0), UnitId(1));
         state
-            .apply(&reg, &Order::SetMove { unit: west, to: tactics_core::offset_to_hex(1, 1) })
+            .apply(
+                &reg,
+                &Order::SetMove {
+                    unit: west,
+                    to: tactics_core::offset_to_hex(1, 1),
+                },
+            )
             .unwrap();
         state
             .apply(
                 &reg,
                 &Order::SetFire {
                     unit: east,
-                    fire: FireIntent::Target { target: west, weapon: 0 },
+                    fire: FireIntent::Target {
+                        target: west,
+                        weapon: 0,
+                    },
                 },
             )
             .unwrap();
@@ -616,7 +647,10 @@ fn overworld_reachability_respects_budget_and_blockers() {
     }
     // Everything reachable must actually be movable-to.
     for hex in reach.keys() {
-        assert!(state.map.get(*hex).is_some(), "reachable tile is on the map");
+        assert!(
+            state.map.get(*hex).is_some(),
+            "reachable tile is on the map"
+        );
     }
 }
 
@@ -655,9 +689,11 @@ fn reinforcements_are_adjacent_and_attackers_must_be_fresh() {
     state.army_mut(neighbour).unwrap().moved = false;
     let far = at + hexx::Hex::new(4, 0);
     state.army_mut(neighbour).unwrap().pos = far;
-    assert!(state
-        .reinforcement_candidates(at, 0, principal, true)
-        .is_empty());
+    assert!(
+        state
+            .reinforcement_candidates(at, 0, principal, true)
+            .is_empty()
+    );
 }
 
 #[test]
@@ -711,12 +747,27 @@ fn hit_breakdown_explains_the_same_number_hit_chance_returns() {
 
     for blind in [false, true] {
         let chance = tactics_core::battle::hit_chance(
-            &reg, &state, attacker.id, attacker.pos, weapon, target.pos, blind,
+            &reg,
+            &state,
+            attacker.id,
+            attacker.pos,
+            weapon,
+            target.pos,
+            blind,
         );
         let breakdown = tactics_core::battle::hit_breakdown(
-            &reg, &state, attacker.id, attacker.pos, weapon, target.pos, blind,
+            &reg,
+            &state,
+            attacker.id,
+            attacker.pos,
+            weapon,
+            target.pos,
+            blind,
         );
-        assert_eq!(breakdown.total, chance, "breakdown must agree with the roll");
+        assert_eq!(
+            breakdown.total, chance,
+            "breakdown must agree with the roll"
+        );
         assert!((5..=95).contains(&breakdown.total));
 
         // Base plus every listed modifier reproduces the total, unless the
@@ -884,10 +935,22 @@ fn a_column_advances_without_ambushing_itself() {
     let (rear, lead) = (UnitId(0), UnitId(1));
     let start = state.unit(rear).unwrap().pos;
     state
-        .apply(&reg, &Order::SetMove { unit: lead, to: tactics_core::offset_to_hex(3, 0) })
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: lead,
+                to: tactics_core::offset_to_hex(3, 0),
+            },
+        )
         .expect("the lead tank has open ground");
     state
-        .apply(&reg, &Order::SetMove { unit: rear, to: tactics_core::offset_to_hex(2, 0) })
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: rear,
+                to: tactics_core::offset_to_hex(2, 0),
+            },
+        )
         .expect("routing behind a friend is legal");
 
     let events = play_round(&reg, &mut state);
@@ -920,14 +983,26 @@ fn friendlies_are_never_ordered_onto_the_same_hex() {
     let (first, second) = (UnitId(0), UnitId(1));
     let contested = tactics_core::offset_to_hex(3, 0);
     state
-        .apply(&reg, &Order::SetMove { unit: first, to: contested })
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: first,
+                to: contested,
+            },
+        )
         .expect("an empty hex is a fine destination");
     assert!(
         !reachable(&reg, &state, second).contains_key(&contested),
         "a hex a friend is already driving to is taken"
     );
     assert_eq!(
-        state.apply(&reg, &Order::SetMove { unit: second, to: contested }),
+        state.apply(
+            &reg,
+            &Order::SetMove {
+                unit: second,
+                to: contested
+            }
+        ),
         Err(tactics_core::battle::OrderError::NoPath),
         "two units must not be ordered into the same hex"
     );
@@ -962,7 +1037,13 @@ fn unspotted_enemies_still_ambush() {
     // refusal. Grass, forest, grass, grass costs exactly one round's fuel.
     let dest = tactics_core::offset_to_hex(4, 0);
     state
-        .apply(&reg, &Order::SetMove { unit: mover, to: dest })
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: mover,
+                to: dest,
+            },
+        )
         .expect("pathing through fog should be attempted");
     for side in state.living_sides() {
         state.apply(&reg, &Order::Commit { side }).unwrap();
@@ -1006,7 +1087,13 @@ fn an_enemy_you_can_see_halts_the_advance_without_surprising_anyone() {
     let mover = UnitId(0);
     assert!(state.fog.side(0).spotted.contains(&UnitId(1)));
     state
-        .apply(&reg, &Order::SetMove { unit: mover, to: tactics_core::offset_to_hex(1, 0) })
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: mover,
+                to: tactics_core::offset_to_hex(1, 0),
+            },
+        )
         .unwrap();
     for side in state.living_sides() {
         state.apply(&reg, &Order::Commit { side }).unwrap();
@@ -1063,7 +1150,13 @@ fn hidden_enemies_do_not_show_up_as_holes_in_the_move_range() {
     // Ordering the move onto that tile is legal; the advance simply stops
     // when it runs into whoever is standing there.
     state
-        .apply(&reg, &Order::SetMove { unit: mover, to: hidden_pos })
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: mover,
+                to: hidden_pos,
+            },
+        )
         .expect("the order must be accepted, not refused with NoPath");
     let events = play_round(&reg, &mut state);
     assert!(
@@ -1092,7 +1185,13 @@ fn spotted_enemies_still_block_a_destination() {
         "precondition: the enemy is in plain sight"
     );
     assert_eq!(
-        state.apply(&reg, &Order::SetMove { unit: mover, to: seen_pos }),
+        state.apply(
+            &reg,
+            &Order::SetMove {
+                unit: mover,
+                to: seen_pos
+            }
+        ),
         Err(tactics_core::battle::OrderError::NoPath),
         "you cannot drive onto an enemy you can see; that is an attack"
     );
@@ -1259,14 +1358,23 @@ fn a_unit_that_spent_the_round_driving_still_shoots_back() {
     let mut state = duel(&reg, 21);
     let (west, east) = (UnitId(0), UnitId(1));
     state
-        .apply(&reg, &Order::SetMove { unit: west, to: tactics_core::offset_to_hex(0, 0) })
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: west,
+                to: tactics_core::offset_to_hex(0, 0),
+            },
+        )
         .expect("west has room to reposition");
     state
         .apply(
             &reg,
             &Order::SetFire {
                 unit: east,
-                fire: FireIntent::Target { target: west, weapon: 0 },
+                fire: FireIntent::Target {
+                    target: west,
+                    weapon: 0,
+                },
             },
         )
         .unwrap();
@@ -1323,14 +1431,26 @@ fn orders_are_closed_once_the_round_is_resolving() {
     );
     assert!(state.is_planning(), "still waiting on the other side");
     assert_eq!(
-        state.apply(&reg, &Order::SetFire { unit: west, fire: FireIntent::Hold }),
+        state.apply(
+            &reg,
+            &Order::SetFire {
+                unit: west,
+                fire: FireIntent::Hold
+            }
+        ),
         Err(tactics_core::battle::OrderError::AlreadyCommitted),
         "a side cannot rewrite orders it has already handed in"
     );
     state.apply(&reg, &Order::Commit { side: 1 }).unwrap();
     assert_eq!(state.resolving_tick(), Some(0), "now the round runs");
     assert_eq!(
-        state.apply(&reg, &Order::SetMove { unit: west, to: tactics_core::offset_to_hex(1, 1) }),
+        state.apply(
+            &reg,
+            &Order::SetMove {
+                unit: west,
+                to: tactics_core::offset_to_hex(1, 1)
+            }
+        ),
         Err(tactics_core::battle::OrderError::NotPlanningPhase),
     );
 }
@@ -1343,14 +1463,23 @@ fn a_round_clears_last_round_orders() {
     let mut state = standoff(&reg, 13);
     let west = UnitId(0);
     state
-        .apply(&reg, &Order::SetMove { unit: west, to: tactics_core::offset_to_hex(0, 0) })
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: west,
+                to: tactics_core::offset_to_hex(0, 0),
+            },
+        )
         .unwrap();
     assert!(state.unit(west).unwrap().planned);
     let round_before = state.round;
 
     play_round(&reg, &mut state);
     if let Some(unit) = state.unit(west) {
-        assert!(state.round > round_before, "the round should have turned over");
+        assert!(
+            state.round > round_before,
+            "the round should have turned over"
+        );
         assert!(!unit.planned, "orders do not carry into the next round");
         assert!(unit.intent.path.is_empty());
         assert_eq!(unit.move_credit, 0, "unspent movement does not bank");
@@ -1480,13 +1609,24 @@ fn a_searching_planner_cannot_read_the_enemys_orders() {
     let mut state = duel(&reg, 21);
     let east = UnitId(1);
     state
-        .apply(&reg, &Order::SetMove { unit: east, to: tactics_core::offset_to_hex(4, 1) })
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: east,
+                to: tactics_core::offset_to_hex(4, 1),
+            },
+        )
         .expect("the east tank has open ground behind it");
     state.apply(&reg, &Order::Commit { side: 1 }).unwrap();
-    assert!(state.unit(east).unwrap().planned, "precondition: side 1 has a plan");
+    assert!(
+        state.unit(east).unwrap().planned,
+        "precondition: side 1 has a plan"
+    );
 
     let known = tactics_core::ai::determinize(&state, 0, 7);
-    let seen = known.unit(east).expect("a spotted enemy is still on the board");
+    let seen = known
+        .unit(east)
+        .expect("a spotted enemy is still on the board");
     assert!(
         !seen.planned && seen.intent.path.is_empty(),
         "side 0 must not see what side 1 was ordered to do"
@@ -1511,4 +1651,3 @@ fn the_policy_planner_is_usable_on_its_own() {
     let order = planner.next_order(&reg, &state, 1);
     assert!(!matches!(order, Order::ClearIntent { .. }));
 }
-
