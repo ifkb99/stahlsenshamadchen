@@ -1596,6 +1596,9 @@ fn finish_battle(
                 vehicle: unit.vehicle.clone(),
                 crew: unit.crew.clone(),
                 name: Some(unit.name.clone()),
+                // Survivors are redeployed by the next battle's own setup, so
+                // where they were pointing when this one ended means nothing.
+                facing: None,
             });
         }
         commands.insert_resource(BattleOutcome {

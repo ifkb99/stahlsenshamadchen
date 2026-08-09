@@ -529,6 +529,7 @@ fn sides_that_can_see_each_other_are_never_called_off() {
             vehicle: "medium_tank".into(),
             crew: Vec::new(),
             name: Some("Watcher".into()),
+            facing: None,
         },
         UnitPlacement {
             at: [2, 1],
@@ -536,6 +537,7 @@ fn sides_that_can_see_each_other_are_never_called_off() {
             vehicle: "medium_tank".into(),
             crew: Vec::new(),
             name: Some("Watched".into()),
+            facing: None,
         },
     ];
     let mut state = BattleState::from_placements(&reg, map, sides, &placements, 1);
@@ -868,6 +870,7 @@ fn unit_at(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> UnitPlacement {
         vehicle: vehicle.into(),
         crew: Vec::new(),
         name: Some(name.into()),
+        facing: None,
     }
 }
 
@@ -1650,4 +1653,68 @@ fn the_policy_planner_is_usable_on_its_own() {
     let mut planner = UtilityPlanner::with_difficulty(3, 99);
     let order = planner.next_order(&reg, &state, 1);
     assert!(!matches!(order, Order::ClearIntent { .. }));
+}
+
+/// Units used to spawn facing due east no matter where the enemy was, which on
+/// a map where the sides deploy east and west handed the eastern side's rear
+/// armour to its opponent until it happened to move or turn. A Panther is
+/// armour 5 from the front and 2 from behind and the damage formula divides by
+/// that number, so the bias was real and it fell on one side only.
+#[test]
+fn units_spawn_facing_the_enemy_rather_than_due_east() {
+    let reg = registry();
+    let state = duel(&reg, 7);
+    let west = state.unit(UnitId(0)).expect("west alive");
+    let east = state.unit(UnitId(1)).expect("east alive");
+
+    assert_eq!(
+        west.facing,
+        west.pos.main_direction_to(east.pos),
+        "the western unit should be looking at its enemy"
+    );
+    assert_eq!(
+        east.facing,
+        east.pos.main_direction_to(west.pos),
+        "the eastern unit should be looking at its enemy, not away from it"
+    );
+
+    // The specific regression: the two must not be pointing the same way.
+    assert_ne!(
+        west.facing, east.facing,
+        "two units facing each other cannot share a facing"
+    );
+
+    // And what actually matters: a head-on shot lands on front armour.
+    assert_eq!(
+        tactics_core::battle::struck_facing(east.pos, east.facing, west.pos),
+        tactics_core::data::ArmorFacing::Front,
+        "a head-on shot should strike the front, not the rear"
+    );
+}
+
+/// A scenario may still say which way someone is looking — that is what makes
+/// an ambush placeable rather than something the engine decides for you.
+#[test]
+fn a_map_can_place_a_unit_looking_the_wrong_way() {
+    use tactics_core::map::Facing;
+    let reg = registry();
+    let mut placements = vec![
+        unit_at([0, 1], 0, "medium_tank", "West"),
+        unit_at([3, 1], 1, "medium_tank", "East"),
+    ];
+    placements[1].facing = Some(Facing::East);
+    let state = two_side_battle(&reg, &["ggggg", "ggggg", "ggggg"], placements, 7);
+
+    let east = state.unit(UnitId(1)).expect("east alive");
+    assert_eq!(
+        east.facing,
+        hexx::EdgeDirection::POINTY_EAST,
+        "an explicit facing must survive the point-at-the-enemy pass"
+    );
+    let west = state.unit(UnitId(0)).expect("west alive");
+    assert_eq!(
+        tactics_core::battle::struck_facing(east.pos, east.facing, west.pos),
+        tactics_core::data::ArmorFacing::Rear,
+        "a unit told to look away presents its rear, which is the point"
+    );
 }

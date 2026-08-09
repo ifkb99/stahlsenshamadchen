@@ -24,7 +24,7 @@ mod orders;
 
 pub use combat::{
     AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, MAX_HIT, MIN_HIT,
-    expected_damage, hit_breakdown, hit_chance, preview_attack, weapon_ready,
+    expected_damage, hit_breakdown, hit_chance, preview_attack, struck_facing, weapon_ready,
 };
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
@@ -215,6 +215,7 @@ impl BattleState {
         for placement in &file.units {
             state.spawn_unit(registry, placement);
         }
+        state.face_units_at_enemies(&file.units);
         state.fog = FogMap::new(state.sides.len());
         fog::recompute(registry, &mut state);
         Ok(state)
@@ -248,9 +249,58 @@ impl BattleState {
         for placement in placements {
             state.spawn_unit(registry, placement);
         }
+        state.face_units_at_enemies(placements);
         state.fog = FogMap::new(state.sides.len());
         fog::recompute(registry, &mut state);
         state
+    }
+
+    /// Turn every unit that was not given an explicit facing towards the enemy.
+    ///
+    /// Units used to spawn facing due east unconditionally, which on a map
+    /// where the sides deploy east and west meant the eastern side presented
+    /// its *rear* armour until it happened to move or fire. That is a real
+    /// asymmetry — a Panther is armour 5 from the front and 2 from behind, and
+    /// the damage formula divides by it — and it fell on one side only.
+    ///
+    /// This runs after every unit exists, because spawning one placement at a
+    /// time cannot know where the other side ended up. Enemy centroids are
+    /// averaged in floating point and rounded through [`Hex::round`], the same
+    /// way [`crate::map::HexMap::center`] does, so the result respects the cube
+    /// constraint and does not depend on iteration order.
+    fn face_units_at_enemies(&mut self, placements: &[UnitPlacement]) {
+        // Resolved for every side up front, so the mutation pass below does not
+        // borrow the unit list while writing to it.
+        let centroids: Vec<Option<Hex>> = (0..self.sides.len() as u8)
+            .map(|side| {
+                let (mut sx, mut sy, mut n) = (0i64, 0i64, 0i64);
+                for unit in self.units.iter().filter(|u| u.side != side) {
+                    sx += unit.pos.x as i64;
+                    sy += unit.pos.y as i64;
+                    n += 1;
+                }
+                (n > 0).then(|| Hex::round([sx as f32 / n as f32, sy as f32 / n as f32]))
+            })
+            .collect();
+
+        // `placements` lines up with `units` by index: both setup paths spawn
+        // in placement order into an empty unit list.
+        for i in 0..self.units.len() {
+            if placements.get(i).is_some_and(|p| p.facing.is_some()) {
+                continue;
+            }
+            let unit = &self.units[i];
+            let Some(target) = centroids.get(unit.side as usize).copied().flatten() else {
+                continue;
+            };
+            // A unit standing exactly on the enemy centroid has no direction to
+            // face; leave it as it is rather than picking one arbitrarily.
+            if target == unit.pos {
+                continue;
+            }
+            let facing = unit.pos.main_direction_to(target);
+            self.units[i].facing = facing;
+        }
     }
 
     pub fn spawn_unit(&mut self, registry: &DataRegistry, placement: &UnitPlacement) -> UnitId {
@@ -276,7 +326,13 @@ impl BattleState {
             crew: placement.crew.clone(),
             name,
             pos: crate::offset_to_hex(placement.at[0], placement.at[1]),
-            facing: EdgeDirection::POINTY_EAST,
+            // An explicit facing wins; otherwise this is a placeholder that
+            // `face_units_at_enemies` replaces once every unit exists, since
+            // spawning one at a time cannot know where the other side is.
+            facing: placement
+                .facing
+                .map(EdgeDirection::from)
+                .unwrap_or(EdgeDirection::POINTY_EAST),
             hp: vehicle.max_hp,
             intent: UnitIntent::default(),
             planned: false,
