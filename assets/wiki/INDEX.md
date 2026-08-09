@@ -29,3 +29,5 @@ Developer and modder material. Useful in the encyclopedia later under a
 - [Architecture](reference/architecture.md) — crate layout and sim design
 - [Modding](reference/modding.md) — mods, maps, and campaign scripts
 - [Rendering](reference/rendering.md) — pixel-perfect isometric hexes
+- [Tone and Art Direction](reference/tone.md) — what the look has already
+  committed to, and what is still open
