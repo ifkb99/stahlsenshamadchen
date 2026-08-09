@@ -1,22 +1,22 @@
 //! The overworld screen: strategic army movement, objective capture,
 //! income, soft fog, and handing off clashes to the battle screen.
 
+use crate::AppState;
 use crate::battle::{BattleForce, BattleOutcome, PendingBattle};
-use crate::campaign::{self, Campaign, CampaignCommand};
 use crate::camera::CameraFocus;
-use crate::iso::{self, ArtCache, ViewCenter, ViewRotation};
+use crate::campaign::{self, Campaign, CampaignCommand};
+use crate::iso::{self, ArtCache, ViewCenter};
 use crate::map_render::{self, CurrentMap, HexOverlay};
 use crate::mods::Mods;
-use crate::AppState;
 use bevy::prelude::*;
 use std::collections::{HashMap, VecDeque};
+use tactics_core::Hex;
 use tactics_core::ai::AiPlanner;
 use tactics_core::battle::SideState;
 use tactics_core::map::MapKind;
 use tactics_core::overworld::{
-    make_overworld_planner, ArmyId, OverworldEvent, OverworldOrder, OverworldState,
+    ArmyId, OverworldEvent, OverworldOrder, OverworldState, make_overworld_planner,
 };
-use tactics_core::Hex;
 
 #[derive(Resource)]
 struct Overworld {
@@ -133,12 +133,16 @@ impl Plugin for OverworldPlugin {
     }
 }
 
+// Same reasoning as `battle::pump_events`: this is a setup system, and the
+// optional resources it takes (a previous overworld, a battle outcome to fold
+// in, a campaign script) are independent things that happen to be needed on
+// the same frame, not parts of one object.
+#[allow(clippy::too_many_arguments)]
 fn enter_overworld(
     mut commands: Commands,
     mods: Res<Mods>,
     art: Res<ArtCache>,
-    rotation: Res<ViewRotation>,
-    mut center: ResMut<ViewCenter>,
+    view: map_render::View,
     mut log: ResMut<OwLogLines>,
     existing: Option<ResMut<Overworld>>,
     outcome: Option<Res<BattleOutcome>>,
@@ -157,9 +161,10 @@ fn enter_overworld(
             );
             ow.anim.extend(events);
             match (outcome.winner, outcome.stalemate) {
-                (Some(w), _) => {
-                    log.push(format!("Battle won by {}.", ow.state.sides[w as usize].name))
-                }
+                (Some(w), _) => log.push(format!(
+                    "Battle won by {}.",
+                    ow.state.sides[w as usize].name
+                )),
                 (None, true) => log.push("Neither side could find the other. Both withdrew."),
                 (None, false) => log.push("The battle ended in mutual ruin."),
             }
@@ -169,8 +174,8 @@ fn enter_overworld(
             commands.remove_resource::<BattleOutcome>();
         }
         ow.clear_selection();
-        spawn_world(&mut commands, registry, &art, rotation.0, &mut center, &ow.state);
-        center_camera(&mut focus, rotation.0, center.0);
+        let center = spawn_world(&mut commands, registry, &art, view.rotation(), &ow.state);
+        center_camera(&mut focus, view.rotation(), center);
         return;
     }
 
@@ -205,8 +210,8 @@ fn enter_overworld(
         }
     }
 
-    spawn_world(&mut commands, registry, &art, rotation.0, &mut center, &state);
-    center_camera(&mut focus, rotation.0, center.0);
+    let center = spawn_world(&mut commands, registry, &art, view.rotation(), &state);
+    center_camera(&mut focus, view.rotation(), center);
 
     if let Some(campaign) = campaign {
         campaign::call_start_hook(&campaign, &state);
@@ -235,10 +240,12 @@ fn spawn_world(
     registry: &tactics_core::data::DataRegistry,
     art: &ArtCache,
     rotation: u32,
-    center: &mut ViewCenter,
     state: &OverworldState,
-) {
-    center.0 = state.map.center();
+) -> Hex {
+    // Returned rather than written through a `ResMut`, so callers can take
+    // `View` (which reads `ViewCenter`) without conflicting access.
+    let center = state.map.center();
+    commands.insert_resource(ViewCenter(center));
     map_render::spawn_map(commands, art, &state.map, rotation, false, OverworldScope);
     commands.insert_resource(CurrentMap(state.map.clone()));
 
@@ -269,7 +276,10 @@ fn spawn_world(
         OverworldScope,
     ));
     for (hex, tile) in state.map.iter() {
-        if registry.terrain(&tile.terrain).is_some_and(|t| t.capturable) {
+        if registry
+            .terrain(&tile.terrain)
+            .is_some_and(|t| t.capturable)
+        {
             commands.spawn((
                 Sprite {
                     color: Color::srgba(1.0, 1.0, 1.0, 0.0),
@@ -283,6 +293,7 @@ fn spawn_world(
         }
     }
     spawn_ui(commands);
+    center
 }
 
 fn spawn_ui(commands: &mut Commands) {
@@ -398,10 +409,10 @@ fn pump_events(
             let name = &overworld.state.sides[*side as usize].name;
             log.push(format!("- Day {turn}: {name} -"));
             // The campaign sees one on_turn per new day (first side's phase).
-            if *side == 0 {
-                if let Some(campaign) = &campaign {
-                    campaign::call_turn_hook(campaign, &overworld.state);
-                }
+            if *side == 0
+                && let Some(campaign) = &campaign
+            {
+                campaign::call_turn_hook(campaign, &overworld.state);
             }
         }
         OverworldEvent::Income { side, amount } => {
@@ -420,7 +431,11 @@ fn pump_events(
                 .unwrap_or_default();
             log.push(format!("{name} captured a {terrain}."));
         }
-        OverworldEvent::BattleTriggered { attacker, defender, at } => {
+        OverworldEvent::BattleTriggered {
+            attacker,
+            defender,
+            at,
+        } => {
             let (Some(att), Some(def)) = (
                 overworld.state.army(*attacker),
                 overworld.state.army(*defender),
@@ -613,7 +628,13 @@ fn muster_input(
 
     let muster = overworld.muster.take().expect("checked above");
     let mut joiners = muster.ai_joiners;
-    joiners.extend(muster.choices.iter().filter(|(_, on)| *on).map(|(id, _)| *id));
+    joiners.extend(
+        muster
+            .choices
+            .iter()
+            .filter(|(_, on)| *on)
+            .map(|(id, _)| *id),
+    );
     if !joiners.is_empty() {
         log.push(format!("{} more armies join the fight.", joiners.len()));
     }
@@ -648,7 +669,11 @@ fn update_muster_ui(
             .map(|a| format!("{} ({} units)", a.name, a.units.len()))
             .unwrap_or_else(|| "?".into())
     };
-    let role = if muster.attacking { "assault" } else { "defence" };
+    let role = if muster.attacking {
+        "assault"
+    } else {
+        "defence"
+    };
     let side_name = state
         .sides
         .get(muster.side as usize)
@@ -717,11 +742,11 @@ fn drive_ai(mods: Res<Mods>, mut overworld: ResMut<Overworld>) {
         Ok(events) => ow.anim.extend(events),
         Err(_) => {
             // Don't wedge on a stubborn army: mark it moved and continue.
-            if let OverworldOrder::MoveArmy { army, .. } = order {
-                if let Some(a) = ow.state.army_mut(army) {
-                    a.moved = true;
-                    return;
-                }
+            if let OverworldOrder::MoveArmy { army, .. } = order
+                && let Some(a) = ow.state.army_mut(army)
+            {
+                a.moved = true;
+                return;
             }
             if let Ok(events) = ow.state.apply(&mods.0, &OverworldOrder::EndTurn) {
                 ow.anim.extend(events);
@@ -736,9 +761,7 @@ fn handle_input(
     mut log: ResMut<OwLogLines>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
-    rotation: Res<ViewRotation>,
-    windows: Query<&Window>,
-    camera: Query<(&Camera, &GlobalTransform)>,
+    view: map_render::View,
 ) {
     if overworld.state.over.is_some() || !overworld.anim.is_empty() || overworld.muster.is_some() {
         return;
@@ -763,8 +786,7 @@ fn handle_input(
     if !buttons.just_pressed(MouseButton::Left) {
         return;
     }
-    let Some(hex) = map_render::hovered_tile(&windows, &camera, &overworld.state.map, rotation.0)
-    else {
+    let Some(hex) = view.hovered(&overworld.state.map) else {
         return;
     };
 
@@ -792,23 +814,18 @@ fn handle_input(
 fn sync_armies(
     mods: Res<Mods>,
     overworld: Res<Overworld>,
-    rotation: Res<ViewRotation>,
-    center: Res<ViewCenter>,
+    view: map_render::View,
     mut markers: Query<(&ArmyMarker, &mut Transform, &mut Visibility, &mut Sprite)>,
 ) {
     let state = &overworld.state;
-    let view_side = state
-        .sides
-        .iter()
-        .position(|s| s.ai.is_none())
-        .unwrap_or(0) as u8;
+    let view_side = state.sides.iter().position(|s| s.ai.is_none()).unwrap_or(0) as u8;
     for (marker, mut transform, mut visibility, mut sprite) in &mut markers {
         let Some(army) = state.army(marker.0) else {
             *visibility = Visibility::Hidden;
             continue;
         };
         let elev = state.map.get(army.pos).map(|t| t.elevation).unwrap_or(0);
-        let (pos, z) = iso::project(army.pos, elev, rotation.0, center.0);
+        let (pos, z) = iso::project(army.pos, elev, view.rotation(), view.center());
         transform.translation = Vec3::new(pos.x, pos.y + 16.0, z + 1.5);
         let seen = state.army_visible_to(&mods.0, army, view_side);
         *visibility = if seen {
@@ -833,18 +850,15 @@ fn update_range_highlights(
     mut commands: Commands,
     mut overworld: ResMut<Overworld>,
     art: Res<ArtCache>,
-    rotation: Res<ViewRotation>,
-    center: Res<ViewCenter>,
-    windows: Query<&Window>,
-    camera: Query<(&Camera, &GlobalTransform)>,
+    view: map_render::View,
     existing: Query<Entity, With<OwRangeTile>>,
     mut hover: Query<(&mut Transform, &mut Visibility), With<OwHoverTile>>,
 ) {
     let map = overworld.state.map.clone();
-    let face_at = |hex: Hex| HexOverlay::face(hex).translation(&map, rotation.0, center.0);
+    let face_at = |hex: Hex| view.face_at(&map, hex);
 
     if let Ok((mut transform, mut visibility)) = hover.single_mut() {
-        match map_render::hovered_tile(&windows, &camera, &map, rotation.0) {
+        match view.hovered(&map) {
             Some(hex) => {
                 transform.translation = face_at(hex);
                 *visibility = Visibility::Inherited;
@@ -869,7 +883,7 @@ fn update_range_highlights(
                 color,
                 ..default()
             },
-            Transform::from_translation(overlay.translation(&map, rotation.0, center.0)),
+            Transform::from_translation(overlay.translation(&map, view.rotation(), view.center())),
             overlay,
             OwRangeTile,
             OverworldScope,
@@ -887,14 +901,13 @@ fn update_range_highlights(
 
 fn update_owner_dots(
     overworld: Res<Overworld>,
-    rotation: Res<ViewRotation>,
-    center: Res<ViewCenter>,
+    view: map_render::View,
     mut dots: Query<(&OwnerDot, &mut Transform, &mut Sprite)>,
 ) {
     let state = &overworld.state;
     for (dot, mut transform, mut sprite) in &mut dots {
         let elev = state.map.get(dot.0).map(|t| t.elevation).unwrap_or(0);
-        let (pos, z) = iso::project(dot.0, elev, rotation.0, center.0);
+        let (pos, z) = iso::project(dot.0, elev, view.rotation(), view.center());
         transform.translation = Vec3::new(pos.x + 18.0, pos.y + 8.0, z + 1.2);
         sprite.color = match state.owners.get(&dot.0) {
             Some(side) => map_render::side_color(*side),
@@ -907,12 +920,10 @@ fn update_ui(
     overworld: Res<Overworld>,
     mods: Res<Mods>,
     log: Res<OwLogLines>,
-    rotation: Res<ViewRotation>,
-    windows: Query<&Window>,
-    camera: Query<(&Camera, &GlobalTransform)>,
-    mut banner: Query<&mut Text, (With<OwBanner>, Without<OwLog>, Without<OwPanel>)>,
-    mut log_text: Query<&mut Text, (With<OwLog>, Without<OwBanner>, Without<OwPanel>)>,
-    mut panel: Query<&mut Text, (With<OwPanel>, Without<OwBanner>, Without<OwLog>)>,
+    view: map_render::View,
+    mut banner: map_render::TextSlot<OwBanner, OwLog, OwPanel>,
+    mut log_text: map_render::TextSlot<OwLog, OwBanner, OwPanel>,
+    mut panel: map_render::TextSlot<OwPanel, OwBanner, OwLog>,
 ) {
     let state = &overworld.state;
     if let Ok(mut text) = banner.single_mut() {
@@ -929,12 +940,8 @@ fn update_ui(
     let Ok(mut text) = panel.single_mut() else {
         return;
     };
-    let view_side = state
-        .sides
-        .iter()
-        .position(|s| s.ai.is_none())
-        .unwrap_or(0) as u8;
-    let hovered = map_render::hovered_tile(&windows, &camera, &state.map, rotation.0);
+    let view_side = state.sides.iter().position(|s| s.ai.is_none()).unwrap_or(0) as u8;
+    let hovered = view.hovered(&state.map);
 
     // Whatever is under the cursor wins, so the player can read the board
     // without losing their selection.

@@ -3,6 +3,7 @@
 mod battle;
 mod camera;
 mod campaign;
+mod devtools;
 mod iso;
 mod map_render;
 mod mods;
@@ -22,7 +23,6 @@ pub enum AppState {
 }
 
 fn main() {
-    let is_debug = std::env::var("STAHL_DEBUG").is_ok();
     App::new()
         .add_plugins(
             DefaultPlugins
@@ -43,9 +43,9 @@ fn main() {
             camera::CameraPlugin,
             battle::BattlePlugin,
             overworld::OverworldPlugin,
+            devtools::DevToolsPlugin,
         ))
         .add_systems(Update, map_render::reposition_map)
-        .add_systems(Update, dev_screenshot.run_if(move || is_debug))
         .run();
 }
 
@@ -63,23 +63,5 @@ fn primary_window() -> Window {
         title: "Stahlsenshamädchen".into(),
         resolution,
         ..default()
-    }
-}
-
-/// Dev tool: STAHL_SCREENSHOT=out.png captures the window a few seconds in
-/// (delay adjustable with STAHL_SCREENSHOT_AT=<seconds>).
-fn dev_screenshot(mut commands: Commands, time: Res<Time>, mut done: Local<bool>) {
-    let at = std::env::var("STAHL_SCREENSHOT_AT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(4.0);
-    if *done || time.elapsed_secs() < at {
-        return;
-    }
-    *done = true;
-    if let Ok(path) = std::env::var("STAHL_SCREENSHOT") {
-        commands
-            .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
-            .observe(bevy::render::view::screenshot::save_to_disk(path));
     }
 }

@@ -1,20 +1,21 @@
 //! The battle screen: renders a `tactics_core` battle, feeds it player
 //! orders, animates the resulting events, and drives AI sides.
 
+use crate::AppState;
 use crate::camera::CameraFocus;
-use crate::iso::{self, ArtCache, ViewCenter, ViewRotation};
+use crate::iso::{self, ArtCache, ViewCenter};
 use crate::map_render::{self, CurrentMap, FogOverlay, HexOverlay};
 use crate::mods::Mods;
-use crate::AppState;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet, VecDeque};
-use tactics_core::ai::{make_battle_planner, AiPlanner};
+use tactics_core::Hex;
+use tactics_core::ai::{AiPlanner, make_battle_planner};
 use tactics_core::battle::{
-    reachable, BattleState, EndReason, Event as BattleEvent, FireIntent, Order, SideState, UnitId,
+    BattleState, EndReason, Event as BattleEvent, FireIntent, Order, SideState, UnitId, reachable,
 };
 use tactics_core::map::UnitPlacement;
 use tactics_core::overworld::ArmyId;
-use tactics_core::Hex;
 
 /// One army committed to a field battle.
 #[derive(Clone)]
@@ -127,6 +128,44 @@ struct BattleUnit(UnitId);
 #[derive(Component)]
 struct HpBar(UnitId);
 
+/// The battle HUD's four text/image widgets.
+///
+/// They are one thing conceptually — the panel on the right and the banner
+/// above it — and the mutual `Without` filters only exist so Bevy can prove
+/// the `&mut Text` queries do not alias. Grouping them keeps that plumbing out
+/// of the system signature.
+#[derive(SystemParam)]
+struct BattleHud<'w, 's> {
+    banner: map_render::TextSlot<'w, 's, RoundBanner, LogText, PanelText>,
+    log_text: map_render::TextSlot<'w, 's, LogText, RoundBanner, PanelText>,
+    panel: map_render::TextSlot<'w, 's, PanelText, RoundBanner, LogText>,
+    portrait: Query<'w, 's, &'static mut ImageNode, With<PanelPortrait>>,
+}
+
+/// Every per-round highlight, for the despawn-and-rebuild pass.
+type HighlightFilter = Or<(With<MoveHighlight>, With<PlanHighlight>)>;
+
+/// Unit sprites, excluding the ones a `Mover` animation currently owns.
+type UnitSprites<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static BattleUnit,
+        &'static mut Transform,
+        &'static mut Visibility,
+        &'static mut Sprite,
+    ),
+    (Without<Mover>, Without<HpBar>),
+>;
+
+/// The little health bar riding above each unit.
+type HpBars<'w, 's> = Query<
+    'w,
+    's,
+    (&'static HpBar, &'static mut Sprite, &'static mut Transform),
+    (With<HpBar>, Without<BattleUnit>),
+>;
+
 #[derive(Component)]
 struct MoveHighlight;
 
@@ -229,8 +268,7 @@ fn setup_battle(
     mods: Res<Mods>,
     art: Res<ArtCache>,
     pending: Option<Res<PendingBattle>>,
-    rotation: Res<ViewRotation>,
-    mut center: ResMut<ViewCenter>,
+    view: map_render::View,
     mut log: ResMut<BattleLog>,
     mut focus: ResMut<CameraFocus>,
 ) {
@@ -257,7 +295,8 @@ fn setup_battle(
             let file = registry.map(map_id).expect("field battle map exists");
             let map = tactics_core::map::HexMap::from_map_file(file).expect("map parses");
             let (placements, origins) = deploy(registry, &map, forces, *attacker_side);
-            let state = BattleState::from_placements(registry, map, sides.clone(), &placements, seed());
+            let state =
+                BattleState::from_placements(registry, map, sides.clone(), &placements, seed());
             (
                 state,
                 Some(FieldBattle {
@@ -295,8 +334,19 @@ fn setup_battle(
         }
     }
 
-    center.0 = state.map.center();
-    map_render::spawn_map(&mut commands, &art, &state.map, rotation.0, true, BattleScope);
+    // The view pivots on the map's centroid. Written through `Commands`
+    // rather than a `ResMut` so this system can also take `View`, which reads
+    // the same resource — two conflicting accesses would panic at runtime.
+    let center = state.map.center();
+    commands.insert_resource(ViewCenter(center));
+    map_render::spawn_map(
+        &mut commands,
+        &art,
+        &state.map,
+        view.rotation(),
+        true,
+        BattleScope,
+    );
     commands.insert_resource(CurrentMap(state.map.clone()));
 
     for unit in state.alive_units() {
@@ -333,7 +383,7 @@ fn setup_battle(
          Enter commit, Q/E rotate.",
     );
 
-    let (map_center, _) = iso::project(center.0, 0, rotation.0, center.0);
+    let (map_center, _) = iso::project(center, 0, view.rotation(), center);
     focus.0 = map_center;
 
     commands.insert_resource(Battle {
@@ -366,9 +416,10 @@ fn deploy(
         let mut spots: Vec<(i32, i32, Hex)> = map
             .iter()
             .filter(|(_, tile)| {
-                registry
-                    .terrain(&tile.terrain)
-                    .is_some_and(|t| t.cost_for(tactics_core::data::MovementClass::Tracked).is_some())
+                registry.terrain(&tile.terrain).is_some_and(|t| {
+                    t.cost_for(tactics_core::data::MovementClass::Tracked)
+                        .is_some()
+                })
             })
             .map(|(hex, _)| {
                 let [col, row] = tactics_core::hex_to_offset(hex);
@@ -383,10 +434,7 @@ fn deploy(
     let mut origins = Vec::new();
     for west in [true, false] {
         let mut spots = deployable(west).into_iter();
-        for force in forces
-            .iter()
-            .filter(|f| (f.side == attacker_side) == west)
-        {
+        for force in forces.iter().filter(|f| (f.side == attacker_side) == west) {
             for unit in &force.units {
                 let Some(hex) = spots.next() else { break };
                 let mut placement = unit.clone();
@@ -520,8 +568,7 @@ fn spawn_battle_ui(commands: &mut Commands) {
 fn drive_movers(
     mut commands: Commands,
     time: Res<Time>,
-    rotation: Res<ViewRotation>,
-    center: Res<ViewCenter>,
+    view: map_render::View,
     map: Option<Res<CurrentMap>>,
     mut movers: Query<(Entity, &mut Mover, &mut Transform)>,
 ) {
@@ -533,7 +580,7 @@ fn drive_movers(
         if mover.progress >= steps {
             let last = *mover.path.last().unwrap();
             let elev = map.0.get(last).map(|t| t.elevation).unwrap_or(0);
-            let (pos, z) = iso::project(last, elev, rotation.0, center.0);
+            let (pos, z) = iso::project(last, elev, view.rotation(), view.center());
             transform.translation = Vec3::new(pos.x, pos.y + 10.0, z + 1.5);
             commands.entity(entity).remove::<Mover>();
             continue;
@@ -543,8 +590,8 @@ fn drive_movers(
         let (a, b) = (mover.path[i], mover.path[i + 1]);
         let ea = map.0.get(a).map(|t| t.elevation).unwrap_or(0);
         let eb = map.0.get(b).map(|t| t.elevation).unwrap_or(0);
-        let (pa, za) = iso::project(a, ea, rotation.0, center.0);
-        let (pb, zb) = iso::project(b, eb, rotation.0, center.0);
+        let (pa, za) = iso::project(a, ea, view.rotation(), view.center());
+        let (pb, zb) = iso::project(b, eb, view.rotation(), view.center());
         // Snapped so a moving unit steps across whole pixels instead of
         // shimmering through sub-texel positions.
         let pos = pa.lerp(pb, t).round();
@@ -552,14 +599,19 @@ fn drive_movers(
     }
 }
 
+// A Bevy system's parameters are its dependency list, and these eight do not
+// form any smaller noun: commands, the clock, content, the battle, the log,
+// the view, and two disjoint queries. Bundling them further would invent a
+// type that exists only to satisfy a lint. The groupings that *were* real —
+// the view, the HUD widgets — already have names.
+#[allow(clippy::too_many_arguments)]
 fn pump_events(
     mut commands: Commands,
     time: Res<Time>,
     mods: Res<Mods>,
     mut battle: ResMut<Battle>,
     mut log: ResMut<BattleLog>,
-    rotation: Res<ViewRotation>,
-    center: Res<ViewCenter>,
+    view: map_render::View,
     units: Query<(Entity, &BattleUnit)>,
     movers: Query<&Mover>,
 ) {
@@ -573,7 +625,10 @@ fn pump_events(
     let mut drained = Vec::new();
     while let Some(event) = battle.anim.pop_front() {
         drained.push(event);
-        if matches!(battle.anim.front(), Some(BattleEvent::TickStarted { .. }) | None) {
+        if matches!(
+            battle.anim.front(),
+            Some(BattleEvent::TickStarted { .. }) | None
+        ) {
             break;
         }
     }
@@ -633,7 +688,13 @@ fn pump_events(
                     .map(|w| w.name.clone())
                     .unwrap_or_default();
                 log.push(format!("{} {verb} ({weapon_name})", name(*attacker)));
-                spawn_puff(&mut commands, *at, rotation.0, center.0, Color::srgb(1.0, 0.9, 0.4));
+                spawn_puff(
+                    &mut commands,
+                    *at,
+                    view.rotation(),
+                    view.center(),
+                    Color::srgb(1.0, 0.9, 0.4),
+                );
             }
             BattleEvent::ShotHit {
                 attacker,
@@ -656,11 +717,23 @@ fn pump_events(
             }
             BattleEvent::ShotMissed { attacker, at } => {
                 log.push(format!("{} misses", name(*attacker)));
-                spawn_puff(&mut commands, *at, rotation.0, center.0, Color::srgba(0.8, 0.8, 0.8, 0.8));
+                spawn_puff(
+                    &mut commands,
+                    *at,
+                    view.rotation(),
+                    view.center(),
+                    Color::srgba(0.8, 0.8, 0.8, 0.8),
+                );
             }
             BattleEvent::UnitDestroyed { unit, at } => {
                 log.push(format!("{} is destroyed!", name(*unit)));
-                spawn_puff(&mut commands, *at, rotation.0, center.0, Color::srgb(1.0, 0.4, 0.1));
+                spawn_puff(
+                    &mut commands,
+                    *at,
+                    view.rotation(),
+                    view.center(),
+                    Color::srgb(1.0, 0.4, 0.1),
+                );
                 if let Some(entity) = entity_of(*unit) {
                     commands.entity(entity).despawn();
                 }
@@ -753,9 +826,7 @@ fn handle_input(
     mut log: ResMut<BattleLog>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
-    rotation: Res<ViewRotation>,
-    windows: Query<&Window>,
-    camera: Query<(&Camera, &GlobalTransform)>,
+    view: map_render::View,
     movers: Query<&Mover>,
 ) {
     let registry = &mods.0;
@@ -807,7 +878,12 @@ fn handle_input(
     // Take back a unit's orders; nothing is locked in until the commit.
     if keys.just_pressed(KeyCode::KeyC) {
         if let Some(unit) = battle.selected {
-            set_intent(registry, &mut battle, &Order::ClearIntent { unit }, &mut log);
+            set_intent(
+                registry,
+                &mut battle,
+                &Order::ClearIntent { unit },
+                &mut log,
+            );
         }
         return;
     }
@@ -817,12 +893,7 @@ fn handle_input(
         return;
     }
 
-    let hovered = map_render::hovered_tile(
-        &windows,
-        &camera,
-        &battle.state.map,
-        rotation.0,
-    );
+    let hovered = view.hovered(&battle.state.map);
 
     // A = engage the hovered enemy with the best weapon.
     if keys.just_pressed(KeyCode::KeyA) {
@@ -882,7 +953,12 @@ fn handle_input(
     if let Some(unit) = battle.selected
         && battle.move_range.contains_key(&hex)
     {
-        set_intent(registry, &mut battle, &Order::SetMove { unit, to: hex }, &mut log);
+        set_intent(
+            registry,
+            &mut battle,
+            &Order::SetMove { unit, to: hex },
+            &mut log,
+        );
     }
 }
 
@@ -968,13 +1044,9 @@ fn engage_with_best(
 /// hp bars) except while a Mover animation owns them.
 fn sync_units(
     battle: Res<Battle>,
-    rotation: Res<ViewRotation>,
-    center: Res<ViewCenter>,
-    mut units: Query<
-        (&BattleUnit, &mut Transform, &mut Visibility, &mut Sprite),
-        (Without<Mover>, Without<HpBar>),
-    >,
-    mut bars: Query<(&HpBar, &mut Sprite, &mut Transform), (With<HpBar>, Without<BattleUnit>)>,
+    view: map_render::View,
+    mut units: UnitSprites,
+    mut bars: HpBars,
     mods: Res<Mods>,
 ) {
     let state = &battle.state;
@@ -997,12 +1069,16 @@ fn sync_units(
             continue;
         };
         let elev = state.map.get(unit.pos).map(|t| t.elevation).unwrap_or(0);
-        let (pos, z) = iso::project(unit.pos, elev, rotation.0, center.0);
+        let (pos, z) = iso::project(unit.pos, elev, view.rotation(), view.center());
         if !animating.contains(&unit.id) {
             transform.translation = Vec3::new(pos.x, pos.y + 10.0, z + 1.5);
         }
-        transform.rotation =
-            Quat::from_rotation_z(iso::facing_angle(unit.pos, unit.facing, rotation.0, center.0));
+        transform.rotation = Quat::from_rotation_z(iso::facing_angle(
+            unit.pos,
+            unit.facing,
+            view.rotation(),
+            view.center(),
+        ));
         let seen = unit.side == view_side || fog.spotted.contains(&unit.id);
         *visibility = if seen {
             Visibility::Inherited
@@ -1066,27 +1142,18 @@ fn update_fog(
 fn update_highlights(
     mut commands: Commands,
     mut battle: ResMut<Battle>,
-    rotation: Res<ViewRotation>,
-    center: Res<ViewCenter>,
-    windows: Query<&Window>,
-    camera: Query<(&Camera, &GlobalTransform)>,
+    view: map_render::View,
     art: Res<ArtCache>,
-    existing: Query<Entity, Or<(With<MoveHighlight>, With<PlanHighlight>)>>,
-    mut hover: Query<
-        (&mut Transform, &mut Visibility),
-        (With<HoverHighlight>, Without<SelectHighlight>),
-    >,
-    mut select: Query<
-        (&mut Transform, &mut Visibility),
-        (With<SelectHighlight>, Without<HoverHighlight>),
-    >,
+    existing: Query<Entity, HighlightFilter>,
+    mut hover: map_render::MarkerQuery<HoverHighlight, SelectHighlight>,
+    mut select: map_render::MarkerQuery<SelectHighlight, HoverHighlight>,
 ) {
     let map = battle.state.map.clone();
-    let face_at = |hex: Hex| HexOverlay::face(hex).translation(&map, rotation.0, center.0);
+    let face_at = |hex: Hex| view.face_at(&map, hex);
 
     // Hover marker.
     if let Ok((mut transform, mut visibility)) = hover.single_mut() {
-        match map_render::hovered_tile(&windows, &camera, &map, rotation.0) {
+        match view.hovered(&map) {
             Some(hex) => {
                 transform.translation = face_at(hex);
                 *visibility = Visibility::Inherited;
@@ -1121,7 +1188,7 @@ fn update_highlights(
                 color: Color::srgba(0.35, 0.55, 1.0, 0.4),
                 ..default()
             },
-            Transform::from_translation(overlay.translation(&map, rotation.0, center.0)),
+            Transform::from_translation(overlay.translation(&map, view.rotation(), view.center())),
             overlay,
             MoveHighlight,
             BattleScope,
@@ -1161,7 +1228,7 @@ fn update_highlights(
                 color,
                 ..default()
             },
-            Transform::from_translation(overlay.translation(&map, rotation.0, center.0)),
+            Transform::from_translation(overlay.translation(&map, view.rotation(), view.center())),
             overlay,
             PlanHighlight,
             BattleScope,
@@ -1174,19 +1241,14 @@ fn update_panel(
     mods: Res<Mods>,
     art: Res<ArtCache>,
     log: Res<BattleLog>,
-    rotation: Res<ViewRotation>,
-    windows: Query<&Window>,
-    camera: Query<(&Camera, &GlobalTransform)>,
-    mut banner: Query<&mut Text, (With<RoundBanner>, Without<LogText>, Without<PanelText>)>,
-    mut log_text: Query<&mut Text, (With<LogText>, Without<RoundBanner>, Without<PanelText>)>,
-    mut panel: Query<&mut Text, (With<PanelText>, Without<RoundBanner>, Without<LogText>)>,
-    mut portrait: Query<&mut ImageNode, With<PanelPortrait>>,
+    view: map_render::View,
+    mut hud: BattleHud,
 ) {
     let state = &battle.state;
     let registry = &mods.0;
     let view_side = battle.view_side();
 
-    if let Ok(mut text) = banner.single_mut() {
+    if let Ok(mut text) = hud.banner.single_mut() {
         let scale = &registry.scale;
         text.0 = match state.resolving_tick() {
             // The elapsed clock is the point of the tick counter: a round is
@@ -1205,7 +1267,7 @@ fn update_panel(
             None => format!("Round {} - planning", state.round),
         };
     }
-    if let Ok(mut text) = log_text.single_mut() {
+    if let Ok(mut text) = hud.log_text.single_mut() {
         text.0 = log.0.iter().cloned().collect::<Vec<_>>().join("\n");
     }
 
@@ -1213,22 +1275,25 @@ fn update_panel(
         unit.side == view_side || state.fog.side(view_side).spotted.contains(&unit.id)
     };
 
-    let hovered_tile = map_render::hovered_tile(&windows, &camera, &state.map, rotation.0);
+    let hovered_tile = view.hovered(&state.map);
     let hovered_unit = hovered_tile
         .and_then(|hex| state.unit_at(hex))
         .filter(|u| visible(u))
         .map(|u| u.id);
 
-    let Ok(mut text) = panel.single_mut() else {
+    let Ok(mut text) = hud.panel.single_mut() else {
         return;
     };
 
     // Hovering an enemy while something is selected is a question about a
     // shot, so answer that first. Otherwise inspect whatever is under the
     // cursor, falling back to the selection and then the bare tile.
-    let attack = battle.selected.zip(hovered_unit).filter(|(attacker, target)| {
-        state.unit(*attacker).map(|u| u.side) != state.unit(*target).map(|u| u.side)
-    });
+    let attack = battle
+        .selected
+        .zip(hovered_unit)
+        .filter(|(attacker, target)| {
+            state.unit(*attacker).map(|u| u.side) != state.unit(*target).map(|u| u.side)
+        });
     if let Some((attacker, target)) = attack {
         let weapon = state
             .unit(target)
@@ -1238,7 +1303,7 @@ fn update_panel(
             tactics_core::battle::preview_attack(registry, state, attacker, weapon, target, false)
         {
             text.0 = format_attack(&registry.scale, &preview);
-            set_portrait(&mut portrait, &art, state, target);
+            set_portrait(&mut hud.portrait, &art, state, target);
             return;
         }
     }
@@ -1251,7 +1316,7 @@ fn update_panel(
         // Describe the tile under the cursor rather than the unit's own, so
         // terrain can be read without dropping the selection.
         text.0 = format_unit(registry, state, unit, hovered_tile.unwrap_or(unit.pos));
-        set_portrait(&mut portrait, &art, state, unit.id);
+        set_portrait(&mut hud.portrait, &art, state, unit.id);
         return;
     }
     if let Some(hex) = hovered_tile {
@@ -1271,7 +1336,11 @@ fn set_portrait(
     let Ok(mut image) = portrait.single_mut() else {
         return;
     };
-    let key = unit.crew.first().map(String::as_str).unwrap_or(&unit.vehicle);
+    let key = unit
+        .crew
+        .first()
+        .map(String::as_str)
+        .unwrap_or(&unit.vehicle);
     if let Some(handle) = art.portraits.get(key) {
         image.image = handle.clone();
     }
@@ -1355,8 +1424,14 @@ fn format_unit(
     let vehicle = registry.vehicle(&unit.vehicle);
     let mut lines = vec![
         unit.name.clone(),
-        vehicle.map(|v| v.name.clone()).unwrap_or_else(|| "?".into()),
-        format!("HP {}/{}", unit.hp.max(0), vehicle.map(|v| v.max_hp).unwrap_or(10)),
+        vehicle
+            .map(|v| v.name.clone())
+            .unwrap_or_else(|| "?".into()),
+        format!(
+            "HP {}/{}",
+            unit.hp.max(0),
+            vehicle.map(|v| v.max_hp).unwrap_or(10)
+        ),
         format!("Side: {}", state.sides[unit.side as usize].name),
     ];
     let scale = &registry.scale;
@@ -1370,11 +1445,7 @@ fn format_unit(
         // and it is the only place the player can see the crew bonus land.
         let speed = tactics_core::battle::move_points(registry, unit);
         let vision = tactics_core::battle::stats::vision_range(registry, unit);
-        lines.push(format!(
-            "Move {} ({})",
-            scale.format_speed(speed),
-            speed
-        ));
+        lines.push(format!("Move {} ({})", scale.format_speed(speed), speed));
         lines.push(format!(
             "Sight {} ({})",
             scale.format_distance(vision as i32),

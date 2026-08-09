@@ -1,0 +1,38 @@
+# A guided tour of the battle screen, for eyeballing render/UI changes.
+#
+#   STAHL_DEBUG=1 STAHL_BATTLE=river_crossing \
+#     STAHL_SCRIPT=scripts/dev/battle-tour.txt cargo run -p stahlsenshamädchen
+#
+# Hexes are axial. river_crossing places side 0's medium tank at offset
+# [10, 20], which is axial (0, 20); its recon car at [12, 14] -> (5, 14).
+
+at 3.0
+log "planning phase, nothing selected"
+shot /tmp/tour-01-planning.png
+
+# Hover the medium tank so the panel describes it.
+hex 0,20
+wait 0.3
+log "hovering the medium tank"
+shot /tmp/tour-02-hover.png
+
+# Select it: the move range should light up.
+click left
+wait 0.5
+log "selected; move range shown"
+shot /tmp/tour-03-selected.png
+
+# Route it two hexes east.
+hex 2,20
+wait 0.3
+click left
+wait 0.5
+log "route ordered"
+shot /tmp/tour-04-route.png
+
+# Rotate the view to check overlays follow the tiles.
+key E
+wait 0.5
+shot /tmp/tour-05-rotated.png
+
+quit

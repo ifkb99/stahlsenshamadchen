@@ -1,0 +1,27 @@
+# The campaign screen: hover a tile, select an army, order it a day's march.
+#
+#   STAHL_DEBUG=1 STAHL_SCRIPT=scripts/dev/overworld-tour.txt \
+#     cargo run -p stahlsenshamädchen
+#
+# frontier places Kuhlmann's 1st Company at offset [1, 1], which is axial
+# (1, 1) under odd-r offset; 2nd Company sits at [1, 7] -> (-2, 7).
+
+at 3.0
+log "campaign day 1"
+shot /tmp/ow-01-start.png
+
+hex 1,1
+wait 0.3
+log "hovering an army"
+shot /tmp/ow-02-hover.png
+
+click left
+wait 0.5
+log "army selected, movement range shown"
+shot /tmp/ow-03-selected.png
+
+key E
+wait 0.5
+shot /tmp/ow-04-rotated.png
+
+quit
