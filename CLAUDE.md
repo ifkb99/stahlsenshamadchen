@@ -13,7 +13,34 @@ cargo run -p stahlsenshamädchen     # the game (starts on the overworld)
 cargo run --bin validate-mods       # validate assets/mods; prints the scale table
 cargo test -p tactics_core          # headless engine tests (the real suite)
 cargo run -p tactics_core --example playthrough [seed]   # narrated AI battle
+cargo run --release -p tactics_core --example perf       # hot-path timings
 ```
+
+### Seeing the game without playing it
+
+The presentation layer used to be checkable only by running the game and
+looking at it, which made every rendering and UI change unreviewable by anyone
+not sitting at the keyboard. `crates/game/src/devtools.rs` fixes that: a script
+of timed actions drives the real input path and captures the window along the
+way.
+
+```sh
+STAHL_DEBUG=1 STAHL_BATTLE=river_crossing \
+  STAHL_SCRIPT=scripts/dev/battle-tour.txt cargo run -p stahlsenshamädchen
+```
+
+`scripts/dev/` holds a tour of each screen; the module doc lists every action.
+Two things about it are load-bearing:
+
+- **The scripted cursor is a resource, not the window's.** Writing to
+  `Window::cursor_position` makes `bevy_winit` warp the real OS pointer, which
+  fights the user for their mouse and fails silently when unfocused or on
+  Wayland. `map_render::View` consults `ScriptedCursor` first instead.
+  Scripts therefore name a **hex**, which also makes them independent of zoom,
+  pan, window size and view rotation.
+- **`run_script` must stay `.after(InputSystems)`.** Bevy clears `just_pressed`
+  at the top of `PreUpdate`, so a press injected before that is wiped before
+  any handler sees it — the symptom is a click that silently selects nothing.
 
 Rust edition 2024, resolver 3. `[profile.dev]` builds the workspace at
 `opt-level = 1` and dependencies at 3, because AI search is slow at opt-level 0.
@@ -168,6 +195,32 @@ rule they defend (`unspotted_enemies_still_ambush`).
   `SightGrid::clear` sharing `sight_line_clear` so the fast path cannot drift,
   and keep `cached_vision_is_the_same_answer_as_computing_it_fresh` passing —
   it rebuilds every side's visible set from scratch and demands a match.
+
+  That "bit-identical across four seeds" check is no longer done by hand:
+  `tests/determinism.rs` records the event stream for the same four seeds into
+  `tests/snapshots/event_stream.txt` and compares byte for byte. It exists
+  because a self-consistency test cannot catch iteration-order bugs — a process
+  agrees with itself whatever its hash seed is — which is precisely how the
+  original `fog::recompute` ordering bug survived. Regenerate deliberately with
+  `UPDATE_SNAPSHOTS=1 cargo test -p tactics_core --test determinism`, and read
+  the diff first: a broad diff means you changed balance, a small one about the
+  *order* of otherwise identical events means you introduced the bug this test
+  is for.
+- **The numbers below are reproducible.** `cargo run --release -p tactics_core
+  --example perf` prints them; `--mcts` adds the slow ones. Measured on the
+  1261-tile `river_crossing` with 8 units, four seeds:
+
+  | | |
+  | --- | --- |
+  | round resolution | 1.66 ms (0.96–2.54 across seeds) |
+  | `reachable()` per call | 32.8 µs |
+  | `unit_vision` per unit, cold | 86.0 µs |
+  | utility order | 0.03 ms |
+  | mcts order, difficulty 3 / 4 | 1.84 s / 4.24 s |
+
+  Run it `--release` or the figures are meaningless. Note this supersedes the
+  "~39 µs per call on the 768-tile map" figure that used to appear below: that
+  map stopped existing when battle maps became the radius-20 hexagon.
 - **MCTS is expensive but no longer impossible.** Was ~35 s per unit order and
   could not finish a round; the fog work brought it to ~3.3 s per order, and
   `cargo run --release -p tactics_core --example playthrough` now plays a full
@@ -176,9 +229,8 @@ rule they defend (`unspotted_enemies_still_ambush`).
   structural and unchanged: 900 iterations rolling out to depth 20, with every
   fifth step a `Commit` that runs the enemy's whole planning pass.
 - **`reachable()` is O(hexes × units) twice over** — tracked in TODO.md under
-  Misc (the occupancy-index item). Measured at ~39 µs per call on the 768-tile
-  map, which is fine in isolation and not fine inside a search that calls it
-  thousands of times.
+  Misc (the occupancy-index item). 32.8 µs per call, which is fine in isolation
+  and not fine inside a search that calls it thousands of times.
 
 ### Content gaps the scale decision exposes
 
@@ -208,15 +260,36 @@ rule they defend (`unspotted_enemies_still_ambush`).
 
 ### Hygiene
 
-- Clippy is not clean: 6 warnings in `tactics_core`, 26 in the game crate. Most
-  are mechanical (`collapsible_if`, `manual_range_contains`, elided lifetimes,
-  `--fix` handles them). Two are worth doing by hand: 11 instances of
-  `type_complexity` in the game crate asking for `type` aliases, and a spread of
-  `too_many_arguments` up to 11/7 — the worst offenders are the combat
-  functions, which are threading `registry, state, attacker, from, weapon,
-  target, blind, …` and would read better as a small `Shot` struct. Doing that
-  before the ballistics work would pay for itself, since penetration adds more
-  parameters to exactly those signatures.
+- **The tree is clean and CI enforces it.** `cargo clippy --workspace
+  --all-targets -- -D warnings` gates, and it denies rustc's own lints too (an
+  unused import fails the build). `cargo fmt --check` gates alongside it, with
+  `style_edition = "2024"` pinned in `rustfmt.toml` so a toolchain upgrade
+  cannot turn CI red on its own. Run both before pushing; `cargo fmt` fixes the
+  second automatically. Keep it this way. What
+  the cleanup produced is worth knowing, because the shapes it introduced are
+  the ones to reach for next time:
+  - `map_render::View` bundles rotation, centre, window, camera and the dev
+    harness's scripted cursor. Those five were threaded separately through nine
+    systems; they are all answers to "how are we looking at the world", so a
+    system now asks for `view` and calls `view.hovered(&map)` or
+    `view.face_at(&map, hex)` instead of re-deriving the projection.
+  - `map_render::TextSlot` / `MarkerQuery` and `battle::BattleHud` name the
+    query types whose `Without` filters exist only so Bevy can prove two
+    `&mut` queries do not alias.
+  - `MapFile::validate`'s placement checker is a `PlacementCheck` struct rather
+    than an eight-argument nested fn.
+  - Two `#[allow(clippy::too_many_arguments)]` remain, on `battle::pump_events`
+    and `overworld::enter_overworld`. A Bevy system's parameters are its
+    dependency list, and those two do not decompose into any smaller noun;
+    inventing a struct to satisfy the lint would make them worse. Both carry a
+    comment saying so.
+
+  Note the previous version of this note claimed the worst `too_many_arguments`
+  offenders were the combat functions and proposed a `Shot` struct. That was
+  wrong: `combat.rs` never tripped the lint. The offenders were all Bevy
+  systems in the game crate. A `Shot` struct may still be a good idea when
+  penetration adds parameters to `hit_chance`/`raw_damage`, but it is a
+  readability choice, not a lint fix.
 - `crates/game/src/battle.rs` is ~1500 lines and `overworld.rs` ~1060. Not
   urgent, but they are the two files that will absorb the prep phase, objectives
   and menus work, and they are already the hardest to navigate.
