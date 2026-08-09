@@ -17,6 +17,7 @@ use tactics_core::map::MapKind;
 use tactics_core::overworld::{
     ArmyId, OverworldEvent, OverworldOrder, OverworldState, make_overworld_planner,
 };
+use tactics_core::save::SaveGame;
 
 #[derive(Resource)]
 struct Overworld {
@@ -229,6 +230,13 @@ fn enter_overworld(
         range_dirty: false,
         muster: None,
     });
+}
+
+/// Where the single save slot lives. Beside the assets for now, which is
+/// wrong for a shipped game — it belongs in the platform's data directory —
+/// and right for one that is still run from its source tree.
+fn save_path() -> std::path::PathBuf {
+    std::path::PathBuf::from("saves/campaign.json")
 }
 
 fn center_camera(focus: &mut CameraFocus, rotation: u32, center: Hex) {
@@ -779,13 +787,22 @@ fn drive_ai(mods: Res<Mods>, mut overworld: ResMut<Overworld>) {
     }
 }
 
+// Save and load need to respawn the world, which means commands, art and the
+// camera on top of everything input already wanted. Same reasoning as the
+// other two systems carrying this allow: the parameters are the dependency
+// list and do not decompose into a smaller noun.
+#[allow(clippy::too_many_arguments)]
 fn handle_input(
+    mut commands: Commands,
     mods: Res<Mods>,
+    art: Res<ArtCache>,
     mut overworld: ResMut<Overworld>,
     mut log: ResMut<OwLogLines>,
+    mut focus: ResMut<CameraFocus>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     view: map_render::View,
+    scoped: Query<Entity, With<OverworldScope>>,
 ) {
     if overworld.state.over.is_some() || !overworld.anim.is_empty() || overworld.muster.is_some() {
         return;
@@ -805,6 +822,44 @@ fn handle_input(
     }
     if keys.just_pressed(KeyCode::Escape) || buttons.just_pressed(MouseButton::Right) {
         overworld.clear_selection();
+        return;
+    }
+    // F5/F9 save and load the campaign. A single slot, because the point of
+    // this first pass is that the state survives at all — slots, naming and a
+    // menu belong with the rest of the menu work.
+    if keys.just_pressed(KeyCode::F5) {
+        let save = SaveGame::new(Some(overworld.state.clone()), None);
+        match tactics_core::save::write(save_path(), &save) {
+            Ok(()) => log.push(format!("Saved to {}.", save_path().display())),
+            Err(e) => log.push(format!("Could not save: {e}")),
+        }
+        return;
+    }
+    if keys.just_pressed(KeyCode::F9) {
+        match tactics_core::save::read(&mods.0, save_path()) {
+            Ok(save) => match save.overworld {
+                Some(state) => {
+                    // Clear the old world first. `spawn_world` also spawns the
+                    // HUD, so respawning without despawning leaves two banners
+                    // and two log panels — and `update_ui` reads them with
+                    // `single_mut()`, which errors on a duplicate and silently
+                    // stops updating. The symptom is a campaign that loads
+                    // correctly and then appears frozen on the old day, which
+                    // is a very slow thing to diagnose from the outside.
+                    for entity in &scoped {
+                        commands.entity(entity).despawn();
+                    }
+                    let center = spawn_world(&mut commands, &mods.0, &art, view.rotation(), &state);
+                    center_camera(&mut focus, view.rotation(), center);
+                    overworld.state = state;
+                    overworld.clear_selection();
+                    overworld.anim.clear();
+                    log.push("Loaded.");
+                }
+                None => log.push("That save has no campaign in it."),
+            },
+            Err(e) => log.push(format!("Could not load: {e}")),
+        }
         return;
     }
     if !buttons.just_pressed(MouseButton::Left) {

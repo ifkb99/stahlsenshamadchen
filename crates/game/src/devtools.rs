@@ -230,6 +230,11 @@ fn parse_key(name: &str) -> Option<KeyCode> {
     {
         return Some(digit_key(d));
     }
+    if let Some(n) = name.strip_prefix('F').and_then(|n| n.parse::<u8>().ok())
+        && (1..=12).contains(&n)
+    {
+        return Some(function_key(n));
+    }
     match name {
         "Enter" | "Return" => Some(KeyCode::Enter),
         "Escape" | "Esc" => Some(KeyCode::Escape),
@@ -250,6 +255,12 @@ fn letter_key(c: char) -> KeyCode {
         KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW, KeyX, KeyY, KeyZ,
     ];
     LETTERS[(c as u8 - b'A') as usize]
+}
+
+fn function_key(n: u8) -> KeyCode {
+    use KeyCode::*;
+    const FN: [KeyCode; 12] = [F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12];
+    FN[(n - 1) as usize]
 }
 
 fn digit_key(c: char) -> KeyCode {
@@ -401,6 +412,9 @@ mod tests {
         assert_eq!(parse_key("Digit1"), Some(KeyCode::Digit1));
         assert_eq!(parse_key("Enter"), Some(KeyCode::Enter));
         assert_eq!(parse_key("Up"), Some(KeyCode::ArrowUp));
+        assert_eq!(parse_key("F5"), Some(KeyCode::F5));
+        assert_eq!(parse_key("F12"), Some(KeyCode::F12));
+        assert_eq!(parse_key("F13"), None);
         assert_eq!(parse_key("Nonsense"), None);
     }
 }

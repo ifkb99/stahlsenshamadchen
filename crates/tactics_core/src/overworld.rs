@@ -12,11 +12,12 @@ use hexx::Hex;
 use rand::seq::IndexedRandom;
 use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ArmyId(pub u32);
 
 impl ArmyId {
@@ -25,7 +26,7 @@ impl ArmyId {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverworldSide {
     pub name: String,
     pub funds: i32,
@@ -40,7 +41,7 @@ pub struct OverworldSide {
 /// unit inside an army has no use for. This is live state — the crew are
 /// [`GirlId`]s into the world's roster, so the same girls come out of a battle
 /// as went in.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArmyUnit {
     pub vehicle: String,
     /// Who is aboard, as handles into [`OverworldState::roster`].
@@ -51,7 +52,7 @@ pub struct ArmyUnit {
 
 /// A girl who was aboard a vehicle when it was destroyed, and what destroyed
 /// it — enough for the campaign to work out what became of her.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrewLoss {
     pub girl: GirlId,
     /// The vehicle she was in, for its [`crate::data::VehicleDef::safety`].
@@ -62,7 +63,7 @@ pub struct CrewLoss {
 }
 
 /// A stack of units moving as one piece on the strategic map.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Army {
     pub id: ArmyId,
     pub side: u8,
@@ -76,7 +77,7 @@ pub struct Army {
     pub alive: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OverworldOrder {
     /// Move toward `to`; moving onto a visible enemy army attacks it.
     MoveArmy {
@@ -86,7 +87,7 @@ pub enum OverworldOrder {
     EndTurn,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OverworldEvent {
     TurnStarted {
         side: u8,
@@ -139,7 +140,7 @@ pub enum OverworldError {
     NoPath,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverworldState {
     pub map: Arc<HexMap>,
     pub sides: Vec<OverworldSide>,
@@ -153,6 +154,7 @@ pub struct OverworldState {
     pub rules: CasualtyRules,
     pub armies: Vec<Army>,
     /// Owner side of each captured objective tile.
+    #[serde(with = "crate::map::hex_keyed")]
     pub owners: HashMap<Hex, u8>,
     pub turn: u32,
     pub active_side: u8,

@@ -39,11 +39,12 @@ use crate::roster::{GirlId, Roster};
 use hexx::{EdgeDirection, Hex};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Stable handle to a unit. Units are never removed from the roster, only
 /// marked dead, so ids stay valid for the whole battle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct UnitId(pub u32);
 
 impl UnitId {
@@ -53,7 +54,7 @@ impl UnitId {
 }
 
 /// One side (faction) in a battle.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SideState {
     pub name: String,
     /// `None` = human controlled.
@@ -61,7 +62,7 @@ pub struct SideState {
 }
 
 /// Where a battle is in the plan/resolve cycle.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Phase {
     /// Sides are writing orders. Nothing on the board moves; one flag per
     /// side records who has finished.
@@ -72,7 +73,7 @@ pub enum Phase {
 }
 
 /// A crewed vehicle on the battlefield.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Unit {
     pub id: UnitId,
     pub side: u8,
@@ -115,7 +116,7 @@ impl Unit {
 }
 
 /// Why a battle stopped.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EndReason {
     /// One side (or every side) was wiped out.
     Eliminated,
@@ -132,7 +133,7 @@ pub enum EndReason {
 /// under observation is not mistaken for a stalemate.
 pub const STALEMATE_ROUNDS: u32 = 8;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BattleResult {
     /// `None` means a draw: either mutual destruction or a stalemate.
     pub winner: Option<u8>,
@@ -140,7 +141,7 @@ pub struct BattleResult {
 }
 
 /// The full battle simulation state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BattleState {
     pub map: Arc<HexMap>,
     /// Sight heights for every tile, resolved once from the map and the

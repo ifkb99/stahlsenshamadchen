@@ -156,9 +156,42 @@ pub struct Tile {
     pub elevation: i32,
 }
 
+/// Serialising a map keyed by [`Hex`].
+///
+/// JSON object keys must be strings and a `Hex` is a struct, so these are
+/// written as a list of pairs instead. The list is sorted by coordinate rather
+/// than left in hash order: identical game states should produce identical
+/// save files, both so a diff between two saves means something and because
+/// this project treats "the same inputs give the same bytes" as a property
+/// worth keeping everywhere it is cheap.
+pub(crate) mod hex_keyed {
+    use hexx::Hex;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::HashMap;
+
+    pub fn serialize<S, V>(map: &HashMap<Hex, V>, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        V: Serialize,
+    {
+        let mut pairs: Vec<(&Hex, &V)> = map.iter().collect();
+        pairs.sort_by_key(|(h, _)| (h.x, h.y));
+        pairs.serialize(s)
+    }
+
+    pub fn deserialize<'de, D, V>(d: D) -> Result<HashMap<Hex, V>, D::Error>
+    where
+        D: Deserializer<'de>,
+        V: Deserialize<'de>,
+    {
+        Ok(Vec::<(Hex, V)>::deserialize(d)?.into_iter().collect())
+    }
+}
+
 /// A parsed, playable hex map.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct HexMap {
+    #[serde(with = "hex_keyed")]
     tiles: HashMap<Hex, Tile>,
 }
 
