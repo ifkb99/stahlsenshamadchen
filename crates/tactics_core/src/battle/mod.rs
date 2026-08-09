@@ -100,6 +100,9 @@ pub struct Unit {
     /// weapon list. Carries across rounds, so a slow gun caught mid-reload
     /// stays mid-reload.
     pub cooldowns: Vec<u32>,
+    /// Damage type of the last hit this unit took, if any. Read by the
+    /// campaign when working out what became of the crew.
+    pub last_hit_by: Option<crate::data::DamageType>,
     pub alive: bool,
 }
 
@@ -363,6 +366,7 @@ impl BattleState {
             planned: false,
             move_credit: 0,
             cooldowns: vec![0; vehicle.weapons.len()],
+            last_hit_by: None,
             alive: true,
         });
         id

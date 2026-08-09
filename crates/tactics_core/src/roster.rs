@@ -19,15 +19,30 @@
 //!   has fought alongside whom and how often, which is per-pair history hanging
 //!   off the same instances.
 //!
-//! # What this module deliberately does not decide
+//! # Ownership, and why there is one roster rather than one per side
 //!
-//! [`GirlStatus::Lost`] exists as a *representable state*, not a policy. What
-//! actually happens to a crew when their vehicle is destroyed — bail out,
-//! wounded pool, permadeath — is an open identity question for this game (see
-//! TODO.md), and it is deliberately not answered here. This module only makes
-//! sure that whatever is decided has somewhere to be recorded.
+//! Every girl in the world lives in a single [`Roster`] and carries the
+//! academy she belongs to in [`Girl::owner`]. The alternative — a roster per
+//! side — would make [`GirlId`] ambiguous without a side alongside it, which
+//! would push side-indexing down into the battle layer for no gain.
+//!
+//! This shape is also the one a 4x mode wants. A campaign is a two-academy
+//! case of the same thing, so girls changing hands — recruited, poached,
+//! captured, transferred between academies — is a field change here rather
+//! than a data migration later.
+//!
+//! # Death is a rule, not a fact of the model
+//!
+//! [`GirlStatus::Dead`] is only reachable when [`CasualtyRules::permadeath`]
+//! is on, which is a per-campaign option rather than something the engine
+//! decides. With it off, the worst a crew suffers is a long recovery.
+//!
+//! Note that [`GirlStatus::Lost`] is *not* death and never was: it means she
+//! bailed out and could not reach friendly lines before the fighting stopped,
+//! and is making her own way back. It resolves on its own after a few days.
 
-use crate::data::{CharacterDef, CrewStats, DataRegistry};
+use crate::data::{CharacterDef, CrewStats, DamageType, DataRegistry};
+use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
 
 /// Stable handle to a girl in a [`Roster`].
@@ -50,19 +65,80 @@ impl GirlId {
 pub enum GirlStatus {
     /// Fit to fight.
     Ready,
-    /// Out of action for `days` more campaign turns. Zero means she is back
-    /// next turn; the countdown is in overworld turns because that is the
-    /// clock a campaign advances.
+    /// Hurt, and out for `days` more campaign turns. The countdown is in
+    /// overworld turns because that is the clock a campaign advances.
     Wounded { days: u32 },
-    /// Gone for good. Present so the state is representable; nothing in the
-    /// engine puts a girl here yet, because what happens to a crew when their
-    /// tank dies is an open design question.
-    Lost,
+    /// Bailed out and did not reach friendly lines before the fighting
+    /// stopped. She is walking back, and turns up again in `days`.
+    ///
+    /// This is emphatically not a euphemism for dead — a crew whose tank
+    /// brews up mostly gets out, and the interesting consequence is that they
+    /// are unavailable for a while, not that they are gone.
+    Lost { days: u32 },
+    /// Killed. Only reachable with [`CasualtyRules::permadeath`] enabled.
+    Dead,
 }
 
 impl GirlStatus {
     pub fn is_ready(self) -> bool {
         matches!(self, Self::Ready)
+    }
+
+    /// Whether she will ever be available again. A wounded or lost girl is
+    /// coming back; a dead one is not.
+    pub fn is_permanent(self) -> bool {
+        matches!(self, Self::Dead)
+    }
+
+    /// Campaign turns until she is fit again, if she is coming back at all.
+    pub fn days_out(self) -> Option<u32> {
+        match self {
+            Self::Ready => Some(0),
+            Self::Wounded { days } | Self::Lost { days } => Some(days),
+            Self::Dead => None,
+        }
+    }
+}
+
+/// Whether a campaign is willing to kill its characters.
+///
+/// Deliberately a rule rather than a constant: Girls und Panzer is famously
+/// non-lethal and this game has an academy half that invests the player in
+/// specific girls, so permadeath is a decision a player (or a mode) makes,
+/// not one the engine makes for them.
+///
+/// Off by default: the softer rule is the one that matches the genre, and a
+/// player who wants the stakes can opt in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct CasualtyRules {
+    /// When off, [`GirlStatus::Dead`] is unreachable and what would have been
+    /// a death becomes a long recovery instead.
+    pub permadeath: bool,
+}
+
+/// What became of one crew member when her vehicle was destroyed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrewFate {
+    /// Got out and reached her own lines.
+    Unharmed,
+    Wounded {
+        days: u32,
+    },
+    /// Got out, but not back — see [`GirlStatus::Lost`].
+    Lost {
+        days: u32,
+    },
+    Killed,
+}
+
+impl From<CrewFate> for GirlStatus {
+    fn from(fate: CrewFate) -> Self {
+        match fate {
+            CrewFate::Unharmed => Self::Ready,
+            CrewFate::Wounded { days } => Self::Wounded { days },
+            CrewFate::Lost { days } => Self::Lost { days },
+            CrewFate::Killed => Self::Dead,
+        }
     }
 }
 
@@ -78,6 +154,9 @@ pub struct Girl {
     /// touching mod data — a nickname earned in play is exactly the sort of
     /// thing the academy half of the game should be able to do.
     pub name: String,
+    /// Which academy she belongs to, as a side index. Mutable on purpose:
+    /// girls changing hands is a thing a 4x mode does.
+    pub owner: u8,
     /// Current ability, seeded from the definition and grown by play.
     pub stats: CrewStats,
     pub xp: u32,
@@ -90,16 +169,79 @@ pub struct Girl {
 
 impl Girl {
     /// Stamp a new girl from a definition.
-    pub fn from_def(id: GirlId, def: &CharacterDef) -> Self {
+    pub fn from_def(id: GirlId, owner: u8, def: &CharacterDef) -> Self {
         Self {
             id,
             def: def.id.clone(),
             name: def.name.clone(),
+            owner,
             stats: def.stats,
             xp: 0,
             status: GirlStatus::Ready,
             battles: 0,
         }
+    }
+}
+
+/// Decide what became of one crew member whose vehicle was destroyed.
+///
+/// Two inputs beyond the dice, which is what makes this a model rather than a
+/// coin flip:
+///
+/// - **What hit them.** A kinetic penetration puts a spall of hot metal
+///   through the fighting compartment; high explosive is more likely to
+///   disable the vehicle than the people in it; small arms that finish off a
+///   vehicle have barely touched the crew at all.
+/// - **How survivable the vehicle is** ([`crate::data::VehicleDef::safety`]) —
+///   hatches, layout, where the ammunition lives.
+///
+/// The bail-out case is the common one and the interesting one: most crews get
+/// out. Whether they get *back* is a separate question, which is what
+/// [`GirlStatus::Lost`] records.
+///
+/// Takes the rng by reference so the caller owns determinism; the campaign
+/// resolves these in girl-id order.
+pub fn resolve_crew_fate(
+    rules: CasualtyRules,
+    safety: i32,
+    killed_by: Option<DamageType>,
+    rng: &mut impl Rng,
+) -> CrewFate {
+    // Chance in 100 that this girl is hurt at all, before safety is applied.
+    let base_harm = match killed_by {
+        Some(DamageType::Kinetic) => 55,
+        Some(DamageType::Explosive) => 40,
+        Some(DamageType::SmallArms) => 20,
+        // Nothing recorded — burned out, abandoned, or a source the sim did
+        // not attribute. Treat it as the middling case.
+        None => 40,
+    };
+    // Each point of safety takes eight points off, so a 0-safety deathtrap is
+    // meaningfully worse than a 5-safety one without ever reaching certainty.
+    let harm = (base_harm - safety * 8).clamp(5, 95);
+
+    if rng.random_range(0..100) >= harm {
+        // Out clean — but possibly on the wrong side of the fighting.
+        return if rng.random_range(0..100) < 25 {
+            CrewFate::Lost {
+                days: rng.random_range(1..=3),
+            }
+        } else {
+            CrewFate::Unharmed
+        };
+    }
+
+    // Hurt. A quarter of those are bad enough to be fatal if the campaign
+    // allows it; otherwise it is a long recovery instead.
+    let severe = rng.random_range(0..100) < 25;
+    match (severe, rules.permadeath) {
+        (true, true) => CrewFate::Killed,
+        (true, false) => CrewFate::Wounded {
+            days: rng.random_range(5..=10),
+        },
+        (false, _) => CrewFate::Wounded {
+            days: rng.random_range(1..=4),
+        },
     }
 }
 
@@ -115,9 +257,9 @@ impl Roster {
     }
 
     /// Add a girl stamped from a definition, returning her handle.
-    pub fn enlist(&mut self, def: &CharacterDef) -> GirlId {
+    pub fn enlist(&mut self, owner: u8, def: &CharacterDef) -> GirlId {
         let id = GirlId(self.girls.len() as u32);
-        self.girls.push(Girl::from_def(id, def));
+        self.girls.push(Girl::from_def(id, owner, def));
         id
     }
 
@@ -127,12 +269,18 @@ impl Roster {
     pub fn enlist_from_registry(
         &mut self,
         registry: &DataRegistry,
+        owner: u8,
         def_id: &str,
     ) -> Option<GirlId> {
         registry.character(def_id).map(|def| {
             let def = def.clone();
-            self.enlist(&def)
+            self.enlist(owner, &def)
         })
+    }
+
+    /// Every girl belonging to one academy, in id order.
+    pub fn of_side(&self, side: u8) -> impl Iterator<Item = &Girl> {
+        self.girls.iter().filter(move |g| g.owner == side)
     }
 
     pub fn get(&self, id: GirlId) -> Option<&Girl> {
@@ -201,22 +349,32 @@ impl Roster {
                 placement
                     .crew
                     .iter()
-                    .filter_map(|def_id| roster.enlist_from_registry(registry, def_id))
+                    .filter_map(|def_id| {
+                        roster.enlist_from_registry(registry, placement.side, def_id)
+                    })
                     .collect()
             })
             .collect();
         (roster, crews)
     }
 
-    /// Advance every wound by one campaign turn.
+    /// Advance every recovery and every long walk home by one campaign turn.
     pub fn advance_day(&mut self) {
         for girl in &mut self.girls {
-            if let GirlStatus::Wounded { days } = girl.status {
-                girl.status = match days.checked_sub(1) {
-                    Some(0) | None => GirlStatus::Ready,
-                    Some(remaining) => GirlStatus::Wounded { days: remaining },
-                };
-            }
+            girl.status = match girl.status {
+                GirlStatus::Wounded { days } if days > 1 => GirlStatus::Wounded { days: days - 1 },
+                GirlStatus::Lost { days } if days > 1 => GirlStatus::Lost { days: days - 1 },
+                // The last day of either brings her back.
+                GirlStatus::Wounded { .. } | GirlStatus::Lost { .. } => GirlStatus::Ready,
+                other => other,
+            };
+        }
+    }
+
+    /// Record that a girl came through a battle.
+    pub fn credit_battle(&mut self, id: GirlId) {
+        if let Some(girl) = self.get_mut(id) {
+            girl.battles += 1;
         }
     }
 }
@@ -241,7 +399,7 @@ mod tests {
     #[test]
     fn a_girl_starts_as_her_definition_but_is_not_bound_to_it() {
         let mut roster = Roster::new();
-        let id = roster.enlist(&def("anka", 3));
+        let id = roster.enlist(0, &def("anka", 3));
         assert_eq!(roster.get(id).unwrap().stats.gunnery, 3);
 
         // The whole point: the instance can move and the definition cannot.
@@ -255,8 +413,8 @@ mod tests {
     fn two_girls_from_one_definition_are_separate_people() {
         let mut roster = Roster::new();
         let template = def("recruit", 2);
-        let a = roster.enlist(&template);
-        let b = roster.enlist(&template);
+        let a = roster.enlist(0, &template);
+        let b = roster.enlist(0, &template);
         assert_ne!(a, b);
         roster.get_mut(a).unwrap().stats.gunnery = 5;
         assert_eq!(roster.get(b).unwrap().stats.gunnery, 2);
@@ -265,8 +423,8 @@ mod tests {
     #[test]
     fn a_wounded_crew_member_contributes_nothing_until_she_recovers() {
         let mut roster = Roster::new();
-        let sharp = roster.enlist(&def("sharp", 5));
-        let dull = roster.enlist(&def("dull", 1));
+        let sharp = roster.enlist(0, &def("sharp", 5));
+        let dull = roster.enlist(0, &def("dull", 1));
         let crew = [sharp, dull];
         assert_eq!(roster.best(&crew, |s| s.gunnery), 5);
 

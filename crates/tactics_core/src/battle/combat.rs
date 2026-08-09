@@ -440,6 +440,11 @@ fn resolve_shot(
     };
     let tgt = state.unit_mut(target).expect("target checked above");
     tgt.hp -= damage;
+    // Remembered so that, if this is the hit that kills it, the campaign can
+    // ask what actually went through the crew compartment. A kinetic
+    // penetration and a machine gun finishing off a burning wreck are very
+    // different days for the girls inside.
+    tgt.last_hit_by = Some(weapon.damage_type);
     let remaining = tgt.hp;
     events.push(Event::ShotHit {
         attacker,

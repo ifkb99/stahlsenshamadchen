@@ -9,6 +9,7 @@ use crate::mods::Mods;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use tactics_core::Hex;
 use tactics_core::ai::{AiPlanner, make_battle_planner};
 use tactics_core::battle::{
@@ -16,13 +17,15 @@ use tactics_core::battle::{
 };
 use tactics_core::map::UnitPlacement;
 use tactics_core::overworld::ArmyId;
+use tactics_core::overworld::{ArmyUnit, CrewLoss};
+use tactics_core::roster::{GirlId, Roster};
 
 /// One army committed to a field battle.
 #[derive(Clone)]
 pub struct BattleForce {
     pub army: ArmyId,
     pub side: u8,
-    pub units: Vec<UnitPlacement>,
+    pub units: Vec<ArmyUnit>,
 }
 
 /// Why we are entering the battle state; set before switching to it.
@@ -34,6 +37,9 @@ pub enum PendingBattle {
     /// two can take part: neighbours on either side may reinforce.
     Field {
         map_id: String,
+        /// The campaign's girls, so the crews that fight are the same people
+        /// who walk away from it.
+        roster: Arc<Roster>,
         /// The army that started it, and the one that was attacked. These
         /// two decide who advances onto the contested tile afterwards.
         attacker: ArmyId,
@@ -53,7 +59,10 @@ pub struct BattleOutcome {
     pub winner: Option<u8>,
     /// Both sides withdrew intact rather than one being destroyed.
     pub stalemate: bool,
-    pub survivors: Vec<(ArmyId, Vec<UnitPlacement>)>,
+    pub survivors: Vec<(ArmyId, Vec<ArmyUnit>)>,
+    /// Girls who were aboard a vehicle that was destroyed. What became of
+    /// them is the campaign's decision, not the battle's.
+    pub losses: Vec<CrewLoss>,
 }
 
 /// Bookkeeping for a battle that resolves an overworld clash.
@@ -286,6 +295,7 @@ fn setup_battle(
         ),
         PendingBattle::Field {
             map_id,
+            roster,
             attacker,
             defender,
             sides,
@@ -294,19 +304,16 @@ fn setup_battle(
         } => {
             let file = registry.map(map_id).expect("field battle map exists");
             let map = tactics_core::map::HexMap::from_map_file(file).expect("map parses");
-            let (placements, origins) = deploy(registry, &map, forces, *attacker_side);
-            // Stamped per battle for now. The seam to make these girls persist
-            // is here: once the overworld owns a `Roster` and armies carry
-            // `GirlId`s, this hands that roster over instead and nothing in
-            // the battle layer changes.
-            let (roster, crews) = tactics_core::roster::Roster::stamp_for(registry, &placements);
+            let (placements, crews, origins) = deploy(registry, &map, forces, *attacker_side);
+            // The campaign's own roster, so these are the same girls who will
+            // carry whatever happens here back out again.
             let state = BattleState::from_placements(
                 registry,
                 map,
                 sides.clone(),
                 &placements,
                 &crews,
-                std::sync::Arc::new(roster),
+                roster.clone(),
                 seed(),
             );
             (
@@ -415,12 +422,13 @@ fn setup_battle(
 /// Line the attacking armies up along the west edge and the defenders along
 /// the east. Returns the placements plus, for each one, the army it came
 /// from, so casualties can be reported back to the right army afterwards.
+#[allow(clippy::type_complexity)]
 fn deploy(
     registry: &tactics_core::data::DataRegistry,
     map: &tactics_core::map::HexMap,
     forces: &[BattleForce],
     attacker_side: u8,
-) -> (Vec<UnitPlacement>, Vec<ArmyId>) {
+) -> (Vec<UnitPlacement>, Vec<Vec<GirlId>>, Vec<ArmyId>) {
     // Tiles a vehicle can actually sit on, nearest edge first. Taking spots
     // in this order lets a side deploy as deep inland as it needs to, so
     // three armies fit where one used to.
@@ -443,21 +451,31 @@ fn deploy(
     };
 
     let mut placements = Vec::new();
+    let mut crews = Vec::new();
     let mut origins = Vec::new();
     for west in [true, false] {
         let mut spots = deployable(west).into_iter();
         for force in forces.iter().filter(|f| (f.side == attacker_side) == west) {
             for unit in &force.units {
                 let Some(hex) = spots.next() else { break };
-                let mut placement = unit.clone();
-                placement.at = tactics_core::hex_to_offset(hex);
-                placement.side = force.side;
-                placements.push(placement);
+                // The crew travels alongside as girl handles rather than in
+                // the placement: a `UnitPlacement` names crew by definition
+                // id, which is the thing this whole refactor is getting away
+                // from.
+                placements.push(UnitPlacement {
+                    at: tactics_core::hex_to_offset(hex),
+                    side: force.side,
+                    vehicle: unit.vehicle.clone(),
+                    crew: Vec::new(),
+                    name: unit.name.clone(),
+                    facing: None,
+                });
+                crews.push(unit.crew.clone());
                 origins.push(force.army);
             }
         }
     }
-    (placements, origins)
+    (placements, crews, origins)
 }
 
 fn spawn_unit_sprite(commands: &mut Commands, art: &ArtCache, id: UnitId, side: u8) {
@@ -1588,7 +1606,7 @@ fn finish_battle(
         // Start every participating army at zero survivors so armies that
         // were wiped out are still reported, then hand each living unit
         // back to the army it marched in with.
-        let mut survivors: Vec<(ArmyId, Vec<UnitPlacement>)> = Vec::new();
+        let mut survivors: Vec<(ArmyId, Vec<ArmyUnit>)> = Vec::new();
         let mut slot_of = HashMap::new();
         for army in &field.origins {
             slot_of.entry(*army).or_insert_with(|| {
@@ -1603,21 +1621,25 @@ fn finish_battle(
             let Some(&slot) = slot_of.get(army) else {
                 continue;
             };
-            survivors[slot].1.push(UnitPlacement {
-                at: [0, 0],
-                side: unit.side,
+            survivors[slot].1.push(ArmyUnit {
                 vehicle: unit.vehicle.clone(),
-                crew: unit
-                    .crew
-                    .iter()
-                    .filter_map(|id| battle.state.roster.get(*id))
-                    .map(|girl| girl.def.clone())
-                    .collect(),
+                crew: unit.crew.clone(),
                 name: Some(unit.name.clone()),
-                // Survivors are redeployed by the next battle's own setup, so
-                // where they were pointing when this one ended means nothing.
-                facing: None,
             });
+        }
+
+        // Everyone who was aboard something that burned. The battle reports
+        // who and what killed it; the campaign decides what that cost them,
+        // because whether this game kills its characters is a campaign rule.
+        let mut losses = Vec::new();
+        for unit in battle.state.units.iter().filter(|u| !u.alive) {
+            for girl in &unit.crew {
+                losses.push(CrewLoss {
+                    girl: *girl,
+                    vehicle: unit.vehicle.clone(),
+                    killed_by: unit.last_hit_by,
+                });
+            }
         }
         commands.insert_resource(BattleOutcome {
             attacker: field.attacker,
@@ -1628,6 +1650,7 @@ fn finish_battle(
                 Some(EndReason::Stalemate)
             ),
             survivors,
+            losses,
         });
     }
 
