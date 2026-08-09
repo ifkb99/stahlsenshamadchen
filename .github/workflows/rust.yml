@@ -1,22 +1,60 @@
 name: Rust
 
+# `develop` is the working branch, so CI that only watched `main` effectively
+# never ran. Both are watched now, and pull requests into either.
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main", "develop"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main", "develop"]
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+      - uses: actions/checkout@v4
+
+      # Bevy links against ALSA and udev on Linux. Without these the game
+      # crate fails to build while `tactics_core` is perfectly fine, which is
+      # a confusing way to discover the dependency.
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev
+
+      # Bevy is a large dependency tree; without a cache most of the run is
+      # spent rebuilding it unchanged.
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --workspace --all-targets --verbose
+
+      - name: Test
+        run: cargo test --workspace --verbose
+
+      # The one that matters most for a project whose content is data: a mod
+      # file that fails validation is otherwise a mergeable regression, since
+      # nothing in the Rust test suite reads it as a modder would.
+      - name: Validate mods
+        run: cargo run --bin validate-mods
+
+      # Gating. This covers rustc's own lints too — clippy runs the full lint
+      # pass, so unused imports and dead code fail here as well as clippy's own
+      # suggestions. Doing it via `RUSTFLAGS` instead would apply to every
+      # dependency, busting the build cache and failing on warnings that are
+      # not ours to fix.
+      #
+      # The tree is clean at this level. The two `#[allow]`s that remain are on
+      # Bevy systems whose parameter list *is* their dependency list, and each
+      # carries a comment saying why.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Gating. `rustfmt.toml` pins `style_edition = "2024"` so this cannot
+      # start failing because a newer rustfmt changed its defaults.
+      - name: Format
+        run: cargo fmt --check
