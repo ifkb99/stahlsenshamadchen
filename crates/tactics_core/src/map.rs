@@ -129,9 +129,17 @@ pub struct HexMap {
 #[derive(Debug, thiserror::Error)]
 pub enum MapError {
     #[error("map `{map}` row {row}: glyph `{glyph}` not in palette")]
-    UnknownGlyph { map: String, row: usize, glyph: char },
+    UnknownGlyph {
+        map: String,
+        row: usize,
+        glyph: char,
+    },
     #[error("map `{map}` elevation row {row}: `{glyph}` is not a digit")]
-    BadElevation { map: String, row: usize, glyph: char },
+    BadElevation {
+        map: String,
+        row: usize,
+        glyph: char,
+    },
     #[error("map `{map}` palette glyph `{glyph}` must be a single character")]
     BadPaletteKey { map: String, glyph: String },
 }
@@ -205,10 +213,9 @@ impl HexMap {
         if self.tiles.is_empty() {
             return Hex::ZERO;
         }
-        let (sx, sy) = self
-            .tiles
-            .keys()
-            .fold((0i64, 0i64), |(sx, sy), h| (sx + h.x as i64, sy + h.y as i64));
+        let (sx, sy) = self.tiles.keys().fold((0i64, 0i64), |(sx, sy), h| {
+            (sx + h.x as i64, sy + h.y as i64)
+        });
         let n = self.tiles.len() as f32;
         Hex::round([sx as f32 / n, sy as f32 / n])
     }
@@ -295,7 +302,9 @@ impl MapFile {
             }
         };
         if map.is_empty() {
-            report.errors.push(format!("map `{}` has no tiles", self.id));
+            report
+                .errors
+                .push(format!("map `{}` has no tiles", self.id));
         }
         self.validate_shape(&map, registry, report);
         for (i, row) in self.elevation.iter().enumerate() {
@@ -334,56 +343,73 @@ impl MapFile {
                 ));
             }
         }
-        fn check_placement(
-            file: &MapFile,
-            map: &HexMap,
-            registry: &DataRegistry,
-            report: &mut ValidationReport,
-            at: [i32; 2],
-            vehicle: Option<&str>,
-            crew: &[String],
-            side: u8,
-        ) {
-            let hex = crate::offset_to_hex(at[0], at[1]);
-            if !map.contains(hex) {
-                report.errors.push(format!(
-                    "map `{}`: placement at [{}, {}] is outside the map",
-                    file.id, at[0], at[1]
-                ));
-            }
-            if let Some(vehicle) = vehicle {
-                if registry.vehicle(vehicle).is_none() {
+        /// The four things every placement check needs, bundled so that only
+        /// the placement itself varies from call to call.
+        struct PlacementCheck<'a> {
+            file: &'a MapFile,
+            map: &'a HexMap,
+            registry: &'a DataRegistry,
+            report: &'a mut ValidationReport,
+        }
+
+        impl PlacementCheck<'_> {
+            fn check(&mut self, at: [i32; 2], vehicle: Option<&str>, crew: &[String], side: u8) {
+                let (file, registry) = (self.file, self.registry);
+                let report = &mut *self.report;
+                let hex = crate::offset_to_hex(at[0], at[1]);
+                if !self.map.contains(hex) {
+                    report.errors.push(format!(
+                        "map `{}`: placement at [{}, {}] is outside the map",
+                        file.id, at[0], at[1]
+                    ));
+                }
+                if let Some(vehicle) = vehicle
+                    && registry.vehicle(vehicle).is_none()
+                {
                     report.errors.push(format!(
                         "map `{}`: placement references missing vehicle `{}`",
                         file.id, vehicle
                     ));
                 }
-            }
-            for c in crew {
-                if registry.character(c).is_none() {
+                for c in crew {
+                    if registry.character(c).is_none() {
+                        report.errors.push(format!(
+                            "map `{}`: placement references missing character `{}`",
+                            file.id, c
+                        ));
+                    }
+                }
+                if side as usize >= file.sides.len() {
                     report.errors.push(format!(
-                        "map `{}`: placement references missing character `{}`",
-                        file.id, c
+                        "map `{}`: placement references side {} but only {} sides are declared",
+                        file.id,
+                        side,
+                        file.sides.len()
                     ));
                 }
             }
-            if side as usize >= file.sides.len() {
-                report.errors.push(format!(
-                    "map `{}`: placement references side {} but only {} sides are declared",
-                    file.id,
-                    side,
-                    file.sides.len()
-                ));
-            }
         }
 
+        let mut check = PlacementCheck {
+            file: self,
+            map: &map,
+            registry,
+            report,
+        };
         for u in &self.units {
-            check_placement(self, &map, registry, report, u.at, Some(&u.vehicle), &u.crew, u.side);
+            check.check(u.at, Some(&u.vehicle), &u.crew, u.side);
         }
         for a in &self.armies {
-            check_placement(self, &map, registry, report, a.at, None, &[], a.side);
+            check.check(a.at, None, &[], a.side);
             for u in &a.units {
-                check_placement(self, &map, registry, report, a.at, Some(&u.vehicle), &u.crew, u.side);
+                // KNOWN BUG, preserved deliberately: this passes the army's
+                // own hex rather than `u.at`, so a unit's coordinates inside
+                // an `ArmyPlacement` are neither validated nor used. Fixing it
+                // is a behaviour change with a design question attached —
+                // either honour the field or drop it — and it is tracked as
+                // such in CLAUDE.md. `frontier.json` currently carries 14 `at`
+                // fields that mean nothing because of this.
+                check.check(a.at, Some(&u.vehicle), &u.crew, u.side);
             }
         }
     }
