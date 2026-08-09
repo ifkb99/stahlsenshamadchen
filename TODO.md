@@ -21,6 +21,9 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 - terrain cover is applied twice: hit_chance_inner subtracts `cover / 2` from accuracy and raw_damage then multiplies by `(100 - cover) / 100`. town at 40 is -20 to hit *and* -40% damage, ~52% total. may well be intended, but the number in a mod file reads much weaker than it plays
 ## Immediate Goals
 ### Misc
+- think about retreating. how does it work IRL?
+  - I want to allow the player to conduct an actual retreat; reaching some tiles to leave the map
+  - that may be fine, but IRL there are no tiles. maybe allow enemy to attempt to pursue?
 - overlays currently reproject via HexOverlay + reposition_map on view rotate. alternative: parent each overlay to its MapTile entity and let Bevy transform propagation carry them (more robust as overlay kinds grow; needs a Hex→Entity index when spawning highlights)
 - save/load: derive serde across BattleState/OverworldState/roster while the sim is still small (ChaCha8Rng supports serde). every field added from here on either serializes or becomes a migration problem
 - allow better control of units. planned routes are drawn now, but they cannot be shaped: waypoints, reverse movement (penalized), and a face command (uses movement)

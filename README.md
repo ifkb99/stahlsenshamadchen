@@ -1,4 +1,4 @@
-# Stahlsenshamädchen
+# Senshamädchen
 
 A hex-based tactics roguelike in Rust + Bevy, inspired by Girls und Panzer,
 Fire Emblem, and Advance Wars: girls in tanks, fog of war, and an overworld
