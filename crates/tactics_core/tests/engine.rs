@@ -3913,15 +3913,24 @@ fn a_devolved_commander_issues_no_ground_missions() {
 
 // --- contact and order latency (chunk 4 of chain of command) ----------------
 
-/// Command rules built white-box, because the base mod deliberately declares
-/// none yet: this chunk is the machinery, and chunk 5 is where the shipped
-/// game switches it on. Building them here is what lets these tests state the
-/// rules at any coefficient — including the zero coefficients that must give
-/// back today's game exactly — without moving the determinism baseline an
-/// inch.
+/// Take the radio sets out of every vehicle, so a test that engineers a net
+/// with `command_rules(radius, ..)` is testing the radius it wrote rather
+/// than the 8-hex hardware the base vehicles carry.
+fn strip_radios(reg: &mut DataRegistry) {
+    for vehicle in reg.vehicles.values_mut() {
+        vehicle.radio = None;
+    }
+}
+
+/// Command rules built white-box, so these tests can state the rules at any
+/// coefficient — including the zero coefficients that must give back today's
+/// game exactly — without moving the determinism baseline an inch.
 fn command_rules(radius: u32, relay: bool, base_ticks: u32) -> tactics_core::data::CommandRules {
     tactics_core::data::CommandRules {
         radius,
+        // No flags in these tests unless a test says otherwise: they are
+        // about the radio, and the visual medium has its own.
+        visual_range: 0,
         // Zero per point, so these tests are about the rules rather than about
         // which girl happens to be sitting in the radio seat.
         radius_per_signals: 0,
@@ -4040,6 +4049,13 @@ fn a_command_block_with_zero_coefficients_is_the_game_without_one() {
     let run = |rules: Option<tactics_core::data::CommandRules>| -> Vec<String> {
         let mut reg = registry();
         reg.command = rules;
+        // The pin pins the RULES coefficients, so the vehicles' own radio
+        // sets are stripped: hardware at 8 hexes would cap the "everyone in
+        // contact" net the zeroed block declares, and hardware is content,
+        // not a coefficient. Stripped identically in both runs.
+        for vehicle in reg.vehicles.values_mut() {
+            vehicle.radio = None;
+        }
         let mut state = BattleState::from_map(&reg, "river_crossing", 21).unwrap();
         let mut ai = AiDriver::new();
         ai.insert(
@@ -4087,6 +4103,7 @@ fn a_command_block_with_zero_coefficients_is_the_game_without_one() {
         radius: 999,
         radius_per_signals: 0,
         relay: true,
+        visual_range: 0,
         overworld_radius: 999,
         latency: tactics_core::data::ReactionRules {
             skill: "command".into(),
@@ -4205,6 +4222,7 @@ fn a_cut_off_unit_keeps_the_orders_she_had() {
         // Two hexes and no relay: the platoon deploys strung out, so the
         // second tank cannot hear her commander.
         r.command = Some(command_rules(2, false, 0));
+        strip_radios(&mut r);
         r
     };
     let (cut_off, events) = quiet_round(&cut_off_reg, Some((armor, mission.clone())));
@@ -4238,6 +4256,7 @@ fn a_cut_off_unit_keeps_the_orders_she_had() {
     let heard_reg = {
         let mut r = registry();
         r.command = Some(command_rules(999, false, 0));
+        strip_radios(&mut r);
         r
     };
     let (in_contact, _) = quiet_round(&heard_reg, Some((armor, mission)));
@@ -4294,6 +4313,7 @@ fn an_order_never_heard_does_not_steer_her() {
     let cut_off_reg = {
         let mut r = registry();
         r.command = Some(command_rules(2, false, 0));
+        strip_radios(&mut r);
         r
     };
     // Round one, no mission: she goes out of contact carrying nothing.
@@ -4339,6 +4359,7 @@ fn an_order_never_heard_does_not_steer_her() {
 fn contact_lost_is_said_once_and_restored_out_loud() {
     let mut reg = registry();
     reg.command = Some(command_rules(3, false, 0));
+    strip_radios(&mut reg);
     let mut state = BattleState::from_map(&reg, "river_crossing", 8).expect("battle");
     let armor = formation_named(&state, "kuhlmann_armor");
     let formation = &state.formations()[armor.index()];
@@ -4506,6 +4527,7 @@ fn a_contact_no_longer_seen_goes_stale_not_absent() {
     // last reported position, marked stale rather than deleted.
     let mut reg = registry();
     reg.command = Some(command_rules(999, false, 0));
+    strip_radios(&mut reg);
     let mut state = picture_stage(&reg, 4);
     let enemy = UnitId(2);
     let seen_at = state.unit(enemy).unwrap().pos;
@@ -4942,5 +4964,104 @@ fn a_loss_condition_must_name_a_formation_of_its_own_side() {
     assert!(
         errors.contains("but that formation belongs to side 0"),
         "and a side cannot stake the battle on somebody else's girls: {errors}"
+    );
+}
+
+// --- the net is two media (chunk 9a) ---------------------------------------
+
+/// Two side-0 formations on a road: Alpha's leader far west, her one member
+/// far east beyond any radio — but two hexes from Bravo's leader, who is on
+/// the net by definition. With `forest`, a wall of trees stands between that
+/// member and Bravo, so nobody can see a flag.
+fn signal_stage(reg: &DataRegistry, forest: bool, seed: u64) -> BattleState {
+    let mut row: Vec<char> = std::iter::repeat_n('g', 40).collect();
+    if forest {
+        row[11] = 'f';
+    }
+    let row: String = row.into_iter().collect();
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "signal_stage",
+        "palette": { "g": "grass", "f": "forest" },
+        "rows": [row],
+        "formations": [
+            { "id": "alpha", "name": "Alpha", "side": 0 },
+            { "id": "bravo", "name": "Bravo", "side": 0 },
+        ],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let mut alpha_lead = unit_at([0, 0], 0, "recon_car", "Alpha Lead");
+    alpha_lead.formation = Some("alpha".into());
+    alpha_lead.leads = true;
+    let mut stray = unit_at([12, 0], 0, "recon_car", "Stray");
+    stray.formation = Some("alpha".into());
+    let mut bravo_lead = unit_at([10, 0], 0, "recon_car", "Bravo Lead");
+    bravo_lead.formation = Some("bravo".into());
+    bravo_lead.leads = true;
+    let enemy = unit_at([38, 0], 1, "recon_car", "Far Foe");
+    let placements = vec![alpha_lead, stray, bravo_lead, enemy];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    )
+}
+
+#[test]
+fn a_flag_carries_between_formations_where_no_radio_does() {
+    // Radio follows the chain of command, but formation membership is
+    // irrelevant to seeing a signal flag: a stray twelve hexes from her own
+    // leader is on the net through the neighbouring platoon's commander two
+    // hexes away — unless a forest stands where the flag would have to be
+    // seen, or the mod declares no visual signalling at all.
+    let rules = |visual: u32| {
+        let mut r = registry();
+        let mut rules = command_rules(4, true, 0);
+        rules.visual_range = visual;
+        r.command = Some(rules);
+        strip_radios(&mut r);
+        r
+    };
+    let stray = UnitId(1);
+    let contact_of = |reg: &DataRegistry, forest: bool| -> bool {
+        let mut state = signal_stage(reg, forest, 6);
+        commit_all(reg, &mut state);
+        state.step_tick(reg);
+        state
+            .formations()
+            .iter()
+            .find(|f| f.id == "alpha")
+            .expect("alpha exists")
+            .in_contact(stray)
+    };
+
+    let flags = rules(2);
+    assert!(
+        contact_of(&flags, false),
+        "the flag reaches her through Bravo's commander"
+    );
+    assert!(
+        !contact_of(&flags, true),
+        "but not through a forest: a signal has to be seen"
+    );
+    let silent = rules(0);
+    assert!(
+        !contact_of(&silent, false),
+        "and a mod that declares no visual medium has none"
     );
 }

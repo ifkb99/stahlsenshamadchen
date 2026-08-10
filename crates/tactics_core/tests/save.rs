@@ -525,6 +525,7 @@ fn a_mission_in_transit_survives_a_save() {
     // so the delay is the stated three ticks whoever is commanding.
     reg.command = Some(tactics_core::data::CommandRules {
         radius: 999,
+        visual_range: 0,
         radius_per_signals: 0,
         relay: true,
         overworld_radius: 999,

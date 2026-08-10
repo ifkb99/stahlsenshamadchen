@@ -114,6 +114,18 @@ pub struct VehicleDef {
     /// Crew roles this vehicle needs ("commander", "driver", "gunner", ...).
     #[serde(default)]
     pub crew_slots: Vec<String>,
+    /// Radio transmit range in hexes — hardware, before the crew's `signals`
+    /// skill works it better or worse.
+    ///
+    /// `None` is a vehicle with no set of its own, which today falls back to
+    /// the command block's `radius` so content written before this field
+    /// keeps its game; once radios are damageable components and infantry
+    /// exist, `None` becomes a real statement (runners and flags only).
+    /// This field is the seam that future hangs off, which is why it lives
+    /// on the vehicle rather than in the rules: a radio is a thing a
+    /// vehicle carries, and things a vehicle carries can be hit.
+    #[serde(default)]
+    pub radio: Option<u32>,
     /// How survivable this vehicle is for the girls inside it, 0-5.
     ///
     /// Separate from armour on purpose: armour decides whether the vehicle

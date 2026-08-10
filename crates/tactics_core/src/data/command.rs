@@ -59,6 +59,21 @@ pub struct CommandRules {
     /// how a signals net is run, not of how far apart the stations happen to
     /// be.
     pub relay: bool,
+    /// How far a hand signal, a flag or a shout carries, in hexes, between
+    /// ANY two friendly vehicles that can see each other.
+    ///
+    /// The second medium of the net, and deliberately promiscuous where the
+    /// radio is hierarchical: radio traffic follows the chain of command, but
+    /// formation membership is irrelevant to seeing a signal flag, so a
+    /// platoon hugging its neighbour stays on the net through her even with
+    /// every radio out of reach. Requires a clear sight line — a flag does
+    /// not carry through a forest — and is deliberately much shorter than
+    /// vision, because reading a signal legibly is not the same act as
+    /// noticing a tank.
+    ///
+    /// Zero (the default a block that says nothing gets) is the game before
+    /// this field existed: no visual signalling at all.
+    pub visual_range: u32,
     /// Command radius in *overworld* hexes, for the campaign's own contact
     /// graph. A separate number from [`Self::radius`] and not derived from it,
     /// because the two are measured in different units — an overworld hex is
@@ -90,6 +105,7 @@ impl Default for CommandRules {
             radius: 6,
             radius_per_signals: 2,
             relay: true,
+            visual_range: 0,
             // Four overworld hexes is 16 km at the shipped scale — a day's
             // sustained march, so an army that drives out of its own
             // headquarters' reach in one day is one that was sent somewhere on
@@ -114,8 +130,18 @@ impl CommandRules {
     /// contact with herself, which is not a state anything downstream is
     /// prepared to reason about.
     pub fn radius_for(&self, signals: i32) -> u32 {
+        self.radio_range(self.radius, signals)
+    }
+
+    /// The reach of a specific transmitter: its vehicle's radio hardware
+    /// (`base`), worked better or worse by the crew's `signals`. This is the
+    /// form the contact graph uses now that radios are things vehicles carry
+    /// — [`Self::radius_for`] is the same sum with the block's own radius as
+    /// the hardware, which is what a vehicle that declares no radio falls
+    /// back to.
+    pub fn radio_range(&self, base: u32, signals: i32) -> u32 {
         let margin = signals - crate::data::AVERAGE;
-        (self.radius as i32 + self.radius_per_signals * margin).max(1) as u32
+        (base as i32 + self.radius_per_signals * margin).max(1) as u32
     }
 
     /// Ticks a mission spends in transit to a leader with this much of the
@@ -160,6 +186,7 @@ mod tests {
             radius: 999,
             radius_per_signals: 0,
             relay: true,
+            visual_range: 0,
             overworld_radius: 999,
             latency: ReactionRules {
                 skill: "command".into(),

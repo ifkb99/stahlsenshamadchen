@@ -324,6 +324,7 @@
         "radius": 8,
         "radius_per_signals": 1,
         "relay": true,
+        "visual_range": 3,
         "overworld_radius": 4,
         "latency": {
             "skill": "command",

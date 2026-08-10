@@ -568,56 +568,99 @@ impl BattleState {
         let Some(rules) = registry.command.as_ref() else {
             return;
         };
+        // The net is two media, walked side-wide in one breadth-first pass.
+        //
+        // **Radio follows the chain of command**: a transmitter reaches only
+        // her own formation, at her vehicle's radio worked by her crew's
+        // signals — dissemination up and down the squad, never sideways to a
+        // neighbour's platoon. **Visual signalling is promiscuous**: a flag,
+        // a hand, a shout carries `visual_range` hexes to ANY friendly with
+        // a clear line to see it, formation be damned — which is exactly why
+        // the walk is per side rather than per formation, and why a platoon
+        // hugging its neighbour stays on the net with every radio out of
+        // reach. Roots are the formation leaders (each implicitly wired to
+        // the side's command) and every unit in no formation at all; roots
+        // always transmit, everyone else extends the net only where `relay`
+        // says a net is run that way.
+        //
+        // Roots, queue and candidate scans are all in unit-id order, so the
+        // reached set and the events below cannot depend on a hash.
+        for side in 0..self.sides.len() as u8 {
+            let living: Vec<UnitId> = self.side_units(side).map(|u| u.id).collect();
+            let mut roots: Vec<UnitId> = living
+                .iter()
+                .copied()
+                .filter(|id| match self.command.formation_of(*id) {
+                    Some(f) => f.leader == Some(*id),
+                    None => true,
+                })
+                .collect();
+            roots.sort_unstable();
+
+            let mut heard: Vec<UnitId> = roots.clone();
+            let mut anchors: VecDeque<UnitId> = roots.into();
+            while let Some(anchor) = anchors.pop_front() {
+                let Some(unit) = self.unit(anchor) else {
+                    continue;
+                };
+                let signals = self.roster.crew_skill(
+                    registry,
+                    registry.vehicle(&unit.vehicle),
+                    &unit.crew,
+                    SIGNALS,
+                    self.terrain_at(unit.pos),
+                );
+                let radio_base = registry
+                    .vehicle(&unit.vehicle)
+                    .and_then(|v| v.radio)
+                    .unwrap_or(rules.radius);
+                let radio = rules.radio_range(radio_base, signals) as i32;
+                let from = unit.pos;
+                let squad = self.command.formation_of(anchor).map(|f| f.id.clone());
+                for id in &living {
+                    if heard.contains(id) {
+                        continue;
+                    }
+                    let Some(other) = self.unit(*id) else {
+                        continue;
+                    };
+                    let dist = other.pos.distance_to(from);
+                    let by_radio = dist <= radio
+                        && squad.is_some()
+                        && self.command.formation_of(*id).map(|f| f.id.as_str())
+                            == squad.as_deref();
+                    let by_sight = rules.visual_range > 0
+                        && dist <= rules.visual_range as i32
+                        && self.sight.clear(from, other.pos);
+                    if by_radio || by_sight {
+                        heard.push(*id);
+                        if rules.relay {
+                            anchors.push_back(*id);
+                        }
+                    }
+                }
+            }
+
+            self.settle_contact(side, &heard, events);
+        }
+    }
+
+    /// Write one side's reached set back onto its formations, snapshotting
+    /// standing orders for the newly cut off and saying every change once.
+    fn settle_contact(&mut self, side: u8, heard: &[UnitId], events: &mut Vec<Event>) {
         for index in 0..self.command.formations.len() {
-            let formation = &self.command.formations[index];
-            let leader = formation.leader;
+            if self.command.formations[index].side != side {
+                continue;
+            }
             // Only units still on the field can be in or out of contact. The
             // dead and the departed are neither, and saying so about them
             // would be noise in the log at the worst possible moment.
-            let living: Vec<UnitId> = formation
+            let living: Vec<UnitId> = self.command.formations[index]
                 .members
                 .iter()
                 .copied()
                 .filter(|id| self.unit(*id).is_some())
                 .collect();
-
-            let mut heard: Vec<UnitId> = Vec::new();
-            if let Some(leader) = leader.filter(|id| self.unit(*id).is_some()) {
-                heard.push(leader);
-                let mut anchors = VecDeque::from([leader]);
-                while let Some(anchor) = anchors.pop_front() {
-                    let Some(unit) = self.unit(anchor) else {
-                        continue;
-                    };
-                    let signals = self.roster.crew_skill(
-                        registry,
-                        registry.vehicle(&unit.vehicle),
-                        &unit.crew,
-                        SIGNALS,
-                        self.terrain_at(unit.pos),
-                    );
-                    let (from, radius) = (unit.pos, rules.radius_for(signals) as i32);
-                    for id in &living {
-                        if heard.contains(id) {
-                            continue;
-                        }
-                        let Some(member) = self.unit(*id) else {
-                            continue;
-                        };
-                        if member.pos.distance_to(from) <= radius {
-                            heard.push(*id);
-                            if rules.relay {
-                                anchors.push_back(*id);
-                            }
-                        }
-                    }
-                    if !rules.relay {
-                        // Without relay the leader is the only voice; nobody
-                        // she reached extends the net.
-                        break;
-                    }
-                }
-            }
 
             // `living` is in unit-id order, so this is too, and so are the
             // events below it. A member newly cut off snapshots the standing
