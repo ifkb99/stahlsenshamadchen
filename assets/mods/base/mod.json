@@ -1,6 +1,6 @@
 {
     "id": "base",
-    "name": "Stahlsenshamädchen Base",
+    "name": "Stahlsensham\u00e4dchen Base",
     "version": "0.1.0",
     "description": "Core content: starter characters, vehicles, weapons, terrain and demo maps.",
     "dependencies": [],
@@ -16,5 +16,111 @@
         "vision_per_awareness": 5,
         "speed_per_driving": 5,
         "accuracy_per_gunnery": 3
-    }
+    },
+    "cores": [
+        {
+            "id": "nerve",
+            "name": "Nerve",
+            "description": "Steadiness under fire."
+        },
+        {
+            "id": "wits",
+            "name": "Wits",
+            "description": "Quickness and perception. How fast she notices, and reacts."
+        },
+        {
+            "id": "intellect",
+            "name": "Intellect",
+            "description": "Reasoning and planning. Reading ground, and understanding an order correctly."
+        },
+        {
+            "id": "hands",
+            "name": "Hands",
+            "description": "Coordination. Laying a gun, driving, loading, repairing."
+        },
+        {
+            "id": "presence",
+            "name": "Presence",
+            "description": "Authority. Whether an order lands and is obeyed."
+        },
+        {
+            "id": "charm",
+            "name": "Charm",
+            "description": "Rapport. Who she gets on with, and how morale travels."
+        }
+    ],
+    "skills": [
+        {
+            "id": "gunnery",
+            "name": "Gunnery",
+            "cores": {
+                "hands": 2,
+                "wits": 1
+            },
+            "untrained_penalty": 4
+        },
+        {
+            "id": "driving",
+            "name": "Driving",
+            "cores": {
+                "hands": 2,
+                "nerve": 1
+            },
+            "untrained_penalty": 3
+        },
+        {
+            "id": "loading",
+            "name": "Loading",
+            "cores": {
+                "hands": 2,
+                "nerve": 1
+            },
+            "untrained_penalty": 3
+        },
+        {
+            "id": "observation",
+            "name": "Observation",
+            "cores": {
+                "wits": 3,
+                "intellect": 1
+            },
+            "untrained_penalty": 2
+        },
+        {
+            "id": "signals",
+            "name": "Signals",
+            "cores": {
+                "intellect": 2,
+                "wits": 1
+            },
+            "untrained_penalty": 4
+        },
+        {
+            "id": "maintenance",
+            "name": "Maintenance",
+            "cores": {
+                "hands": 2,
+                "intellect": 1
+            },
+            "untrained_penalty": 5
+        },
+        {
+            "id": "first_aid",
+            "name": "First Aid",
+            "cores": {
+                "intellect": 2,
+                "hands": 1
+            },
+            "untrained_penalty": 5
+        },
+        {
+            "id": "command",
+            "name": "Command",
+            "cores": {
+                "presence": 2,
+                "intellect": 1
+            },
+            "untrained_penalty": 6
+        }
+    ]
 }

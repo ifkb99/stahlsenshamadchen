@@ -3,60 +3,70 @@
         "id": "anka",
         "name": "Anka Weiss",
         "bio": "Calm under fire. Commands the school's medium tank like she was born in it.",
-        "stats": { "gunnery": 3, "driving": 1, "awareness": 2, "morale": 4, "leadership": 4 }
+        "cores": { "nerve": 13, "wits": 10, "intellect": 11, "hands": 10, "presence": 13, "charm": 11 },
+        "skills": { "gunnery": 11, "driving": 9, "signals": 10, "command": 12 }
     },
     {
         "id": "mina",
         "name": "Mina Falkenrath",
         "bio": "Gunnery prodigy with a grudge against paper targets.",
-        "stats": { "gunnery": 5, "driving": 0, "awareness": 1, "morale": 2, "leadership": 1 }
+        "cores": { "nerve": 9, "wits": 10, "intellect": 10, "hands": 14, "presence": 8, "charm": 9 },
+        "skills": { "gunnery": 15, "loading": 10 }
     },
     {
         "id": "juno",
         "name": "Juno Akiyama",
         "bio": "Drives like the brakes are a suggestion.",
-        "stats": { "gunnery": 1, "driving": 5, "awareness": 2, "morale": 3, "leadership": 1 }
+        "cores": { "nerve": 11, "wits": 12, "intellect": 9, "hands": 14, "presence": 9, "charm": 11 },
+        "skills": { "driving": 15, "maintenance": 10 }
     },
     {
         "id": "elsa",
         "name": "Elsa Brandt",
         "bio": "Sees everything, says little. The recon section is hers.",
-        "stats": { "gunnery": 1, "driving": 2, "awareness": 5, "morale": 3, "leadership": 2 }
+        "cores": { "nerve": 11, "wits": 15, "intellect": 12, "hands": 10, "presence": 10, "charm": 8 },
+        "skills": { "signals": 12, "driving": 10 }
     },
     {
         "id": "petra",
         "name": "Petra Voss",
         "bio": "Firing solutions by intuition, confirmed by mathematics.",
-        "stats": { "gunnery": 4, "driving": 0, "awareness": 2, "morale": 3, "leadership": 2 }
+        "cores": { "nerve": 10, "wits": 11, "intellect": 14, "hands": 12, "presence": 10, "charm": 9 },
+        "skills": { "gunnery": 13, "maintenance": 11 }
     },
     {
         "id": "rosa",
         "name": "Rosa Steiner",
         "bio": "First-year. Enthusiasm outweighs experience, barely.",
-        "stats": { "gunnery": 2, "driving": 2, "awareness": 1, "morale": 5, "leadership": 0 }
+        "cores": { "nerve": 14, "wits": 9, "intellect": 9, "hands": 10, "presence": 8, "charm": 13 },
+        "skills": { "gunnery": 9, "driving": 9, "loading": 9 }
     },
     {
         "id": "irma",
         "name": "Irma Krieger",
         "bio": "Captain of the Iron Valkyries. Textbook doctrine, ruthlessly applied.",
-        "stats": { "gunnery": 4, "driving": 1, "awareness": 2, "morale": 4, "leadership": 4 }
+        "cores": { "nerve": 13, "wits": 10, "intellect": 13, "hands": 11, "presence": 14, "charm": 8 },
+        "skills": { "command": 14, "gunnery": 12, "signals": 11 }
     },
     {
         "id": "sofia",
         "name": "Sofia Ravenna",
         "bio": "Valkyrie flanker. Fights on instinct and espresso.",
-        "stats": { "gunnery": 2, "driving": 4, "awareness": 2, "morale": 3, "leadership": 1 }
+        "cores": { "nerve": 10, "wits": 13, "intellect": 9, "hands": 12, "presence": 9, "charm": 12 },
+        "skills": { "driving": 13, "gunnery": 10 }
     },
     {
         "id": "nadja",
         "name": "Nadja Orlov",
         "bio": "Tank destroyer ace. Patience of a glacier, temper of an avalanche.",
-        "stats": { "gunnery": 5, "driving": 1, "awareness": 3, "morale": 2, "leadership": 1 }
+        "cores": { "nerve": 9, "wits": 12, "intellect": 11, "hands": 14, "presence": 10, "charm": 7 },
+        "skills": { "gunnery": 15, "first_aid": 9 }
     },
     {
         "id": "greta",
         "name": "Greta Müller",
         "bio": "Valkyrie scout. Writes home about the scenery between contacts.",
-        "stats": { "gunnery": 1, "driving": 3, "awareness": 4, "morale": 3, "leadership": 1 }
+        "cores": { "nerve": 11, "wits": 14, "intellect": 11, "hands": 10, "presence": 9, "charm": 12 },
+        "skills": { "signals": 12, "driving": 12 }
     }
 ]
