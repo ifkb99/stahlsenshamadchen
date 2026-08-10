@@ -548,6 +548,107 @@ as brain goal inputs; commander traits feeding the brain (the theater's full
 form — the seam exists from chunk 2); the engineer/logistics units the comms
 rules make meaningful.
 
+## Playtest follow-ups (chunk 9)
+
+The first real play session (2026-08-10) found the wire working and found the
+three things it lacks: orders die instead of waiting, the net is invisible,
+and the radio is a rule rather than a thing a vehicle carries. Decisions
+taken with the designer; the sub-chunks land in this order because 9a changes
+the net's shape and everything after draws it or rides on it.
+
+### 9a. The net is two media (difficulty 3/5)
+
+Contact stops being one flat radius and becomes the union of two edge kinds,
+walked by the same deterministic BFS from the leader:
+
+- **Radio, within the chain of command.** `VehicleDef.radio: Option<u32>` —
+  transmit range in hexes, hardware, the seam that damage and interception
+  later attach to. A vehicle without the field uses the command block's
+  `radius` exactly as today, so mods written before the field keep their
+  game. The base mod declares it on every vehicle at the uniform current
+  value (8) — deliberately no differentiation yet, so this pass changes
+  shape, not balance; a tuning pass differentiates later. Radio hops stay
+  *inside the formation* (leader to members, member relaying to member —
+  dissemination up and down the squad); cross-formation coordination goes up
+  to the side and back down, which today is free because the side root is
+  the player or the brain, and becomes real when an HQ unit exists. Each
+  hop transmits at the *transmitter's* effective range (her vehicle's radio
+  plus `radius_per_signals` on her crew).
+- **Visual, between any friendlies.** A new `visual_range` in the command
+  block (default 3 — a flag or a hand at 100 m hexes carries much shorter
+  than an eye spots a tank) links ANY two friendly units within it that
+  have a clear sight line (`state.sight.clear`, the cheap cached check).
+  Formation membership is irrelevant to seeing a signal flag, which is what
+  keeps a small formation near its neighbours on the net without a radio
+  vehicle existing yet.
+
+The baseline regenerates deliberately (net shape moves the wire events);
+read the diff — combat drift beyond what contact changes explain is a bug.
+Campaign contact keeps its current senior-army radio model; 4 km hexes have
+no visual signalling to speak of.
+
+*Future, recorded not built:* radios as damageable components (waits on the
+ballistics/component rework); transmissions as detectable events — an enemy
+with the `signals` skill learning that *somebody* transmitted nearby, then
+decoding with time — is the electronic-warfare layer, and it falls out of
+transmissions being events once somebody wants it.
+
+### 9b. Orders wait instead of dying (difficulty 3/5)
+
+Deliver-on-contact, both layers. A direct order to an out-of-contact unit is
+*accepted* and waits at the radio: the battle stores the intent (the
+destination, never the computed path — she re-paths from wherever she is
+when it reaches her) and delivers it at the first planning phase she is in
+contact for, announced with its own event. `ClearIntent` clears a waiting
+order without needing contact — not sending is free. On the campaign, a
+mission to an out-of-range army queues at the senior army and transmits at
+a turn start that finds the army in range. The formation panel and army
+panel both show "orders waiting", because an order silently parked is as
+illegible as one silently dropped.
+
+Delivery is at the planning phase, not mid-round: WEGO's bargain is that
+resolution plays out what was planned, and a queued order landing mid-tick
+belongs to the reaction-to-new-information machinery that arrives with
+traits, not here.
+
+### 9c. Mission sequences (difficulty 4/5)
+
+"Advance to the ford, then hold it." `Formation` gains a plan — a queue of
+missions behind the standing one. `Order::SetMission` replaces the whole
+plan (current behaviour, unchanged); new `Order::QueueMission` appends. The
+plan is transmitted once and executed locally by the formation: promotion
+from one mission to the next needs no wire, because the leader has known
+the whole plan since it arrived — which is the Auftragstaktik shape and
+also the cheap one. Promotion happens in the sim at end of round when the
+standing mission *completes*:
+
+- `Advance { to }` completes when a member stands within 1 hex of `to`.
+- `Recon { toward }` completes when the formation has eyes on it — the
+  target tile visible to a member.
+- `Hold` and `Withdraw` are terminal: nothing follows a stand-fast or a
+  retreat, and queueing behind one is refused so the impossibility is said
+  rather than silent.
+
+Completion and promotion are announced (the log hears "1st Platoon reaches
+its objective; moving to the next order"). Executors keep reading only the
+standing mission — sequencing is entirely the formation's bookkeeping. UI:
+holding Shift with G/H/R queues instead of replacing; the panel lists the
+plan in order.
+
+### 9d. Seeing the net (difficulty 2/5)
+
+- Leaders get a marker on their sprite (team-coloured chevron), everywhere,
+  always — who is in charge is not privileged information about your own
+  side, and on the enemy it only shows for units the picture shows anyway.
+- Selecting a formation draws the net: a range ring at the leader's
+  effective radio range, members tinted by contact state, and — if it reads
+  well in the screenshot loop, not otherwise — link lines showing who hears
+  whom and by which medium.
+- The panel names the numbers: "Net: radio 8 (+1, Elsa's signals), visual
+  3" and, per member, in contact / out / orders waiting.
+- Campaign mirror: a marker on the senior army, a radio-range ring on
+  selection, and the existing out-of-contact tag kept.
+
 ## Open questions
 
 Carried deliberately, none blocking chunks 1–2:
