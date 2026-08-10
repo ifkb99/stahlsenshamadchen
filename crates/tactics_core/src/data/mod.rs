@@ -15,6 +15,6 @@ pub use cores::{
 };
 pub use defs::*;
 pub use manifest::ModManifest;
-pub use morale::{MoraleRules, MoraleRung};
+pub use morale::{MoraleRules, MoraleRung, holds_together};
 pub use registry::{DataError, DataRegistry, ValidationReport, parse_color};
 pub use scale::Scale;

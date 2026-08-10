@@ -347,6 +347,24 @@ impl BattleState {
             .map(|u| u.id)
             .collect();
         for id in refusing {
+            // She gets to try to hold. Discipline is the skill that resists,
+            // rolled three-dice against her level, so training buys reliability
+            // rather than a coin flip — and disobedience becomes something a
+            // player can train away instead of a fact about the girl.
+            let level = self.unit(id).map(|u| {
+                self.roster.crew_skill(
+                    registry,
+                    registry.vehicle(&u.vehicle),
+                    &u.crew,
+                    &registry.morale.skill,
+                    self.terrain_at(u.pos),
+                )
+            });
+            if let Some(level) = level
+                && crate::data::holds_together(&mut self.rng, level)
+            {
+                continue;
+            }
             let rung = self
                 .unit(id)
                 .map(|u| registry.morale.rung(u.pressure).name.clone())

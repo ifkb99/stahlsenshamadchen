@@ -136,6 +136,20 @@ impl MoraleRules {
     }
 }
 
+/// A GURPS-shaped success roll: three dice against a skill, succeeding on a
+/// roll at or under it.
+///
+/// The *shape* matters more than the numbers. Three dice cluster hard around
+/// ten, so a disciplined crew holds nearly always and a poor one nearly never,
+/// with genuine upsets at the edges. A flat roll would make good crews feel
+/// arbitrary — which is fatal in a game where girls are allowed to disobey,
+/// because the player has to be able to trust that training bought them
+/// something.
+pub fn holds_together(rng: &mut impl rand::RngExt, skill_level: i32) -> bool {
+    let roll: i32 = (0..3).map(|_| rng.random_range(1..=6)).sum();
+    roll <= skill_level
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,6 +192,28 @@ mod tests {
             ..MoraleRules::default()
         };
         assert!(rules.rung(100).obeys, "no rungs means nothing to fall from");
+    }
+
+    #[test]
+    fn discipline_decides_who_holds_and_the_dice_cluster() {
+        use rand::SeedableRng;
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(7);
+        let rate = |rng: &mut rand_chacha::ChaCha8Rng, level| {
+            (0..2000).filter(|_| holds_together(rng, level)).count() as f32 / 2000.0
+        };
+        let poor = rate(&mut rng, 6);
+        let ordinary = rate(&mut rng, 10);
+        let excellent = rate(&mut rng, 15);
+        assert!(
+            poor < ordinary && ordinary < excellent,
+            "{poor} {ordinary} {excellent}"
+        );
+        // Three dice cluster: training should be reliable, not a coin flip.
+        assert!(
+            excellent > 0.9,
+            "a disciplined crew nearly always holds: {excellent}"
+        );
+        assert!(poor < 0.15, "a poor one nearly never does: {poor}");
     }
 
     #[test]
