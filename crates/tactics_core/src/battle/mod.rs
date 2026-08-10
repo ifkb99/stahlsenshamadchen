@@ -148,6 +148,11 @@ pub enum EndReason {
     /// than the enemy's tanks, which is the whole point of writing an
     /// objective down.
     Objectives,
+    /// A side lost a formation its map declared it could not afford to lose:
+    /// the commanding officer named in a [`crate::map::LossCondition`] is
+    /// dead, or the formation carrying the scenario is gone. Only a map that
+    /// wrote the condition down can end this way.
+    Decapitated,
 }
 
 /// Rounds without contact before the battle is called off. Contact means a

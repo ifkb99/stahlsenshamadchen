@@ -3026,7 +3026,19 @@ fn a_map_with_formations_but_no_missions_fights_exactly_as_the_flat_pool_did() {
     // planners, one battle with its command state stripped — the event
     // streams must match to the byte, or the mission machinery is leaking
     // into battles that never asked for it.
-    let reg = registry_wireless();
+    //
+    // Succession narrowed this from "identical" to "identical in deeds", the
+    // same way the command block did in chunk 5. A formation whose commander
+    // burns hands over to the next girl whether or not anybody priced a
+    // radio, and says so — so `CommandPassed` is set aside here as words.
+    // What it *costs* is `morale.leader_lost`, and at zero, which is what a
+    // mod that never mentions the field gets, it costs nothing: the rest of
+    // the stream has to match byte for byte.
+    let reg = {
+        let mut reg = registry_wireless();
+        reg.morale.leader_lost = 0;
+        reg
+    };
     let run = |strip: bool| -> Vec<String> {
         let mut state = BattleState::from_map(&reg, "river_crossing", 21).unwrap();
         if strip {
@@ -3050,8 +3062,15 @@ fn a_map_with_formations_but_no_missions_fights_exactly_as_the_flat_pool_did() {
         !with_formations.is_empty(),
         "the battle should do something"
     );
+    let (spoken, deeds): (Vec<String>, Vec<String>) = with_formations
+        .into_iter()
+        .partition(|e| e.starts_with("CommandPassed"));
+    assert!(
+        !spoken.is_empty(),
+        "and somebody's commander should be lost in it, or this proves nothing"
+    );
     assert_eq!(
-        with_formations,
+        deeds,
         run(true),
         "unmissioned formations must fight exactly as the flat pool did"
     );
@@ -3842,63 +3861,6 @@ fn contact_lost_is_said_once_and_restored_out_loud() {
     );
 }
 
-#[test]
-fn a_dead_leader_leaves_her_formation_out_of_contact() {
-    // Nobody is speaking. Succession — the next girl taking over, and being
-    // worse at it — is a later chunk; until then the honest state is a platoon
-    // that has stopped hearing anything, and it must be stated rather than
-    // silently inferred by whoever reads `leader`.
-    let mut reg = registry();
-    // A radius that covers the whole map, so what this proves is the absence
-    // of a commander rather than the distance to one.
-    reg.command = Some(command_rules(999, true, 0));
-    let mut state = BattleState::from_map(&reg, "river_crossing", 3).expect("battle");
-    let armor = formation_named(&state, "kuhlmann_armor");
-    let leader = state.formations()[armor.index()]
-        .leader
-        .expect("a commander");
-
-    commit_all(&reg, &mut state);
-    let quiet = state.step_tick(&reg);
-    assert!(
-        !quiet
-            .iter()
-            .any(|e| matches!(e, BattleEvent::OutOfContact { .. })),
-        "everyone is in contact while she is alive"
-    );
-
-    let commander = state.unit_mut(leader).expect("she is alive");
-    commander.hp = 0;
-    commander.alive = false;
-
-    let events = state.step_tick(&reg);
-    let formation = &state.formations()[armor.index()];
-    let orphans: Vec<UnitId> = formation
-        .members
-        .iter()
-        .copied()
-        .filter(|id| *id != leader)
-        .collect();
-    assert_eq!(
-        formation
-            .out_of_contact
-            .iter()
-            .map(|c| c.unit)
-            .collect::<Vec<_>>(),
-        orphans,
-        "with nobody to hear, everyone still on the field is out of contact"
-    );
-    for id in orphans {
-        assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, BattleEvent::OutOfContact { unit } if *unit == id)),
-            "and each of them is said out loud: {events:?}"
-        );
-        assert!(!formation.in_contact(id));
-    }
-}
-
 // --- the command picture (chunk 5) -----------------------------------------
 
 /// A long open road: a leader in the west, her scout far to the east with an
@@ -4036,5 +3998,409 @@ fn a_contact_no_longer_seen_goes_stale_not_absent() {
     assert_eq!(
         ghost.at, seen_at,
         "standing where he was last reported, not where he is"
+    );
+}
+
+// --- commander loss (chunk 6) ----------------------------------------------
+
+/// A battle on a map written out in the test, so a chain of command and the
+/// stakes a scenario places on it can be declared in one place and read in
+/// one place. `file` is the map file minus its units, which come in as
+/// placements the way every other battle helper here takes them.
+fn scripted_battle(
+    reg: &DataRegistry,
+    file: serde_json::Value,
+    placements: Vec<UnitPlacement>,
+) -> BattleState {
+    let file: tactics_core::map::MapFile = serde_json::from_value(file).unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        1,
+    )
+}
+
+/// A placement that answers to a formation, and optionally commands it.
+fn in_formation(mut placement: UnitPlacement, formation: &str, leads: bool) -> UnitPlacement {
+    placement.formation = Some(formation.into());
+    placement.leads = leads;
+    placement
+}
+
+/// Take a unit off the board the way a shell would, but silently: no
+/// `UnitDestroyed` event, so nothing this produces can be confused with the
+/// pressure of watching a friend burn.
+fn strike_down(state: &mut BattleState, unit: UnitId) {
+    let victim = state.unit_mut(unit).expect("she was alive");
+    victim.hp = 0;
+    victim.alive = false;
+}
+
+#[test]
+fn command_passes_to_the_next_girl_in_the_order_of_battle() {
+    // Succession is formation machinery, not wire machinery, so this runs on
+    // a registry with no `command` block at all: who is in charge of a platoon
+    // is a fact about the platoon, and a mod that never priced a radio still
+    // has one girl senior to another. Seniority is the order the map author
+    // wrote her formation down in — lowest living unit id — which is the same
+    // authorable rule `leads` follows for the first leader.
+    let reg = registry_wireless();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 3).expect("battle");
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let (leader, heir) = {
+        let formation = &state.formations()[armor.index()];
+        let leader = formation.leader.expect("a commander");
+        let heir = *formation
+            .members
+            .iter()
+            .find(|id| **id != leader)
+            .expect("and somebody to inherit");
+        (leader, heir)
+    };
+    assert_eq!(
+        state.formations()[armor.index()].founding_leader,
+        Some(leader),
+        "the map's commander is on record from the first tick"
+    );
+
+    commit_all(&reg, &mut state);
+    let quiet = state.step_tick(&reg);
+    assert!(
+        !quiet
+            .iter()
+            .any(|e| matches!(e, BattleEvent::CommandPassed { .. })),
+        "nobody is promoted while she is alive"
+    );
+
+    strike_down(&mut state, leader);
+    let events = state.step_tick(&reg);
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            BattleEvent::CommandPassed { formation, from, to }
+                if formation == "kuhlmann_armor" && *from == leader && *to == heir
+        )),
+        "command passes, and the log names both ends of it: {events:?}"
+    );
+    let formation = &state.formations()[armor.index()];
+    assert_eq!(formation.leader, Some(heir), "she has the platoon now");
+    assert_eq!(
+        formation.founding_leader,
+        Some(leader),
+        "but the girl the map put in charge is not rewritten by her own death \
+         — a scenario's loss condition asks about her, not her successor"
+    );
+    assert!(
+        !state
+            .step_tick(&reg)
+            .iter()
+            .any(|e| matches!(e, BattleEvent::CommandPassed { .. })),
+        "and it is said once, not once a tick"
+    );
+}
+
+/// A formation strung out along a road: the commander at the west end, three
+/// more in a huddle twenty hexes east of her, and an enemy far beyond
+/// everybody's guns. With a short radius nobody but the commander is on the
+/// net, which is what makes the succession visible in the contact graph.
+fn strung_out_platoon(reg: &DataRegistry) -> BattleState {
+    let row = "g".repeat(60);
+    let placements = vec![
+        in_formation(unit_at([0, 0], 0, "recon_car", "Commander"), "column", true),
+        in_formation(unit_at([20, 0], 0, "recon_car", "Heir"), "column", false),
+        in_formation(
+            unit_at([22, 0], 0, "recon_car", "Neighbour"),
+            "column",
+            false,
+        ),
+        in_formation(
+            unit_at([40, 0], 0, "recon_car", "Straggler"),
+            "column",
+            false,
+        ),
+        unit_at([59, 0], 1, "recon_car", "Prowler"),
+    ];
+    scripted_battle(
+        reg,
+        serde_json::json!({
+            "id": "strung_out",
+            "palette": { "g": "grass" },
+            "rows": [row],
+            "formations": [ { "id": "column", "name": "The Column", "side": 0 } ],
+        }),
+        placements,
+    )
+}
+
+#[test]
+fn a_successor_leads_a_formation_back_into_contact() {
+    // This inverts a rule an earlier chunk pinned: a dead leader used to
+    // strand her whole formation out of contact for the rest of the battle,
+    // because the net was anchored on a girl who was no longer there. She is
+    // replaced within the tick now, and the net re-forms around wherever her
+    // successor is standing — which is not where the commander was, so who is
+    // in contact genuinely changes hands with the command.
+    let mut reg = registry();
+    // Five hexes and no relay: the column is too long for one voice, so the
+    // three easterners are cut off while the commander is alive.
+    reg.command = Some(command_rules(5, false, 0));
+    let mut state = strung_out_platoon(&reg);
+    let column = formation_named(&state, "column");
+    let (commander, heir, neighbour, straggler) = (UnitId(0), UnitId(1), UnitId(2), UnitId(3));
+
+    commit_all(&reg, &mut state);
+    state.step_tick(&reg);
+    assert_eq!(
+        state.formations()[column.index()]
+            .out_of_contact
+            .iter()
+            .map(|c| c.unit)
+            .collect::<Vec<_>>(),
+        vec![heir, neighbour, straggler],
+        "nobody down the road can hear her"
+    );
+
+    strike_down(&mut state, commander);
+    let events = state.step_tick(&reg);
+
+    let formation = &state.formations()[column.index()];
+    assert_eq!(formation.leader, Some(heir), "the next girl has it");
+    assert!(
+        formation.in_contact(heir) && formation.in_contact(neighbour),
+        "and the net re-forms around her: {:?}",
+        formation.out_of_contact
+    );
+    assert!(
+        !formation.in_contact(straggler),
+        "twenty hexes further on is still twenty hexes further on"
+    );
+    for unit in [heir, neighbour] {
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, BattleEvent::ContactRestored { unit: u } if *u == unit)),
+            "coming back onto the net is said out loud: {events:?}"
+        );
+    }
+}
+
+#[test]
+fn losing_a_commander_shakes_her_formation() {
+    // The formation takes it hard, and the whole formation does — unlike
+    // watching a friend burn, which only reaches the crews who could see it,
+    // this is news that travels the chain of command. It rides the same
+    // ladder and the same one place that turns a tick's events into fear.
+    let mut reg = registry_wireless();
+    // A distinctive number, so what arrives can only have come from here.
+    reg.morale.leader_lost = 5;
+    let mut state = strung_out_platoon(&reg);
+    let column = formation_named(&state, "column");
+    let commander = UnitId(0);
+
+    commit_all(&reg, &mut state);
+    state.step_tick(&reg);
+    assert!(
+        state.alive_units().all(|u| u.pressure == 0),
+        "nothing has happened to anybody yet"
+    );
+
+    strike_down(&mut state, commander);
+    state.step_tick(&reg);
+
+    let members = state.formations()[column.index()].members.clone();
+    for id in members.iter().filter(|id| **id != commander) {
+        assert_eq!(
+            state.unit(*id).expect("still on the field").pressure,
+            5,
+            "every girl in the column felt it, however far down the road she is"
+        );
+    }
+    assert_eq!(
+        state.unit(UnitId(4)).expect("the enemy is fine").pressure,
+        0,
+        "and nobody outside the formation felt anything at all"
+    );
+}
+
+/// A decapitation stage: two crews of side 0 in one formation behind a forest
+/// curtain, one enemy on the far side of it, and a lane home in the west. The
+/// curtain is the same one the objective tests use — these rules are about
+/// who is left, and a firefight would decide the battle before the
+/// bookkeeping could be watched.
+fn decapitation_battle(reg: &DataRegistry, loss_conditions: serde_json::Value) -> BattleState {
+    scripted_battle(
+        reg,
+        serde_json::json!({
+            "id": "decapitation_map",
+            "palette": { "g": "grass", "f": "forest" },
+            "rows": ["gggggfggggg"],
+            "objectives": [{
+                "id": "west_road", "at": [[0, 0], [1, 0]], "value": 1,
+                "kind": "exit", "side": 0
+            }],
+            "formations": [ { "id": "staff", "name": "Staff Group", "side": 0 } ],
+            "loss_conditions": loss_conditions,
+        }),
+        vec![
+            in_formation(unit_at([3, 0], 0, "medium_tank", "Kuhlmann"), "staff", true),
+            in_formation(
+                unit_at([4, 0], 0, "medium_tank", "Adjutant"),
+                "staff",
+                false,
+            ),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+    )
+}
+
+#[test]
+fn a_map_may_declare_that_losing_the_command_formation_loses_the_battle() {
+    // Decapitation is map data. The engine always degrades a formation that
+    // loses its commander; whether the *battle* is over because of it is a
+    // question about what this battle was for, and only the scenario knows.
+    let reg = registry();
+    let mut state = decapitation_battle(
+        &reg,
+        serde_json::json!([{ "side": 0, "formation": "staff", "when": "leader_lost" }]),
+    );
+    let commander = state.formations()[0]
+        .founding_leader
+        .expect("the map named one");
+
+    commit_all(&reg, &mut state);
+    state.step_tick(&reg);
+    assert!(!state.is_over(), "the battle is ordinary until she is hit");
+
+    strike_down(&mut state, commander);
+    let events = state.step_tick(&reg);
+    assert_eq!(
+        state.over.map(|r| (r.winner, r.reason)),
+        Some((Some(1), EndReason::Decapitated)),
+        "her side has lost, whatever is still on the field: {events:?}"
+    );
+    assert!(
+        state.side_units(0).next().is_some(),
+        "and it really is a decapitation rather than an elimination — side 0 \
+         still has a tank"
+    );
+
+    // The negative, and the additivity rule in one line: the same battle, the
+    // same dead commander, with the declaration taken out.
+    let reg = registry();
+    let mut plain = decapitation_battle(&reg, serde_json::json!([]));
+    let commander = plain.formations()[0].founding_leader.expect("a commander");
+    commit_all(&reg, &mut plain);
+    plain.step_tick(&reg);
+    strike_down(&mut plain, commander);
+    plain.step_tick(&reg);
+    assert!(
+        !plain.is_over(),
+        "a map that says nothing fights on with a new commander"
+    );
+}
+
+#[test]
+fn a_formation_that_withdrew_intact_is_not_a_decapitation() {
+    // `wiped` asks whether a formation was destroyed, and driving off the map
+    // by a lane your own map wrote down is not being destroyed. Reading
+    // `!alive` here — the mistake exits exist to prevent — would end the
+    // battle against the side that carried out its withdrawal perfectly.
+    let reg = registry();
+    let wiped = serde_json::json!([{ "side": 0, "formation": "staff", "when": "wiped" }]);
+    let mut state = decapitation_battle(&reg, wiped.clone());
+    for (unit, to) in [(UnitId(0), [0, 0]), (UnitId(1), [1, 0])] {
+        state
+            .apply(
+                &reg,
+                &Order::SetMove {
+                    unit,
+                    to: tactics_core::offset_to_hex(to[0], to[1]),
+                },
+            )
+            .expect("the road home is walkable");
+    }
+    play_round(&reg, &mut state);
+
+    assert!(
+        state.units[0].exited && state.units[1].exited,
+        "the whole staff group got away"
+    );
+    assert_ne!(
+        state.over.map(|r| r.reason),
+        Some(EndReason::Decapitated),
+        "and leaving is not losing"
+    );
+
+    // The other half of the same rule: a formation that leaves a vehicle
+    // burning behind it *has* been wiped out, and the condition fires.
+    let mut caught = decapitation_battle(&reg, wiped);
+    strike_down(&mut caught, UnitId(1));
+    caught
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: UnitId(0),
+                to: tactics_core::offset_to_hex(0, 0),
+            },
+        )
+        .expect("the survivor runs for the road");
+    play_round(&reg, &mut caught);
+    assert_eq!(
+        caught.over.map(|r| (r.winner, r.reason)),
+        Some((Some(1), EndReason::Decapitated)),
+        "one of them died, so the formation was destroyed rather than withdrawn"
+    );
+}
+
+#[test]
+fn a_loss_condition_must_name_a_formation_of_its_own_side() {
+    // A loss condition decides a battle, so a typo in one does not look
+    // wrong — it quietly makes a scenario unwinnable, or unlosable. Both of
+    // these are errors for that reason.
+    let reg = registry();
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "misplaced_stakes",
+        "palette": { "g": "grass" },
+        "rows": ["gg"],
+        "shape": "free",
+        "sides": [{ "name": "West" }, { "name": "East" }],
+        "formations": [ { "id": "staff", "side": 0 } ],
+        "units": [
+            { "at": [0, 0], "side": 0, "vehicle": "medium_tank", "formation": "staff" },
+        ],
+        "loss_conditions": [
+            { "side": 0, "formation": "ghost_staff", "when": "leader_lost" },
+            { "side": 1, "formation": "staff", "when": "wiped" },
+        ],
+    }))
+    .unwrap();
+    let mut report = tactics_core::data::ValidationReport::default();
+    file.validate_into(&reg, &mut report);
+    let errors = report.errors.join("\n");
+
+    assert!(
+        errors.contains("`ghost_staff`, which the map does not declare"),
+        "a stake on a formation that does not exist can never be settled: {errors}"
+    );
+    assert!(
+        errors.contains("but that formation belongs to side 0"),
+        "and a side cannot stake the battle on somebody else's girls: {errors}"
     );
 }

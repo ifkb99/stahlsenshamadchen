@@ -939,6 +939,21 @@ fn pump_events(
                     at
                 ));
             }
+            // A formation changing hands is the loudest thing that can happen
+            // to it short of dying, and the player is about to watch its whole
+            // pressure jump: the line explaining why has to arrive first.
+            BattleEvent::CommandPassed {
+                formation,
+                from,
+                to,
+            } => {
+                let who = formation_name(&battle.state, formation);
+                log.push(format!(
+                    "{} is gone. {} takes command of {who}.",
+                    name(*from),
+                    name(*to)
+                ));
+            }
             BattleEvent::BattleEnded { winner, reason } => {
                 let text = match (winner, reason) {
                     (Some(w), EndReason::Objectives) => format!(
@@ -960,12 +975,23 @@ fn pump_events(
                             .max()
                             .unwrap_or(0),
                     ),
+                    // The reason is the news here, not the result: a battle
+                    // that ended because somebody's headquarters died has to
+                    // say so, or the player watching a healthy force walk off
+                    // the field will read it as a bug.
+                    (Some(w), EndReason::Decapitated) => format!(
+                        "Command broken. {} takes the field.",
+                        battle.state.sides[*w as usize].name
+                    ),
                     (Some(w), _) => format!("Victory: {}", battle.state.sides[*w as usize].name),
                     (None, EndReason::Stalemate) => {
                         "Contact lost. Both sides break off, with nothing to show for it.".into()
                     }
                     (None, EndReason::Eliminated) => "Mutual destruction.".into(),
                     (None, EndReason::Objectives) => "The ground changed hands.".into(),
+                    (None, EndReason::Decapitated) => {
+                        "Command broken, with nobody left to profit by it.".into()
+                    }
                 };
                 log.push(text);
                 battle.exit_timer = Some(Timer::from_seconds(2.5, TimerMode::Once));

@@ -59,6 +59,18 @@ pub struct MoraleRules {
     pub hit: u32,
     /// Pressure from watching a friend die within sight.
     pub ally_destroyed: u32,
+    /// Pressure on every surviving member of a formation whose leader is
+    /// gone — destroyed, or driven off the map — at the moment command
+    /// passes to somebody else.
+    ///
+    /// `#[serde(default)]` rather than required, so a mod that says nothing
+    /// feels nothing: losing a commander then costs a formation exactly what
+    /// it cost before this existed, which is the additivity rule applied to
+    /// the newest rung on the oldest ladder. Unlike a hit or a friend
+    /// burning, this one reaches the whole formation wherever it is standing
+    /// — the news travels the chain of command, not the line of sight.
+    #[serde(default)]
+    pub leader_lost: u32,
     /// Pressure shed at the end of each round.
     pub recovery: u32,
     /// Skill points above average that shed one extra point of pressure. A
@@ -93,6 +105,12 @@ impl Default for MoraleRules {
             ],
             hit: 3,
             ally_destroyed: 4,
+            // Mirrors the shipped `mod.json`: watching your commander go is
+            // at least as bad as watching anybody else go. Note this is the
+            // *engine's* stand-in for a mod that declares no morale block at
+            // all; a mod that declares one and omits the field gets zero,
+            // which is the field's serde default and the gentler reading.
+            leader_lost: 4,
             recovery: 2,
             recovery_per_skill: 4,
         }

@@ -11,7 +11,7 @@ use super::{
     movement,
 };
 use crate::data::{ArmorFacing, DataRegistry};
-use crate::map::ObjectiveKind;
+use crate::map::{LossTrigger, ObjectiveKind};
 use hexx::Hex;
 use serde::{Deserialize, Serialize};
 
@@ -194,6 +194,22 @@ pub enum Event {
         unit: UnitId,
         by: UnitId,
         at: Hex,
+    },
+    /// A formation's leader is off the field and the next girl in its order of
+    /// battle has taken over: `from` is who was lost, `to` is who now
+    /// commands.
+    ///
+    /// Named, on both ends, because the whole system is built on events
+    /// carrying their own story — a recap screen or a bark should be able to
+    /// say "Kesselring is gone; Weber has the platoon" from this line alone,
+    /// without reconstructing it afterwards from a corpse and a leader field.
+    /// It is also the *cause* of the pressure the formation is about to feel,
+    /// which is what makes that pressure fair: the ladder only ever moves for
+    /// something the player watched happen.
+    CommandPassed {
+        formation: String,
+        from: UnitId,
+        to: UnitId,
     },
     /// A vehicle drove off the map by an exit objective. It is out of the
     /// battle and its crew are going home; this is not [`Self::UnitDestroyed`]
@@ -473,6 +489,14 @@ impl BattleState {
 
         self.resolve_movement(registry, &mut events);
         events.extend(fog::recompute(registry, self));
+        // Succession runs first and runs always: who commands a formation is
+        // a fact about the formation, not about anybody's radio, so this is
+        // the one thing here that is not gated on a mod declaring command
+        // rules. It has to precede the contact recompute — a successor who
+        // takes over in the same step anchors the net immediately, which is
+        // the difference between a leader's death costing her platoon a tick
+        // and costing it the rest of the battle.
+        self.pass_command(&mut events);
         // Contact is read after everyone has moved and before anyone shoots,
         // so a vehicle that drove out of its leader's radius is out of contact
         // in the same tick it left rather than the next one.
@@ -714,9 +738,35 @@ impl BattleState {
                 _ => None,
             })
             .collect();
+        // Read off the event for the same reason everything else here is: the
+        // succession pass has no business knowing what fear costs, and one
+        // place that turns a tick's news into pressure is worth more than a
+        // hook in each system that produces news.
+        let bereaved: Vec<Vec<UnitId>> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::CommandPassed { formation, .. } => self
+                    .command
+                    .formations()
+                    .iter()
+                    .find(|f| f.id == *formation)
+                    .map(|f| f.members.clone()),
+                _ => None,
+            })
+            .collect();
 
         for id in hits {
             add(self, id, rules.hit);
+        }
+        for members in bereaved {
+            // The whole formation, wherever it is standing: unlike watching a
+            // friend burn, losing your commander is news that travels the
+            // chain of command rather than the line of sight. Members are in
+            // unit-id order, and `add` quietly skips anyone no longer on the
+            // field.
+            for id in members {
+                add(self, id, rules.leader_lost);
+            }
         }
         for (side, at) in losses {
             // Watching a friend go up is worse than hearing about it, so this
@@ -892,6 +942,35 @@ impl BattleState {
         if self.over.is_some() {
             return;
         }
+        // Decapitation is read before *everything*, including the score. The
+        // score-before-board rule below says the mission outranks the force
+        // spent; this says the same thing one level up — a scenario that
+        // declared a formation its side cannot survive losing has stated what
+        // the battle was for, and a side that has lost it has lost whatever
+        // ground it happens to be standing on and however many points it has
+        // collected on the way. Reading the points first would let a raid pay
+        // for its own headquarters with objective hexes.
+        //
+        // A map that declares no `loss_conditions` walks an empty list, which
+        // is how this stays an additive rule rather than a new phase of the
+        // battle.
+        if let Some(loser) = self.decapitated() {
+            // A decapitation names who lost; who *won* it is a separate
+            // question, and in the two-sided battle every map is, the answer
+            // is the only other army on the field. With more sides than that
+            // nobody has beheaded anybody in particular, so the points break
+            // the tie exactly as they do for a stalemate — and only if they
+            // point at somebody who is not the side that just came apart.
+            let others: Vec<u8> = (0..self.sides.len() as u8)
+                .filter(|s| *s != loser)
+                .collect();
+            let winner = match others.as_slice() {
+                [only] => Some(*only),
+                _ => self.leader().filter(|s| *s != loser),
+            };
+            self.finish(winner, EndReason::Decapitated, events);
+            return;
+        }
         // The score is read *before* the board, because the mission being
         // accomplished outranks the force being spent. That ordering is not
         // pedantry: a side whose mission is to withdraw reaches its target on
@@ -927,6 +1006,49 @@ impl BattleState {
             let winner = self.leader();
             self.finish(winner, EndReason::Stalemate, events);
         }
+    }
+
+    /// The first side whose map-declared loss condition has come true, if any.
+    ///
+    /// Conditions are walked in map-file order, so which one fires when two
+    /// come true on the same tick cannot depend on a hash. A condition naming
+    /// a formation this battle does not have — possible on the overworld path,
+    /// where a terrain map's declarations meet an army's units and an empty
+    /// formation is dropped — can never fire, which is the right answer: the
+    /// stake was placed on somebody who is not here.
+    fn decapitated(&self) -> Option<u8> {
+        for condition in self.map.loss_conditions() {
+            let Some(formation) = self
+                .command
+                .formations()
+                .iter()
+                .find(|f| f.id == condition.formation)
+            else {
+                continue;
+            };
+            // `lost` throughout, never `!alive`: a vehicle that drove off by
+            // an exit is off the board but home, and reading `alive` here
+            // would turn every ordered withdrawal into a decapitation.
+            let lost = |id: &UnitId| {
+                self.units
+                    .get(id.index())
+                    .is_some_and(|u| !u.alive && !u.exited)
+            };
+            let fallen = match condition.when {
+                LossTrigger::LeaderLost => formation.founding_leader.iter().any(lost),
+                LossTrigger::Wiped => {
+                    formation.members.iter().any(lost)
+                        && formation
+                            .members
+                            .iter()
+                            .all(|id| self.units.get(id.index()).is_some_and(|u| !u.alive))
+                }
+            };
+            if fallen {
+                return Some(condition.side);
+            }
+        }
+        None
     }
 
     /// Does any side currently have an enemy in sight?

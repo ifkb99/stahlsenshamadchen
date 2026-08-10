@@ -246,6 +246,46 @@ impl FormationDef {
     }
 }
 
+/// A scenario's stake in a formation: what it costs its side to lose one.
+///
+/// Decapitation is deliberately map data rather than an engine rule. Losing a
+/// commander always degrades a formation — that is succession and the morale
+/// hit, and it happens on every map — but whether a battle is *over* because
+/// of it is a question about what this battle was for, and only the scenario
+/// knows. A raid on a headquarters ends when the headquarters is gone; the
+/// same platoon losing the same girl in a meeting engagement fights on with a
+/// new commander. A map that declares none of these behaves exactly as it did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LossCondition {
+    /// The side that *loses* if this comes true. Named rather than inferred
+    /// from the formation so the declaration reads as what it is — a stake one
+    /// army has placed on one of its formations.
+    pub side: u8,
+    /// The formation whose fate decides it, by [`FormationDef::id`].
+    pub formation: String,
+    pub when: LossTrigger,
+}
+
+/// What has to happen to a formation for its side to have lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LossTrigger {
+    /// The girl who was in command when the battle opened is dead.
+    ///
+    /// The *founding* leader, not whoever holds the job now: succession
+    /// replaces her within a tick, and a condition that tested the current
+    /// leader would be satisfied by the successor's death instead, which is a
+    /// different scenario. Dead, not merely off the board — a commander who
+    /// drove out by an exit lane withdrew, and a withdrawal that ends the
+    /// battle in the enemy's favour would make every exit a trap.
+    LeaderLost,
+    /// The formation no longer exists: every member is dead or gone, and at
+    /// least one of them died. The second half is what keeps a clean
+    /// withdrawal from being a decapitation — a formation that drove off the
+    /// map entire did what it was told, and the map has to be able to say so.
+    Wiped,
+}
+
 /// An army placed by an overworld map.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArmyPlacement {
@@ -302,6 +342,11 @@ pub struct MapFile {
     /// side, which is every map that predates the chain of command.
     #[serde(default)]
     pub formations: Vec<FormationDef>,
+    /// Formations whose loss ends the battle. A map that declares none is
+    /// fought until somebody is eliminated or the points decide it, exactly
+    /// as every map was before commanders could be lost.
+    #[serde(default)]
+    pub loss_conditions: Vec<LossCondition>,
 }
 
 /// One tile of a parsed map.
@@ -381,6 +426,16 @@ pub struct HexMap {
     /// order.
     #[serde(default)]
     formations: Vec<FormationDef>,
+    /// Stakes placed on those formations, in declaration order.
+    ///
+    /// Here for the same reason the formations are: both battle-setup paths
+    /// already carry a `HexMap`, so a rule that has to reach a field battle
+    /// the overworld assembles as well as a scenario travels on the map or
+    /// grows an argument on every constructor. It is also honest about what
+    /// these are — a fact about the scenario, fixed before the first shot,
+    /// which is exactly what the map is for.
+    #[serde(default)]
+    loss_conditions: Vec<LossCondition>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -460,6 +515,7 @@ impl HexMap {
             objectives,
             victory_score: file.victory_score,
             formations: file.formations.clone(),
+            loss_conditions: file.loss_conditions.clone(),
         })
     }
 
@@ -479,6 +535,13 @@ impl HexMap {
     /// order a battle resolves them in and the seniority they succeed in.
     pub fn formations(&self) -> &[FormationDef] {
         &self.formations
+    }
+
+    /// What ends this battle short of elimination or points: the formations
+    /// whose loss a side cannot survive. Empty for every map that says
+    /// nothing, which is how a scenario opts out by omission.
+    pub fn loss_conditions(&self) -> &[LossCondition] {
+        &self.loss_conditions
     }
 
     pub fn get(&self, hex: Hex) -> Option<&Tile> {
@@ -656,6 +719,27 @@ impl MapFile {
                     self.id, unit.at[0], unit.at[1]
                 )),
                 _ => {}
+            }
+        }
+
+        // A loss condition decides the battle, so a typo in one does not look
+        // wrong, it quietly makes a scenario unwinnable or unlosable. Both
+        // checks are errors for that reason: a condition naming a formation
+        // that does not exist can never fire, and one naming another side's
+        // formation is a stake placed on somebody else's girls.
+        for condition in &self.loss_conditions {
+            match self.formations.iter().find(|f| f.id == condition.formation) {
+                None => report.errors.push(format!(
+                    "map `{}`: side {} would lose with formation `{}`, which the map does not \
+                     declare",
+                    self.id, condition.side, condition.formation
+                )),
+                Some(formation) if formation.side != condition.side => report.errors.push(format!(
+                    "map `{}`: side {} would lose with formation `{}`, but that formation \
+                         belongs to side {}",
+                    self.id, condition.side, condition.formation, formation.side
+                )),
+                Some(_) => {}
             }
         }
     }

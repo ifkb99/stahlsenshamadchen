@@ -104,10 +104,26 @@ pub struct Formation {
     /// The girl in charge: the member whose placement said `leads`, else the
     /// first member in declaration order (seniority the map author controls).
     ///
-    /// `Option` because a formation can be *left* leaderless — the leader's
-    /// vehicle is destroyed and succession has not happened yet — not because
-    /// a fresh one ever is. A formation with members always starts with one.
+    /// `Option` because a formation can be *left* leaderless — every member
+    /// of it is dead or gone, so there is nobody left to take over — not
+    /// because a fresh one ever is. A formation with members always starts
+    /// with one, and keeps one for as long as anybody is still on the field.
     pub leader: Option<UnitId>,
+    /// The girl who was in command when the battle opened.
+    ///
+    /// Kept beside [`Self::leader`] rather than derived from it because
+    /// succession *overwrites* the current leader within a tick of her death,
+    /// and a scenario's [`crate::map::LossTrigger::LeaderLost`] is a question
+    /// about the girl the map named — "is the commanding officer dead" — not
+    /// about whoever holds the job now. Without this, a decapitation condition
+    /// would quietly retarget itself onto the successor the moment it should
+    /// have fired.
+    ///
+    /// `#[serde(default)]` so a save written before succession existed opens
+    /// as a battle whose formations have no founding leader on record, which
+    /// is the honest answer: nothing in that save was tracking one.
+    #[serde(default)]
+    pub founding_leader: Option<UnitId>,
     /// Members in unit-id order, which is placement order.
     pub members: Vec<UnitId>,
     /// A doctrine of this formation's own, overriding its side's. Absent is
@@ -285,6 +301,7 @@ impl CommandState {
                     id: def.id.clone(),
                     side: def.side,
                     leader: Some(leader),
+                    founding_leader: Some(leader),
                     members: members.into_iter().map(|(id, _)| id).collect(),
                     doctrine: def.doctrine.clone(),
                     mission: None,
@@ -374,10 +391,12 @@ impl BattleState {
     /// command rules, which is the whole of the additivity story for latency.
     ///
     /// A formation whose leader is off the board is priced at an ordinary
-    /// level rather than refused. Succession — who is in charge once she is
-    /// gone, and how much worse she is at it — is a later chunk; until then
-    /// the honest placeholder is "somebody passed it on, at ordinary speed"
-    /// rather than either extreme.
+    /// level rather than refused. That is a narrow window now that
+    /// [`Self::pass_command`] exists — it lasts from the tick she is lost to
+    /// the next one, plus the planning phase in between if she went in the
+    /// round's last tick — and a formation with nobody left at all, where
+    /// "somebody passed it on, at ordinary speed" is the honest placeholder
+    /// and the mission has nobody to reach anyway.
     pub(super) fn mission_delay(&self, registry: &DataRegistry, formation: FormationId) -> u32 {
         let Some(rules) = registry.command.as_ref() else {
             return 0;
@@ -427,6 +446,65 @@ impl BattleState {
         }
     }
 
+    /// Hand command to the next girl in the order of battle wherever the
+    /// leader is off the field.
+    ///
+    /// **Ungated, and that is the point.** Every other rule in this module
+    /// exists only where a mod declares a `command` block, because a radius
+    /// and a latency are a signals net and a game without one has neither.
+    /// Leadership is not like that: it belongs to the *formation*, and a map
+    /// that declares formations has said who is in charge whether or not
+    /// anybody priced the radio. A formation whose leader burned and whose
+    /// command never passed would be a hole in the chain that no mod asked
+    /// for, so this runs on every battle that has formations at all — and on
+    /// one that has none it walks an empty list, which is the additivity rule
+    /// satisfied by there being nothing to do rather than by a branch.
+    ///
+    /// Succession is by **lowest living unit id**, which is placement order,
+    /// which is the order the map author wrote her formation down in. That is
+    /// the authorable rule the `leads` flag already follows for the first
+    /// leader: seniority is something a scenario writer states, not something
+    /// the engine infers from stats.
+    ///
+    /// The successor is worse at the job and no code here makes her so. Every
+    /// price the chain of command charges — [`BattleState::mission_delay`] and
+    /// the contact radius below — is already read off *the current leader's*
+    /// crew, at the place she is standing, so promoting a girl with a weaker
+    /// `command` skill lengthens her formation's latencies and promoting one
+    /// with weaker `signals` shrinks its net, for free and for the right
+    /// reason. Building a separate penalty on top would be pricing the same
+    /// thing twice.
+    ///
+    /// Formations are walked in declaration order and members in id order, so
+    /// what this emits cannot depend on a hash.
+    pub(super) fn pass_command(&mut self, events: &mut Vec<Event>) {
+        for index in 0..self.command.formations.len() {
+            let formation = &self.command.formations[index];
+            // `unit()` filters on `alive`, which is false for the destroyed
+            // and for anyone who drove off by an exit — and both are reasons
+            // somebody else has to take over. Whether she *died* is a
+            // different question, asked by the scenario's loss conditions.
+            let Some(gone) = formation.leader.filter(|id| self.unit(*id).is_none()) else {
+                continue;
+            };
+            let successor = formation
+                .members
+                .iter()
+                .copied()
+                .find(|id| self.unit(*id).is_some());
+            self.command.formations[index].leader = successor;
+            // A formation with nobody left is left leaderless and silent.
+            // There is no promotion to announce and nobody to hear it.
+            if let Some(to) = successor {
+                events.push(Event::CommandPassed {
+                    formation: self.command.formations[index].id.clone(),
+                    from: gone,
+                    to,
+                });
+            }
+        }
+    }
+
     /// Work out who can still hear their leader, and say so when the answer
     /// changes.
     ///
@@ -442,10 +520,11 @@ impl BattleState {
     /// order of battle. Members are visited in unit-id order at every step, so
     /// the events and the resulting set are the same on every machine.
     ///
-    /// A formation whose leader is dead or has driven off the map is entirely
-    /// out of contact: nobody is speaking. Succession — the next girl taking
-    /// over, and being worse at it — is chunk 6 of the command build order and
-    /// deliberately not smuggled in here.
+    /// A formation with nobody left to speak — every member dead or gone — is
+    /// entirely out of contact. That is now the only way to reach that state:
+    /// [`Self::pass_command`] runs first and hands the net to the next girl,
+    /// so a leader dying costs her formation a tick of nothing rather than the
+    /// rest of the battle in silence.
     ///
     /// Does nothing at all when no mod declares command rules. Not an
     /// optimisation: it is what makes `out_of_contact` empty forever in a

@@ -321,14 +321,20 @@ When the leader's vehicle is destroyed or she is out of the fight:
 
 - Her formation takes a pressure hit (`morale` block gains a `leader_lost`
   entry beside `hit` and `ally_destroyed` — same ladder, no parallel system).
-- Command passes to the next `leads`-ranked member, else the best `command`
-  skill aboard the formation, announced with `CommandPassed`. The successor
-  is worse at it: longer latencies, weaker initiative, because the checks are
-  hers now and her numbers are real.
-- A scenario that wants decapitation stakes declares it: a side-level
-  `loss_condition` in map data naming a unit or formation whose loss ends the
-  battle. Engine machinery reads the declaration; no battle carries the rule
-  unless its map wrote it down.
+- Command passes to the lowest-id living member — placement order, which is
+  the seniority the map author wrote down — announced with `CommandPassed`.
+  The successor is worse at it: longer latencies, a smaller net, because the
+  checks are hers now and her numbers are real. As built, that costs no extra
+  mechanism at all: latency and radius were already priced on whoever the
+  leader *is*.
+- A scenario that wants decapitation stakes declares it: `loss_conditions` in
+  map data, each naming a side, one of its formations, and whether the trigger
+  is `leader_lost` (the girl who opened the battle in command is dead — dead,
+  not withdrawn) or `wiped` (every member dead or gone, and at least one of
+  them dead, so a clean withdrawal is not a decapitation). `check_victory`
+  reads them before the score, because a battle whose command is destroyed is
+  over whatever the points say. Engine machinery reads the declaration; no
+  battle carries the rule unless its map wrote it down.
 
 ## What the player sees (game crate)
 
@@ -448,11 +454,20 @@ consumers live: the *display* reading the picture (ghost markers), and any
 brain reading of enemy contacts (today's brain reads no enemy information
 at all, so there was nothing to switch).
 
-**6. Commander loss.** Pressure entry, succession, `CommandPassed`, optional
-`loss_condition` in map data. *Verify:* engine tests
-(`command_passes_to_the_next_girl_and_she_is_worse_at_it`); a scenario with
-the loss condition ends when it should. *Difficulty: 2/5* — additive
-machinery on existing morale patterns, well specified above.
+**6. Commander loss.** ✅ Done: `morale.leader_lost`, succession by seniority,
+`CommandPassed`, and optional `loss_conditions` in map data. Three things are
+worth carrying forward. **Succession is formation machinery, not wire
+machinery** — it runs whether or not a mod declares a `command` block, because
+who leads a platoon is a fact about the platoon; only the radius and the
+latency belong to the radio. **The successor is worse at it for free**: every
+price the chain charges is already read off the *current* leader's crew, so
+promoting a weaker girl lengthens her formation's latencies and shrinks its
+net with no second mechanism. And the founding leader is kept beside the
+current one, because a scenario's `leader_lost` condition asks about the girl
+the map named, not about whoever holds the job now. This was the one
+deliberate baseline regeneration of the chunk: succession replaced the
+`OutOfContact` cascade a dead leader used to cause with a `CommandPassed` and,
+often, a `ContactRestored` — recon that could not report can report again.
 
 **7. The human hybrid.** Formation panel, mission issuing, contact-gated
 direct orders, ghost-contact hovers, devtools tour script. *Verify:*
@@ -501,8 +516,11 @@ Carried deliberately, none blocking chunks 1–2:
 - **Where the command radius lives.** Per-vehicle (a radio set is hardware),
   per-mod block (chosen for now), or both with the vehicle as a multiplier.
   The radio unit will force this decision in chunk 7.
-- **`leads` succession order.** Declaration order vs. best command skill.
-  Start with declaration order (authorable), fall back to skill.
+- ~~**`leads` succession order.**~~ Settled in chunk 6: declaration order,
+  full stop. It is authorable, it cannot depend on a hash, and "the senior
+  girl takes over" is a rule a player can predict — which the skill-based
+  fallback, chosen by numbers she cannot see, would not be. A scenario that
+  wants a different heir writes her formation down in a different order.
 - **What the balance target is.** After chunk 3 the doctrines fight through
   commanders; the 24-battle matchup table is the instrument, but what "good"
   looks like (decision rate, shot volume, exit usage) needs a stake in the

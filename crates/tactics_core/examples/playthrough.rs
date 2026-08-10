@@ -165,6 +165,19 @@ fn main() {
                     name(&state, *by),
                     name(&state, *unit)
                 ),
+                // Named on both ends: the narrator is the standing proof that
+                // every event carries its own story, and "command passes" with
+                // nobody in it would be exactly the archaeology that discipline
+                // exists to prevent.
+                Event::CommandPassed {
+                    formation,
+                    from,
+                    to,
+                } => println!(
+                    "   >> command of {formation} passes from {} to {}",
+                    name(&state, *from),
+                    name(&state, *to)
+                ),
                 Event::ObjectiveTaken {
                     objective, side, ..
                 } => println!(

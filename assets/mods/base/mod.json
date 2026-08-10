@@ -355,6 +355,7 @@
         ],
         "hit": 3,
         "ally_destroyed": 4,
+        "leader_lost": 4,
         "recovery": 2,
         "recovery_per_skill": 4
     }
