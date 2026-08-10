@@ -2,7 +2,7 @@
 
 use super::defs::*;
 use super::manifest::ModManifest;
-use super::{Balance, CoreDef, CoreIndex, RoleDef, Scale, SkillDef, TraitDef};
+use super::{Balance, CoreDef, CoreIndex, ReactionRules, RoleDef, Scale, SkillDef, TraitDef};
 use crate::map::MapFile;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -59,6 +59,8 @@ pub struct DataRegistry {
     pub scale: Scale,
     /// What a point of crew skill is worth. Single value, as [`Self::scale`].
     pub balance: Balance,
+    /// How long crews take to act on orders.
+    pub reaction: ReactionRules,
     /// The axes of temperament this game has, in the order a girl's values are
     /// stored. Declared by mod data, not by Rust.
     pub cores: Vec<CoreDef>,
@@ -114,6 +116,9 @@ impl DataRegistry {
             }
             if let Some(balance) = manifest.balance {
                 registry.balance = balance;
+            }
+            if let Some(reaction) = &manifest.reaction {
+                registry.reaction = reaction.clone();
             }
             if let Some(cores) = &manifest.cores {
                 registry.cores = cores.clone();
@@ -483,6 +488,7 @@ mod tests {
                     skills: None,
                     roles: None,
                     traits: None,
+                    reaction: None,
                     dependencies: deps.iter().map(|s| s.to_string()).collect(),
                     scale: None,
                     balance: None,

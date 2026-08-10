@@ -1925,3 +1925,67 @@ fn a_paired_trait_costs_something() {
         "and she stops watching anything else while she does it"
     );
 }
+
+/// The reaction rules answer "how long before she acts", which is the number
+/// slice 5 will spend when a girl has to respond to something she was not
+/// told about. Nothing consumes it yet — see the note in
+/// `assets/wiki/reference/girls.md` on why gating *planned* execution was the
+/// wrong place for it.
+#[test]
+fn reaction_delay_reads_the_crew_that_is_aboard() {
+    let reg = registry();
+    let mut roster = tactics_core::roster::Roster::new();
+
+    let make = |roster: &mut tactics_core::roster::Roster, id: &str, speed: i32, trained: i32| {
+        let def: tactics_core::data::CharacterDef = serde_json::from_value(serde_json::json!({
+            "id": id, "name": id,
+            "cores": { "speed": speed, "will": 10 },
+            "skills": { "reactions": trained },
+        }))
+        .unwrap();
+        roster.enlist(0, &def, &reg)
+    };
+    let quick = make(&mut roster, "quick", 16, 16);
+    let slow = make(&mut roster, "slow", 5, 5);
+
+    let delay = |girl| {
+        reg.reaction.delay(
+            roster
+                .skill_level(&reg, girl, "reactions", &Default::default())
+                .unwrap(),
+        )
+    };
+    assert!(
+        delay(quick) < delay(slow),
+        "a quick crew should be ready sooner: {} vs {}",
+        delay(quick),
+        delay(slow)
+    );
+    // Reactions 16 against an average of 10 shaves one tick off the base of
+    // two at four points a tick; it takes a genuinely exceptional crew to act
+    // the instant they are told.
+    assert_eq!(delay(quick), 1);
+    assert_eq!(
+        reg.reaction.delay(30),
+        0,
+        "and there is a ceiling: nobody acts before they are told"
+    );
+}
+
+/// Difficulty is a mod, so the whole system has to switch off in data. Nothing
+/// in Rust may need changing to get orders that simply happen.
+#[test]
+fn a_gentle_mod_removes_reaction_delay_entirely() {
+    let mut reg = registry();
+    let ordinary = reg.reaction.delay(tactics_core::data::AVERAGE);
+    assert!(ordinary > 0, "the shipped rules make crews take a moment");
+
+    reg.reaction = tactics_core::data::ReactionRules {
+        base_ticks: 0,
+        max_ticks: 0,
+        ..reg.reaction.clone()
+    };
+    for level in [0, tactics_core::data::AVERAGE, 20] {
+        assert_eq!(reg.reaction.delay(level), 0, "level {level}");
+    }
+}

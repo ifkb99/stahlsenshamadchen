@@ -505,6 +505,32 @@ pub mod stats {
         )
     }
 
+    /// Ticks this crew waits before acting on its orders.
+    ///
+    /// The round is twelve ticks and the orders were given before it started,
+    /// so this is where "she was told" and "she did it" come apart. A quick
+    /// crew is moving almost at once; a slow one is still getting going while
+    /// the round happens around them.
+    ///
+    /// Zero for everyone when a mod says so, which is how difficulty is
+    /// turned down without a branch in here.
+    pub fn reaction_delay(
+        registry: &DataRegistry,
+        roster: &Roster,
+        unit: &Unit,
+        terrain: Option<&str>,
+    ) -> u32 {
+        let rules = &registry.reaction;
+        let level = roster.crew_skill(
+            registry,
+            registry.vehicle(&unit.vehicle),
+            &unit.crew,
+            &rules.skill,
+            terrain,
+        );
+        rules.delay(level)
+    }
+
     /// Driving skill used by [`super::move_points`].
     pub fn driving(
         registry: &DataRegistry,

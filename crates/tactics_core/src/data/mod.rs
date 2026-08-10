@@ -7,7 +7,7 @@ mod manifest;
 mod registry;
 mod scale;
 
-pub use balance::Balance;
+pub use balance::{Balance, ReactionRules};
 pub use cores::{
     AVERAGE, CheckContext, CoreDef, CoreIndex, RoleDef, SkillDef, TraitCondition, TraitDef,
     TraitEffect,
