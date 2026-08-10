@@ -195,6 +195,55 @@ fn a_battle_saved_mid_fight_remembers_who_holds_the_ground() {
     assert_eq!(restored.score, state.score);
 }
 
+/// The chain of command is state, not a cache, so unlike the sight grid it
+/// has to survive in the file itself — and unlike objective control it needs
+/// nothing put back on load, because it is plain data with no map-sized index
+/// behind it. Both halves of that are checked here: it round-trips exactly,
+/// and a save written before formations existed still opens.
+#[test]
+fn a_saved_battle_remembers_who_answers_to_whom() {
+    let reg = registry();
+    let mut original = BattleState::from_map(&reg, "river_crossing", 12).expect("battle");
+    assert!(
+        !original.formations().is_empty(),
+        "river_crossing declares formations, or this test proves nothing"
+    );
+    // Mid-fight rather than at setup: a save is taken from a battle in
+    // progress, and command state must not quietly depend on being fresh.
+    play(&reg, &mut original, 2, 9);
+
+    let text = SaveGame::new(&reg, None, Some(original.clone()))
+        .to_json()
+        .expect("serialises");
+    let restored = SaveGame::from_json(&reg, &text)
+        .expect("deserialises")
+        .0
+        .battle
+        .expect("battle round-trips");
+    assert_eq!(
+        restored.command, original.command,
+        "every formation, leader and member must come back exactly"
+    );
+
+    // And a save from before any of this existed loads as what it was: one
+    // flat pool per side, with nothing for `rehydrate` to rebuild.
+    let mut old: serde_json::Value = serde_json::from_str(&text).unwrap();
+    old["battle"]
+        .as_object_mut()
+        .unwrap()
+        .remove("command")
+        .expect("field is saved");
+    let older = SaveGame::from_json(&reg, &old.to_string())
+        .expect("a save from before formations must still load")
+        .0
+        .battle
+        .expect("battle survives");
+    assert!(
+        older.formations().is_empty(),
+        "no chain of command is a legal state, not a broken one"
+    );
+}
+
 /// The campaign is the half a player would actually mind losing: a girl with
 /// nine battles behind her and a wound that has three days left on it.
 #[test]

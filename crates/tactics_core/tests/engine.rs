@@ -517,6 +517,8 @@ fn sides_that_can_see_each_other_are_never_called_off() {
             crew: Vec::new(),
             name: Some("Watcher".into()),
             facing: None,
+            formation: None,
+            leads: false,
         },
         UnitPlacement {
             at: [2, 1],
@@ -525,6 +527,8 @@ fn sides_that_can_see_each_other_are_never_called_off() {
             crew: Vec::new(),
             name: Some("Watched".into()),
             facing: None,
+            formation: None,
+            leads: false,
         },
     ];
     let (roster, crews) = tactics_core::roster::Roster::stamp_for(&reg, &placements);
@@ -878,6 +882,8 @@ fn unit_at(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> UnitPlacement {
         crew: Vec::new(),
         name: Some(name.into()),
         facing: None,
+        formation: None,
+        leads: false,
     }
 }
 
@@ -1377,6 +1383,175 @@ fn an_objective_the_map_does_not_contain_is_a_validation_error() {
         errors.contains("share the id"),
         "nor two that cannot be told apart: {errors}"
     );
+}
+
+/// A map file whose chain of command is deliberately broken in every way
+/// there is, so one call to `validate_into` can be asked about all of them.
+fn tangled_command_map() -> tactics_core::map::MapFile {
+    serde_json::from_value(serde_json::json!({
+        "id": "tangled_command",
+        "palette": { "g": "grass" },
+        "rows": ["gggggg"],
+        "shape": "free",
+        "sides": [{ "name": "West" }, { "name": "East" }],
+        "formations": [
+            { "id": "twins", "side": 0 },
+            { "id": "twins", "side": 0 },
+            { "id": "nobody", "side": 1 },
+            { "id": "mixed", "side": 0 },
+        ],
+        "units": [
+            { "at": [0, 0], "side": 0, "vehicle": "medium_tank",
+              "formation": "twins", "leads": true },
+            { "at": [1, 0], "side": 0, "vehicle": "medium_tank",
+              "formation": "twins", "leads": true },
+            { "at": [2, 0], "side": 1, "vehicle": "medium_tank",
+              "formation": "mixed" },
+            { "at": [3, 0], "side": 0, "vehicle": "medium_tank",
+              "formation": "ghost_platoon" },
+            { "at": [4, 0], "side": 0, "vehicle": "medium_tank", "leads": true },
+        ],
+    }))
+    .unwrap()
+}
+
+#[test]
+fn a_chain_of_command_that_does_not_join_up_is_a_validation_error() {
+    // Formations say who obeys whom, so a typo does not merely look wrong: it
+    // leaves a vehicle outside the chain, which once missions exist is
+    // indistinguishable from a crew that was told to sit still. Every one of
+    // these is refused rather than warned about for that reason.
+    let reg = registry();
+    let mut report = tactics_core::data::ValidationReport::default();
+    tangled_command_map().validate_into(&reg, &mut report);
+    let errors = report.errors.join("\n");
+
+    assert!(
+        errors.contains("does not declare"),
+        "a unit in a formation nobody declared must be refused: {errors}"
+    );
+    assert!(
+        errors.contains("has no members"),
+        "nor a formation nobody is in: {errors}"
+    );
+    assert!(
+        errors.contains("only one girl can be in command"),
+        "nor two crews both claiming to lead: {errors}"
+    );
+    assert!(
+        errors.contains("which belongs to side"),
+        "nor a formation spanning two armies: {errors}"
+    );
+    assert!(
+        errors.contains("marked `leads` but is in no formation"),
+        "nor a leader of nothing: {errors}"
+    );
+    assert!(
+        errors.contains("two formations share the id"),
+        "nor two formations that cannot be told apart: {errors}"
+    );
+}
+
+#[test]
+fn a_formation_asking_for_an_unknown_doctrine_falls_back_rather_than_failing() {
+    // Doctrine degrades everywhere else it is named — an unknown one on a side
+    // becomes the balanced default rather than refusing to field the side —
+    // and a formation's own doctrine is the same bargain one level down.
+    let reg = registry();
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "odd_doctrine",
+        "palette": { "g": "grass" },
+        "rows": ["gg"],
+        "shape": "free",
+        "sides": [{ "name": "West" }],
+        "formations": [
+            { "id": "first", "side": 0, "doctrine": "napoleonic_squares" },
+        ],
+        "units": [
+            { "at": [0, 0], "side": 0, "vehicle": "medium_tank", "formation": "first" },
+        ],
+    }))
+    .unwrap();
+    let mut report = tactics_core::data::ValidationReport::default();
+    file.validate_into(&reg, &mut report);
+
+    assert!(
+        report.is_ok(),
+        "an unknown doctrine must not stop the map loading: {:?}",
+        report.errors
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.contains("napoleonic_squares")),
+        "but it must be said out loud: {:?}",
+        report.warnings
+    );
+}
+
+#[test]
+fn a_map_that_declares_formations_puts_them_on_the_battle() {
+    // The shipped scenario is the fixture on purpose: it is what the
+    // determinism baseline is fought on, so populating command state here is
+    // what makes "nothing reads it yet" a checkable claim rather than a hope.
+    let reg = registry();
+    let state = BattleState::from_map(&reg, "river_crossing", 1).expect("battle");
+
+    let ids: Vec<&str> = state.formations().iter().map(|f| f.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "kuhlmann_armor",
+            "kuhlmann_recon",
+            "valkyrie_line",
+            "valkyrie_screen"
+        ],
+        "formations must arrive in the order the map declared them"
+    );
+
+    let armor = state
+        .formations()
+        .iter()
+        .find(|f| f.id == "kuhlmann_armor")
+        .expect("the map declares it");
+    assert_eq!(armor.side, 0);
+    // Anka's medium tank is placed first and says `leads`; Mina's light tank
+    // follows her. Members are unit ids, which is placement order.
+    assert_eq!(armor.members, vec![UnitId(0), UnitId(2)]);
+    assert_eq!(armor.leader, Some(UnitId(0)));
+
+    // A formation that names no leader falls back to its first member, which
+    // is the seniority a map author controls by declaration order.
+    let screen = state
+        .formations()
+        .iter()
+        .find(|f| f.id == "valkyrie_screen")
+        .expect("the map declares it");
+    assert_eq!(screen.side, 1);
+    assert_eq!(screen.leader, Some(UnitId(7)), "Greta's car says `leads`");
+
+    // Every unit answers to exactly one formation, and to the right one.
+    for unit in state.units.iter() {
+        let formation = state
+            .formation_of(unit.id)
+            .unwrap_or_else(|| panic!("{} is in no formation", unit.name));
+        assert_eq!(
+            formation.side, unit.side,
+            "{} answers to the other army",
+            unit.name
+        );
+    }
+}
+
+#[test]
+fn a_map_that_declares_no_formations_has_no_chain_of_command() {
+    // The additivity rule: saying nothing is one flat pool per side, which is
+    // every battle this engine fought before formations existed.
+    let reg = registry();
+    let state = standoff(&reg, 1);
+    assert!(state.formations().is_empty());
+    assert!(state.formation_of(UnitId(0)).is_none());
 }
 
 fn standoff(reg: &DataRegistry, seed: u64) -> BattleState {

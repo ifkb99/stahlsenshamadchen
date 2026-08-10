@@ -109,6 +109,28 @@
             }
         }
     ],
+    "formations": [
+        {
+            "id": "kuhlmann_armor",
+            "name": "1st Armored Platoon",
+            "side": 0
+        },
+        {
+            "id": "kuhlmann_recon",
+            "name": "Reconnaissance Section",
+            "side": 0
+        },
+        {
+            "id": "valkyrie_line",
+            "name": "Valkyrie Line",
+            "side": 1
+        },
+        {
+            "id": "valkyrie_screen",
+            "name": "Valkyrie Screen",
+            "side": 1
+        }
+    ],
     "units": [
         {
             "at": [
@@ -120,7 +142,9 @@
             "crew": [
                 "anka",
                 "rosa"
-            ]
+            ],
+            "formation": "kuhlmann_armor",
+            "leads": true
         },
         {
             "at": [
@@ -131,7 +155,9 @@
             "vehicle": "recon_car",
             "crew": [
                 "elsa"
-            ]
+            ],
+            "formation": "kuhlmann_recon",
+            "leads": true
         },
         {
             "at": [
@@ -143,7 +169,8 @@
             "crew": [
                 "mina",
                 "juno"
-            ]
+            ],
+            "formation": "kuhlmann_armor"
         },
         {
             "at": [
@@ -154,7 +181,8 @@
             "vehicle": "artillery",
             "crew": [
                 "petra"
-            ]
+            ],
+            "formation": "kuhlmann_recon"
         },
         {
             "at": [
@@ -165,7 +193,9 @@
             "vehicle": "medium_tank",
             "crew": [
                 "irma"
-            ]
+            ],
+            "formation": "valkyrie_line",
+            "leads": true
         },
         {
             "at": [
@@ -176,7 +206,8 @@
             "vehicle": "light_tank",
             "crew": [
                 "sofia"
-            ]
+            ],
+            "formation": "valkyrie_screen"
         },
         {
             "at": [
@@ -187,7 +218,8 @@
             "vehicle": "tank_destroyer",
             "crew": [
                 "nadja"
-            ]
+            ],
+            "formation": "valkyrie_line"
         },
         {
             "at": [
@@ -198,7 +230,9 @@
             "vehicle": "recon_car",
             "crew": [
                 "greta"
-            ]
+            ],
+            "formation": "valkyrie_screen",
+            "leads": true
         }
     ],
     "objectives": [

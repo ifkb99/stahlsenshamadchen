@@ -281,6 +281,8 @@ fn two_unit_field(
             crew: Vec::new(),
             name: Some("attacker".into()),
             facing: Some(Facing::East),
+            formation: None,
+            leads: false,
         },
         UnitPlacement {
             at: [1 + DUEL_RANGE, 1],
@@ -289,6 +291,8 @@ fn two_unit_field(
             crew: Vec::new(),
             name: Some("target".into()),
             facing: Some(target_facing),
+            formation: None,
+            leads: false,
         },
     ];
     let sides = vec![

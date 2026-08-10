@@ -520,6 +520,11 @@ fn deploy(
                     crew: Vec::new(),
                     name: unit.name.clone(),
                     facing: None,
+                    // An army is not yet a formation: the campaign half of
+                    // the chain of command is a later chunk, so a field
+                    // battle is still one flat pool per side.
+                    formation: None,
+                    leads: false,
                 });
                 crews.push(unit.crew.clone());
                 origins.push(force.army);

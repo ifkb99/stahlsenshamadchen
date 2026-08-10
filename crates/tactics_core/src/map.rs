@@ -100,6 +100,18 @@ pub struct UnitPlacement {
     /// a scenario that wants someone caught looking the wrong way.
     #[serde(default)]
     pub facing: Option<Facing>,
+    /// The [`FormationDef`] this vehicle belongs to, by id. Absent means the
+    /// side's flat pool — which is every unit on every map written before
+    /// formations existed, and is exactly today's game.
+    #[serde(default)]
+    pub formation: Option<String>,
+    /// Whether the girl in this vehicle commands the formation. At most one
+    /// placement per formation may say so; a formation whose author names
+    /// nobody is led by its first-declared member, which is the authorable
+    /// rule (declaration order is a chain of seniority a map writer controls)
+    /// rather than a hidden one.
+    #[serde(default)]
+    pub leads: bool,
 }
 
 /// Ground a battle is fought *for*, as written in a map file.
@@ -186,6 +198,54 @@ impl Objective {
     }
 }
 
+/// A formation a map declares: a group of units with somebody in charge.
+///
+/// Formations exist because an order has to be issued by *someone*, to
+/// *someone*. Today a side is a flat pool that an all-seeing planner drives
+/// unit by unit; a formation is the unit of command that pool is missing —
+/// the thing a mission is given to, that a leader can be lost from, and that
+/// can be out of contact while the rest of the side is not.
+///
+/// A map that declares none is one flat pool per side and behaves exactly as
+/// it did, which is the additivity rule this project holds every harsh system
+/// to. Declaring them is therefore always opt-in, and the checks in
+/// [`MapFile::validate_into`] are strict precisely because they are: a
+/// formation that references nothing, or that nobody is in, is dead data
+/// which will mislead whoever edits the map next.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FormationDef {
+    pub id: String,
+    /// Display name. Empty falls back to the id — see [`Self::display_name`].
+    #[serde(default)]
+    pub name: String,
+    /// Index into the map's `sides` list. Every member placement must agree
+    /// with it: a formation spanning two armies is not a chain of command,
+    /// it is a typo.
+    pub side: u8,
+    /// A doctrine of this formation's own, overriding the side's. Two
+    /// platoons of one academy may fight differently — a recon screen is not
+    /// supposed to behave like the tanks it screens for. Absent means the
+    /// side's doctrine, which is what every side has today.
+    ///
+    /// Unread until missions exist; declared now so the map format does not
+    /// have to change again to acquire it.
+    #[serde(default)]
+    pub doctrine: Option<String>,
+}
+
+impl FormationDef {
+    /// What to call this formation on screen. The fallback lives here rather
+    /// than in each caller so "no name means the id" is one rule in one
+    /// place, the same way [`Objective`] resolves its own name at parse time.
+    pub fn display_name(&self) -> &str {
+        if self.name.is_empty() {
+            &self.id
+        } else {
+            &self.name
+        }
+    }
+}
+
 /// An army placed by an overworld map.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArmyPlacement {
@@ -238,6 +298,10 @@ pub struct MapFile {
     /// rule and the one a map gets by saying nothing.
     #[serde(default)]
     pub victory_score: Option<u32>,
+    /// Who answers to whom. A map that declares none is one flat pool per
+    /// side, which is every map that predates the chain of command.
+    #[serde(default)]
+    pub formations: Vec<FormationDef>,
 }
 
 /// One tile of a parsed map.
@@ -301,6 +365,22 @@ pub struct HexMap {
     objectives: Vec<Objective>,
     #[serde(default)]
     victory_score: Option<u32>,
+    /// Formations declared by the map file, in declaration order.
+    ///
+    /// These ride here for the same reason objectives do, and it is worth
+    /// stating because a formation is not a hex and this struct is mostly
+    /// hexes. `HexMap` is what *both* battle-setup paths already carry — a
+    /// scenario map and a field battle the overworld assembles from
+    /// placements — so anything that has to reach both without growing an
+    /// argument on every constructor travels here. `victory_score` set the
+    /// precedent; this follows it.
+    ///
+    /// Declaration order is load bearing: it is the order
+    /// [`crate::battle::CommandState`] walks, and by the seniority rule it is
+    /// also who takes over when a leader is lost. It must never become a hash
+    /// order.
+    #[serde(default)]
+    formations: Vec<FormationDef>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -379,6 +459,7 @@ impl HexMap {
             tiles,
             objectives,
             victory_score: file.victory_score,
+            formations: file.formations.clone(),
         })
     }
 
@@ -392,6 +473,12 @@ impl HexMap {
     /// Points that end the battle outright, if this map sets any.
     pub fn victory_score(&self) -> Option<u32> {
         self.victory_score
+    }
+
+    /// Formations this map declares, in declaration order — which is the
+    /// order a battle resolves them in and the seniority they succeed in.
+    pub fn formations(&self) -> &[FormationDef] {
+        &self.formations
     }
 
     pub fn get(&self, hex: Hex) -> Option<&Tile> {
@@ -488,6 +575,89 @@ impl MapFile {
             registry.scale.battle_map_tiles(),
             map.len(),
         ));
+    }
+
+    /// Check that the chain of command a map writes down joins up.
+    ///
+    /// Every referential mistake here is an error rather than a warning, and
+    /// deliberately so: a formation is data about *who obeys whom*, so a typo
+    /// does not merely look wrong, it silently leaves a vehicle outside the
+    /// chain — indistinguishable, once missions exist, from a crew that was
+    /// ordered to sit still. The one exception is an unknown doctrine, which
+    /// degrades to the side's exactly the way an unknown doctrine on a side
+    /// degrades to the balanced default (see [`crate::ai::resolve_doctrine`]).
+    ///
+    /// Only the map's own `units` are considered. A unit inside an
+    /// [`ArmyPlacement`] belongs to an army rather than to this map's
+    /// scenario, and armies grow formations of their own when the campaign
+    /// half of the chain of command lands.
+    fn validate_formations(&self, registry: &DataRegistry, report: &mut ValidationReport) {
+        let mut seen: Vec<&str> = Vec::new();
+        for formation in &self.formations {
+            if seen.contains(&formation.id.as_str()) {
+                report.errors.push(format!(
+                    "map `{}`: two formations share the id `{}`",
+                    self.id, formation.id
+                ));
+            }
+            seen.push(&formation.id);
+
+            if let Some(doctrine) = &formation.doctrine
+                && registry.doctrine(doctrine).is_none()
+            {
+                report.warnings.push(format!(
+                    "map `{}`: formation `{}` asks for unknown doctrine `{doctrine}`; falling \
+                     back to its side's",
+                    self.id, formation.id
+                ));
+            }
+
+            let members: Vec<&UnitPlacement> = self
+                .units
+                .iter()
+                .filter(|u| u.formation.as_deref() == Some(formation.id.as_str()))
+                .collect();
+            if members.is_empty() {
+                report.errors.push(format!(
+                    "map `{}`: formation `{}` has no members, so nobody can ever be ordered \
+                     through it",
+                    self.id, formation.id
+                ));
+            }
+            let leaders = members.iter().filter(|u| u.leads).count();
+            if leaders > 1 {
+                report.errors.push(format!(
+                    "map `{}`: formation `{}` has {leaders} placements marked `leads`, and only \
+                     one girl can be in command",
+                    self.id, formation.id
+                ));
+            }
+            for member in members.iter().filter(|u| u.side != formation.side) {
+                report.errors.push(format!(
+                    "map `{}`: a side {} unit at [{}, {}] is in formation `{}`, which belongs to \
+                     side {}",
+                    self.id, member.side, member.at[0], member.at[1], formation.id, formation.side
+                ));
+            }
+        }
+
+        for unit in &self.units {
+            match &unit.formation {
+                Some(id) if !seen.contains(&id.as_str()) => report.errors.push(format!(
+                    "map `{}`: unit at [{}, {}] is in formation `{id}`, which the map does not \
+                     declare",
+                    self.id, unit.at[0], unit.at[1]
+                )),
+                // Leading nothing is not a rank. Left as an error rather than
+                // ignored because the author plainly meant this crew to be in
+                // charge of something and naming what was forgotten.
+                None if unit.leads => report.errors.push(format!(
+                    "map `{}`: unit at [{}, {}] is marked `leads` but is in no formation",
+                    self.id, unit.at[0], unit.at[1]
+                )),
+                _ => {}
+            }
+        }
     }
 
     /// Validate this map against loaded terrain/vehicle/character defs.
@@ -622,6 +792,7 @@ impl MapFile {
                 }
             }
         }
+        self.validate_formations(registry, report);
         if self.victory_score.is_some() && self.objectives.is_empty() {
             report.warnings.push(format!(
                 "map `{}`: sets `victory_score` but declares no objectives, so no side can \
@@ -738,6 +909,27 @@ mod tests {
         assert_eq!(top_right.terrain, "forest");
         assert_eq!(top_right.elevation, 2);
         assert!(!map.contains(crate::offset_to_hex(1, 1)));
+    }
+
+    /// A formation with no `name` is displayed as its id, so a map author who
+    /// only wanted a handle gets a readable one rather than a blank label.
+    #[test]
+    fn a_formation_without_a_name_is_called_by_its_id() {
+        let file: MapFile = serde_json::from_str(
+            r##"{
+                "id": "test",
+                "palette": { "g": "grass" },
+                "rows": ["gg"],
+                "formations": [
+                    { "id": "1st_platoon", "side": 0 },
+                    { "id": "2nd_platoon", "name": "2nd Platoon", "side": 0 }
+                ]
+            }"##,
+        )
+        .unwrap();
+        let map = HexMap::from_map_file(&file).unwrap();
+        let names: Vec<&str> = map.formations().iter().map(|f| f.display_name()).collect();
+        assert_eq!(names, ["1st_platoon", "2nd Platoon"]);
     }
 
     #[test]

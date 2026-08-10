@@ -18,6 +18,7 @@
 //! search-based planners branch on.
 
 mod combat;
+mod command;
 mod fog;
 mod movement;
 mod orders;
@@ -26,6 +27,7 @@ pub use combat::{
     AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, MAX_HIT, MIN_HIT,
     expected_damage, hit_breakdown, hit_chance, preview_attack, struck_facing, weapon_ready,
 };
+pub use command::{CommandState, Formation};
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
     destination_blocked, edge_cost as movement_edge_cost, move_points, path_to, reachable,
@@ -208,6 +210,14 @@ pub struct BattleState {
     /// Objective points each side has collected, indexed by side.
     #[serde(default)]
     pub score: Vec<u32>,
+    /// Who answers to whom: the map's formations resolved against the units
+    /// that actually spawned.
+    ///
+    /// Inert as of this chunk — populated, saved, and read by nothing that
+    /// makes a decision. `#[serde(default)]` so a save written before the
+    /// chain of command existed opens as what it was: one flat pool per side.
+    #[serde(default)]
+    pub command: CommandState,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -254,6 +264,10 @@ impl BattleState {
         let side_count = sides.len();
         let objective_count = map.objectives().len();
         let sight = Arc::new(SightGrid::build(registry, &map));
+        // Resolved before the map is moved into its `Arc`, and from the same
+        // two things the units are spawned from, so membership cannot drift
+        // from the roster it describes.
+        let command = CommandState::from_placements(map.formations(), &file.units);
         // A scenario battle has no campaign behind it, so its girls are
         // stamped fresh from mod data and forgotten afterwards.
         let (roster, crews) = Roster::stamp_for(registry, &file.units);
@@ -273,6 +287,7 @@ impl BattleState {
             last_contact_round: 1,
             objective_held: vec![None; objective_count],
             score: vec![0; side_count],
+            command,
         };
         for (placement, crew) in file.units.iter().zip(&crews) {
             state.spawn_unit(registry, placement, crew.clone());
@@ -297,6 +312,12 @@ impl BattleState {
         let side_count = sides.len();
         let objective_count = map.objectives().len();
         let sight = Arc::new(SightGrid::build(registry, &map));
+        // The formations travel on the map for exactly this reason: a field
+        // battle the overworld assembles picks them up without this signature
+        // growing, the same trip objectives already make. A declaration whose
+        // members are not among these placements is dropped rather than
+        // carried empty — see `CommandState::from_placements`.
+        let command = CommandState::from_placements(map.formations(), placements);
         let mut state = Self {
             map: Arc::new(map),
             sight,
@@ -313,6 +334,7 @@ impl BattleState {
             last_contact_round: 1,
             objective_held: vec![None; objective_count],
             score: vec![0; side_count],
+            command,
         };
         for (i, placement) in placements.iter().enumerate() {
             state.spawn_unit(
@@ -502,6 +524,19 @@ impl BattleState {
             .iter()
             .enumerate()
             .map(|(i, o)| (o, self.objective_held.get(i).copied().flatten()))
+    }
+
+    /// Every formation in this battle, in the order its map declared them.
+    ///
+    /// Empty on a map that declares none, which is one flat pool per side and
+    /// exactly the game this engine played before the chain of command.
+    pub fn formations(&self) -> &[Formation] {
+        self.command.formations()
+    }
+
+    /// The formation a unit answers to, if it is in one.
+    pub fn formation_of(&self, unit: UnitId) -> Option<&Formation> {
+        self.command.formation_of(unit)
     }
 
     /// Objective points a side has collected so far.
