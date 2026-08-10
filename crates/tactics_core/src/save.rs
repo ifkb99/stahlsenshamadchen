@@ -208,6 +208,14 @@ pub fn rehydrate(registry: &DataRegistry, battle: &mut BattleState) {
     // key list is indexed by side during recompute, so an empty one panics
     // rather than simply recomputing.
     battle.fog.rehydrate();
+    // Objective control and the scoreboard are indexed positionally — by
+    // objective and by side — and scoring writes through those indices. A
+    // save written before objectives existed carries neither, so size them
+    // from the map and the sides rather than trusting the file to agree.
+    battle
+        .objective_held
+        .resize(battle.map.objectives().len(), None);
+    battle.score.resize(battle.sides.len(), 0);
 }
 
 /// Write a save to disk.

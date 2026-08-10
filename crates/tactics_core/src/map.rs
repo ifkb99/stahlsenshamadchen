@@ -102,6 +102,90 @@ pub struct UnitPlacement {
     pub facing: Option<Facing>,
 }
 
+/// Ground a battle is fought *for*, as written in a map file.
+///
+/// Before this existed the only way to win was to destroy the enemy, which
+/// made holding the best cover on the map an unpunishable strategy — and the
+/// AI, played well, duly discovered that and stopped advancing. An objective
+/// is the thing that makes ground cost something: it is worth points to
+/// whoever stands on it, so a side that refuses to leave its start line loses
+/// on points to one that walked to the bridge.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ObjectiveSpec {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    /// The hexes that make up this objective, in `[column, row]` offset
+    /// coordinates like every other placement in a map file. Several hexes
+    /// because the things worth fighting for — a bridge, a crossroads, a
+    /// village — are rarely one tile wide.
+    pub at: Vec<[i32; 2]>,
+    /// Points collected for it: per round for ground held, per vehicle for
+    /// ground driven off.
+    #[serde(default = "default_objective_value")]
+    pub value: u32,
+    #[serde(default)]
+    pub kind: ObjectiveKind,
+    /// The side this objective belongs to, if only one may use it. Absent
+    /// means anybody's — which is what contested ground is, and is why `hold`
+    /// leaves it alone. An `exit` almost always names a side: a lane off the
+    /// map that either army may use is a lane both armies will use on turn
+    /// one.
+    #[serde(default)]
+    pub side: Option<u8>,
+}
+
+fn default_objective_value() -> u32 {
+    1
+}
+
+/// What a side is supposed to do with an objective.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObjectiveKind {
+    /// Ground worth standing on. Pays its value every round to whoever holds
+    /// it. The default, so a map that says nothing means what every map that
+    /// predates exits meant.
+    #[default]
+    Hold,
+    /// Ground worth *leaving* by. A vehicle that reaches it drives off the
+    /// map — out of the battle, but home rather than burning — and pays its
+    /// value once. This is what a withdrawal, a breakthrough and a raid that
+    /// means to get away again are all made of.
+    Exit,
+}
+
+/// An objective with its hexes resolved, as a battle uses it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Objective {
+    pub id: String,
+    pub name: String,
+    pub hexes: Vec<Hex>,
+    pub value: u32,
+    pub kind: ObjectiveKind,
+    pub side: Option<u8>,
+}
+
+impl Objective {
+    /// Whether `side` is allowed to score this one.
+    pub fn open_to(&self, side: u8) -> bool {
+        self.side.is_none_or(|s| s == side)
+    }
+}
+
+impl Objective {
+    /// Where to draw the marker, and what the AI steers at: the first hex,
+    /// which is the one the map author wrote down first. Deliberately not a
+    /// centroid — a centroid of an L-shaped objective can land off it.
+    pub fn anchor(&self) -> Hex {
+        self.hexes.first().copied().unwrap_or(Hex::ZERO)
+    }
+
+    pub fn contains(&self, hex: Hex) -> bool {
+        self.hexes.contains(&hex)
+    }
+}
+
 /// An army placed by an overworld map.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArmyPlacement {
@@ -145,6 +229,15 @@ pub struct MapFile {
     pub units: Vec<UnitPlacement>,
     #[serde(default)]
     pub armies: Vec<ArmyPlacement>,
+    /// Ground worth fighting for. A map that names none is fought to the
+    /// death, exactly as every map was before objectives existed.
+    #[serde(default)]
+    pub objectives: Vec<ObjectiveSpec>,
+    /// Points that win the battle outright. Absent means objectives only
+    /// decide a battle that would otherwise be a draw, which is the gentler
+    /// rule and the one a map gets by saying nothing.
+    #[serde(default)]
+    pub victory_score: Option<u32>,
 }
 
 /// One tile of a parsed map.
@@ -193,6 +286,21 @@ pub(crate) mod hex_keyed {
 pub struct HexMap {
     #[serde(with = "hex_keyed")]
     tiles: HashMap<Hex, Tile>,
+    /// Ground worth fighting for, in the order the map file declared it.
+    ///
+    /// These live on the map rather than on the battle because they are
+    /// immutable terrain-like facts: which hexes are the bridge does not
+    /// change during a fight, only who is standing on them. That split also
+    /// means both battle-setup paths — a scenario map and a field battle the
+    /// overworld assembles from placements — pick objectives up for free,
+    /// since both already carry a `HexMap`.
+    ///
+    /// `#[serde(default)]` so saves written before objectives existed still
+    /// load, as maps without them.
+    #[serde(default)]
+    objectives: Vec<Objective>,
+    #[serde(default)]
+    victory_score: Option<u32>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -247,7 +355,43 @@ impl HexMap {
                 );
             }
         }
-        Ok(Self { tiles })
+        let objectives = file
+            .objectives
+            .iter()
+            .map(|spec| Objective {
+                id: spec.id.clone(),
+                name: if spec.name.is_empty() {
+                    spec.id.clone()
+                } else {
+                    spec.name.clone()
+                },
+                hexes: spec
+                    .at
+                    .iter()
+                    .map(|at| crate::offset_to_hex(at[0], at[1]))
+                    .collect(),
+                value: spec.value,
+                kind: spec.kind,
+                side: spec.side,
+            })
+            .collect();
+        Ok(Self {
+            tiles,
+            objectives,
+            victory_score: file.victory_score,
+        })
+    }
+
+    /// Ground worth fighting for, in map-file order. That order is load
+    /// bearing: it indexes the battle's control and is walked when scoring,
+    /// so it must not become a hash order.
+    pub fn objectives(&self) -> &[Objective] {
+        &self.objectives
+    }
+
+    /// Points that end the battle outright, if this map sets any.
+    pub fn victory_score(&self) -> Option<u32> {
+        self.victory_score
     }
 
     pub fn get(&self, hex: Hex) -> Option<&Tile> {
@@ -412,6 +556,62 @@ impl MapFile {
                 ));
             }
         }
+        // Objectives decide battles, so a typo in one silently changes the
+        // result rather than merely looking wrong. An objective off the map,
+        // or one with no hexes at all, can never be held by anybody.
+        let mut seen_objectives: Vec<&str> = Vec::new();
+        for objective in &self.objectives {
+            if seen_objectives.contains(&objective.id.as_str()) {
+                report.errors.push(format!(
+                    "map `{}`: two objectives share the id `{}`",
+                    self.id, objective.id
+                ));
+            }
+            seen_objectives.push(&objective.id);
+            if objective.at.is_empty() {
+                report.errors.push(format!(
+                    "map `{}`: objective `{}` names no hexes, so nobody can ever hold it",
+                    self.id, objective.id
+                ));
+            }
+            for at in &objective.at {
+                if !map.contains(crate::offset_to_hex(at[0], at[1])) {
+                    report.errors.push(format!(
+                        "map `{}`: objective `{}` includes [{}, {}], which is outside the map",
+                        self.id, objective.id, at[0], at[1]
+                    ));
+                }
+            }
+            if let Some(side) = objective.side
+                && side as usize >= self.sides.len()
+            {
+                report.errors.push(format!(
+                    "map `{}`: objective `{}` belongs to side {side} but only {} sides are \
+                     declared",
+                    self.id,
+                    objective.id,
+                    self.sides.len()
+                ));
+            }
+            // An exit anybody may drive off is a lane both armies leave by on
+            // the first round, which is not a battle. Warned rather than
+            // refused: a scenario about two forces disengaging from each
+            // other is a real thing to want.
+            if objective.kind == ObjectiveKind::Exit && objective.side.is_none() {
+                report.warnings.push(format!(
+                    "map `{}`: exit `{}` names no side, so every side may leave by it",
+                    self.id, objective.id
+                ));
+            }
+        }
+        if self.victory_score.is_some() && self.objectives.is_empty() {
+            report.warnings.push(format!(
+                "map `{}`: sets `victory_score` but declares no objectives, so no side can \
+                 ever score",
+                self.id
+            ));
+        }
+
         /// The four things every placement check needs, bundled so that only
         /// the placement itself varies from call to call.
         struct PlacementCheck<'a> {

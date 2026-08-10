@@ -927,6 +927,478 @@ fn duel(reg: &DataRegistry, seed: u64) -> BattleState {
 /// map can no longer put units out of contact by standing them far apart —
 /// terrain has to do it. Tests about the round structure rather than about
 /// shooting start here, so a chance encounter cannot end the battle early.
+/// A battle on a map that declares ground worth taking.
+///
+/// Every objective test uses the same forest curtain as [`standoff`]: the
+/// rules being checked are about who is standing where, and two crews trading
+/// fire would end the battle before the bookkeeping could be observed.
+fn objective_battle(
+    reg: &DataRegistry,
+    objectives: serde_json::Value,
+    victory_score: Option<u32>,
+    placements: Vec<UnitPlacement>,
+) -> BattleState {
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "objective_map",
+        "palette": { "g": "grass", "f": "forest" },
+        "rows": ["gggggfggggg"],
+        "objectives": objectives,
+        "victory_score": victory_score,
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        1,
+    )
+}
+
+/// The two crews of an objective test, out of contact behind the curtain.
+fn curtained_pair() -> Vec<UnitPlacement> {
+    vec![
+        unit_at([0, 0], 0, "medium_tank", "West"),
+        unit_at([10, 0], 1, "medium_tank", "East"),
+    ]
+}
+
+#[test]
+fn ground_is_taken_by_standing_on_it_and_stays_taken_after_leaving() {
+    // Control persists on purpose: ground you have taken has to be taken back
+    // rather than merely vacated, or an objective would be worth nothing to
+    // anyone who has somewhere else to be.
+    let reg = registry();
+    let mut state = objective_battle(
+        &reg,
+        serde_json::json!([{ "id": "crossroads", "at": [[2, 0]], "value": 1 }]),
+        None,
+        curtained_pair(),
+    );
+    assert_eq!(state.objective_held, vec![None], "nobody starts holding it");
+
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: UnitId(0),
+                to: tactics_core::offset_to_hex(2, 0),
+            },
+        )
+        .expect("west can drive to the crossroads");
+    let events = play_round(&reg, &mut state);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            BattleEvent::ObjectiveTaken { objective, side: Some(0), .. } if objective == "crossroads"
+        )),
+        "taking ground is announced, or a battle decided on points reads as arbitrary"
+    );
+    assert_eq!(state.objective_held, vec![Some(0)]);
+
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: UnitId(0),
+                to: tactics_core::offset_to_hex(0, 0),
+            },
+        )
+        .expect("west can drive home again");
+    let events = play_round(&reg, &mut state);
+    assert_eq!(
+        state.objective_held,
+        vec![Some(0)],
+        "walking away does not hand the ground back"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::ObjectiveTaken { .. })),
+        "ground that did not change hands says nothing"
+    );
+}
+
+#[test]
+fn ground_two_sides_stand_on_belongs_to_neither() {
+    // The objective is deliberately two hexes at opposite ends of the map, so
+    // that one crew from each side can stand on it without being in a
+    // position to shoot the other. What is under test is the contest rule,
+    // not gunnery.
+    let reg = registry();
+    let mut state = objective_battle(
+        &reg,
+        serde_json::json!([{ "id": "the_valley", "at": [[0, 0], [10, 0]], "value": 4 }]),
+        None,
+        curtained_pair(),
+    );
+    play_round(&reg, &mut state);
+    assert_eq!(
+        state.objective_held,
+        vec![None],
+        "ground both sides are standing on is nobody's"
+    );
+    assert_eq!(
+        (state.score(0), state.score(1)),
+        (0, 0),
+        "and a contested objective pays nobody, or a defender could collect \
+         points while being overrun"
+    );
+}
+
+#[test]
+fn holding_ground_pays_once_a_round_however_many_ticks_a_round_has() {
+    // Paying per tick would make the size of every score an accident of
+    // `ticks_per_round`, which is mod data and may be anything.
+    let reg = registry();
+    let mut state = objective_battle(
+        &reg,
+        serde_json::json!([{ "id": "crossroads", "at": [[0, 0]], "value": 3 }]),
+        None,
+        curtained_pair(),
+    );
+    for round in 1..=3 {
+        play_round(&reg, &mut state);
+        assert_eq!(
+            state.score(0),
+            3 * round,
+            "three points a round, not three a tick"
+        );
+        assert_eq!(state.score(1), 0);
+    }
+}
+
+#[test]
+fn a_side_that_holds_the_ground_wins_a_battle_that_loses_contact() {
+    // The rule this whole feature exists for. Two crews who never find each
+    // other used to produce a draw, which made sitting still unbeatable; now
+    // the one that walked to the objective has something to show for it.
+    let reg = registry();
+    let mut state = objective_battle(
+        &reg,
+        serde_json::json!([{ "id": "crossroads", "at": [[2, 0]], "value": 1 }]),
+        None,
+        curtained_pair(),
+    );
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: UnitId(0),
+                to: tactics_core::offset_to_hex(2, 0),
+            },
+        )
+        .expect("west can drive to the crossroads");
+
+    let mut ended = None;
+    for _ in 0..(STALEMATE_ROUNDS as usize + 2) {
+        let events = play_round(&reg, &mut state);
+        if let Some(BattleEvent::BattleEnded { winner, reason }) = events
+            .iter()
+            .find(|e| matches!(e, BattleEvent::BattleEnded { .. }))
+        {
+            ended = Some((*winner, *reason));
+            break;
+        }
+    }
+    assert_eq!(
+        ended,
+        Some((Some(0), EndReason::Stalemate)),
+        "breaking contact ends the shooting; the points say who won"
+    );
+    assert_eq!(
+        state.alive_units().count(),
+        2,
+        "and it still costs nobody their tanks"
+    );
+}
+
+#[test]
+fn reaching_the_victory_score_ends_the_battle_outright() {
+    let reg = registry();
+    let mut state = objective_battle(
+        &reg,
+        serde_json::json!([{ "id": "the_hill", "at": [[0, 0]], "value": 5 }]),
+        Some(10),
+        curtained_pair(),
+    );
+    let mut ended = None;
+    for _ in 0..4 {
+        let events = play_round(&reg, &mut state);
+        if let Some(BattleEvent::BattleEnded { winner, reason }) = events
+            .iter()
+            .find(|e| matches!(e, BattleEvent::BattleEnded { .. }))
+        {
+            ended = Some((*winner, *reason));
+            break;
+        }
+    }
+    assert_eq!(ended, Some((Some(0), EndReason::Objectives)));
+    assert_eq!(
+        state.round, 2,
+        "two rounds at five points a round, and not a round later"
+    );
+}
+
+#[test]
+fn driving_off_an_exit_takes_the_crew_home_rather_than_killing_them() {
+    // The distinction the whole exit mechanism rests on. `alive` is "on the
+    // battlefield" and answers targeting and fog; it is not "came home", and
+    // the campaign reads the second.
+    let reg = registry();
+    let mut state = objective_battle(
+        &reg,
+        serde_json::json!([{
+            "id": "west_road", "at": [[0, 0]], "value": 5,
+            "kind": "exit", "side": 0
+        }]),
+        None,
+        vec![
+            unit_at([1, 0], 0, "medium_tank", "Leaver"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+    );
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: UnitId(0),
+                to: tactics_core::offset_to_hex(0, 0),
+            },
+        )
+        .expect("west can reach the road");
+    let events = play_round(&reg, &mut state);
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            BattleEvent::UnitExited { unit, objective, .. }
+                if *unit == UnitId(0) && objective == "west_road"
+        )),
+        "leaving is announced in its own right, never as a destruction"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::UnitDestroyed { .. })),
+        "nobody was destroyed"
+    );
+
+    let leaver = &state.units[0];
+    assert!(!leaver.alive, "she is off the board");
+    assert!(leaver.exited, "but she left under her own power");
+    assert_eq!(state.score(0), 5, "and the exit paid its value once");
+
+    assert!(
+        state.surviving_units().any(|u| u.id == UnitId(0)),
+        "the campaign must count her among the survivors"
+    );
+    assert!(
+        !state.lost_units().any(|u| u.id == UnitId(0)),
+        "and must not count her among the losses"
+    );
+}
+
+#[test]
+fn an_exit_belongs_to_the_side_it_names() {
+    // An exit anyone may use is a lane both armies leave by on round one.
+    let reg = registry();
+    let mut state = objective_battle(
+        &reg,
+        serde_json::json!([{
+            "id": "west_road", "at": [[0, 0], [10, 0]], "value": 5,
+            "kind": "exit", "side": 0
+        }]),
+        None,
+        // Side 1 starts standing on a hex of side 0's exit. Both stay behind
+        // the curtain: the rule under test is eligibility, and a firefight
+        // would settle it by killing somebody instead.
+        vec![
+            unit_at([1, 0], 0, "medium_tank", "West"),
+            unit_at([10, 0], 1, "medium_tank", "Squatter"),
+        ],
+    );
+    play_round(&reg, &mut state);
+    assert!(
+        state.units[1].alive && !state.units[1].exited,
+        "side 1 may not leave by side 0's road"
+    );
+    assert_eq!(state.score(1), 0);
+}
+
+#[test]
+fn an_exit_is_not_ground_anybody_holds() {
+    let reg = registry();
+    let mut state = objective_battle(
+        &reg,
+        serde_json::json!([{
+            "id": "west_road", "at": [[0, 0]], "value": 5,
+            "kind": "exit", "side": 0
+        }]),
+        None,
+        curtained_pair(),
+    );
+    play_round(&reg, &mut state);
+    assert_eq!(
+        state.objective_held,
+        vec![None],
+        "an exit is passed through, not held, so it never pays per round"
+    );
+}
+
+#[test]
+fn a_withdrawal_that_reaches_its_target_wins_on_the_tick_it_completes() {
+    // Elimination is checked *after* the score for exactly this case: the
+    // last vehicle of a withdrawing force leaves the board and reaches the
+    // target in the same tick. Checking the board first would award the
+    // battle to an enemy holding a field nobody wanted.
+    let reg = registry();
+    let mut state = objective_battle(
+        &reg,
+        serde_json::json!([{
+            "id": "west_road", "at": [[0, 0]], "value": 10,
+            "kind": "exit", "side": 0
+        }]),
+        Some(10),
+        vec![
+            unit_at([1, 0], 0, "medium_tank", "Last Out"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+    );
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: UnitId(0),
+                to: tactics_core::offset_to_hex(0, 0),
+            },
+        )
+        .expect("west can reach the road");
+    let events = play_round(&reg, &mut state);
+
+    let ended = events.iter().find_map(|e| match e {
+        BattleEvent::BattleEnded { winner, reason } => Some((*winner, *reason)),
+        _ => None,
+    });
+    assert_eq!(
+        ended,
+        Some((Some(0), EndReason::Objectives)),
+        "the force that got away won, though it has nothing left on the field"
+    );
+}
+
+#[test]
+fn an_intact_crew_will_not_run_for_the_exit_but_a_broken_one_will() {
+    // Withdrawal has to be conditional or the lane is a free win: every unit
+    // would drive off on round one. The gate is the doctrine's
+    // `withdraw_threshold` against the vehicle's own damage.
+    let reg = registry();
+    let state = objective_battle(
+        &reg,
+        serde_json::json!([{
+            "id": "west_road", "at": [[0, 0]], "value": 5,
+            "kind": "exit", "side": 0
+        }]),
+        None,
+        curtained_pair(),
+    );
+    let eval = Evaluator::new(reg.doctrine("elastic_defense").cloned().unwrap());
+    let exit = tactics_core::offset_to_hex(0, 0);
+    let away = tactics_core::offset_to_hex(4, 0);
+
+    let healthy = state.units[0].hp;
+    assert!(
+        eval.score_tile(&reg, &state, UnitId(0), exit).score
+            <= eval.score_tile(&reg, &state, UnitId(0), away).score,
+        "an undamaged crew cannot see the exit at all"
+    );
+
+    let mut hurt = state;
+    hurt.units[0].hp = 1;
+    assert!(hurt.units[0].hp < healthy);
+    assert!(
+        eval.score_tile(&reg, &hurt, UnitId(0), exit).score
+            > eval.score_tile(&reg, &hurt, UnitId(0), away).score,
+        "a crew that is nearly finished should run for the road"
+    );
+}
+
+#[test]
+fn a_map_that_names_no_objectives_is_fought_exactly_as_it_was_before() {
+    // Objectives have to be an additive rule whose absence is the old game —
+    // the same constraint difficulty-as-a-mod puts on every harsh system. The
+    // check that bites is the evaluator's: on a map with no objectives, how
+    // much a doctrine cares about objectives must not change a single score.
+    let reg = registry();
+    let state = standoff(&reg, 1);
+    assert!(state.map.objectives().is_empty());
+    assert!(
+        state.leader().is_none(),
+        "nobody leads a battle with nothing to lead on"
+    );
+
+    let mut indifferent = reg.doctrine("massed_armor").cloned().unwrap();
+    indifferent.objective_value = 0.0;
+    let mut greedy = indifferent.clone();
+    greedy.objective_value = 25.0;
+
+    let (a, b) = (Evaluator::new(indifferent), Evaluator::new(greedy));
+    for (tile, _) in state.map.iter() {
+        assert_eq!(
+            a.score_tile(&reg, &state, UnitId(0), tile).score,
+            b.score_tile(&reg, &state, UnitId(0), tile).score,
+            "a map with no objectives cannot be scored differently by a \
+             doctrine that wants them"
+        );
+    }
+}
+
+#[test]
+fn an_objective_the_map_does_not_contain_is_a_validation_error() {
+    let reg = registry();
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "bad_objectives",
+        "palette": { "g": "grass" },
+        "rows": ["ggg"],
+        "shape": "free",
+        "objectives": [
+            { "id": "nowhere", "at": [[99, 99]], "value": 1 },
+            { "id": "nowhere", "at": [], "value": 1 },
+        ],
+    }))
+    .unwrap();
+    let mut report = tactics_core::data::ValidationReport::default();
+    file.validate_into(&reg, &mut report);
+
+    let errors = report.errors.join("\n");
+    assert!(
+        errors.contains("outside the map"),
+        "an objective nobody can stand on must not load quietly: {errors}"
+    );
+    assert!(
+        errors.contains("names no hexes"),
+        "nor one with no ground at all: {errors}"
+    );
+    assert!(
+        errors.contains("share the id"),
+        "nor two that cannot be told apart: {errors}"
+    );
+}
+
 fn standoff(reg: &DataRegistry, seed: u64) -> BattleState {
     let state = two_side_battle(
         reg,

@@ -200,5 +200,65 @@
                 "greta"
             ]
         }
-    ]
+    ],
+    "objectives": [
+        {
+            "id": "bridge",
+            "name": "The Road Bridge",
+            "at": [
+                [
+                    20,
+                    20
+                ],
+                [
+                    21,
+                    20
+                ],
+                [
+                    22,
+                    20
+                ]
+            ],
+            "value": 3
+        },
+        {
+            "id": "north_ford",
+            "name": "The Upper Ford",
+            "at": [
+                [
+                    22,
+                    9
+                ],
+                [
+                    23,
+                    9
+                ],
+                [
+                    24,
+                    9
+                ]
+            ],
+            "value": 2
+        },
+        {
+            "id": "south_ford",
+            "name": "The Lower Ford",
+            "at": [
+                [
+                    16,
+                    31
+                ],
+                [
+                    17,
+                    31
+                ],
+                [
+                    18,
+                    31
+                ]
+            ],
+            "value": 2
+        }
+    ],
+    "victory_score": 60
 }

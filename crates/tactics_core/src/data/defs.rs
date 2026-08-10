@@ -215,6 +215,15 @@ pub struct DoctrineDef {
     pub concentration: f32,
     /// Appetite for advancing into ground nobody has scouted.
     pub scouting: f32,
+    /// How much the ground a map declares worth taking is worth to this
+    /// doctrine, as a multiplier on each objective's own value.
+    ///
+    /// Defaulted rather than required because a doctrine written before
+    /// objectives existed must not silently become one that ignores them —
+    /// a planner that does not care about the objectives loses on points
+    /// without ever noticing there was anything to lose.
+    #[serde(default = "default_objective_value")]
+    pub objective_value: f32,
     /// Willingness to spend indirect fire rather than hold it.
     pub indirect_appetite: f32,
     /// Fraction of starting strength lost before the side looks for a way
@@ -226,6 +235,10 @@ pub struct DoctrineDef {
     /// Reserved for chain of command: how much a commander devolves
     /// decisions to subordinates.
     pub delegation: f32,
+}
+
+fn default_objective_value() -> f32 {
+    1.0
 }
 
 impl Default for DoctrineDef {
@@ -242,6 +255,7 @@ impl Default for DoctrineDef {
             elevation_value: 1.0,
             concentration: 1.0,
             scouting: 1.0,
+            objective_value: default_objective_value(),
             indirect_appetite: 1.0,
             withdraw_threshold: 0.7,
             initiative: 0.5,
