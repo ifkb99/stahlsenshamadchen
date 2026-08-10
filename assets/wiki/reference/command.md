@@ -469,14 +469,36 @@ deliberate baseline regeneration of the chunk: succession replaced the
 `OutOfContact` cascade a dead leader used to cause with a `CommandPassed` and,
 often, a `ContactRestored` — recon that could not report can report again.
 
-**7. The human hybrid.** Formation panel, mission issuing, contact-gated
-direct orders, ghost-contact hovers, devtools tour script. *Verify:*
-screenshots; the game-crate end-to-end test TODO wants grows a command case.
-This chunk is also where the delegation-tax number faces its real judge: a
-play session where relying on the missions feels better than overriding
-them. *Difficulty: 3/5* — no determinism stakes and the sim is untouched,
-but it lives in the repo's two largest files and UI feel takes iteration;
-screenshots are the loop, not the suite.
+**7. The human hybrid.** ✅ Done. `F` walks the player's formations and the
+side panel becomes a formation panel (leader, standing orders, anything still
+in the air, members tagged where they are out of contact); `G`/`H`/`R`/`W` on
+the hovered hex issue `Order::SetMission` through the same `apply` the enemy
+commander speaks through, so the log carries her orders and his in one
+vocabulary. Three things are worth carrying forward:
+
+- **Delegation fills in the *how*, never the *whether*.** Committing drives a
+  new `SideCommand::executor_only` — the executors and no brain — over the
+  player's side, so a unit she left unplanned inside a formation *under a
+  mission* is planned by that formation's executor. A unit in no formation, or
+  in one nobody has ordered, gets a bare hold-fire instead of the fallback
+  planner's own judgment: filling that gap would be inventing an order she
+  never gave. The rule is enforced inside `executor_only` rather than only in
+  the UI, so the two cannot disagree.
+- **The display reads the picture, and so does targeting.** One function,
+  `shown_to`, answers where a unit is drawn and how solidly: fresh contacts
+  solid, stale ones as dimmed ghosts on the hex they were last reported from
+  (no health bar — a report knows where, not how hurt), unreported enemies not
+  at all. `pump_events` asks it before handing a sprite to the move animator,
+  or a ghost would walk the enemy's real route across the screen.
+- **A refusal must not leak what the picture withheld.** Firing at a ghost is
+  refused in the log, naming her and the report's age, because the marker is
+  drawn and silence would read as a broken click. An enemy that a cut-off unit
+  can see but nobody has *reported* is treated exactly as an empty tile — the
+  click becomes a move and the ambush machinery handles it — since any message
+  at all would announce her. That is the deliberate reading of "refuse a
+  direct order to an out-of-contact unit with a stated reason": the reason is
+  stated about the player's own crew (`set_intent` names her and says she is
+  following her last orders), never about the enemy's.
 
 **8. Campaign missions.** Overworld vocabulary, radio range + relay, battle
 inheritance, withdrawal arrival. *Verify:* a campaign test that orders a
@@ -504,9 +526,13 @@ Carried deliberately, none blocking chunks 1–2:
   that refuses to field a wounded girl, or a muster screen that shows the
   choice — plus a pass over `resolve_crew_fate`'s first-draft numbers, since
   those probabilities were tuned for a game where death was opt-in.
-- **How a ghost contact renders.** Last-known-position markers are the
-  convention; the open part is age — fade, timestamp, or the reporter's name
-  on hover. Art-direction question as much as UI, and it lands with chunk 7.
+- ~~**How a ghost contact renders.**~~ Settled in chunk 7, and cheaply: the
+  unit's own sprite at the last reported hex, dimmed to 45% and stripped of
+  its health bar, with the reporter and the report's age in the panel on
+  hover. Reusing the sprite rather than spawning a marker set is what keeps
+  "the picture" a display rule instead of a parallel world; age is words
+  rather than a fade because the log already speaks in rounds. An explicit
+  staleness *fade* is still available later if ghosts need to age visibly.
 - **Mission granularity for the brain.** Does the first commander brain
   reassign missions every round or hold them until conditions change? Holding
   is more legible and cheaper; start there.

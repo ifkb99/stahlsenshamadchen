@@ -11,10 +11,10 @@ use bevy::prelude::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use tactics_core::Hex;
-use tactics_core::ai::{AiDriver, make_battle_planner};
+use tactics_core::ai::{AiConfig, AiDriver, SideCommand, make_battle_planner};
 use tactics_core::battle::{
-    BattleState, EndReason, Event as BattleEvent, FireIntent, Mission, Order, SideState, UnitId,
-    reachable,
+    BattleState, Contact, EndReason, Event as BattleEvent, FireIntent, Formation, FormationId,
+    Mission, Order, SideState, Unit, UnitId, reachable,
 };
 use tactics_core::map::{ObjectiveKind, UnitPlacement};
 use tactics_core::overworld::ArmyId;
@@ -91,6 +91,16 @@ struct Battle {
     anim: VecDeque<BattleEvent>,
     pace: Timer,
     selected: Option<UnitId>,
+    /// The formation the player is commanding, as an index into
+    /// `state.formations()`. Mutually exclusive with `selected`: one of them
+    /// is a conversation with a crew and the other a conversation with a
+    /// platoon, and the keyboard would not know which one a keystroke meant.
+    formation: Option<usize>,
+    /// The player's own staff: executors that fill in whatever she left
+    /// unplanned when she commits. Built on first use and kept for the rest
+    /// of the battle, because a planner that forgot which round it last
+    /// reviewed would review every one of them again.
+    delegate: Option<AiDriver>,
     move_range: HashMap<Hex, u32>,
     /// Move-range highlights need respawning.
     range_dirty: bool,
@@ -124,6 +134,105 @@ impl Battle {
     fn accepting_orders(&self) -> bool {
         !self.state.is_over() && self.state.is_planning() && self.anim.is_empty()
     }
+
+    /// The formations the player commands, in the order their map declared
+    /// them — which is the order `F` walks and the order the panel names.
+    fn own_formations(&self) -> Vec<usize> {
+        let side = self.view_side();
+        self.state
+            .formations()
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.side == side)
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// The formation currently being commanded.
+    fn formation(&self) -> Option<&Formation> {
+        self.formation.and_then(|i| self.state.formations().get(i))
+    }
+
+    /// Walk to the next of the player's formations, then off the end back to
+    /// none. Cycling past the last one is the same gesture as `Esc`: there is
+    /// no mode to get stuck in.
+    fn cycle_formation(&mut self) {
+        let own = self.own_formations();
+        self.formation = match self.formation {
+            None => own.first().copied(),
+            Some(current) => own
+                .iter()
+                .position(|i| *i == current)
+                .and_then(|at| own.get(at + 1))
+                .copied(),
+        };
+    }
+
+    /// Whether committing now means handing unplanned units to their
+    /// formations' executors.
+    ///
+    /// Only units under a mission count. A unit the player left alone in a
+    /// formation nobody has ordered is not a gap in her plan, she *is* the
+    /// plan — see [`SideCommand::executor_only`], which enforces the same
+    /// rule one level down so the two cannot disagree.
+    fn delegating(&self, side: u8) -> bool {
+        self.state.unplanned_units(side).any(|u| {
+            self.state
+                .formation_of(u.id)
+                .is_some_and(|f| f.latest_mission().is_some())
+        })
+    }
+}
+
+/// Whether this mod prices a chain of command at all. With no `command` block
+/// there is no picture to read and no contact to lose, so every display and
+/// order rule below falls back to the fog — which is the game exactly as it
+/// was, with no switch anywhere to say so.
+fn command_rules(registry: &tactics_core::data::DataRegistry) -> bool {
+    registry.command.is_some()
+}
+
+/// How the screen shows one unit to the side it is drawn for.
+///
+/// Under command rules the display follows the *command picture* rather than
+/// the side's fog: what her units can see is what they shoot at, and what has
+/// been reported to her is what she is allowed to know. The two come apart
+/// exactly where the design wants them to — a scout out of contact sees
+/// things her commander is never told.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shown {
+    /// Not on the picture at all: nothing is drawn, and orders that would
+    /// reveal it are refused by falling through to the ambush path rather
+    /// than by a message.
+    Hidden,
+    /// Where it really is, drawn solidly. Own units and fresh contacts.
+    Real,
+    /// A stale contact: last reported position, drawn as a ghost. The unit
+    /// itself may be anywhere by now.
+    Ghost(Hex),
+}
+
+/// Where to draw `unit` for `view_side`, and how solid it is.
+///
+/// One function because two systems need the same answer and disagreeing
+/// would be a fog leak: `sync_units` places the sprite, and `pump_events`
+/// asks before letting a move animation take it over. A ghost must never
+/// walk the enemy's real route across the screen.
+fn shown_to(state: &BattleState, command_rules: bool, view_side: u8, unit: &Unit) -> Shown {
+    if unit.side == view_side {
+        return Shown::Real;
+    }
+    if !command_rules {
+        return match state.fog.side(view_side).spotted.contains(&unit.id) {
+            true => Shown::Real,
+            false => Shown::Hidden,
+        };
+    }
+    match state.picture(view_side).iter().find(|c| c.unit == unit.id) {
+        Some(contact) if contact.fresh => Shown::Real,
+        Some(contact) => Shown::Ghost(contact.at),
+        None => Shown::Hidden,
+    }
 }
 
 // --- markers --------------------------------------------------------------
@@ -136,6 +245,13 @@ struct BattleUnit(UnitId);
 
 #[derive(Component)]
 struct HpBar(UnitId);
+
+/// The little widgets riding on a unit sprite — the health bar and the black
+/// slot behind it. Named as a group because a ghost hides all of them at
+/// once: a contact reported an hour ago says where somebody was, never how
+/// badly she is hurt now.
+#[derive(Component)]
+struct UnitBadge(UnitId);
 
 /// The battle HUD's four text/image widgets.
 ///
@@ -152,7 +268,11 @@ struct BattleHud<'w, 's> {
 }
 
 /// Every per-round highlight, for the despawn-and-rebuild pass.
-type HighlightFilter = Or<(With<MoveHighlight>, With<PlanHighlight>)>;
+type HighlightFilter = Or<(
+    With<MoveHighlight>,
+    With<PlanHighlight>,
+    With<FormationHighlight>,
+)>;
 
 /// Unit sprites, excluding the ones a `Mover` animation currently owns.
 type UnitSprites<'w, 's> = Query<
@@ -181,6 +301,16 @@ struct MoveHighlight;
 /// Overlay showing what your own units have been ordered to do this round.
 #[derive(Component)]
 struct PlanHighlight;
+
+/// Overlay under every member of the formation being commanded, so a mission
+/// is visibly given to *these four vehicles* rather than to a name in a list.
+#[derive(Component)]
+struct FormationHighlight;
+
+/// The formation marker's colour: violet, because it belongs to neither
+/// side's palette nor to the amber of ground worth taking. It says "these are
+/// the girls you are talking to", which is not a fact about the map.
+const FORMATION_MARKER: Color = Color::srgba(0.65, 0.5, 1.0, 0.5);
 
 #[derive(Component)]
 struct HoverHighlight;
@@ -440,7 +570,8 @@ fn setup_battle(
     log.push(
         "Battle started. Both sides plan, then the round plays out at once. \
          LMB select/move, A engage hovered enemy, B blind fire, V hold, C clear orders, \
-         Enter commit, Q/E rotate.",
+         Enter commit, Q/E rotate. F picks a formation; G advance, H hold, R recon on the \
+         hovered hex, W withdraw.",
     );
 
     let (map_center, _) = iso::project(center, 0, view.rotation(), center);
@@ -452,6 +583,8 @@ fn setup_battle(
         anim: VecDeque::new(),
         pace: Timer::from_seconds(0.28, TimerMode::Repeating),
         selected: None,
+        formation: None,
+        delegate: None,
         move_range: HashMap::new(),
         range_dirty: false,
         mode: InputMode::Normal,
@@ -556,6 +689,7 @@ fn spawn_unit_sprite(commands: &mut Commands, art: &ArtCache, id: UnitId, side: 
                     ..default()
                 },
                 Transform::from_translation(Vec3::new(0.0, 22.0, 0.1)),
+                UnitBadge(id),
             ));
             parent.spawn((
                 Sprite {
@@ -565,6 +699,7 @@ fn spawn_unit_sprite(commands: &mut Commands, art: &ArtCache, id: UnitId, side: 
                 },
                 Transform::from_translation(Vec3::new(0.0, 22.0, 0.2)),
                 HpBar(id),
+                UnitBadge(id),
             ));
         });
 }
@@ -721,6 +856,8 @@ fn pump_events(
         return;
     }
     let registry = &mods.0;
+    let rules = command_rules(registry);
+    let view_side = battle.view_side();
     // Names are copied out rather than looked up through `battle`, so the
     // loop below is free to touch the resource while logging.
     let names: Vec<String> = battle.state.units.iter().map(|u| u.name.clone()).collect();
@@ -754,9 +891,17 @@ fn pump_events(
             // The separator itself has nothing to show.
             BattleEvent::TickStarted { .. } => {}
             // Movers spawned in the same beat animate together, which is the
-            // whole point of resolving a tick at a time.
+            // whole point of resolving a tick at a time. A unit the screen is
+            // not showing where it really is — a ghost — must not be handed
+            // to the animator: the walk would drag the marker along the
+            // enemy's true route, which is the picture leaking through the
+            // one system that does not consult it.
             BattleEvent::UnitMoved { unit, path } => {
-                if let Some(entity) = entity_of(*unit) {
+                let real = battle
+                    .state
+                    .unit(*unit)
+                    .is_some_and(|u| shown_to(&battle.state, rules, view_side, u) == Shown::Real);
+                if real && let Some(entity) = entity_of(*unit) {
                     commands.entity(entity).insert(Mover {
                         path: path.clone(),
                         progress: 0.0,
@@ -901,11 +1046,15 @@ fn pump_events(
             // A formation being given a mission goes in the log for the reason
             // the whole system is built around legibility: four vehicles
             // turning north together should be explained by a line the player
-            // already read, not inferred afterwards. Nothing in the game
-            // issues one yet.
+            // already read, not inferred afterwards. Both commanders speak
+            // here — the enemy's brain and the player's own keystroke — which
+            // is the point of routing missions through the order stream.
             BattleEvent::MissionAssigned { formation, mission } => {
                 let who = formation_name(&battle.state, formation);
-                log.push(format!("{who} ordered to {}.", mission_verb(mission)));
+                log.push(format!(
+                    "{who} ordered to {}.",
+                    mission_sentence(&battle.state, Some(mission))
+                ));
             }
             // ...and the same order arriving, some ticks later, when the mod
             // prices a signals net. The gap between the two lines is the thing
@@ -915,7 +1064,7 @@ fn pump_events(
                 let who = formation_name(&battle.state, formation);
                 log.push(format!(
                     "{who} receives the order to {}.",
-                    mission_verb(mission)
+                    mission_sentence(&battle.state, Some(mission))
                 ));
             }
             // A unit that has stopped answering the radio is announced for the
@@ -933,10 +1082,10 @@ fn pump_events(
             // who *told* her — and that somebody could — is the information.
             BattleEvent::ContactReported { unit, by, at } => {
                 log.push(format!(
-                    "{} reports {} at {:?}.",
+                    "{} reports {} at {}.",
                     name(*by),
                     name(*unit),
-                    at
+                    hex_label(*at)
                 ));
             }
             // A formation changing hands is the loudest thing that can happen
@@ -1011,17 +1160,6 @@ fn formation_name(state: &BattleState, id: &str) -> String {
         .find(|f| f.id == id)
         .map(|f| f.display_name().to_string())
         .unwrap_or_else(|| id.to_string())
-}
-
-/// A mission as a verb, so the two halves of an order travelling read as the
-/// same sentence sent and received.
-fn mission_verb(mission: &Mission) -> &'static str {
-    match mission {
-        Mission::Advance { .. } => "advance",
-        Mission::Hold { .. } => "hold",
-        Mission::Recon { .. } => "reconnoitre",
-        Mission::Withdraw { .. } => "withdraw",
-    }
 }
 
 fn spawn_puff(commands: &mut Commands, at: Hex, rotation: u32, center: Hex, color: Color) {
@@ -1103,20 +1241,28 @@ fn handle_input(
     // has done the same.
     if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::KeyT) {
         battle.selected = None;
+        battle.formation = None;
         battle.move_range.clear();
         battle.range_dirty = true;
-        let battle = &mut *battle;
-        match battle.state.apply(registry, &Order::Commit { side }) {
-            Ok(events) => battle.anim.extend(events),
-            Err(e) => log.push(format!("Can't commit: {e}")),
-        }
+        commit_round(registry, &mut battle, side, &mut log);
         return;
     }
     if keys.just_pressed(KeyCode::Escape) || buttons.just_pressed(MouseButton::Right) {
         battle.selected = None;
+        battle.formation = None;
         battle.move_range.clear();
         battle.range_dirty = true;
         battle.mode = InputMode::Normal;
+        return;
+    }
+    // F walks the player's formations. Talking to a platoon and talking to a
+    // crew are different conversations, so taking up one drops the other.
+    if keys.just_pressed(KeyCode::KeyF) {
+        battle.selected = None;
+        battle.move_range.clear();
+        battle.mode = InputMode::Normal;
+        battle.cycle_formation();
+        battle.range_dirty = true;
         return;
     }
     // Hold: stay put and shoot at whatever appears.
@@ -1154,13 +1300,47 @@ fn handle_input(
 
     let hovered = view.hovered(&battle.state.map);
 
+    // Mission orders. These go through `Order::SetMission` — the same entry
+    // point the commander brain speaks through — so the player's decisions
+    // and the AI's produce the same events, land in the same save and read
+    // the same way in a replay. That is the whole reason missions are orders
+    // rather than a UI concept.
+    if let Some(index) = battle.formation
+        && let Some(asked) = mission_from_keys(&keys, &battle.state, index, hovered)
+    {
+        match asked {
+            Ok(mission) => {
+                let order = Order::SetMission {
+                    formation: FormationId(index as u32),
+                    mission,
+                };
+                let battle = &mut *battle;
+                match battle.state.apply(registry, &order) {
+                    // `MissionAssigned` comes back out here; pushing it into
+                    // the same queue the resolution uses is what makes the
+                    // player's own order arrive in the log beside the enemy's.
+                    Ok(events) => {
+                        battle.anim.extend(events);
+                        battle.range_dirty = true;
+                    }
+                    Err(e) => log.push(format!("Order refused: {e}")),
+                }
+            }
+            Err(why) => log.push(why),
+        }
+        return;
+    }
+
     // A = engage the hovered enemy with the best weapon.
     if keys.just_pressed(KeyCode::KeyA) {
-        if let (Some(unit), Some(hex)) = (battle.selected, hovered)
-            && let Some(target) = battle.state.spotted_enemy_at(hex, side)
-        {
-            let target_id = target.id;
-            engage_with_best(registry, &mut battle, unit, target_id, &mut log);
+        if let (Some(unit), Some(hex)) = (battle.selected, hovered) {
+            match aim_at(&battle.state, command_rules(registry), hex, side) {
+                Aim::Enemy(target) => {
+                    engage_with_best(registry, &mut battle, unit, target, &mut log)
+                }
+                Aim::Ghost(why) => log.push(why),
+                Aim::Nothing => {}
+            }
         }
         return;
     }
@@ -1192,20 +1372,31 @@ fn handle_input(
     if let Some(unit) = battle.state.unit_at(hex).filter(|u| u.side == side) {
         let id = unit.id;
         battle.selected = Some(id);
+        battle.formation = None;
         battle.range_dirty = true;
         battle.move_range = reachable(registry, &battle.state, id);
         return;
     }
 
-    // Click spotted enemy: engage with the best weapon. Unspotted enemies
-    // fall through to the move branch, so probing the fog by clicking is not
-    // a way to find them — you drive in and get ambushed like anyone else.
-    if let Some(target) = battle.state.spotted_enemy_at(hex, side) {
-        let target_id = target.id;
-        if let Some(unit) = battle.selected {
-            engage_with_best(registry, &mut battle, unit, target_id, &mut log);
+    // Click an enemy the player is entitled to shoot at: engage with the best
+    // weapon. Enemies she has not been told about fall through to the move
+    // branch, so probing the fog — or the picture — by clicking is not a way
+    // to find them; you drive in and get ambushed like anyone else.
+    match aim_at(&battle.state, command_rules(registry), hex, side) {
+        Aim::Enemy(target) => {
+            if let Some(unit) = battle.selected {
+                engage_with_best(registry, &mut battle, unit, target, &mut log);
+            }
+            return;
         }
-        return;
+        // A ghost is drawn, so unlike an unreported enemy it has to be
+        // answered: the player can see the marker and needs to be told why
+        // her gunner will not lay on it.
+        Aim::Ghost(why) => {
+            log.push(why);
+            return;
+        }
+        Aim::Nothing => {}
     }
 
     // Click a reachable tile: route the unit there for this round.
@@ -1222,15 +1413,230 @@ fn handle_input(
 }
 
 /// Apply one planning order and refresh the overlays that show it.
+///
+/// Direct orders are contact-gated: a crew who cannot hear her chain of
+/// command cannot be told anything new, and the refusal names her and says
+/// what she will do instead. Silence would be the failure mode — an order
+/// that vanished would be indistinguishable from a bug, which is the bargain
+/// `OrderRefused` already makes for a crew that will not obey. Taking orders
+/// *back* (`ClearIntent`) is exempt: it is not something anyone has to hear.
 fn set_intent(
     registry: &tactics_core::data::DataRegistry,
     battle: &mut Battle,
     order: &Order,
     log: &mut BattleLog,
 ) {
+    let addressed = match order {
+        Order::SetMove { unit, .. } | Order::SetFire { unit, .. } => Some(*unit),
+        _ => None,
+    };
+    if let Some(id) = addressed
+        && let Some(unit) = battle.state.unit(id)
+        && battle
+            .state
+            .formation_of(id)
+            .is_some_and(|f| !f.in_contact(id))
+    {
+        log.push(format!(
+            "No contact with {} - she is following her last orders.",
+            unit.name
+        ));
+        return;
+    }
     match battle.state.apply(registry, order) {
         Ok(_) => battle.range_dirty = true,
         Err(e) => log.push(format!("Order refused: {e}")),
+    }
+}
+
+/// Close the player's planning — through her staff, if she left them
+/// anything to do.
+///
+/// A unit she did not order herself, in a formation she *has* given a
+/// mission, is planned by that formation's executor: the same object an AI
+/// side runs on, under the same doctrine, in service of the same mission.
+/// That is what delegation means here, and it is why the mission vocabulary
+/// is shared — her platoon carries out her intent by the same machinery the
+/// enemy's does. With nothing delegated this is the bare commit it always was.
+fn commit_round(
+    registry: &tactics_core::data::DataRegistry,
+    battle: &mut Battle,
+    side: u8,
+    log: &mut BattleLog,
+) {
+    if !battle.delegating(side) {
+        match battle.state.apply(registry, &Order::Commit { side }) {
+            Ok(events) => battle.anim.extend(events),
+            Err(e) => log.push(format!("Can't commit: {e}")),
+        }
+        return;
+    }
+    let Battle {
+        state,
+        delegate,
+        anim,
+        ..
+    } = battle;
+    let driver = delegate.get_or_insert_with(|| {
+        // Difficulty 5, i.e. no scoring noise: difficulty is how well an
+        // *opponent* executes, and the player's own subordinates have no
+        // reason to blunder on her behalf. Doctrine is left unstated so each
+        // formation fights under whatever its map declared, falling back to
+        // the balanced default.
+        let config = AiConfig {
+            planner: "command".into(),
+            difficulty: 5,
+            doctrine: None,
+        };
+        let mut driver = AiDriver::new();
+        driver.insert(
+            side,
+            Box::new(SideCommand::executor_only(&config, seed(), registry)),
+        );
+        driver
+    });
+    // The executors' own `Commit` closes the side, so this both fills the
+    // gaps and hands the round in.
+    let mut events = Vec::new();
+    let mut refused = Vec::new();
+    driver.plan_round_with(registry, state, |decision| {
+        events.extend(decision.events.iter().cloned());
+        if let Some(error) = &decision.rejected {
+            refused.push(error.to_string());
+        }
+    });
+    anim.extend(events);
+    for error in refused {
+        log.push(format!("Your staff fumbled an order: {error}"));
+    }
+}
+
+/// The mission the player just asked for, if she pressed one of the mission
+/// keys. `Err` is a key that was pressed but could not be turned into an
+/// order — nothing under the cursor, no lane out — and carries the line to
+/// say so, because a keystroke that does nothing at all reads as broken.
+///
+/// `W` doubles as the camera's pan-up key, which is the same bargain `A`
+/// already makes: a tap issues the order, a hold moves the camera.
+fn mission_from_keys(
+    keys: &ButtonInput<KeyCode>,
+    state: &BattleState,
+    formation: usize,
+    hovered: Option<Hex>,
+) -> Option<Result<Mission, String>> {
+    let needs_ground = |what: &str| Err(format!("Hover the ground first, then press {what}."));
+    if keys.just_pressed(KeyCode::KeyG) {
+        return Some(match hovered {
+            Some(to) => Ok(Mission::Advance { to }),
+            None => needs_ground("G to advance"),
+        });
+    }
+    if keys.just_pressed(KeyCode::KeyH) {
+        // The one mission that needs no ground: `Hold { at: None }` is
+        // "stand where you are", which is a real order and the reserve's.
+        return Some(Ok(Mission::Hold { at: hovered }));
+    }
+    if keys.just_pressed(KeyCode::KeyR) {
+        return Some(match hovered {
+            Some(toward) => Ok(Mission::Recon { toward }),
+            None => needs_ground("R to reconnoitre"),
+        });
+    }
+    if keys.just_pressed(KeyCode::KeyW) {
+        return Some(match nearest_exit(state, formation) {
+            Some(via) => Ok(Mission::Withdraw { via }),
+            None => Err("There is no way off this map for your side.".into()),
+        });
+    }
+    None
+}
+
+/// The retreat lane a formation would take: the nearest exit objective its
+/// side is entitled to use, measured from its leader.
+///
+/// Deliberately the same rule the commander brain applies to its own
+/// formations (`SideCommand::wants_out`) — the player picking a formation and
+/// pressing `W` should get the lane her opposite number would have chosen,
+/// not a different one. Ties go to the first-declared lane so the answer
+/// cannot flap.
+fn nearest_exit(state: &BattleState, formation: usize) -> Option<String> {
+    let formation = state.formations().get(formation)?;
+    let from = formation
+        .leader
+        .and_then(|id| state.unit(id))
+        .or_else(|| formation.members.iter().find_map(|id| state.unit(*id)))
+        .map(|u| u.pos)?;
+    let mut best: Option<(i32, &str)> = None;
+    for objective in state.map.objectives() {
+        if objective.kind != ObjectiveKind::Exit || !objective.open_to(formation.side) {
+            continue;
+        }
+        let dist = objective
+            .hexes
+            .iter()
+            .map(|h| h.distance_to(from))
+            .min()
+            .unwrap_or(i32::MAX);
+        if best.is_none_or(|(b, _)| dist < b) {
+            best = Some((dist, objective.id.as_str()));
+        }
+    }
+    best.map(|(_, id)| id.to_string())
+}
+
+/// What the player may order a shot at on one hex.
+enum Aim {
+    /// Somebody she has been told about: a fresh contact, or — with no
+    /// command rules — an ordinary spotted enemy.
+    Enemy(UnitId),
+    /// A ghost marker: the last reported position of a unit nobody can see
+    /// now. Carries the line explaining the refusal.
+    Ghost(String),
+    /// Nothing she knows about. Handled by doing what an empty tile does,
+    /// never by a message: a refusal naming an enemy she has not been told
+    /// about would leak exactly what the command picture exists to withhold.
+    Nothing,
+}
+
+fn aim_at(state: &BattleState, command_rules: bool, hex: Hex, side: u8) -> Aim {
+    if !command_rules {
+        return match state.spotted_enemy_at(hex, side) {
+            Some(enemy) => Aim::Enemy(enemy.id),
+            None => Aim::Nothing,
+        };
+    }
+    // The real unit first: a fresh contact is drawn where it is, so that is
+    // where the player is pointing when she means to shoot at it.
+    if let Some(enemy) = state.unit_at(hex).filter(|u| u.side != side)
+        && state
+            .picture(side)
+            .iter()
+            .any(|c| c.unit == enemy.id && c.fresh)
+    {
+        return Aim::Enemy(enemy.id);
+    }
+    match state
+        .picture(side)
+        .iter()
+        .find(|c| !c.fresh && c.at == hex)
+        .and_then(|c| Some((c, state.units.get(c.unit.index())?)))
+    {
+        Some((contact, unit)) => Aim::Ghost(format!(
+            "{} was last reported here, {}. Nobody has eyes on her now - B blind-fires the hex.",
+            unit.name,
+            report_age(state, contact)
+        )),
+        None => Aim::Nothing,
+    }
+}
+
+/// How old a report is, in the words the log uses elsewhere: rounds, because
+/// that is the clock the player is reading off the banner.
+fn report_age(state: &BattleState, contact: &Contact) -> String {
+    match state.round.saturating_sub(contact.round) {
+        0 => "this round".into(),
+        1 => "a round ago".into(),
+        n => format!("{n} rounds ago"),
     }
 }
 
@@ -1301,17 +1707,24 @@ fn engage_with_best(
 
 /// Keep unit sprites in sync with the sim (position, facing, visibility,
 /// hp bars) except while a Mover animation owns them.
+///
+/// Enemies are drawn from the command picture rather than the side's fog
+/// wherever a mod prices a chain of command: solid where a report is fresh, a
+/// dimmed ghost at the last reported hex where it is not, nothing at all
+/// where nobody has said anything. Own units and the terrain fog overlay are
+/// untouched — eyes see ground, and the picture is about contacts.
 fn sync_units(
     battle: Res<Battle>,
     art: Res<ArtCache>,
     view: map_render::View,
     mut units: UnitSprites,
     mut bars: HpBars,
+    mut badges: Query<(&UnitBadge, &mut Visibility), Without<BattleUnit>>,
     mods: Res<Mods>,
 ) {
     let state = &battle.state;
     let view_side = battle.view_side();
-    let fog = state.fog.side(view_side);
+    let rules = command_rules(&mods.0);
     // A move already queued for animation belongs to the animator; snapping
     // the sprite to the destination first would spoil the walk.
     let animating: HashSet<UnitId> = battle
@@ -1328,8 +1741,16 @@ fn sync_units(
             *visibility = Visibility::Hidden;
             continue;
         };
-        let elev = state.map.get(unit.pos).map(|t| t.elevation).unwrap_or(0);
-        let (pos, z) = iso::project(unit.pos, elev, view.rotation(), view.center());
+        // Where the screen puts her is not always where she is: a ghost
+        // stands on the hex somebody last reported, however far the unit has
+        // driven since.
+        let shown = shown_to(state, rules, view_side, unit);
+        let at = match shown {
+            Shown::Ghost(reported) => reported,
+            _ => unit.pos,
+        };
+        let elev = state.map.get(at).map(|t| t.elevation).unwrap_or(0);
+        let (pos, z) = iso::project(at, elev, view.rotation(), view.center());
         if !animating.contains(&unit.id) {
             transform.translation = Vec3::new(pos.x, pos.y + 10.0, z + 1.5);
         }
@@ -1338,7 +1759,7 @@ fn sync_units(
         // be spun — it would tip over — so it swaps to the frame for its
         // direction and mirrors for the three western ones. The generated
         // blob has no frames and is symmetric enough to just rotate.
-        let angle = iso::facing_angle(unit.pos, unit.facing, view.rotation(), view.center());
+        let angle = iso::facing_angle(at, unit.facing, view.rotation(), view.center());
         let side = unit.side % iso::SIDE_COLORS.len() as u8;
         if art.has_vehicle_frames(&unit.vehicle, side) {
             let (frame, flip) = iso::facing_frame(angle);
@@ -1350,18 +1771,32 @@ fn sync_units(
         } else {
             transform.rotation = Quat::from_rotation_z(angle);
         }
-        let seen = unit.side == view_side || fog.spotted.contains(&unit.id);
-        *visibility = if seen {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
+        *visibility = match shown {
+            Shown::Hidden => Visibility::Hidden,
+            _ => Visibility::Inherited,
         };
-        // Dim your own units once they have their orders for the round.
+        // Dim your own units once they have their orders for the round, and
+        // a ghost further still: a marker on a report is not a vehicle you
+        // are looking at, and it must not read like one.
         let done = state.is_planning() && unit.side == view_side && unit.planned;
-        sprite.color = if done {
-            Color::srgb(0.55, 0.55, 0.55)
+        sprite.color = match (shown, done) {
+            (Shown::Ghost(_), _) => Color::srgba(1.0, 1.0, 1.0, 0.45),
+            (_, true) => Color::srgb(0.55, 0.55, 0.55),
+            _ => Color::WHITE,
+        };
+    }
+
+    // The badges say how hurt somebody is, which a stale report does not
+    // know. They inherit their parent's visibility, so hiding them is only
+    // ever about the ghost case.
+    for (badge, mut visibility) in &mut badges {
+        let ghost = state
+            .unit(badge.0)
+            .is_some_and(|u| matches!(shown_to(state, rules, view_side, u), Shown::Ghost(_)));
+        *visibility = if ghost {
+            Visibility::Hidden
         } else {
-            Color::WHITE
+            Visibility::Inherited
         };
     }
 
@@ -1464,6 +1899,36 @@ fn update_highlights(
             MoveHighlight,
             BattleScope,
         ));
+    }
+
+    // The formation being commanded, marked where its members are standing.
+    // Only the ones still on the field: a marker on a burnt-out crew's last
+    // hex would be a lie about who is left to obey.
+    if let Some(formation) = battle.formation() {
+        let members: Vec<Hex> = formation
+            .members
+            .iter()
+            .filter_map(|id| battle.state.unit(*id))
+            .map(|u| u.pos)
+            .collect();
+        for hex in members {
+            let overlay = HexOverlay::face(hex);
+            commands.spawn((
+                Sprite {
+                    image: art.face.clone(),
+                    color: FORMATION_MARKER,
+                    ..default()
+                },
+                Transform::from_translation(overlay.translation(
+                    &map,
+                    view.rotation(),
+                    view.center(),
+                )),
+                overlay,
+                FormationHighlight,
+                BattleScope,
+            ));
+        }
     }
 
     // Your own orders, drawn so the whole round can be reviewed before it is
@@ -1589,9 +2054,13 @@ fn update_panel(
         text.0 = log.0.iter().cloned().collect::<Vec<_>>().join("\n");
     }
 
-    let visible = |unit: &tactics_core::battle::Unit| {
-        unit.side == view_side || state.fog.side(view_side).spotted.contains(&unit.id)
-    };
+    // What the panel will talk about is what the screen is drawing, which
+    // under command rules is the picture rather than the fog: describing a
+    // unit whose sprite is hidden would hand the player through the panel
+    // exactly what the picture withheld from the map.
+    let rules = command_rules(registry);
+    let visible =
+        |unit: &tactics_core::battle::Unit| shown_to(state, rules, view_side, unit) == Shown::Real;
 
     let hovered_tile = view.hovered(&state.map);
     let hovered_unit = hovered_tile
@@ -1602,6 +2071,17 @@ fn update_panel(
     let Ok(mut text) = hud.panel.single_mut() else {
         return;
     };
+
+    // Commanding a formation is a mode: while one is picked the panel is
+    // about it and about the ground under the cursor, which is what the
+    // mission keys are aimed at.
+    if let Some(formation) = battle.formation() {
+        text.0 = format_formation(registry, state, formation, hovered_tile);
+        if let Some(leader) = formation.leader {
+            set_portrait(&mut hud.portrait, &art, state, leader);
+        }
+        return;
+    }
 
     // Hovering an enemy while something is selected is a question about a
     // shot, so answer that first. Otherwise inspect whatever is under the
@@ -1626,6 +2106,27 @@ fn update_panel(
         }
     }
 
+    // A ghost is the only thing on the board with nothing behind it to
+    // inspect, so the panel answers for the report instead: who saw her, and
+    // how long ago. That is the whole of what the commander knows, and it
+    // outranks the selection for the same reason hovering anything else does.
+    if let Some(contact) = hovered_tile
+        .filter(|_| hovered_unit.is_none())
+        .and_then(|hex| {
+            state
+                .picture(view_side)
+                .iter()
+                .find(|c| !c.fresh && c.at == hex)
+        })
+    {
+        text.0 = format!(
+            "{}\n\n{}",
+            format_contact(state, contact),
+            format_tile(registry, state, contact.at)
+        );
+        return;
+    }
+
     let shown = hovered_unit
         .or(battle.selected)
         .and_then(|id| state.unit(id))
@@ -1641,7 +2142,131 @@ fn update_panel(
         text.0 = format_tile(registry, state, hex);
         return;
     }
-    text.0 = "Hover a tile for terrain\n\nLMB: select / set route\nA: engage hovered enemy\nB: blind fire a tile\nV: hold and watch\nC: clear orders\nEnter: commit the round\nQ/E: rotate view".into();
+    text.0 = "Hover a tile for terrain\n\nLMB: select / set route\nA: engage hovered enemy\nB: blind fire a tile\nV: hold and watch\nC: clear orders\nEnter: commit the round\nF: pick a formation\nQ/E: rotate view".into();
+}
+
+/// The formation panel: who these girls are, what they were told to do, what
+/// is still on its way to them, and which of them can no longer hear it.
+///
+/// The mission is spelled out in words rather than as an enum name, because
+/// the point of the panel is that a player can read her own last order back
+/// and check it against what her platoon is actually doing. An order still in
+/// transit is listed separately for the same reason — "she has been told" and
+/// "she knows" are different states, and the gap between them is the system.
+fn format_formation(
+    registry: &tactics_core::data::DataRegistry,
+    state: &BattleState,
+    formation: &Formation,
+    hovered: Option<Hex>,
+) -> String {
+    let name = |id: UnitId| {
+        state
+            .units
+            .get(id.index())
+            .map(|u| u.name.clone())
+            .unwrap_or_else(|| "???".into())
+    };
+    let mut lines = vec![
+        formation_name(state, &formation.id),
+        match formation.leader {
+            Some(leader) => format!("Leader: {}", name(leader)),
+            None => "Leader: nobody left".into(),
+        },
+        String::new(),
+        format!(
+            "Orders: {}",
+            mission_sentence(state, formation.mission.as_ref())
+        ),
+    ];
+    if let Some((mission, ticks)) = &formation.incoming {
+        lines.push(format!(
+            "In the air: {} ({})",
+            mission_sentence(state, Some(mission)),
+            registry.scale.format_duration(*ticks)
+        ));
+    }
+    lines.push(String::new());
+    lines.push("Members:".into());
+    for id in &formation.members {
+        let Some(unit) = state.units.get(id.index()) else {
+            continue;
+        };
+        if !unit.alive {
+            // Gone is gone, and the panel says which kind: a crew that drove
+            // off by an exit came home, and listing her as lost would be the
+            // UI telling the lie the engine is careful not to.
+            lines.push(format!(
+                "  {} - {}",
+                unit.name,
+                if unit.exited { "withdrawn" } else { "lost" }
+            ));
+            continue;
+        }
+        let tag = if formation.in_contact(*id) {
+            String::new()
+        } else {
+            " - out of contact".into()
+        };
+        lines.push(format!("  {}{}", unit.name, tag));
+    }
+    lines.push(String::new());
+    lines.push("G advance / H hold / R recon".into());
+    lines.push("on the hovered hex; W withdraw.".into());
+    lines.push("F next formation, Esc drops it.".into());
+    if let Some(hex) = hovered {
+        lines.push(String::new());
+        lines.push(format!("Hovered {}:", hex_label(hex)));
+        lines.push(format_tile(registry, state, hex));
+    }
+    lines.join("\n")
+}
+
+/// A mission as a sentence a person would say, naming ground the way the map
+/// file does so a player can find it again.
+fn mission_sentence(state: &BattleState, mission: Option<&Mission>) -> String {
+    match mission {
+        None => "none given".into(),
+        Some(Mission::Advance { to }) => format!("advance on {}", hex_label(*to)),
+        Some(Mission::Hold { at: Some(at) }) => format!("hold {}", hex_label(*at)),
+        Some(Mission::Hold { at: None }) => "hold where you are".into(),
+        Some(Mission::Recon { toward }) => format!("reconnoitre toward {}", hex_label(*toward)),
+        Some(Mission::Withdraw { via }) => format!(
+            "withdraw by {}",
+            state
+                .map
+                .objectives()
+                .iter()
+                .find(|o| &o.id == via)
+                .map(|o| o.name.clone())
+                .unwrap_or_else(|| via.clone())
+        ),
+    }
+}
+
+/// One line of the command picture: who was seen, by whom, and how stale the
+/// report is.
+fn format_contact(state: &BattleState, contact: &Contact) -> String {
+    let name = |id: UnitId| {
+        state
+            .units
+            .get(id.index())
+            .map(|u| u.name.clone())
+            .unwrap_or_else(|| "???".into())
+    };
+    format!(
+        "Last reported here\n{}\nby {}, {}",
+        name(contact.unit),
+        name(contact.reporter),
+        report_age(state, contact)
+    )
+}
+
+/// A hex in the coordinates a map file writes down, which is what a player
+/// can count on the board and an author can find in JSON. The axial pair is
+/// an implementation detail nobody outside the engine reads.
+fn hex_label(hex: Hex) -> String {
+    let [col, row] = tactics_core::hex_to_offset(hex);
+    format!("({col},{row})")
 }
 
 fn set_portrait(

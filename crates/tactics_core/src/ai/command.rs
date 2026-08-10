@@ -63,6 +63,10 @@ pub struct SideCommand {
     /// Built lazily on the first order, because planners are constructed
     /// before the battle exists and the formations live on it.
     built: bool,
+    /// Whether this side has a brain of its own. False for the human hybrid
+    /// (see [`Self::executor_only`]), where the commander is a person and
+    /// this object is only her staff.
+    reviews_missions: bool,
     /// The round missions were last reviewed, so the brain speaks once per
     /// round rather than once per order.
     reviewed_round: Option<u32>,
@@ -79,8 +83,38 @@ impl SideCommand {
             fallback: UtilityPlanner::from_config(config, seed ^ 0xC0FF_EE00, data),
             side_doctrine: None,
             built: false,
+            reviews_missions: true,
             reviewed_round: None,
             pending: VecDeque::new(),
+        }
+    }
+
+    /// The same side, without a brain: per-formation executors and nothing
+    /// else. This is the human hybrid the design doc describes — the player
+    /// *is* the commander, so nothing here may issue a mission, and no
+    /// [`Event::MissionAssigned`](crate::battle::Event::MissionAssigned) can
+    /// come out of it.
+    ///
+    /// What it does instead is fill the gaps she left: a unit she did not
+    /// order herself is planned by her formation's executor, under that
+    /// formation's doctrine, in service of the mission she gave it. Units she
+    /// *did* order are never touched, because the driver only ever asks about
+    /// [`next_unplanned_unit`] and a hand-ordered unit is already planned.
+    ///
+    /// One rule is different from an AI side's, and deliberately so: **a unit
+    /// in no formation, or in a formation under no mission, is not planned at
+    /// all** — she is given a bare hold-fire, today's "planned, watching"
+    /// default. An AI side would hand her to the fallback planner, which
+    /// would send her off to fight on her own judgment; doing that for the
+    /// human would be inventing a purpose she never gave. Delegation fills in
+    /// the *how* of an order, never the *whether*. A mission still in the air
+    /// counts as given ([`Formation::latest_mission`]): she has ordered it,
+    /// and her subordinates plan on what they currently know, which for one
+    /// transit window is still the last thing they heard.
+    pub fn executor_only(config: &AiConfig, seed: u64, data: &DataRegistry) -> Self {
+        Self {
+            reviews_missions: false,
+            ..Self::from_config(config, seed, data)
         }
     }
 
@@ -301,8 +335,9 @@ impl AiPlanner<BattleState, Order> for SideCommand {
 
         // The commander speaks first, once per round: missions before unit
         // orders, so the executors already know what the ground is worth by
-        // the time they plan the first vehicle.
-        if self.reviewed_round != Some(state.round) {
+        // the time they plan the first vehicle. A brainless side skips this
+        // entirely — somebody else has already spoken, or nobody has.
+        if self.reviews_missions && self.reviewed_round != Some(state.round) {
             self.reviewed_round = Some(state.round);
             self.pending
                 .extend(self.mission_review(registry, state, side));
@@ -323,11 +358,25 @@ impl AiPlanner<BattleState, Order> for SideCommand {
         let Some(unit) = next_unplanned_unit(state, side) else {
             return Order::Commit { side };
         };
-        let executor = state
+        let formation = state
             .command
             .formations()
             .iter()
-            .position(|f| f.contains(unit))
+            .position(|f| f.contains(unit));
+        // Without a brain, an unmissioned unit is one nobody has decided
+        // about, and deciding for her is not this object's job. See
+        // [`Self::executor_only`]: she watches her arc instead.
+        if !self.reviews_missions
+            && !formation
+                .and_then(|index| state.command.formations().get(index))
+                .is_some_and(|f| f.latest_mission().is_some())
+        {
+            return Order::SetFire {
+                unit,
+                fire: FireIntent::Hold,
+            };
+        }
+        let executor = formation
             .and_then(|index| self.executors.get_mut(&index))
             .unwrap_or(&mut self.fallback);
         self.pending = executor.plan_unit(registry, state, unit).into();

@@ -3275,6 +3275,123 @@ fn a_beaten_formation_is_ordered_out_by_its_commander() {
 }
 
 #[test]
+fn an_executor_only_command_fills_gaps_without_issuing_missions() {
+    // The human hybrid, driven headlessly. The player's side has no brain —
+    // she is the brain — so the object standing behind it must issue no
+    // missions at all, plan the units of a formation she has given orders to,
+    // and leave everyone else alone. That last part is the one worth pinning:
+    // an AI side hands an unformationed unit to its fallback planner, which
+    // sends her off to fight on her own judgment. Doing that on the player's
+    // behalf would be inventing an order she never gave, so a unit outside
+    // any mission gets today's "planned, watching" default instead.
+    let reg = registry_wireless();
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "delegation_field",
+        "palette": { "g": "grass" },
+        "rows": ["gggggggggggggg", "gggggggggggggg", "gggggggggggggg"],
+        "shape": "free",
+        "sides": [{ "name": "Kuhlmann" }],
+        "formations": [{ "id": "first", "name": "1st Platoon", "side": 0 }],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let placement =
+        |col: i32, row: i32, name: &str, formation: Option<&str>, leads: bool| UnitPlacement {
+            at: [col, row],
+            side: 0,
+            vehicle: "medium_tank".into(),
+            crew: Vec::new(),
+            name: Some(name.into()),
+            facing: None,
+            formation: formation.map(str::to_string),
+            leads,
+        };
+    let placements = vec![
+        placement(0, 0, "Leader", Some("first"), true),
+        placement(0, 1, "Follower", Some("first"), false),
+        placement(0, 2, "Nobody's", None, false),
+    ];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(&reg, &placements);
+    let mut state = BattleState::from_placements(
+        &reg,
+        map,
+        vec![SideState {
+            name: "Kuhlmann".into(),
+            ai: None,
+        }],
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        17,
+    );
+
+    // The human's order, issued exactly as the UI issues it.
+    let target = tactics_core::offset_to_hex(12, 1);
+    let formation = FormationId(0);
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation,
+                mission: Mission::Advance { to: target },
+            },
+        )
+        .expect("the player may order her own formation");
+
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
+        Box::new(tactics_core::ai::SideCommand::executor_only(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: None,
+            },
+            17,
+            &reg,
+        )),
+    );
+    let mut spoken = 0;
+    ai.plan_round_with(&reg, &mut state, |d| {
+        assert!(d.rejected.is_none(), "the executors issued {:?}", d.order);
+        spoken += d
+            .events
+            .iter()
+            .filter(|e| matches!(e, BattleEvent::MissionAssigned { .. }))
+            .count();
+    });
+
+    assert_eq!(
+        spoken, 0,
+        "an executor-only side has no commander and must never issue a mission"
+    );
+    assert!(state.has_committed(0), "and it closes the side's planning");
+
+    for id in state.formations()[formation.index()].members.clone() {
+        let unit = state.unit(id).expect("planning harms nobody");
+        assert!(
+            unit.planned_destination().distance_to(target) < unit.pos.distance_to(target),
+            "{} is under a mission she can hear, so her executor drives her at it",
+            unit.name
+        );
+    }
+
+    let loose = state
+        .side_units(0)
+        .find(|u| state.formation_of(u.id).is_none())
+        .expect("one unit answers to nobody");
+    assert!(
+        loose.planned,
+        "she is accounted for, so the round can start"
+    );
+    assert!(
+        loose.intent.path.is_empty() && loose.intent.fire == FireIntent::Hold,
+        "but nobody ordered her anywhere, so she holds and watches: {:?}",
+        loose.intent
+    );
+}
+
+#[test]
 fn initiative_moves_a_commander_on_and_obedience_does_not() {
     let reg = registry_wireless();
 

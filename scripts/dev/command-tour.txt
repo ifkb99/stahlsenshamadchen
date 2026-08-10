@@ -1,0 +1,74 @@
+# A tour of the chain of command on screen: picking a formation, giving it a
+# mission, and watching the order travel down the wire.
+#
+#   STAHL_PRESENT=immediate STAHL_DEBUG=1 STAHL_BATTLE=river_crossing \
+#     STAHL_SCRIPT=scripts/dev/command-tour.txt cargo run -p stahlsenshamädchen
+#
+# Hexes are axial. river_crossing's side 0 is the player's, in two formations:
+# 1st Armored Platoon (medium tank at offset [10, 20] -> axial (0, 20), light
+# tank at [11, 26]) and the Reconnaissance Section. The bridge — the ground
+# the whole map is about — is offset [20, 20] -> axial (10, 20).
+
+at 3.0
+log "planning phase, nobody selected"
+shot /tmp/command-01-planning.png
+
+# F walks the player's formations. Its members light up violet and the panel
+# becomes the formation panel: leader, standing orders, membership.
+key F
+wait 0.6
+log "1st Armored Platoon selected"
+shot /tmp/command-02-formation.png
+
+# Aim at the bridge and order the platoon onto it. The order goes out through
+# Order::SetMission, so MissionAssigned reaches the log exactly as it does
+# when the enemy's commander speaks — and the panel lists the mission as in
+# the air, because the base mod prices a signals net.
+hex 10,20
+wait 0.4
+key G
+wait 1.2
+log "advance ordered on the bridge"
+shot /tmp/command-03-mission.png
+
+# Commit. Whatever the player left unplanned inside a formation under orders
+# is planned by that formation's executors, and the round plays out.
+key Enter
+wait 9
+
+# Pick the platoon up again to read its orders back: the mission has landed
+# (MissionReceived in the log) so it is standing rather than travelling, and
+# any member who has driven out of her leader's radius carries the tag.
+key F
+wait 0.8
+log "one round fought; the order has arrived"
+shot /tmp/command-04-standing.png
+
+# A second round, to get the two halves of the command picture on screen at
+# once: enemies somebody is watching are drawn solidly with their health,
+# enemies nobody can see any more are dimmed ghosts on the hex they were last
+# reported from.
+key Enter
+wait 9
+log "two rounds fought: fresh contacts and ghosts"
+shot /tmp/command-05-picture.png
+
+# The panel's side of the picture, and the order rule that goes with it: a
+# ghost is a report, not a target, so pointing a gun at one is refused in the
+# log rather than silently ignored. Where the fight leaves its ghosts depends
+# on the seed, so this pair of hexes is written for STAHL_SEED=7 — the recon
+# car, who was never given a mission and so is still where she deployed, and
+# a hex a Valkyrie was last reported from two rounds earlier. On another seed
+# it is an ordinary tile and an ordinary click.
+hex 5,14
+wait 0.4
+click left
+wait 0.5
+hex 21,16
+wait 0.5
+click left
+wait 0.8
+log "a ghost hovered and a shot at it refused"
+shot /tmp/command-06-ghost.png
+
+quit
