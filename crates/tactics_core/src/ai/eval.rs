@@ -276,7 +276,16 @@ impl Evaluator {
     /// a typical piece of ground is worth in the shipped maps, so "go where
     /// you were told" pulls about as hard as "take the ford" used to. The
     /// balance harness's delegation-tax table is the instrument that judges
-    /// them; tuning belongs to chunk 3.
+    /// them.
+    ///
+    /// `delegation` is the strictness knob, and this is where it is finally
+    /// read: a commander who devolves little expects the letter of the order
+    /// followed, so the mission term is scaled by `1.5 - delegation` — a
+    /// tight doctrine at 0.3 holds its units to the plan half again as hard
+    /// as the neutral 0.5, and a loose one at 0.7 leaves room for the local
+    /// terms (cover, threat, a good shot) to bend the route. A withdrawal is
+    /// exempt on purpose: latitude is about *how* to fight, never about
+    /// whether an ordered retreat happens.
     fn mission_value(
         &self,
         state: &BattleState,
@@ -288,6 +297,7 @@ impl Evaluator {
         /// Worth of a mission's ground, in objective-value units.
         const MISSION_WEIGHT: f32 = 2.0;
         let doctrine = &self.doctrine;
+        let strictness = (1.5 - doctrine.delegation).clamp(0.5, 1.5);
         match mission {
             // Take the ground and stand on it: reward for arriving, slope
             // for the road there — the objective shape with the commander
@@ -295,7 +305,10 @@ impl Evaluator {
             Mission::Advance { to } => {
                 let dist = to.distance_to(tile);
                 let reward = if dist <= 1 { 1.5 } else { 0.0 };
-                MISSION_WEIGHT * doctrine.objective_value * (reward - 0.15 * dist as f32)
+                MISSION_WEIGHT
+                    * strictness
+                    * doctrine.objective_value
+                    * (reward - 0.15 * dist as f32)
             }
             // Stand where told. `None` anchors on the leader rather than a
             // stored hex or a centroid: she is where the formation is, the
@@ -312,7 +325,10 @@ impl Evaluator {
                 match anchor {
                     Some(anchor) => {
                         let dist = anchor.distance_to(tile) as f32;
-                        MISSION_WEIGHT * doctrine.objective_value * (0.75 - 0.15 * dist)
+                        MISSION_WEIGHT
+                            * strictness
+                            * doctrine.objective_value
+                            * (0.75 - 0.15 * dist)
                     }
                     // Nobody left to anchor on: the mission has no ground to
                     // say anything about.
@@ -327,7 +343,7 @@ impl Evaluator {
             Mission::Recon { toward } => {
                 let dist = toward.distance_to(tile);
                 let reward = if dist <= 2 { 0.75 } else { 0.0 };
-                MISSION_WEIGHT * doctrine.scouting * (reward - 0.15 * dist as f32)
+                MISSION_WEIGHT * strictness * doctrine.scouting * (reward - 0.15 * dist as f32)
             }
             // Leave by the named lane. Deliberately ungated by damage: the
             // per-unit flight gate in `objective_value` exists because an

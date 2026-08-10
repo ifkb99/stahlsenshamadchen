@@ -3140,6 +3140,9 @@ fn an_ordered_withdrawal_needs_no_wounds() {
 
 #[test]
 fn the_command_planner_assigns_missions_once_and_units_follow_them() {
+    // A centralized doctrine (low delegation), because a devolved one
+    // deliberately assigns no ground at all — see
+    // a_devolved_commander_issues_no_ground_missions.
     let reg = registry();
     let mut state = BattleState::from_map(&reg, "river_crossing", 9).unwrap();
     let mut ai = AiDriver::new();
@@ -3149,7 +3152,7 @@ fn the_command_planner_assigns_missions_once_and_units_follow_them() {
             &AiConfig {
                 planner: "command".into(),
                 difficulty: 5,
-                doctrine: Some("elastic_defense".into()),
+                doctrine: Some("massed_armor".into()),
             },
             9,
             &reg,
@@ -3194,5 +3197,149 @@ fn the_command_planner_assigns_missions_once_and_units_follow_them() {
     assert_eq!(
         reassigned, 0,
         "an unchanged mission is not news, and re-announcing it every round would be"
+    );
+}
+
+#[test]
+fn a_beaten_formation_is_ordered_out_by_its_commander() {
+    // Withdrawal as a command decision: nobody in this formation consults
+    // her own damage — the commander weighs the formation against her
+    // doctrine's threshold and orders it out by the nearest lane.
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 31).unwrap();
+    let formation = formation_named(&state, "valkyrie_line");
+    for id in state.formations()[formation.index()].members.clone() {
+        state.units[id.index()].hp = 1;
+    }
+
+    let mut ai = AiDriver::new();
+    ai.insert(
+        1,
+        make_battle_planner(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: Some("elastic_defense".into()),
+            },
+            31,
+            &reg,
+        ),
+    );
+    ai.plan_round(&reg, &mut state);
+
+    match &state.formations()[formation.index()].mission {
+        Some(Mission::Withdraw { via }) => assert_eq!(
+            via, "east_road",
+            "the lane is the nearest exit her side may use"
+        ),
+        other => panic!("a formation at a tenth strength should be ordered out, got {other:?}"),
+    }
+    // The intact formation hears nothing: elastic defence devolves command,
+    // so its formations fight their own ground and are only ever *ordered*
+    // to leave it.
+    let screen = formation_named(&state, "valkyrie_screen");
+    assert!(
+        state.formations()[screen.index()].mission.is_none(),
+        "a devolved commander does not micro-assign ground to a formation that is fighting well"
+    );
+}
+
+#[test]
+fn initiative_moves_a_commander_on_and_obedience_does_not() {
+    let reg = registry();
+
+    // The balanced doctrine carries initiative 0.5: with the bridge already
+    // hers, her formations are re-aimed at ground she does not hold.
+    let mut state = BattleState::from_map(&reg, "river_crossing", 33).unwrap();
+    state.objective_held[0] = Some(1);
+    let mut ai = AiDriver::new();
+    ai.insert(
+        1,
+        make_battle_planner(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: None,
+            },
+            33,
+            &reg,
+        ),
+    );
+    ai.plan_round(&reg, &mut state);
+    let line = formation_named(&state, "valkyrie_line");
+    let ford = state
+        .map
+        .objectives()
+        .iter()
+        .find(|o| o.id == "north_ford")
+        .unwrap()
+        .anchor();
+    assert_eq!(
+        state.formations()[line.index()].mission,
+        Some(Mission::Advance { to: ford }),
+        "initiative moves her off ground already taken"
+    );
+
+    // Massed armour carries initiative 0.3: the plan said the bridge, so
+    // the bridge it is, held or not.
+    let mut state = BattleState::from_map(&reg, "river_crossing", 33).unwrap();
+    state.objective_held[0] = Some(0);
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
+        make_battle_planner(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: Some("massed_armor".into()),
+            },
+            33,
+            &reg,
+        ),
+    );
+    ai.plan_round(&reg, &mut state);
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let bridge = state.map.objectives()[0].anchor();
+    assert_eq!(
+        state.formations()[armor.index()].mission,
+        Some(Mission::Advance { to: bridge }),
+        "an obedient doctrine follows the letter of the plan"
+    );
+}
+
+#[test]
+fn a_devolved_commander_issues_no_ground_missions() {
+    // Elastic defence devolves command (delegation 0.7): its formations
+    // keep the whole-map judgment that is the doctrine's strength, and the
+    // commander's only order is the one that is never devolved — leaving.
+    // Measured before believed: pinning this doctrine to anchor hexes cost
+    // it 16 of 24 wins against an unchanged opponent.
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 17).unwrap();
+    let mut ai = AiDriver::new();
+    ai.insert(
+        1,
+        make_battle_planner(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: Some("elastic_defense".into()),
+            },
+            17,
+            &reg,
+        ),
+    );
+    ai.plan_round(&reg, &mut state);
+    assert!(
+        state
+            .formations()
+            .iter()
+            .filter(|f| f.side == 1)
+            .all(|f| f.mission.is_none()),
+        "her formations fight their own ground"
+    );
+    assert!(
+        state.has_committed(1),
+        "and the side still finishes planning"
     );
 }
