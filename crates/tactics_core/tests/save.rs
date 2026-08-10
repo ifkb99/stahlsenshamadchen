@@ -154,6 +154,56 @@ fn loading_rebuilds_the_sight_grid_that_the_save_leaves_out() {
     );
 }
 
+#[test]
+fn a_save_written_before_objectives_existed_still_opens() {
+    // A content patch must not cost a player their campaign, so the two
+    // fields objectives added carry `#[serde(default)]` — and `rehydrate`
+    // sizes them from the map afterwards, because scoring indexes through
+    // them and a short vector would panic rather than simply score nothing.
+    let reg = registry();
+    let state = BattleState::from_map(&reg, "river_crossing", 7).expect("battle");
+    let text = SaveGame::new(&reg, None, Some(state)).to_json().unwrap();
+
+    let mut old: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let battle = old["battle"].as_object_mut().unwrap();
+    battle.remove("objective_held").expect("field is saved");
+    battle.remove("score").expect("field is saved");
+
+    let restored = SaveGame::from_json(&reg, &old.to_string())
+        .expect("a save from before objectives must still load")
+        .0
+        .battle
+        .expect("battle survives");
+    assert_eq!(
+        restored.objective_held.len(),
+        restored.map.objectives().len(),
+        "control must be sized against the map it was loaded with"
+    );
+    assert_eq!(restored.score.len(), restored.sides.len());
+    assert!(restored.leader().is_none(), "and nobody has scored yet");
+}
+
+#[test]
+fn a_battle_saved_mid_fight_remembers_who_holds_the_ground() {
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 4).expect("battle");
+    // Put someone on the bridge and let a round pay out, so there is control
+    // and a score to lose rather than two empty vectors.
+    let bridge = state.map.objectives()[0].anchor();
+    let unit = state.units[0].id;
+    state.unit_mut(unit).unwrap().pos = bridge;
+    play(&reg, &mut state, 1, 4);
+    assert_eq!(state.objective_held[0], Some(state.units[0].side));
+    assert!(state.score(state.units[0].side) > 0, "a round paid out");
+
+    let text = SaveGame::new(&reg, None, Some(state.clone()))
+        .to_json()
+        .unwrap();
+    let restored = SaveGame::from_json(&reg, &text).unwrap().0.battle.unwrap();
+    assert_eq!(restored.objective_held, state.objective_held);
+    assert_eq!(restored.score, state.score);
+}
+
 /// The campaign is the half a player would actually mind losing: a girl with
 /// nine battles behind her and a wound that has three days left on it.
 #[test]

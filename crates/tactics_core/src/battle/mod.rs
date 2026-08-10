@@ -128,7 +128,15 @@ pub enum EndReason {
     /// with whatever they have left. Without this, survivors who lose
     /// contact in the fog wander until they happen to collide — hundreds of
     /// rounds, with the campaign stuck behind them.
+    ///
+    /// Note this no longer implies a draw. Breaking contact is how the
+    /// *shooting* stops; who won is then read off the objectives, and only a
+    /// level score is honestly nobody's battle.
     Stalemate,
+    /// A side reached the map's `victory_score`. The ground was worth more
+    /// than the enemy's tanks, which is the whole point of writing an
+    /// objective down.
+    Objectives,
 }
 
 /// Rounds without contact before the battle is called off. Contact means a
@@ -171,6 +179,26 @@ pub struct BattleState {
     /// Round in which the sides were last in contact, for the stalemate
     /// check.
     pub last_contact_round: u32,
+    /// Who currently holds each of `map.objectives()`, by the same index.
+    ///
+    /// Parallel to the map's list rather than keyed by id because the two are
+    /// built together in one place and neither ever changes length, and
+    /// because an index cannot disagree about ordering the way a hash map
+    /// could — objectives are walked to produce events, so their order is
+    /// part of determinism.
+    ///
+    /// Control persists: a side that takes the bridge and drives on still
+    /// holds it until an enemy stands on it. Ground you have taken should
+    /// have to be taken back.
+    ///
+    /// Defaulted on load so a save written before objectives existed opens as
+    /// what it was — a battle with no ground worth taking. `save::rehydrate`
+    /// then sizes it against the map, because scoring indexes through it.
+    #[serde(default)]
+    pub objective_held: Vec<Option<u8>>,
+    /// Objective points each side has collected, indexed by side.
+    #[serde(default)]
+    pub score: Vec<u32>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -215,6 +243,7 @@ impl BattleState {
             })
             .collect();
         let side_count = sides.len();
+        let objective_count = map.objectives().len();
         let sight = Arc::new(SightGrid::build(registry, &map));
         // A scenario battle has no campaign behind it, so its girls are
         // stamped fresh from mod data and forgotten afterwards.
@@ -233,6 +262,8 @@ impl BattleState {
             rng: ChaCha8Rng::seed_from_u64(seed),
             over: None,
             last_contact_round: 1,
+            objective_held: vec![None; objective_count],
+            score: vec![0; side_count],
         };
         for (placement, crew) in file.units.iter().zip(&crews) {
             state.spawn_unit(registry, placement, crew.clone());
@@ -255,6 +286,7 @@ impl BattleState {
         seed: u64,
     ) -> Self {
         let side_count = sides.len();
+        let objective_count = map.objectives().len();
         let sight = Arc::new(SightGrid::build(registry, &map));
         let mut state = Self {
             map: Arc::new(map),
@@ -270,6 +302,8 @@ impl BattleState {
             rng: ChaCha8Rng::seed_from_u64(seed),
             over: None,
             last_contact_round: 1,
+            objective_held: vec![None; objective_count],
+            score: vec![0; side_count],
         };
         for (i, placement) in placements.iter().enumerate() {
             state.spawn_unit(
@@ -431,6 +465,33 @@ impl BattleState {
 
     pub fn is_over(&self) -> bool {
         self.over.is_some()
+    }
+
+    /// Every objective on this map paired with the side currently holding it.
+    pub fn objectives(&self) -> impl Iterator<Item = (&crate::map::Objective, Option<u8>)> {
+        self.map
+            .objectives()
+            .iter()
+            .enumerate()
+            .map(|(i, o)| (o, self.objective_held.get(i).copied().flatten()))
+    }
+
+    /// Objective points a side has collected so far.
+    pub fn score(&self, side: u8) -> u32 {
+        self.score.get(side as usize).copied().unwrap_or(0)
+    }
+
+    /// The side ahead on objectives, if exactly one is. `None` covers both
+    /// "level" and "this map has no objectives", which are the same answer to
+    /// the only question callers ask: can the points decide this?
+    pub fn leader(&self) -> Option<u8> {
+        let best = self.score.iter().copied().max()?;
+        if best == 0 {
+            return None;
+        }
+        let mut leaders = self.score.iter().enumerate().filter(|(_, s)| **s == best);
+        let (side, _) = leaders.next()?;
+        leaders.next().is_none().then_some(side as u8)
     }
 
     /// Sides that still have living units.

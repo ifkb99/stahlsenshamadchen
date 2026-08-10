@@ -203,6 +203,16 @@ struct Flash(Timer);
 #[derive(Component)]
 struct Puff(Timer);
 
+/// A hex belonging to `map.objectives()[index]`, tinted by who holds it.
+#[derive(Component)]
+struct ObjectiveMarker {
+    index: usize,
+}
+
+/// Ground nobody has taken yet: a pale amber that reads as "worth something"
+/// without belonging to either side's colour.
+const OBJECTIVE_NEUTRAL: Color = Color::srgba(1.0, 0.85, 0.35, 0.30);
+
 #[derive(Component)]
 struct RoundBanner;
 
@@ -245,6 +255,7 @@ impl Plugin for BattlePlugin {
                     sync_units,
                     update_fog,
                     update_highlights,
+                    update_objective_markers,
                     update_panel,
                     update_flashes,
                     finish_battle,
@@ -367,6 +378,31 @@ fn setup_battle(
         BattleScope,
     );
     commands.insert_resource(CurrentMap(state.map.clone()));
+
+    // Objectives are drawn once and only ever recoloured, because which hexes
+    // they cover cannot change during a battle. They are `HexOverlay`s, so
+    // `reposition_map` carries them through view rotation with everything
+    // else.
+    for (index, objective) in state.map.objectives().iter().enumerate() {
+        for hex in &objective.hexes {
+            let overlay = HexOverlay::face(*hex);
+            commands.spawn((
+                Sprite {
+                    image: art.face.clone(),
+                    color: OBJECTIVE_NEUTRAL,
+                    ..default()
+                },
+                Transform::from_translation(overlay.translation(
+                    &state.map,
+                    view.rotation(),
+                    center,
+                )),
+                overlay,
+                ObjectiveMarker { index },
+                BattleScope,
+            ));
+        }
+    }
 
     for unit in state.alive_units() {
         spawn_unit_sprite(&mut commands, &art, unit.id, unit.side, &unit.vehicle);
@@ -806,11 +842,52 @@ fn pump_events(
                     .unwrap_or_else(|| "A crew".into());
                 log.push(format!("{who} refuses to advance - {rung}."));
             }
+            // Ground changing hands is worth saying out loud: it is the only
+            // thing that moves the score, and a battle decided on points that
+            // never mentioned the points would read as arbitrary.
+            BattleEvent::ObjectiveTaken {
+                objective, side, ..
+            } => {
+                let what = battle
+                    .state
+                    .map
+                    .objectives()
+                    .iter()
+                    .find(|o| &o.id == objective)
+                    .map(|o| o.name.clone())
+                    .unwrap_or_else(|| objective.clone());
+                log.push(match side {
+                    Some(s) => format!("{what} taken by {}.", battle.state.sides[*s as usize].name),
+                    None => format!("{what} is contested."),
+                });
+            }
             BattleEvent::BattleEnded { winner, reason } => {
                 let text = match (winner, reason) {
+                    (Some(w), EndReason::Objectives) => format!(
+                        "Victory on objectives: {} ({} points)",
+                        battle.state.sides[*w as usize].name,
+                        battle.state.score(*w)
+                    ),
+                    (Some(w), EndReason::Stalemate) => format!(
+                        "Contact lost. {} holds the ground, {} to {}.",
+                        battle.state.sides[*w as usize].name,
+                        battle.state.score(*w),
+                        battle
+                            .state
+                            .score
+                            .iter()
+                            .enumerate()
+                            .filter(|(s, _)| *s != *w as usize)
+                            .map(|(_, v)| *v)
+                            .max()
+                            .unwrap_or(0),
+                    ),
                     (Some(w), _) => format!("Victory: {}", battle.state.sides[*w as usize].name),
-                    (None, EndReason::Stalemate) => "Contact lost. Both sides break off.".into(),
+                    (None, EndReason::Stalemate) => {
+                        "Contact lost. Both sides break off, with nothing to show for it.".into()
+                    }
                     (None, EndReason::Eliminated) => "Mutual destruction.".into(),
+                    (None, EndReason::Objectives) => "The ground changed hands.".into(),
                 };
                 log.push(text);
                 battle.exit_timer = Some(Timer::from_seconds(2.5, TimerMode::Once));
@@ -1311,6 +1388,29 @@ fn update_highlights(
     }
 }
 
+/// Tint each objective hex with whoever holds it.
+///
+/// Separate from `update_highlights` because these are not highlights: they
+/// do not depend on selection or the move range, and rebuilding them on every
+/// `range_dirty` pass would respawn a hundred sprites to change a colour.
+fn update_objective_markers(
+    battle: Res<Battle>,
+    mut markers: Query<(&ObjectiveMarker, &mut Sprite)>,
+) {
+    for (marker, mut sprite) in &mut markers {
+        sprite.color = match battle
+            .state
+            .objective_held
+            .get(marker.index)
+            .copied()
+            .flatten()
+        {
+            Some(side) => map_render::side_color(side).with_alpha(0.45),
+            None => OBJECTIVE_NEUTRAL,
+        };
+    }
+}
+
 fn update_panel(
     battle: Res<Battle>,
     mods: Res<Mods>,
@@ -1343,6 +1443,21 @@ fn update_panel(
             }
             None => format!("Round {} - planning", state.round),
         };
+        // The score belongs next to the round, because on a map with
+        // objectives it is the other clock the player is racing: a battle can
+        // now be lost while winning the shooting.
+        if !state.map.objectives().is_empty() {
+            let scores: Vec<String> = state
+                .sides
+                .iter()
+                .enumerate()
+                .map(|(i, side)| format!("{} {}", side.name, state.score(i as u8)))
+                .collect();
+            text.0 = match state.map.victory_score() {
+                Some(target) => format!("{}   |   {} (to {target})", text.0, scores.join("  -  ")),
+                None => format!("{}   |   {}", text.0, scores.join("  -  ")),
+            };
+        }
     }
     if let Ok(mut text) = hud.log_text.single_mut() {
         text.0 = log.0.iter().cloned().collect::<Vec<_>>().join("\n");

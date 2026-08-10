@@ -124,6 +124,15 @@ pub enum Event {
         unit: UnitId,
         rung: String,
     },
+    /// Ground changed hands. Only emitted on a change, so a side sitting on
+    /// the bridge for twenty rounds says this once.
+    ObjectiveTaken {
+        objective: String,
+        /// The side that now holds it, or `None` if it was contested back to
+        /// nobody's.
+        side: Option<u8>,
+        at: Hex,
+    },
     BattleEnded {
         winner: Option<u8>,
         reason: EndReason,
@@ -307,6 +316,17 @@ impl BattleState {
 
         self.apply_pressure(registry, &mut events);
 
+        // Control is re-read every tick so driving onto the bridge takes it
+        // there and then, but points are only paid at the end of a round —
+        // an objective is worth holding for a *round*, and paying per tick
+        // would make the scale of the score an accident of `ticks_per_round`.
+        self.update_objective_control(&mut events);
+        let next = tick + 1;
+        let round_over = next >= registry.scale.ticks_per_round;
+        if round_over {
+            self.award_objective_points();
+        }
+
         if self.in_contact() || events.iter().any(|e| matches!(e, Event::ShotHit { .. })) {
             self.last_contact_round = self.round;
         }
@@ -315,8 +335,7 @@ impl BattleState {
             return events;
         }
 
-        let next = tick + 1;
-        if next >= registry.scale.ticks_per_round {
+        if round_over {
             self.begin_round(registry, &mut events);
         } else {
             self.phase = Phase::Resolving { tick: next };
@@ -585,15 +604,94 @@ impl BattleState {
         events.push(Event::RoundStarted { round: self.round });
     }
 
+    /// Work out who is standing on each objective, and hand it over when that
+    /// answer changes.
+    ///
+    /// A side takes an objective by having a living unit on one of its hexes
+    /// while no enemy does; a hex held by nobody stays with whoever took it
+    /// last, so ground has to be taken back rather than merely vacated. When
+    /// two sides are both on it, it is contested and belongs to neither —
+    /// which is what stops a defender collecting points while being overrun.
+    ///
+    /// Objectives are walked in map-file order and units in id order, so the
+    /// events this emits cannot depend on hash iteration order.
+    fn update_objective_control(&mut self, events: &mut Vec<Event>) {
+        // The map is shared behind an `Arc`, so taking a handle to it costs a
+        // refcount and frees `self` to be written to inside the loop.
+        let map = std::sync::Arc::clone(&self.map);
+        for (index, objective) in map.objectives().iter().enumerate() {
+            let mut occupiers: Vec<u8> = self
+                .units
+                .iter()
+                .filter(|u| u.alive && objective.contains(u.pos))
+                .map(|u| u.side)
+                .collect();
+            occupiers.sort_unstable();
+            occupiers.dedup();
+            let claimant = match occupiers.as_slice() {
+                [side] => Some(*side),
+                // Nobody there: control stands. Several sides there: nobody's.
+                [] => self.objective_held[index],
+                _ => None,
+            };
+            if self.objective_held[index] != claimant {
+                self.objective_held[index] = claimant;
+                events.push(Event::ObjectiveTaken {
+                    objective: objective.id.clone(),
+                    side: claimant,
+                    at: objective.anchor(),
+                });
+            }
+        }
+    }
+
+    /// Pay each objective's value to whoever holds it. Silent: a side quietly
+    /// collecting two points a round is a running total, not news, and the
+    /// log exists to carry the things that are.
+    fn award_objective_points(&mut self) {
+        let map = std::sync::Arc::clone(&self.map);
+        for (index, objective) in map.objectives().iter().enumerate() {
+            let Some(side) = self.objective_held[index] else {
+                continue;
+            };
+            if let Some(score) = self.score.get_mut(side as usize) {
+                *score += objective.value;
+            }
+        }
+    }
+
     fn check_victory(&mut self, events: &mut Vec<Event>) {
         if self.over.is_some() {
             return;
         }
         let living = self.living_sides();
         if living.len() <= 1 {
-            self.finish(living.first().copied(), EndReason::Eliminated, events);
-        } else if self.round.saturating_sub(self.last_contact_round) >= STALEMATE_ROUNDS {
-            self.finish(None, EndReason::Stalemate, events);
+            // Even a wipeout is read off the objectives first: a side that
+            // took the bridge and was then destroyed to the last tank has
+            // still taken the bridge, and mutual destruction over ground
+            // somebody held is not the same battle as mutual destruction in
+            // an empty field.
+            let winner = living.first().copied().or_else(|| self.leader());
+            self.finish(winner, EndReason::Eliminated, events);
+            return;
+        }
+        // A map that sets no `victory_score` cannot end this way, which is
+        // what keeps objectives an additive rule: say nothing and the battle
+        // is fought to the death exactly as it always was.
+        if let Some(target) = self.map.victory_score()
+            && let Some(side) = self
+                .score
+                .iter()
+                .position(|s| *s >= target)
+                .map(|s| s as u8)
+        {
+            self.finish(Some(side), EndReason::Objectives, events);
+            return;
+        }
+        if self.round.saturating_sub(self.last_contact_round) >= STALEMATE_ROUNDS {
+            // Breaking contact ends the shooting; the points say who won it.
+            let winner = self.leader();
+            self.finish(winner, EndReason::Stalemate, events);
         }
     }
 

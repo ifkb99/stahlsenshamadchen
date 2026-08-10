@@ -132,9 +132,19 @@ fn main() {
                 Event::OrderRefused { unit, rung } => {
                     println!("{} refuses to advance ({rung})", name(&state, *unit))
                 }
+                Event::ObjectiveTaken {
+                    objective, side, ..
+                } => println!(
+                    "   >> {objective} taken by {}",
+                    match side {
+                        Some(s) => state.sides[*s as usize].name.clone(),
+                        None => "nobody - contested".into(),
+                    }
+                ),
                 Event::BattleEnded { winner, reason } => println!(
-                    "=== battle over after {rounds} rounds: {:?} wins ({reason:?}) ===",
-                    winner.map(|w| state.sides[w as usize].name.clone())
+                    "=== battle over after {rounds} rounds: {:?} wins ({reason:?}), score {:?} ===",
+                    winner.map(|w| state.sides[w as usize].name.clone()),
+                    state.score
                 ),
             }
         }

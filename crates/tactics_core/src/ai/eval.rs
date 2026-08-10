@@ -107,20 +107,80 @@ impl Evaluator {
             .map(|dist| -(dist as f32) * 0.1 * doctrine.concentration)
             .unwrap_or(0.0);
 
-        // Advance: with something to shoot, close on it; with no contact at
-        // all, push toward the middle of the map to find some.
+        // Objectives: the one thing on the map worth something with no enemy
+        // attached to it, and the reason this evaluator will leave good cover
+        // at all. Measured against the old behaviour it is the whole fix —
+        // without it, holding the best ground in sight is unbeatable play,
+        // and two sides doing that never meet.
+        let objective = self.objective_value(state, me.side, tile);
+
+        // Advance: with something to shoot, close on it. With no contact and
+        // no objectives, push toward the middle of the map to find some —
+        // which is all this could do before objectives existed, and is still
+        // what a map that names none gets.
         let advance = match enemies.iter().map(|e| e.pos.distance_to(tile)).min() {
             Some(nearest) => -(nearest as f32) * 0.3 * doctrine.aggression,
-            None => -(state.map.center().distance_to(tile) as f32) * 0.15 * doctrine.scouting,
+            None if state.map.objectives().is_empty() => {
+                -(state.map.center().distance_to(tile) as f32) * 0.15 * doctrine.scouting
+            }
+            // The objective term is already saying which way to walk, and far
+            // more specifically than "inwards" ever did.
+            None => 0.0,
         };
 
         TileScore {
             score: attack_value * 2.0 * (0.5 + doctrine.aggression) - threat * caution
                 + terrain_value
                 + mass
+                + objective
                 + advance,
             attack: best_attack.map(|(t, w, _)| (t, w)),
         }
+    }
+
+    /// What holding `tile` is worth in objective terms to `side`.
+    ///
+    /// Every objective is scored and the best taken, so a unit walks toward
+    /// the one it can most usefully affect rather than being pulled apart by
+    /// all of them at once. Two things fall out of the shape:
+    ///
+    /// - The reward is for *standing* on it, and the distance term is a slope
+    ///   leading there, so a unit twenty hexes away still knows which way to
+    ///   drive. That slope is what a greedy one-round planner needs: it can
+    ///   only see the tiles it can reach this round, so a gradient that is
+    ///   flat until you arrive is a gradient it cannot follow.
+    /// - Ground already held is worth half. It is still worth sitting on —
+    ///   walking away hands it back for free — but not worth marching across
+    ///   the map for when there is unclaimed ground somewhere else.
+    ///
+    /// The two coefficients were swept over 24 battles. Both halves of the
+    /// curve are bad in different ways: at zero this is the old game, 11 of 24
+    /// decided and 302 shots fired in 16.5 rounds because nobody advances; at
+    /// double these values it is 21 of 24 decided but only 517 shots in 8.1
+    /// rounds, because units drive at the objective through fire and are
+    /// destroyed before a firefight develops. The peak of *fighting* — 652
+    /// shots, 23 of 24 decided, 9.3 rounds — is here, which is why the
+    /// engine-side numbers are half what they first were rather than the
+    /// doctrine values being odd fractions.
+    fn objective_value(&self, state: &BattleState, side: u8, tile: Hex) -> f32 {
+        let mut best: Option<f32> = None;
+        for (objective, held) in state.objectives() {
+            let weight = objective.value as f32
+                * self.doctrine.objective_value
+                * if held == Some(side) { 0.5 } else { 1.0 };
+            let distance = objective
+                .hexes
+                .iter()
+                .map(|h| h.distance_to(tile))
+                .min()
+                .unwrap_or(0);
+            let reward = if objective.contains(tile) { 1.5 } else { 0.0 };
+            let score = weight * (reward - 0.15 * distance as f32);
+            if best.is_none_or(|b| score > b) {
+                best = Some(score);
+            }
+        }
+        best.unwrap_or(0.0)
     }
 
     /// How the battle stands for `side`, in [-1, 1]. Aggressive doctrines
@@ -149,7 +209,30 @@ impl Evaluator {
         }
         let weight_theirs = 0.5 + self.doctrine.aggression * 0.5;
         let weight_ours = 1.5 - weight_theirs;
-        (ours * weight_ours - theirs * weight_theirs) / total
+        let material = (ours * weight_ours - theirs * weight_theirs) / total;
+
+        // Ground counts too, or a search planner would happily trade away
+        // every objective on the map for a favourable exchange of tanks and
+        // then lose on points. Weighted against material rather than added to
+        // it so the result stays inside [-1, 1] and the two are comparable.
+        let ground: f32 = state
+            .objectives()
+            .map(|(objective, held)| match held {
+                Some(s) if s == side => objective.value as f32,
+                Some(_) => -(objective.value as f32),
+                None => 0.0,
+            })
+            .sum();
+        let at_stake: f32 = state
+            .map
+            .objectives()
+            .iter()
+            .map(|o| o.value as f32)
+            .sum::<f32>();
+        if at_stake <= 0.0 {
+            return material;
+        }
+        0.7 * material + 0.3 * (ground / at_stake)
     }
 
     fn is_indirect(

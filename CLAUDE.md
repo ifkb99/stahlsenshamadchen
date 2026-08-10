@@ -34,6 +34,37 @@ It earns its keep immediately. It states the `.max(1)` damage floor as "mg
 kills heavy_tank in 3 rounds" — the same as a 37 mm gun — and reports that most
 battles currently end in stalemate rather than a decision.
 
+### Objectives
+
+A battle map may declare `objectives` — named sets of hexes worth points to
+whoever holds them — and optionally a `victory_score`. The rules are small and
+the consequences are not:
+
+- **Objectives are map data, not battle state.** They live on `HexMap`
+  (`map.objectives()`), because which hexes are the bridge cannot change during
+  a fight. The battle carries only `objective_held` (parallel to that list) and
+  `score` (by side). That split is why both setup paths — `from_map` and the
+  overworld's `from_placements` — get objectives with no new arguments.
+- **Control persists and contest cancels.** Standing on a hex takes it; driving
+  away does not give it back; two sides on it makes it nobody's. Points are
+  paid once at the end of a round, never per tick, or the size of every score
+  would be an accident of `ticks_per_round`.
+- **`EndReason::Stalemate` no longer implies a draw.** Losing contact ends the
+  shooting; `BattleState::leader()` then says who won it. `winner: None` now
+  means the score was actually level. Anything reading a battle result must
+  handle `(Some(winner), Stalemate)`.
+- **A map that declares no objectives behaves exactly as before**, including in
+  the evaluator — `a_map_that_names_no_objectives_is_fought_exactly_as_it_was_before`
+  pins that by requiring two doctrines with wildly different `objective_value`
+  to score every tile identically. This is the same additivity rule that
+  difficulty-as-a-mod imposes, and it is the one to re-check when touching
+  `Evaluator::objective_value`.
+
+The reason they exist is not scenario variety, it is that the AI had no reason
+to advance: with elimination as the only victory condition, holding the best
+cover on the map is optimal play, and the stalemate rate *rose* as difficulty
+noise fell (11/12 at zero noise). See TODO.md under Design Decisions.
+
 ### Saving
 
 `tactics_core::save` serialises a game in progress; F5/F9 on the campaign map
@@ -251,9 +282,9 @@ rule they defend (`unspotted_enemies_still_ambush`).
 
   | | |
   | --- | --- |
-  | round resolution | 1.66 ms (0.96–2.54 across seeds) |
-  | `reachable()` per call | 32.8 µs |
-  | `unit_vision` per unit, cold | 86.0 µs |
+  | round resolution | 1.12 ms (0.93–1.27 across seeds) |
+  | `reachable()` per call | 24.0 µs |
+  | `unit_vision` per unit, cold | 73.4 µs |
   | utility order | 0.03 ms |
   | mcts order, difficulty 3 / 4 | 1.84 s / 4.24 s |
 
