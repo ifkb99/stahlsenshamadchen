@@ -162,3 +162,98 @@ mod tests {
         assert_eq!(Balance::scaled(1, -100, 5), 1);
     }
 }
+
+/// How long a crew takes to act.
+///
+/// A round is twelve ticks, orders are fixed at the start, and the world
+/// changes while it resolves. A machine begins executing at tick zero. A
+/// person takes a moment — to hear the order, to understand it, to get moving
+/// — and that moment is the difference between a unit and a crew.
+///
+/// This is a data block for a reason beyond tuning: **difficulty is a mod in
+/// this project**, and somebody who wants orders that simply happen should get
+/// that by loading content, not by the engine carrying a branch. Setting
+/// `base_ticks` and `max_ticks` to zero makes every crew instantaneous and
+/// this whole system disappears without an `if` anywhere.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReactionRules {
+    /// Which skill is consulted. Data, so a mod can decide that reacting is a
+    /// matter of drill, or of nerve, or of nothing at all.
+    pub skill: String,
+    /// Ticks an ordinary crew takes before acting.
+    pub base_ticks: u32,
+    /// How many points above average shave one tick off. Below average adds
+    /// them back at the same rate.
+    pub levels_per_tick: i32,
+    /// The slowest anyone can be, however bad they are.
+    pub max_ticks: u32,
+}
+
+impl Default for ReactionRules {
+    fn default() -> Self {
+        Self {
+            skill: "reactions".into(),
+            base_ticks: 2,
+            levels_per_tick: 4,
+            max_ticks: 5,
+        }
+    }
+}
+
+impl ReactionRules {
+    /// Ticks this crew waits before acting on its orders.
+    ///
+    /// Saturating rather than wrapping, and clamped both ends: a brilliant
+    /// crew reaches zero and stops, and a dreadful one stops at `max_ticks`
+    /// rather than spending the whole round frozen.
+    pub fn delay(&self, level: i32) -> u32 {
+        if self.max_ticks == 0 {
+            return 0;
+        }
+        let margin = level - crate::data::AVERAGE;
+        let shaved = if self.levels_per_tick == 0 {
+            0
+        } else {
+            margin / self.levels_per_tick
+        };
+        (self.base_ticks as i32 - shaved).clamp(0, self.max_ticks as i32) as u32
+    }
+}
+
+#[cfg(test)]
+mod reaction_tests {
+    use super::*;
+
+    #[test]
+    fn a_quicker_crew_acts_sooner() {
+        let rules = ReactionRules::default();
+        assert_eq!(rules.delay(crate::data::AVERAGE), 2, "ordinary");
+        assert!(rules.delay(18) < rules.delay(crate::data::AVERAGE));
+        assert!(rules.delay(4) > rules.delay(crate::data::AVERAGE));
+    }
+
+    #[test]
+    fn nobody_waits_forever_and_nobody_acts_before_they_are_told() {
+        let rules = ReactionRules::default();
+        assert_eq!(rules.delay(100), 0, "a genius still cannot act early");
+        assert_eq!(
+            rules.delay(-100),
+            rules.max_ticks,
+            "and a fool is not frozen"
+        );
+    }
+
+    #[test]
+    fn a_gentle_mod_turns_the_whole_system_off_with_data() {
+        // The property that matters for difficulty-as-mods: no branch in Rust
+        // is needed to get orders that simply happen.
+        let rules = ReactionRules {
+            base_ticks: 0,
+            max_ticks: 0,
+            ..ReactionRules::default()
+        };
+        for level in [-20, 0, crate::data::AVERAGE, 30] {
+            assert_eq!(rules.delay(level), 0, "level {level} should be instant");
+        }
+    }
+}

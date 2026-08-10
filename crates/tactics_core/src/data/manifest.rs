@@ -30,6 +30,10 @@ pub struct ModManifest {
     /// Things that are true about a girl but are not numbers.
     #[serde(default)]
     pub traits: Option<Vec<super::TraitDef>>,
+    /// How long crews take to act on orders. Replaced wholesale, like the
+    /// other rule blocks — a difficulty mod says only what it changes.
+    #[serde(default)]
+    pub reaction: Option<super::ReactionRules>,
     /// What the engine's hexes, rounds and ticks mean in metres and seconds.
     ///
     /// Unlike a vehicle or a weapon, scale is a property of the game rather

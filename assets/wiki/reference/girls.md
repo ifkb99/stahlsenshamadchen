@@ -448,9 +448,26 @@ what it moved.
 3. **Traits.** Declarative condition-and-modifier, with the Lua hook for the
    behavioural ones. Innate first, acquired-from-events second — the casualty
    data needed for the latter already exists.
-4. **Reaction latency.** Ticks of delay before acting on a new order or a new
-   situation. This is the slice that makes girls read as people rather than
-   robots, and it needs the morale ladder to be legible.
+4. **Reaction latency.** Half done, and the half that is missing is the
+   interesting half. The rules exist — a `reaction` block, a `reactions` skill
+   on Speed and Will, and `ReactionRules::delay` turning a skill level into
+   ticks — and nothing consumes them yet.
+
+   The first attempt gated *planned execution*: a unit could not move or fire
+   until its delay had passed. That was wrong twice over. Gating fire
+   double-models rate of fire, which weapon cooldowns already do, and it taxes
+   a crew every round for orders they were given before it started — measured,
+   it cut shots across a battle by 42% and doubled how long fights ran. Gating
+   movement broke the meaning of a vehicle's stated speed, and broke three
+   invariant tests that any non-zero delay would have broken, which is the tell
+   that it was not a tuning problem.
+
+   Re-reading the design settled it: *"a person notices at tick four and does
+   something about it at tick six"* is about reacting to **new information**,
+   not about being slow to start a move already ordered. So the delay belongs
+   on responses to things the girl was not told about — a tank appearing
+   mid-round, an ambush, an order that arrives late — which is the same trigger
+   deviation needs, and therefore belongs with slice 5 rather than before it.
 5. **Morale ladder and full latitude.** Steady / wavering / breaking, visible
    before it matters, with a stated cause in the log whenever a girl does
    something other than what she was told.
