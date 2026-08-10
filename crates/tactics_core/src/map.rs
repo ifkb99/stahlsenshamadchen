@@ -603,6 +603,24 @@ impl MapFile {
                     self.id, objective.id
                 ));
             }
+            // Standing on an exit means taking it, so a unit placed on one
+            // drives off the map on the first tick without ever being played.
+            if objective.kind == ObjectiveKind::Exit {
+                for placement in &self.units {
+                    if objective.side.is_none_or(|s| s == placement.side)
+                        && objective
+                            .at
+                            .iter()
+                            .any(|at| at[0] == placement.at[0] && at[1] == placement.at[1])
+                    {
+                        report.errors.push(format!(
+                            "map `{}`: a side {} unit is placed on its own exit `{}` at [{}, {}], \
+                             so it would leave the battle on the first tick",
+                            self.id, placement.side, objective.id, placement.at[0], placement.at[1]
+                        ));
+                    }
+                }
+            }
         }
         if self.victory_score.is_some() && self.objectives.is_empty() {
             report.warnings.push(format!(

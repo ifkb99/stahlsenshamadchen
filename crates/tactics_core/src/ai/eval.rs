@@ -11,6 +11,13 @@ use crate::data::{DataRegistry, DoctrineDef};
 use crate::map::ObjectiveKind;
 use hexx::Hex;
 
+/// How much a crew that is finished wants the exit, in the same units as an
+/// objective's `value`. Set to the worth of a good piece of ground, so a tank
+/// down to its last hit point pulls toward the lane about as hard as a fresh
+/// one pulls toward the bridge — and, being independent of what the exit pays,
+/// lets a retreat lane be worth one point without being ignored.
+const EXIT_URGENCY: f32 = 3.0;
+
 /// What holding a tile is worth, and the shot that comes with it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TileScore {
@@ -174,13 +181,17 @@ impl Evaluator {
     /// *permitted* to leave belongs to the chain of command, not to the
     /// evaluator.
     fn objective_value(&self, state: &BattleState, side: u8, tile: Hex, hp_fraction: f32) -> f32 {
-        // How badly this crew wants out: nothing at all until the doctrine's
-        // withdrawal threshold is crossed, then rising as the vehicle is shot
-        // to pieces. An intact tank under any doctrine scores every exit at
-        // zero, which is what stops the lane being a free win.
-        let flight = ((self.doctrine.withdraw_threshold - hp_fraction)
-            / self.doctrine.withdraw_threshold.max(0.01))
-        .clamp(0.0, 1.0);
+        // How badly this crew wants out.
+        //
+        // `withdraw_threshold` is a fraction of strength *lost* before a
+        // doctrine looks for a way out — so a high one is stubborn, which is
+        // why massed armour sits at 0.85 and elastic defence at 0.45. The
+        // crossing point is therefore `1 - threshold` of remaining hp, and
+        // wanting out rises from nothing there to everything at destruction.
+        // Getting this the wrong way round makes the stubborn doctrine the
+        // first to run, which is what it did on the first attempt.
+        let breaking = (1.0 - self.doctrine.withdraw_threshold).clamp(0.01, 1.0);
+        let flight = ((breaking - hp_fraction) / breaking).clamp(0.0, 1.0);
 
         let mut best: Option<f32> = None;
         for (objective, held) in state.objectives() {
@@ -188,18 +199,25 @@ impl Evaluator {
             if !objective.open_to(side) {
                 continue;
             }
-            let appetite = match objective.kind {
+            // What an exit *pays* and how badly a broken crew wants it are
+            // different quantities, and multiplying by `value` the way ground
+            // does conflates them. A retreat lane must be worth almost no
+            // points — winning by running away is not winning — while still
+            // pulling hard enough to cross a map. So an exit's urgency comes
+            // from the crew's condition alone, scaled to be worth about as
+            // much to a finished crew as a good objective is to a fresh one.
+            let weight = match objective.kind {
                 ObjectiveKind::Hold => {
                     // Ground already held is worth half: still worth sitting
                     // on, not worth marching across the map for.
-                    if held == Some(side) { 0.5 } else { 1.0 }
+                    let appetite = if held == Some(side) { 0.5 } else { 1.0 };
+                    objective.value as f32 * self.doctrine.objective_value * appetite
                 }
-                ObjectiveKind::Exit => flight,
+                ObjectiveKind::Exit => EXIT_URGENCY * self.doctrine.objective_value * flight,
             };
-            if appetite <= 0.0 {
+            if weight <= 0.0 {
                 continue;
             }
-            let weight = objective.value as f32 * self.doctrine.objective_value * appetite;
             let distance = objective
                 .hexes
                 .iter()

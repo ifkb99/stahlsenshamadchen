@@ -482,6 +482,17 @@ fn deploy(
                         .is_some()
                 })
             })
+            // A side deploys at the shallowest tiles of its own edge, which
+            // is precisely where that side's retreat lane is. Standing on an
+            // exit means taking it, so without this the leading vehicles
+            // would drive off the map on the first tick and the battle would
+            // be over before anyone saw an enemy. Nobody forms up on the road
+            // home.
+            .filter(|(hex, _)| {
+                !map.objectives()
+                    .iter()
+                    .any(|o| o.kind == ObjectiveKind::Exit && o.contains(*hex))
+            })
             .map(|(hex, _)| {
                 let [col, row] = tactics_core::hex_to_offset(hex);
                 (if west { col } else { -col }, row, hex)
@@ -1881,4 +1892,66 @@ fn finish_battle(
     commands.remove_resource::<Battle>();
     commands.remove_resource::<PendingBattle>();
     next.set(AppState::Overworld);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn registry() -> tactics_core::data::DataRegistry {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
+        tactics_core::data::DataRegistry::load_dir(&root)
+            .expect("mods load")
+            .0
+    }
+
+    /// Deployment puts a side at the shallowest tiles of its own map edge —
+    /// which is exactly where a retreat lane lives. Without this rule the
+    /// attacker's leading vehicles spawn standing on their own way out and
+    /// drive off the map on the first tick, ending the battle before it
+    /// starts.
+    #[test]
+    fn nobody_deploys_onto_their_own_way_off_the_map() {
+        let reg = registry();
+        let file = reg.map("river_crossing").expect("shipped battle map");
+        let map = tactics_core::map::HexMap::from_map_file(file).expect("map parses");
+        assert!(
+            map.objectives()
+                .iter()
+                .any(|o| o.kind == ObjectiveKind::Exit),
+            "this test is meaningless if the map has no exits"
+        );
+
+        let forces: Vec<BattleForce> = [0u8, 1]
+            .iter()
+            .map(|side| BattleForce {
+                army: ArmyId(*side as u32),
+                side: *side,
+                units: (0..4)
+                    .map(|_| ArmyUnit {
+                        vehicle: "medium_tank".into(),
+                        crew: Vec::new(),
+                        name: None,
+                    })
+                    .collect(),
+            })
+            .collect();
+
+        let (placements, _, _) = deploy(&reg, &map, &forces, 0);
+        assert_eq!(placements.len(), 8, "everyone was placed");
+        for placement in &placements {
+            let hex = tactics_core::offset_to_hex(placement.at[0], placement.at[1]);
+            for objective in map.objectives() {
+                assert!(
+                    !(objective.kind == ObjectiveKind::Exit
+                        && objective.open_to(placement.side)
+                        && objective.contains(hex)),
+                    "side {} deployed onto exit `{}` at {:?}",
+                    placement.side,
+                    objective.id,
+                    placement.at
+                );
+            }
+        }
+    }
 }
