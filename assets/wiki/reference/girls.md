@@ -412,6 +412,25 @@ Worth reading before building any of this.
 - **Fire Emblem** — already a stated inspiration: growth rates as per-character
   tendency, and supports as the payoff for caring.
 
+## Everything harsh must be switchable off in data
+
+Difficulty is a mod, not a setting. A player who wants none of this — no
+bailouts, no disobedience, orders that simply happen — should be able to load a
+`gentle` mod and get a Fire Emblem-shaped game, without the engine carrying a
+difficulty branch through every system.
+
+That is a constraint on how the rest of this is written, not a feature to add
+afterwards. **Each harsh system has to be an additive rule whose absence is the
+gentle game:**
+
+- reaction latency collapses to zero ticks when its coefficients are zero, and
+  orders execute the instant they are given;
+- the morale ladder reduces to a single rung, and nobody ever wavers;
+- casualty resolution already reduces to "everyone walks away", which is what
+  `CasualtyRules::permadeath` being off does today.
+
+If switching one of them off needs an `if` in Rust, it was built wrong.
+
 ## Build order
 
 Staged so each slice is verifiable on its own. The determinism baseline and
