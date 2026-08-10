@@ -112,6 +112,8 @@ pub struct ArtCache {
     pub tiles: HashMap<(String, i32), Handle<Image>>,
     /// Bare hex face used for highlights and fog, elevation 0.
     pub face: Handle<Image>,
+    /// Bare leader's chevron, tinted per side where it is used.
+    pub chevron: Handle<Image>,
     /// side index -> tank blob sprite, used when a vehicle ships no art.
     pub units: HashMap<u8, Handle<Image>>,
     /// (vehicle id, side index) -> the vehicle's three facing frames,
@@ -349,6 +351,47 @@ pub fn face_image() -> Image {
     tile_image([255, 255, 255], 0)
 }
 
+/// The mark of whoever is in charge: a small upward wedge, drawn white with a
+/// dark rim and tinted at the use site the way [`face_image`] is.
+///
+/// White rather than per-side, because both scales that draw it — a battle
+/// formation's leader and a campaign's senior army — want it in *their* side's
+/// colour, and a second copy per side would be three images to keep in step
+/// for no gain. The rim is what makes it survive the palette: the sides are
+/// bright and the world is drab, but a blue wedge on a blue river still needs
+/// an edge to be a shape rather than a smudge.
+pub fn chevron_image() -> Image {
+    let (w, h) = (18u32, 12u32);
+    let mut data = vec![0u8; (w * h * 4) as usize];
+    let cx = (w as f32 - 1.0) / 2.0;
+    // A solid wedge rather than a hollow V. At the default zoom a unit sprite
+    // is about forty pixels across and the marker rides above it, so the
+    // legible shape is the bold one; a two-pixel chevron stroke turned to
+    // mush in the screenshot loop.
+    let inside = |x: i64, y: i64| {
+        if !(0..w as i64).contains(&x) || !(0..h as i64).contains(&y) {
+            return false;
+        }
+        (x as f32 - cx).abs() <= y as f32 * 0.72 + 0.5
+    };
+    for y in 0..h as i64 {
+        for x in 0..w as i64 {
+            if !inside(x, y) {
+                continue;
+            }
+            let rim =
+                !inside(x - 1, y) || !inside(x + 1, y) || !inside(x, y - 1) || !inside(x, y + 1);
+            let c: [u8; 4] = if rim {
+                [20, 20, 26, 255]
+            } else {
+                [255, 255, 255, 255]
+            };
+            put(&mut data, w, x as u32, y as u32, c);
+        }
+    }
+    make_image(w, h, data)
+}
+
 /// A little tank: hull plus turret and a barrel pointing +x, tinted per
 /// side. Sprites rotate to match unit facing.
 pub fn unit_image(color: [u8; 3]) -> Image {
@@ -460,6 +503,7 @@ impl ArtCache {
     pub fn build(registry: &DataRegistry, images: &mut Assets<Image>) -> Self {
         let mut cache = Self {
             face: images.add(face_image()),
+            chevron: images.add(chevron_image()),
             ..Default::default()
         };
         for terrain in registry.terrain.values() {

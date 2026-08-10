@@ -41,6 +41,22 @@ impl HexOverlay {
         }
     }
 
+    /// Top-face marker that wins where two land on the same tile.
+    ///
+    /// Two overlays at the same `z_bias` are ordered by nothing in
+    /// particular, so a marker that must stay readable under another one
+    /// cannot simply be spawned later. The radio-range ring is the case that
+    /// wanted it: on the campaign an army's move range and its net horizon
+    /// are both a handful of hexes out and land on each other, and the ring
+    /// is the thinner, more precise of the two.
+    pub fn face_over(hex: Hex) -> Self {
+        Self {
+            hex,
+            anchor: Anchor::Face,
+            z_bias: 0.65,
+        }
+    }
+
     /// Fog-style marker, sitting on the prism body.
     pub fn fog(hex: Hex) -> Self {
         Self {

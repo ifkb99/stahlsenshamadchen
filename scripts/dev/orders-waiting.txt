@@ -40,10 +40,13 @@ log "a direct order to a girl who cannot hear it"
 shot /tmp/waiting-01-order.png
 
 # The panel's side of the same fact: F picks up the platoon, and it tags her
-# twice over — out of contact, and with orders waiting for her.
+# twice over — out of contact, and with orders waiting for her. The map says
+# it too: the violet under a member who is still on the net goes red under
+# one who is not, and the green ring is Anka's radio horizon, which Mina is
+# plainly outside.
 key F
 wait 0.8
-log "the formation panel: out of contact, orders waiting"
+log "the formation panel and the net: out of contact, orders waiting"
 shot /tmp/waiting-02-panel.png
 
 # Now close the gap by hand: her commander drives southwest after her, which

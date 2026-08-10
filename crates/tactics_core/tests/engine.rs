@@ -5659,3 +5659,50 @@ fn an_amendment_travels_the_wire_like_any_order() {
     assert_eq!(f.mission, Some(Mission::Hold { at: None }));
     assert!(f.plan.is_empty(), "the countermand replaced the whole plan");
 }
+
+// --- seeing the net (chunk 9d) ----------------------------------------------
+
+#[test]
+fn the_ring_the_screen_draws_is_the_edge_the_engine_walks() {
+    // `radio_reach` exists so the battle screen can draw a leader's range
+    // ring without keeping its own copy of the formula. What makes it worth
+    // having is that the contact graph reads the same function: set a radius
+    // the ring can be counted against, and the girl one hex inside it is on
+    // the net while the one a hex outside is not.
+    let mut reg = registry();
+    reg.command = Some(command_rules(6, false, 0));
+    strip_radios(&mut reg);
+    let mut state = radio_stage(&reg, 3);
+
+    let leader = UnitId(0);
+    let stray = UnitId(1);
+    assert_eq!(
+        state.radio_reach(&reg, leader),
+        Some(6),
+        "no radio hardware and no signals coefficient: the block's own radius"
+    );
+
+    // The stray sits ten hexes out in `radio_stage`; walk her to the ring and
+    // then one hex past it, and contact follows the number the ring is drawn
+    // at rather than any second opinion.
+    let on_the_ring = state.unit(leader).expect("leader").pos + tactics_core::Hex::new(6, 0);
+    state.units[stray.index()].pos = on_the_ring;
+    settle(&reg, &mut state);
+    assert!(
+        state.formations()[0].in_contact(stray),
+        "a girl standing on the ring hears her leader"
+    );
+
+    state.units[stray.index()].pos = on_the_ring + tactics_core::Hex::new(1, 0);
+    settle(&reg, &mut state);
+    assert!(
+        !state.formations()[0].in_contact(stray),
+        "and one hex beyond it she does not"
+    );
+
+    // Nothing to draw where nothing is priced: the same window answers `None`
+    // for a mod with no chain of command, which is what keeps the display's
+    // additivity story the same as the engine's.
+    reg.command = None;
+    assert_eq!(state.radio_reach(&reg, leader), None);
+}

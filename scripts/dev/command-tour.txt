@@ -20,6 +20,26 @@ wait 0.6
 log "1st Armored Platoon selected"
 shot /tmp/command-02-formation.png
 
+# F again for the Reconnaissance Section, which is where the net is worth
+# looking at: Elsa Brandt leads it from a recon car, and her signals buy her
+# hexes her platoon commander does not have — so the panel's "Net:" line
+# carries the crew's share of it, and the green ring on the map is drawn at
+# the further radius. Both numbers come out of BattleState::radio_reach, the
+# same function the contact graph walks, so the ring is the edge rather than
+# a picture of one.
+key F
+wait 0.6
+log "the Reconnaissance Section: a wider net, drawn and named"
+shot /tmp/command-03-net.png
+
+# Round the cycle and back: F past the last formation drops the mode
+# entirely, so two more presses put the 1st Armored Platoon in hand again for
+# the order below.
+key F
+wait 0.3
+key F
+wait 0.4
+
 # Aim at the bridge and order the platoon onto it. The order goes out through
 # Order::SetMission, so MissionAssigned reaches the log exactly as it does
 # when the enemy's commander speaks — and the panel lists the mission as in
@@ -29,7 +49,7 @@ wait 0.4
 key G
 wait 1.2
 log "advance ordered on the bridge"
-shot /tmp/command-03-mission.png
+shot /tmp/command-04-mission.png
 
 # Commit. Whatever the player left unplanned inside a formation under orders
 # is planned by that formation's executors, and the round plays out.
@@ -42,7 +62,7 @@ wait 9
 key F
 wait 0.8
 log "one round fought; the order has arrived"
-shot /tmp/command-04-standing.png
+shot /tmp/command-05-standing.png
 
 # A second round, to get the two halves of the command picture on screen at
 # once: enemies somebody is watching are drawn solidly with their health,
@@ -51,7 +71,7 @@ shot /tmp/command-04-standing.png
 key Enter
 wait 9
 log "two rounds fought: fresh contacts and ghosts"
-shot /tmp/command-05-picture.png
+shot /tmp/command-06-picture.png
 
 # The panel's side of the picture, and the order rule that goes with it: a
 # ghost is a report, not a target, so pointing a gun at one is refused in the
@@ -69,6 +89,6 @@ wait 0.5
 click left
 wait 0.8
 log "a ghost hovered and a shot at it refused"
-shot /tmp/command-06-ghost.png
+shot /tmp/command-07-ghost.png
 
 quit

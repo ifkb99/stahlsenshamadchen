@@ -792,6 +792,37 @@ impl BattleState {
         }
     }
 
+    /// How far this crew's own transmissions carry, in hexes: her vehicle's
+    /// radio worked by her crew's `signals`, falling back to the command
+    /// block's `radius` for a vehicle that declares no set.
+    ///
+    /// **Presentation's window into the net.** The contact graph below walks
+    /// exactly this sum for every transmitter it visits, and it is public
+    /// only so that the range ring the battle screen draws round a leader is
+    /// *the same number the engine used* rather than the game crate's copy of
+    /// the formula — a copy that would silently start lying the day a mod
+    /// changed `radius_per_signals` or a vehicle grew a better radio.
+    ///
+    /// `None` where there is nothing to draw: a mod that prices no chain of
+    /// command has no net, and a unit no longer on the field is not
+    /// transmitting.
+    pub fn radio_reach(&self, registry: &DataRegistry, unit: UnitId) -> Option<u32> {
+        let rules = registry.command.as_ref()?;
+        let unit = self.unit(unit)?;
+        let vehicle = registry.vehicle(&unit.vehicle);
+        let signals = self.roster.crew_skill(
+            registry,
+            vehicle,
+            &unit.crew,
+            SIGNALS,
+            self.terrain_at(unit.pos),
+        );
+        Some(rules.radio_range(
+            vehicle.and_then(|v| v.radio).unwrap_or(rules.radius),
+            signals,
+        ))
+    }
+
     /// Work out who can still hear their leader, and say so when the answer
     /// changes.
     ///
@@ -856,19 +887,16 @@ impl BattleState {
                 let Some(unit) = self.unit(anchor) else {
                     continue;
                 };
-                let signals = self.roster.crew_skill(
-                    registry,
-                    registry.vehicle(&unit.vehicle),
-                    &unit.crew,
-                    SIGNALS,
-                    self.terrain_at(unit.pos),
-                );
-                let radio_base = registry
-                    .vehicle(&unit.vehicle)
-                    .and_then(|v| v.radio)
-                    .unwrap_or(rules.radius);
-                let radio = rules.radio_range(radio_base, signals) as i32;
                 let from = unit.pos;
+                // The same sum [`Self::radio_reach`] shows the player, by
+                // construction rather than by agreement: the ring drawn round
+                // a leader on screen *is* this edge of the graph. `None` is
+                // unreachable here — rules exist and the unit is on the field
+                // — so skipping is a formality rather than a case.
+                let Some(radio) = self.radio_reach(registry, anchor) else {
+                    continue;
+                };
+                let radio = radio as i32;
                 let squad = self.command.formation_of(anchor).map(|f| f.id.clone());
                 for id in &living {
                     if heard.contains(id) {

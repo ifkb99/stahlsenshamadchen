@@ -257,6 +257,16 @@ struct HpBar(UnitId);
 #[derive(Component)]
 struct UnitBadge(UnitId);
 
+/// The wedge riding over whoever leads a formation.
+///
+/// Deliberately *not* a [`UnitBadge`]: the badges say how hurt somebody is,
+/// which a stale report cannot know, so a ghost hides them. Who is in command
+/// is not that kind of fact — it was true when the report was filed and the
+/// report is what the ghost is — so the chevron stays, dimmed with the rest
+/// of the ghost.
+#[derive(Component)]
+struct LeaderChevron(UnitId);
+
 /// The battle HUD's four text/image widgets.
 ///
 /// They are one thing conceptually — the panel on the right and the banner
@@ -276,6 +286,7 @@ type HighlightFilter = Or<(
     With<MoveHighlight>,
     With<PlanHighlight>,
     With<FormationHighlight>,
+    With<NetRing>,
 )>;
 
 /// Unit sprites, excluding the ones a `Mover` animation currently owns.
@@ -299,6 +310,34 @@ type HpBars<'w, 's> = Query<
     (With<HpBar>, Without<BattleUnit>),
 >;
 
+/// The wedge riding above the health bar on whoever is leading.
+type LeaderChevrons<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static LeaderChevron,
+        &'static mut Visibility,
+        &'static mut Sprite,
+        &'static mut Transform,
+    ),
+    (Without<BattleUnit>, Without<UnitBadge>, Without<HpBar>),
+>;
+
+/// Everything riding on a unit sprite rather than being one: the health bar,
+/// the slot behind it, and the leader's chevron.
+///
+/// Bundled for the same two reasons `BattleHud` is. They are one thing — the
+/// furniture `sync_units` hangs off a vehicle — and the mutual `Without`
+/// filters exist only so Bevy can prove three `&mut Visibility` / `&mut
+/// Sprite` queries over sibling entities do not alias, which is plumbing that
+/// has no business in a system signature.
+#[derive(SystemParam)]
+struct UnitWidgets<'w, 's> {
+    bars: HpBars<'w, 's>,
+    badges: Query<'w, 's, (&'static UnitBadge, &'static mut Visibility), Without<BattleUnit>>,
+    chevrons: LeaderChevrons<'w, 's>,
+}
+
 #[derive(Component)]
 struct MoveHighlight;
 
@@ -316,11 +355,48 @@ struct FormationHighlight;
 /// the girls you are talking to", which is not a fact about the map.
 const FORMATION_MARKER: Color = Color::srgba(0.65, 0.5, 1.0, 0.5);
 
+/// The same marker under a girl who cannot hear a word of it. Kept at the
+/// violet's weight and swung to red rather than made a new symbol: it is the
+/// *same* fact — she is in the formation you are commanding — with the one
+/// thing that matters about her tonight said in the colour of a warning.
+const FORMATION_CUT_OFF: Color = Color::srgba(1.0, 0.3, 0.35, 0.55);
+
+/// One hex of the leader's radio horizon.
+///
+/// A ring rather than a disc, and that is a legibility decision rather than a
+/// cheap one: the base mod's eight-hex radio fills two hundred tiles, which
+/// would bury the map it is drawn over. What a player actually reads off it
+/// is the *edge* — how much further this platoon can be sent before it stops
+/// answering — so the edge is the only part drawn.
+#[derive(Component)]
+struct NetRing;
+
+/// Signals green: the last colour in the battle palette not already spoken
+/// for. Blue is move range, amber is ground worth taking, sky blue is a way
+/// off the map, red is a gun line and violet is the formation itself — so the
+/// wire gets green — and at nearly twice the alpha of the filled overlays,
+/// because a line one tile wide has to hold its own against terrain that is
+/// already olive. The first pass at 0.62 read as a slightly brighter patch of
+/// grass in the screenshot loop rather than as a drawn line.
+const NET_RING: Color = Color::srgba(0.3, 1.0, 0.62, 0.78);
+
 #[derive(Component)]
 struct HoverHighlight;
 
 #[derive(Component)]
 struct SelectHighlight;
+
+/// The two markers that follow the mouse and the selection.
+///
+/// They are one thing — where the player's attention is — and their mutual
+/// `Without` filters exist only so Bevy can prove the two `&mut Transform`
+/// queries do not alias, which is the same reason `BattleHud` and
+/// `UnitWidgets` exist.
+#[derive(SystemParam)]
+struct Cursors<'w, 's> {
+    hover: map_render::MarkerQuery<'w, 's, HoverHighlight, SelectHighlight>,
+    select: map_render::MarkerQuery<'w, 's, SelectHighlight, HoverHighlight>,
+}
 
 /// Sprite walking along a path, blocking the event pump while it exists.
 #[derive(Component)]
@@ -814,6 +890,20 @@ fn spawn_unit_sprite(commands: &mut Commands, art: &ArtCache, id: UnitId, side: 
                 Transform::from_translation(Vec3::new(0.0, 22.0, 0.2)),
                 HpBar(id),
                 UnitBadge(id),
+            ));
+            // Spawned for everybody and shown for the few, because command
+            // passes: the girl who inherits a formation mid-battle needs the
+            // wedge to appear over her without anything spawning a sprite in
+            // the middle of a round. `sync_units` reads `Formation.leader`
+            // every frame, so there is no event to miss.
+            parent.spawn((
+                Sprite {
+                    image: art.chevron.clone(),
+                    ..default()
+                },
+                Transform::from_translation(Vec3::new(0.0, 31.0, 0.2)),
+                Visibility::Hidden,
+                LeaderChevron(id),
             ));
         });
 }
@@ -1844,8 +1934,7 @@ fn sync_units(
     art: Res<ArtCache>,
     view: map_render::View,
     mut units: UnitSprites,
-    mut bars: HpBars,
-    mut badges: Query<(&UnitBadge, &mut Visibility), Without<BattleUnit>>,
+    mut widgets: UnitWidgets,
     mods: Res<Mods>,
 ) {
     let state = &battle.state;
@@ -1915,7 +2004,7 @@ fn sync_units(
     // The badges say how hurt somebody is, which a stale report does not
     // know. They inherit their parent's visibility, so hiding them is only
     // ever about the ghost case.
-    for (badge, mut visibility) in &mut badges {
+    for (badge, mut visibility) in &mut widgets.badges {
         let ghost = state
             .unit(badge.0)
             .is_some_and(|u| matches!(shown_to(state, rules, view_side, u), Shown::Ghost(_)));
@@ -1926,7 +2015,47 @@ fn sync_units(
         };
     }
 
-    for (bar, mut sprite, mut transform) in &mut bars {
+    // Who is in charge, read fresh off the formations rather than plumbed
+    // through `CommandPassed`: succession happens in the middle of a tick and
+    // the screen would have to hear about it anyway, so the cheap thing and
+    // the correct thing are the same one.
+    let leaders: HashSet<UnitId> = state.formations().iter().filter_map(|f| f.leader).collect();
+    for (chevron, mut visibility, mut sprite, mut transform) in &mut widgets.chevrons {
+        let Some(unit) = state.unit(chevron.0).filter(|u| leaders.contains(&u.id)) else {
+            *visibility = Visibility::Hidden;
+            continue;
+        };
+        // Inherited, never Visible: the parent's own rule about whether this
+        // unit is on the picture at all is the one that decides, so a chevron
+        // can never draw an enemy the fog is hiding.
+        *visibility = Visibility::Inherited;
+        let shown = shown_to(state, rules, view_side, unit);
+        let dim = matches!(shown, Shown::Ghost(_));
+        sprite.color = map_render::side_color(unit.side).with_alpha(if dim { 0.45 } else { 1.0 });
+        // A rank marking is not painted on the turret. A vehicle with no art
+        // is turned bodily to face, and a child sprite would be swung round
+        // with it, so the wedge undoes its parent's rotation — both the spin
+        // and the orbit it would otherwise be carried through.
+        let at = match shown {
+            Shown::Ghost(reported) => reported,
+            _ => unit.pos,
+        };
+        let art_side = unit.side % iso::SIDE_COLORS.len() as u8;
+        let upright = if art.has_vehicle_frames(&unit.vehicle, art_side) {
+            Quat::IDENTITY
+        } else {
+            Quat::from_rotation_z(-iso::facing_angle(
+                at,
+                unit.facing,
+                view.rotation(),
+                view.center(),
+            ))
+        };
+        transform.rotation = upright;
+        transform.translation = upright * Vec3::new(0.0, 31.0, 0.2);
+    }
+
+    for (bar, mut sprite, mut transform) in &mut widgets.bars {
         if let Some(unit) = state.unit(bar.0) {
             let max = mods
                 .0
@@ -1974,17 +2103,17 @@ fn update_fog(
 fn update_highlights(
     mut commands: Commands,
     mut battle: ResMut<Battle>,
+    mods: Res<Mods>,
     view: map_render::View,
     art: Res<ArtCache>,
     existing: Query<Entity, HighlightFilter>,
-    mut hover: map_render::MarkerQuery<HoverHighlight, SelectHighlight>,
-    mut select: map_render::MarkerQuery<SelectHighlight, HoverHighlight>,
+    mut cursors: Cursors,
 ) {
     let map = battle.state.map.clone();
     let face_at = |hex: Hex| view.face_at(&map, hex);
 
     // Hover marker.
-    if let Ok((mut transform, mut visibility)) = hover.single_mut() {
+    if let Ok((mut transform, mut visibility)) = cursors.hover.single_mut() {
         match view.hovered(&map) {
             Some(hex) => {
                 transform.translation = face_at(hex);
@@ -1994,7 +2123,7 @@ fn update_highlights(
         }
     }
     // Selection marker.
-    if let Ok((mut transform, mut visibility)) = select.single_mut() {
+    if let Ok((mut transform, mut visibility)) = cursors.select.single_mut() {
         match battle.selected.and_then(|id| battle.state.unit(id)) {
             Some(unit) => {
                 transform.translation = face_at(unit.pos);
@@ -2027,22 +2156,62 @@ fn update_highlights(
         ));
     }
 
-    // The formation being commanded, marked where its members are standing.
-    // Only the ones still on the field: a marker on a burnt-out crew's last
-    // hex would be a lie about who is left to obey.
+    // The formation being commanded, drawn as its net: the ground its members
+    // are standing on, coloured by whether they can still hear the order, and
+    // the horizon their leader's radio reaches to.
+    //
+    // Only members still on the field: a marker on a burnt-out crew's last hex
+    // would be a lie about who is left to obey.
     if let Some(formation) = battle.formation() {
-        let members: Vec<Hex> = formation
+        let members: Vec<(Hex, Color)> = formation
             .members
             .iter()
-            .filter_map(|id| battle.state.unit(*id))
-            .map(|u| u.pos)
+            .filter_map(|id| battle.state.unit(*id).map(|u| (*id, u.pos)))
+            .map(|(id, pos)| {
+                let color = match formation.in_contact(id) {
+                    true => FORMATION_MARKER,
+                    false => FORMATION_CUT_OFF,
+                };
+                (pos, color)
+            })
             .collect();
-        for hex in members {
+        // The reach comes from the engine's own accessor, so what is drawn is
+        // the graph edge rather than the game crate's opinion of it — see
+        // `BattleState::radio_reach`. Nothing is drawn where nothing is
+        // priced: a mod with no command block answers `None` and the ring
+        // simply does not exist, which is the additivity rule again.
+        let ring: Vec<Hex> = formation
+            .leader
+            .and_then(|id| {
+                let at = battle.state.unit(id)?.pos;
+                let reach = battle.state.radio_reach(&mods.0, id)?;
+                Some(at.ring(reach).filter(|h| map.get(*h).is_some()).collect())
+            })
+            .unwrap_or_default();
+        for hex in ring {
+            let overlay = HexOverlay::face_over(hex);
+            commands.spawn((
+                Sprite {
+                    image: art.face.clone(),
+                    color: NET_RING,
+                    ..default()
+                },
+                Transform::from_translation(overlay.translation(
+                    &map,
+                    view.rotation(),
+                    view.center(),
+                )),
+                overlay,
+                NetRing,
+                BattleScope,
+            ));
+        }
+        for (hex, color) in members {
             let overlay = HexOverlay::face(hex);
             commands.spawn((
                 Sprite {
                     image: art.face.clone(),
-                    color: FORMATION_MARKER,
+                    color,
                     ..default()
                 },
                 Transform::from_translation(overlay.translation(
@@ -2298,12 +2467,15 @@ fn format_formation(
             Some(leader) => format!("Leader: {}", name(leader)),
             None => "Leader: nobody left".into(),
         },
-        String::new(),
-        format!(
-            "Orders: {}",
-            mission_sentence(state, formation.mission.as_ref())
-        ),
     ];
+    if let Some(net) = format_net(registry, state, formation) {
+        lines.push(net);
+    }
+    lines.push(String::new());
+    lines.push(format!(
+        "Orders: {}",
+        mission_sentence(state, formation.mission.as_ref())
+    ));
     if let Some((change, ticks)) = &formation.incoming {
         // An amendment reads differently from a countermand, because the
         // player who queued a leg should not fear it will replace her plan.
@@ -2365,6 +2537,53 @@ fn format_formation(
         lines.push(format_tile(registry, state, hex));
     }
     lines.join("\n")
+}
+
+/// The formation's net in numbers: how far the leader's radio carries, how
+/// much of that is her crew rather than her hardware, and how far a flag
+/// carries to anybody at all.
+///
+/// The ring drawn on the map says *where* the radio ends; this says why it
+/// ends there, which is the half a player can act on — a poor signaller is a
+/// crew problem with a crew answer. Both numbers come from the engine
+/// ([`BattleState::radio_reach`] and the command block itself) rather than
+/// from arithmetic repeated here, so the sentence cannot come apart from the
+/// ring beside it.
+///
+/// `None` for a mod that prices no chain of command: there is no net, so
+/// there is no line, and the panel is the one it was before any of this.
+/// The visual clause is dropped the same way when `visual_range` is zero,
+/// which is what a mod that declares radios and no flags looks like.
+fn format_net(
+    registry: &tactics_core::data::DataRegistry,
+    state: &BattleState,
+    formation: &Formation,
+) -> Option<String> {
+    let rules = registry.command.as_ref()?;
+    let leader = formation.leader?;
+    let unit = state.unit(leader)?;
+    let reach = state.radio_reach(registry, leader)?;
+    // The hardware, so the difference between it and the reach is exactly
+    // what the crew is worth. Credited to the leader by name because that is
+    // how every other line in this panel names a vehicle; the seat actually
+    // working the set may be her radio operator's, which `crew_skill` already
+    // knows and the player can read off the crew.
+    let hardware = registry
+        .vehicle(&unit.vehicle)
+        .and_then(|v| v.radio)
+        .unwrap_or(rules.radius);
+    let mut line = format!("Net: radio {reach}");
+    if reach != hardware {
+        line.push_str(&format!(
+            " ({:+}, {}'s signals)",
+            reach as i32 - hardware as i32,
+            unit.name
+        ));
+    }
+    if rules.visual_range > 0 {
+        line.push_str(&format!(", visual {}", rules.visual_range));
+    }
+    Some(line)
 }
 
 /// A mission as a sentence a person would say, naming ground the way the map

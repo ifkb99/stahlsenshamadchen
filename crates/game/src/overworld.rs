@@ -84,6 +84,17 @@ struct OwRangeTile;
 #[derive(Component)]
 struct OwHoverTile;
 
+/// The wedge over the army carrying headquarters — the campaign's mirror of
+/// the battle's leader chevron, and rooted at the same place the campaign's
+/// contact graph is: [`OverworldState::senior_army`].
+#[derive(Component)]
+struct ArmyChevron(ArmyId);
+
+/// Signals green, the same wire colour the battle screen draws its ring in:
+/// the two scales are one system and a player who has learned the colour on
+/// the battlefield should not have to learn it again on the map.
+const OW_NET_RING: Color = Color::srgba(0.3, 1.0, 0.62, 0.78);
+
 #[derive(Component)]
 struct OwBanner;
 
@@ -272,19 +283,36 @@ fn spawn_world(
     commands.insert_resource(CurrentMap(state.map.clone()));
 
     for army in state.armies.iter().filter(|a| a.alive) {
-        commands.spawn((
-            Sprite {
-                image: art
-                    .armies
-                    .get(&(army.side % iso::SIDE_COLORS.len() as u8))
-                    .cloned()
-                    .unwrap_or_else(|| art.face.clone()),
-                ..default()
-            },
-            Transform::default(),
-            ArmyMarker(army.id),
-            OverworldScope,
-        ));
+        commands
+            .spawn((
+                Sprite {
+                    image: art
+                        .armies
+                        .get(&(army.side % iso::SIDE_COLORS.len() as u8))
+                        .cloned()
+                        .unwrap_or_else(|| art.face.clone()),
+                    ..default()
+                },
+                Transform::default(),
+                ArmyMarker(army.id),
+                OverworldScope,
+            ))
+            // Spawned for every army and shown for the one carrying the
+            // headquarters, because seniority moves: the army the net is
+            // rooted at changes the moment the first-declared one is
+            // destroyed, and `sync_armies` reads it fresh every frame rather
+            // than waiting to be told.
+            .with_children(|parent| {
+                parent.spawn((
+                    Sprite {
+                        image: art.chevron.clone(),
+                        ..default()
+                    },
+                    Transform::from_translation(Vec3::new(0.0, 26.0, 0.2)),
+                    Visibility::Hidden,
+                    ArmyChevron(army.id),
+                ));
+            });
     }
     commands.spawn((
         Sprite {
@@ -993,6 +1021,7 @@ fn sync_armies(
     overworld: Res<Overworld>,
     view: map_render::View,
     mut markers: Query<(&ArmyMarker, &mut Transform, &mut Visibility, &mut Sprite)>,
+    mut chevrons: Query<(&ArmyChevron, &mut Visibility, &mut Sprite), Without<ArmyMarker>>,
 ) {
     let state = &overworld.state;
     let view_side = state.sides.iter().position(|s| s.ai.is_none()).unwrap_or(0) as u8;
@@ -1019,6 +1048,25 @@ fn sync_armies(
             Color::WHITE
         };
     }
+
+    // Whoever is carrying headquarters this morning. Every side gets one,
+    // and the enemy's shows only where her army marker is already drawn —
+    // the chevron inherits its parent's visibility, so it cannot become a
+    // way of finding an army the map is hiding.
+    let seniors: Vec<ArmyId> = (0..state.sides.len() as u8)
+        .filter_map(|side| state.senior_army(side))
+        .collect();
+    for (chevron, mut visibility, mut sprite) in &mut chevrons {
+        let senior = seniors.contains(&chevron.0);
+        *visibility = if senior {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if let Some(army) = state.army(chevron.0) {
+            sprite.color = map_render::side_color(army.side);
+        }
+    }
 }
 
 /// Tint the tiles the selected army can reach, mark the enemies it can
@@ -1026,6 +1074,7 @@ fn sync_armies(
 fn update_range_highlights(
     mut commands: Commands,
     mut overworld: ResMut<Overworld>,
+    mods: Res<Mods>,
     art: Res<ArtCache>,
     view: map_render::View,
     existing: Query<Entity, With<OwRangeTile>>,
@@ -1074,6 +1123,54 @@ fn update_range_highlights(
             tint(enemy.pos, Color::srgba(1.0, 0.3, 0.25, 0.45));
         }
     }
+
+    // The wire, over the move range rather than under it: a day's drive and a
+    // radio horizon are both a handful of hexes out, so on this map the two
+    // land on each other constantly, and the ring is the thinner and more
+    // precise of the two. It says how far this army may be *sent* before it
+    // stops answering, which is a different question from how far it can
+    // drive today and is often the binding one.
+    //
+    // Drawn round the selection rather than round headquarters because
+    // `relay` is on — every army in contact retransmits at its own radius, so
+    // this really is her horizon — and because selection is own-side only,
+    // which keeps the enemy's net off the screen without a rule having to say
+    // so.
+    let ring: Vec<Hex> = net_radius(&mods.0)
+        .zip(overworld.selected.and_then(|id| overworld.state.army(id)))
+        .map(|(radius, army)| {
+            army.pos
+                .ring(radius)
+                .filter(|hex| map.get(*hex).is_some())
+                .collect()
+        })
+        .unwrap_or_default();
+    for hex in ring {
+        let overlay = HexOverlay::face_over(hex);
+        commands.spawn((
+            Sprite {
+                image: art.face.clone(),
+                color: OW_NET_RING,
+                ..default()
+            },
+            Transform::from_translation(overlay.translation(&map, view.rotation(), view.center())),
+            overlay,
+            OwRangeTile,
+            OverworldScope,
+        ));
+    }
+}
+
+/// How far a campaign radio carries, in overworld hexes, or `None` for a mod
+/// that prices no chain of command.
+///
+/// The campaign's own number rather than the battle's, because an overworld
+/// hex is forty battle hexes and one figure serving both would leave
+/// headquarters either deaf on the map or omniscient on the field. One reader
+/// for the ring and for the panel line, so the two cannot disagree about
+/// whether there is a net at all.
+fn net_radius(registry: &tactics_core::data::DataRegistry) -> Option<u32> {
+    registry.command.as_ref().map(|r| r.overworld_radius)
 }
 
 fn update_owner_dots(
@@ -1150,6 +1247,15 @@ fn update_ui(
             Some(ArmyMission::Withdraw { to }) => format!("Orders: fall back on {}", place(*to)),
             None => "Orders: none".into(),
         });
+        // The number behind the ring on the map, for the same reason the
+        // battle panel names its own: "out of radio contact" says the wire is
+        // dead, and only the radius says how far she had to drive to kill it.
+        if let Some(radius) = net_radius(&mods.0) {
+            lines.push(format!(
+                "Radio: {radius} hexes ({})",
+                mods.0.scale.format_overworld_distance(radius)
+            ));
+        }
         if !state.in_contact(army.id) {
             lines.push("Out of radio contact".into());
         }
