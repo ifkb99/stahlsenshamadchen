@@ -369,7 +369,14 @@ UI is reviewable in screenshots, per the working guide.
 
 The MVP is core gameplay solidified to the point of a complete campaign or
 two; the life layer — post-battle reports, sfx, barks, the academy screens'
-warmth — deliberately comes after it. That deferral is safe under exactly one
+warmth — deliberately comes after it. Three boundary decisions, so nobody
+re-litigates them mid-chunk: the first campaign ships **without the
+requisition loop** — you fight with what you start with, and the interest
+comes from the map, the missions and the commanders, not the economy; **every
+girl is a placeholder** for now, character writing waits for the systems to
+be worth writing into; and **campaign length is deliberately unnumbered** —
+gameplay gets solidified first, then campaigns are sized around the session
+time that gameplay turns out to want, not the other way round. That deferral is safe under exactly one
 condition, so it is stated here as a rule rather than a hope: **every event
 must keep carrying the story** — who, what, why, in the event itself, never
 reconstructed after the fact. `OrderRefused` names the girl and her rung;
@@ -385,6 +392,14 @@ Staged so every chunk is verifiable with the instruments before the next
 starts, per the working guide. Chunks 1–2 are the heart; nothing after them
 starts until `balance --sim` says the formations fight sanely.
 
+Each chunk carries a difficulty (1–5), which is really a judgment-density
+rating: how much of the work is following this document versus making calls
+this document cannot make for you. Low-rated chunks are well suited to a
+cheaper model or a quicker pass — the determinism baseline, the additivity
+tests and the harness are the safety net that makes that delegation cheap to
+verify, which is the same argument the game itself makes about delegation.
+High-rated chunks change what the game *is* and deserve the careful pass.
+
 **0. One driver loop.** ✅ Done. The drive-until-commit loop that existed six
 times now lives in `ai::AiDriver`; verified as a pure refactor (committed
 determinism baseline passes unregenerated, playthrough and `balance --sim`
@@ -394,7 +409,9 @@ output byte-identical, battle-fight tour plays on screen).
 `validate-mods`, `CommandState` on `BattleState` (populated, inert), save
 round-trip. No behaviour change anywhere. *Verify:* baseline byte-identical;
 new save test covers command state; validation tests for the referential
-mistakes.
+mistakes. *Difficulty: 2/5* — mechanical and fully specified; the only trap
+is keeping `CommandState`'s internal order deterministic
+(declaration order, never a hash map's).
 
 **2. Missions and executors.** `Order::SetMission`, mission context threaded
 through `Evaluator`, `SideCommand` with a first commander brain (assign
@@ -412,19 +429,30 @@ flat per-unit pool versus as mission-run formations, over the 24-battle
 harness. The tax will not be zero at first; the point is to *see* it, and to
 drive it toward zero by chunk 6, because delegation is the default posture
 and a delegation the player pays for is one they will refuse.
+*Difficulty: 5/5* — the heart. Touches the evaluator (the additivity hinge),
+introduces the hierarchy, and every later chunk inherits its shapes. If it
+must be split for cost: the `SetMission` plumbing and validation is a 2/5
+sub-chunk; the mission-context evaluator, `SideCommand` and the first brain
+are the 5/5 remainder and should be one careful pass.
 
 **3. Willingness moves to the commander.** `initiative`/`delegation` read;
 withdrawal becomes a mission a leader issues, with the evaluator's global exit
 gate demoted to the fallback for leaderless/cut-off units. *Verify:* `balance
 --sim` on doctrine matchups (elastic_defense's 16-7 dominance is the
 baseline to watch, not to fix — see the open question on balance targets);
-exits still taken, never on round one.
+exits still taken, never on round one. *Difficulty: 4/5* — small in lines,
+large in judgment: it re-homes behaviour the evaluator sweep tuned, and
+whether the result fights *sensibly* is a call the tests cannot make alone.
 
 **4. Contact and order latency.** `command` block, contact graph + events,
 mission transit delay priced by `command`/`signals` checks. *Verify:*
 additivity (no block = today, pinned test at any coefficient — the
 reaction-latency post-mortem's tell); scripted battle showing
-`MissionAssigned` → `MissionReceived` lag in the log.
+`MissionAssigned` → `MissionReceived` lag in the log. *Difficulty: 3/5* —
+the machinery mirrors existing patterns (the contact graph is fog-shaped,
+the delay is the reaction currency), but this exact area killed one
+implementation already; the post-mortem in girls.md is required reading and
+the invariant tests are the referee.
 
 **5. The command picture.** Reports travel up: `ContactReported` events,
 per-side picture state (contact, position, age, reporter), stale contacts,
@@ -434,23 +462,32 @@ changes how the game *feels* the most. *Verify:* additivity (no command
 block: picture ≡ fog, display and baseline unchanged); an engine test where
 a cut-off scout's sighting provably never reaches the brain
 (`a_scout_out_of_contact_reports_nothing`); `balance --sim` before/after,
-since the brains now fight on degraded information.
+since the brains now fight on degraded information. *Difficulty: 5/5* —
+changes what the brains know and what the player sees at once; fog honesty,
+serialization and balance all move together, and the failure modes are the
+quiet kind.
 
 **6. Commander loss.** Pressure entry, succession, `CommandPassed`, optional
 `loss_condition` in map data. *Verify:* engine tests
 (`command_passes_to_the_next_girl_and_she_is_worse_at_it`); a scenario with
-the loss condition ends when it should.
+the loss condition ends when it should. *Difficulty: 2/5* — additive
+machinery on existing morale patterns, well specified above.
 
 **7. The human hybrid.** Formation panel, mission issuing, contact-gated
 direct orders, ghost-contact hovers, devtools tour script. *Verify:*
 screenshots; the game-crate end-to-end test TODO wants grows a command case.
 This chunk is also where the delegation-tax number faces its real judge: a
 play session where relying on the missions feels better than overriding
-them.
+them. *Difficulty: 3/5* — no determinism stakes and the sim is untouched,
+but it lives in the repo's two largest files and UI feel takes iteration;
+screenshots are the loop, not the suite.
 
 **8. Campaign missions.** Overworld vocabulary, radio range + relay, battle
 inheritance, withdrawal arrival. *Verify:* a campaign test that orders a
-mission out of radio range and watches it not arrive.
+mission out of radio range and watches it not arrive. *Difficulty: 3/5* —
+mirrors battle patterns that will be established by then, in cooler code;
+the one place deserving extra care is `apply_battle_result`, the
+under-tested seam where campaign state can corrupt silently.
 
 **Later, enabled but not built:** external brains (NN/LLM) via the
 observation/order adapter; side-level mission types (eliminate, harass, raid)
@@ -462,12 +499,10 @@ rules make meaningful.
 
 Carried deliberately, none blocking chunks 1–2:
 
-- **What a campaign day costs in minutes.** Delegation exists to keep a day
-  quick, but "quick" needs a number before chunk 7 tunes anything against it
-  — one battle plus campaign moves in twenty minutes is a different game from
-  the same in forty-five. Wants a stake in the ground, then the resolution
-  animation pace, auto-resolve options and battle count per day get designed
-  against it rather than discovered.
+- **What a campaign day costs in minutes.** Deliberately left unnumbered for
+  now: gameplay gets solidified first and campaigns are sized to fit after.
+  Delegation still exists to keep a day quick — the delegation-tax metric is
+  how "quick without being worse" stays honest while the target floats.
 - **When to flip the permadeath default in code.** The decision is made
   (default on); the flip waits for the wound system to have teeth — an army
   that refuses to field a wounded girl, or a muster screen that shows the
