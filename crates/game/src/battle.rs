@@ -678,6 +678,19 @@ fn pump_events(
     for event in &drained {
         match event {
             BattleEvent::RoundStarted { round } => {
+                // Collapse quiet rounds. The log keeps eight lines, and a
+                // banner every round eats all of them — which defeats the
+                // whole point of reporting morale and refusals, since the
+                // player is meant to see a crew wavering *before* it costs
+                // them. A round in which nothing happened does not need
+                // announcing twice.
+                let quiet = log
+                    .0
+                    .back()
+                    .is_some_and(|last| last.starts_with("- Round "));
+                if quiet {
+                    log.0.pop_back();
+                }
                 log.push(format!("- Round {round}: orders -"));
                 battle.range_dirty = true;
             }

@@ -1,0 +1,67 @@
+# Fight a real battle out, so the things that only happen under fire — morale
+# changes, refusals, casualties — actually reach the log panel.
+#
+#   STAHL_PRESENT=immediate STAHL_DEBUG=1 STAHL_BATTLE=river_crossing \
+#     STAHL_SCRIPT=scripts/dev/battle-fight.txt cargo run -p stahlsenshamädchen
+#
+# Enter commits the round; it is ignored while one is resolving, so each press
+# is followed by long enough for the twelve ticks to animate. Shots are taken
+# along the way rather than at the end, because a finished battle returns to
+# the overworld and takes its log with it.
+
+at 3.0
+key Enter
+wait 5
+key Enter
+wait 5
+key Enter
+wait 5
+key Enter
+wait 5
+shot /tmp/fight-1.png
+key Enter
+wait 5
+key Enter
+wait 5
+key Enter
+wait 5
+key Enter
+wait 5
+shot /tmp/fight-2.png
+key Enter
+wait 5
+key Enter
+wait 5
+key Enter
+wait 5
+key Enter
+wait 5
+shot /tmp/fight-3.png
+key Enter
+wait 5
+key Enter
+wait 5
+key Enter
+wait 5
+key Enter
+wait 5
+shot /tmp/fight-4.png
+key Enter
+wait 5
+key Enter
+wait 5
+key Enter
+wait 5
+key Enter
+wait 5
+shot /tmp/fight-5.png
+key Enter
+wait 5
+key Enter
+wait 5
+key Enter
+wait 5
+key Enter
+wait 5
+shot /tmp/fight-6.png
+quit
