@@ -24,6 +24,19 @@
 //! because an empty one answers every line-of-sight question wrongly rather
 //! than loudly. That is why loading takes a registry.
 //!
+//! # Which mods were playing
+//!
+//! A save records the mods that produced it, because in this project the mods
+//! *are* the rules. Difficulty is a mod: whether crews bail out, whether girls
+//! can refuse an order, whether death is permanent. Loading a campaign under a
+//! different set would silently change what game it is — a run started gentle
+//! could come back lethal, and a permadeath run could quietly stop being one.
+//!
+//! Mismatched *ids* are refused, because the rules genuinely differ. Differing
+//! *versions* of the same mods are allowed and reported, since that is an
+//! ordinary content patch and refusing would make every balance tweak a
+//! save-breaker.
+//!
 //! # Versioning
 //!
 //! [`SaveGame::version`] is checked on load. It exists now, while there is
@@ -40,10 +53,29 @@ use std::sync::Arc;
 /// being added — serde's `default` handles additions on its own.
 pub const SAVE_VERSION: u32 = 1;
 
+/// Which mod, at which version, was loaded when a save was written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModStamp {
+    pub id: String,
+    #[serde(default)]
+    pub version: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SaveError {
     #[error("save is version {found}, this build reads version {expected}")]
     Version { found: u32, expected: u32 },
+    #[error(
+        "save was made with a different set of mods: {}{}",
+        if missing.is_empty() { String::new() } else { format!("missing {}", missing.join(", ")) },
+        if extra.is_empty() { String::new() } else { format!(" unexpected {}", extra.join(", ")) },
+    )]
+    Mods {
+        /// In the save, not loaded now.
+        missing: Vec<String>,
+        /// Loaded now, not in the save.
+        extra: Vec<String>,
+    },
     #[error("save is not valid json: {0}")]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
@@ -59,6 +91,10 @@ pub enum SaveError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveGame {
     pub version: u32,
+    /// The mods in effect when this was written. Empty in saves from before
+    /// this was recorded, which are then accepted without a mod check.
+    #[serde(default)]
+    pub mods: Vec<ModStamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overworld: Option<OverworldState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -66,9 +102,22 @@ pub struct SaveGame {
 }
 
 impl SaveGame {
-    pub fn new(overworld: Option<OverworldState>, battle: Option<BattleState>) -> Self {
+    /// Stamp a save with the mods currently loaded.
+    pub fn new(
+        registry: &DataRegistry,
+        overworld: Option<OverworldState>,
+        battle: Option<BattleState>,
+    ) -> Self {
         Self {
             version: SAVE_VERSION,
+            mods: registry
+                .mods
+                .iter()
+                .map(|m| ModStamp {
+                    id: m.id.clone(),
+                    version: m.version.clone(),
+                })
+                .collect(),
             overworld,
             battle,
         }
@@ -82,7 +131,16 @@ impl SaveGame {
     ///
     /// The registry is needed for exactly that: the sight grid is rebuilt from
     /// the map and terrain rather than carried in the file.
-    pub fn from_json(registry: &DataRegistry, text: &str) -> Result<Self, SaveError> {
+    /// Parse a save, check it belongs to this game, and put back everything
+    /// [`SaveGame`] chose not to store.
+    ///
+    /// Returns any warnings alongside — mirroring
+    /// [`DataRegistry::load_dir`], which reports rather than refuses for
+    /// anything survivable.
+    pub fn from_json(
+        registry: &DataRegistry,
+        text: &str,
+    ) -> Result<(Self, Vec<String>), SaveError> {
         let mut save: Self = serde_json::from_str(text)?;
         if save.version != SAVE_VERSION {
             return Err(SaveError::Version {
@@ -90,10 +148,53 @@ impl SaveGame {
                 expected: SAVE_VERSION,
             });
         }
+        let warnings = save.check_mods(registry)?;
         if let Some(battle) = &mut save.battle {
             rehydrate(registry, battle);
         }
-        Ok(save)
+        Ok((save, warnings))
+    }
+
+    /// Compare the save's mods against what is loaded.
+    fn check_mods(&self, registry: &DataRegistry) -> Result<Vec<String>, SaveError> {
+        // A save written before mods were stamped cannot be checked, and
+        // refusing it would be worse than trusting it.
+        if self.mods.is_empty() {
+            return Ok(Vec::new());
+        }
+        let loaded: Vec<&str> = registry.mods.iter().map(|m| m.id.as_str()).collect();
+        let saved: Vec<&str> = self.mods.iter().map(|s| s.id.as_str()).collect();
+
+        let missing: Vec<String> = saved
+            .iter()
+            .filter(|id| !loaded.contains(id))
+            .map(|id| (*id).to_string())
+            .collect();
+        let extra: Vec<String> = loaded
+            .iter()
+            .filter(|id| !saved.contains(id))
+            .map(|id| (*id).to_string())
+            .collect();
+        if !missing.is_empty() || !extra.is_empty() {
+            return Err(SaveError::Mods { missing, extra });
+        }
+
+        // Same mods, different versions: an ordinary content patch. Say so and
+        // carry on, because refusing would make every balance tweak break
+        // saves.
+        Ok(self
+            .mods
+            .iter()
+            .filter_map(|stamp| {
+                let now = registry.mods.iter().find(|m| m.id == stamp.id)?;
+                (now.version != stamp.version).then(|| {
+                    format!(
+                        "mod `{}` was version {} when this was saved and is {} now",
+                        stamp.id, stamp.version, now.version
+                    )
+                })
+            })
+            .collect())
     }
 }
 
@@ -123,6 +224,6 @@ pub fn write(path: impl AsRef<std::path::Path>, save: &SaveGame) -> Result<(), S
 pub fn read(
     registry: &DataRegistry,
     path: impl AsRef<std::path::Path>,
-) -> Result<SaveGame, SaveError> {
+) -> Result<(SaveGame, Vec<String>), SaveError> {
     SaveGame::from_json(registry, &std::fs::read_to_string(path)?)
 }

@@ -840,7 +840,7 @@ fn handle_input(
     // this first pass is that the state survives at all — slots, naming and a
     // menu belong with the rest of the menu work.
     if keys.just_pressed(KeyCode::F5) {
-        let save = SaveGame::new(Some(overworld.state.clone()), None);
+        let save = SaveGame::new(&mods.0, Some(overworld.state.clone()), None);
         match tactics_core::save::write(save_path(), &save) {
             Ok(()) => log.push(format!("Saved to {}.", save_path().display())),
             Err(e) => log.push(format!("Could not save: {e}")),
@@ -849,7 +849,7 @@ fn handle_input(
     }
     if keys.just_pressed(KeyCode::F9) {
         match tactics_core::save::read(&mods.0, save_path()) {
-            Ok(save) => match save.overworld {
+            Ok((save, warnings)) => match save.overworld {
                 Some(state) => {
                     // Clear the old world first. `spawn_world` also spawns the
                     // HUD, so respawning without despawning leaves two banners
@@ -867,6 +867,12 @@ fn handle_input(
                     overworld.clear_selection();
                     overworld.anim.clear();
                     log.push("Loaded.");
+                    // Say so rather than swallowing it: a content patch
+                    // between saving and loading can move numbers under the
+                    // player's campaign.
+                    for warning in warnings {
+                        log.push(warning);
+                    }
                 }
                 None => log.push("That save has no campaign in it."),
             },

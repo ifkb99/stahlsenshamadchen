@@ -75,11 +75,12 @@ fn round_trips_and_keeps_the_future_identical() {
     let mut original = BattleState::from_map(&reg, "river_crossing", 11).expect("battle");
     play(&reg, &mut original, 3, 7);
 
-    let text = SaveGame::new(None, Some(original.clone()))
+    let text = SaveGame::new(&reg, None, Some(original.clone()))
         .to_json()
         .expect("serialises");
     let mut restored = SaveGame::from_json(&reg, &text)
         .expect("deserialises")
+        .0
         .battle
         .expect("battle round-trips");
 
@@ -117,7 +118,9 @@ fn loading_rebuilds_the_sight_grid_that_the_save_leaves_out() {
     let state = BattleState::from_map(&reg, "river_crossing", 3).expect("battle");
     assert!(!state.sight.is_empty(), "a fresh battle has its sight grid");
 
-    let text = SaveGame::new(None, Some(state.clone())).to_json().unwrap();
+    let text = SaveGame::new(&reg, None, Some(state.clone()))
+        .to_json()
+        .unwrap();
     // The sight grid serialises to an empty object because its only field is
     // skipped. (Checking for "tiles" would not work: `HexMap` has a field by
     // that name which genuinely is saved.)
@@ -126,7 +129,7 @@ fn loading_rebuilds_the_sight_grid_that_the_save_leaves_out() {
         "the sight grid should be empty in the file, not carried"
     );
 
-    let restored = SaveGame::from_json(&reg, &text).unwrap().battle.unwrap();
+    let restored = SaveGame::from_json(&reg, &text).unwrap().0.battle.unwrap();
     assert!(!restored.sight.is_empty(), "loading must rebuild it");
 
     // And it must be the *same* grid, not merely a non-empty one. Sampled
@@ -162,8 +165,14 @@ fn a_campaign_keeps_its_girls_and_their_scars() {
     state.roster.get_mut(girl).unwrap().xp = 250;
     state.roster.get_mut(girl).unwrap().status = GirlStatus::Wounded { days: 3 };
 
-    let text = SaveGame::new(Some(state.clone()), None).to_json().unwrap();
-    let mut restored = SaveGame::from_json(&reg, &text).unwrap().overworld.unwrap();
+    let text = SaveGame::new(&reg, Some(state.clone()), None)
+        .to_json()
+        .unwrap();
+    let mut restored = SaveGame::from_json(&reg, &text)
+        .unwrap()
+        .0
+        .overworld
+        .unwrap();
 
     let back = restored
         .roster
@@ -192,12 +201,81 @@ fn a_campaign_keeps_its_girls_and_their_scars() {
 fn a_save_from_another_version_is_refused_rather_than_misread() {
     let reg = registry();
     let state = OverworldState::from_map(&reg, "frontier", 1).expect("overworld");
-    let text = SaveGame::new(Some(state), None).to_json().unwrap().replace(
-        &format!("\"version\": {SAVE_VERSION}"),
-        &format!("\"version\": {}", SAVE_VERSION + 1),
-    );
+    let text = SaveGame::new(&reg, Some(state), None)
+        .to_json()
+        .unwrap()
+        .replace(
+            &format!("\"version\": {SAVE_VERSION}"),
+            &format!("\"version\": {}", SAVE_VERSION + 1),
+        );
     assert!(
         SaveGame::from_json(&reg, &text).is_err(),
         "a future save must be refused, not silently half-read"
     );
+}
+
+/// Difficulty is a mod in this project — whether crews bail out, whether a
+/// girl can refuse an order, whether death is permanent. So a save has to
+/// remember which rules it was played under, or a campaign started gentle
+/// could come back lethal without anyone being told.
+#[test]
+fn a_save_remembers_which_mods_were_playing() {
+    let reg = registry();
+    let state = OverworldState::from_map(&reg, "frontier", 4).expect("overworld");
+    let text = SaveGame::new(&reg, Some(state), None).to_json().unwrap();
+
+    let (save, warnings) = SaveGame::from_json(&reg, &text).expect("its own mods load fine");
+    assert!(warnings.is_empty(), "nothing has changed: {warnings:?}");
+    assert!(
+        save.mods.iter().any(|m| m.id == "base"),
+        "the base mod should be stamped: {:?}",
+        save.mods
+    );
+
+    // A save from a game that also had a difficulty mod loaded is refused,
+    // because the rules it was played under are not the rules now.
+    let harsher = text.replace(
+        "\"mods\": [",
+        "\"mods\": [\n    { \"id\": \"ironman\", \"version\": \"1.0.0\" },",
+    );
+    let err = SaveGame::from_json(&reg, &harsher).expect_err("should refuse");
+    assert!(
+        format!("{err}").contains("ironman"),
+        "the error should name what is missing: {err}"
+    );
+}
+
+/// A content patch must not break saves, or every balance tweak costs the
+/// player their campaign.
+#[test]
+fn a_version_bump_warns_rather_than_refusing() {
+    let reg = registry();
+    let state = OverworldState::from_map(&reg, "frontier", 6).expect("overworld");
+    let text = SaveGame::new(&reg, Some(state), None)
+        .to_json()
+        .unwrap()
+        .replace("\"version\": \"0.1.0\"", "\"version\": \"0.0.9\"");
+
+    let (save, warnings) = SaveGame::from_json(&reg, &text).expect("still loads");
+    assert!(save.overworld.is_some());
+    assert_eq!(warnings.len(), 1, "should say so: {warnings:?}");
+    assert!(warnings[0].contains("base"), "{warnings:?}");
+}
+
+/// Saves written before mods were stamped cannot be checked, and refusing them
+/// would be worse than trusting them.
+#[test]
+fn a_save_from_before_this_existed_is_still_accepted() {
+    let reg = registry();
+    let state = OverworldState::from_map(&reg, "frontier", 8).expect("overworld");
+    let text = SaveGame::new(&reg, Some(state), None).to_json().unwrap();
+    let stripped: serde_json::Value = {
+        let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        v.as_object_mut().unwrap().remove("mods");
+        v
+    };
+    let (save, warnings) =
+        SaveGame::from_json(&reg, &stripped.to_string()).expect("older saves still load");
+    assert!(save.overworld.is_some());
+    assert!(warnings.is_empty());
 }
