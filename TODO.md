@@ -69,6 +69,7 @@ stalemate, so there is finally a baseline to measure a rewrite against.
 - easily moddable ammo types
 ### Chain of Command
 (WEGO landed: rounds are plan-then-resolve, orders are per-unit intents, and AI is split into planner + doctrine + difficulty. the seams left for this are the planner registry, which can build child planners, and the unused `initiative`/`delegation` doctrine weights)
+- **the design and build order live in `assets/wiki/reference/command.md`** — formations as data, missions as orders in the order stream (so saves/replays/NN/LLM brains all speak one vocabulary), comms as checks. read it before touching anything below. chunk 0 (the shared `AiDriver` planning loop) is done
 - planners are held per side; command wants them per formation, with a commander planner owning subordinates that have their own doctrine
 - mission-type orders: a commander sets its subordinates' intents instead of a human doing it, and only within radio range
 - in battle, works similar to Combat Mission
