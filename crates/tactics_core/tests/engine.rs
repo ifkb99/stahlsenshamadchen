@@ -1,7 +1,9 @@
 //! End-to-end tests against the real `assets/mods` content.
 
 use std::path::PathBuf;
-use tactics_core::ai::{AiConfig, AiPlanner, Evaluator, UtilityPlanner, make_battle_planner};
+use tactics_core::ai::{
+    AiConfig, AiDriver, AiPlanner, Evaluator, UtilityPlanner, make_battle_planner,
+};
 use tactics_core::battle::{
     BattleState, EndReason, Event as BattleEvent, FireIntent, Order, STALEMATE_ROUNDS, SideState,
     UnitId, los_clear, reachable,
@@ -369,27 +371,16 @@ fn battle_resolution_is_deterministic_per_seed() {
             difficulty: 5,
             doctrine: None,
         };
-        let mut planners = [
-            make_battle_planner(&cfg, seed, &reg),
-            make_battle_planner(&cfg, seed + 1, &reg),
-        ];
+        let mut ai = AiDriver::new();
+        ai.insert(0, make_battle_planner(&cfg, seed, &reg));
+        ai.insert(1, make_battle_planner(&cfg, seed + 1, &reg));
         let mut log = Vec::new();
         for _ in 0..40 {
             if state.is_over() {
                 break;
             }
             // Both sides write orders, then the round plays out at once.
-            for side in [0u8, 1u8] {
-                for _ in 0..64 {
-                    if state.has_committed(side) || !state.is_planning() {
-                        break;
-                    }
-                    let order = planners[side as usize].next_order(&reg, &state, side);
-                    if state.apply(&reg, &order).is_err() {
-                        let _ = state.apply(&reg, &Order::Commit { side });
-                    }
-                }
-            }
+            ai.plan_round(&reg, &mut state);
             log.extend(state.resolve_round(&reg).iter().map(|e| format!("{e:?}")));
         }
         log
@@ -445,26 +436,15 @@ fn ai_vs_ai_battle_finishes() {
         difficulty: 4,
         doctrine: None,
     };
-    let mut planners = [
-        make_battle_planner(&cfg, 5, &reg),
-        make_battle_planner(&cfg, 6, &reg),
-    ];
+    let mut ai = AiDriver::new();
+    ai.insert(0, make_battle_planner(&cfg, 5, &reg));
+    ai.insert(1, make_battle_planner(&cfg, 6, &reg));
     for round in 0..200 {
         if state.is_over() {
             println!("battle over after {round} rounds: {:?}", state.over);
             return;
         }
-        for side in [0u8, 1u8] {
-            for _ in 0..64 {
-                if state.has_committed(side) || !state.is_planning() {
-                    break;
-                }
-                let order = planners[side as usize].next_order(&reg, &state, side);
-                if state.apply(&reg, &order).is_err() {
-                    let _ = state.apply(&reg, &Order::Commit { side });
-                }
-            }
-        }
+        ai.plan_round(&reg, &mut state);
         state.resolve_round(&reg);
     }
     panic!("battle did not finish; final state: round {}", state.round);

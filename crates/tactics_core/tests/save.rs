@@ -7,7 +7,7 @@
 //! *after* the reload rather than what the file contains.
 
 use std::path::PathBuf;
-use tactics_core::ai::{AiConfig, AiPlanner, make_battle_planner};
+use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{BattleState, Event, Order};
 use tactics_core::data::DataRegistry;
 use tactics_core::overworld::OverworldState;
@@ -39,24 +39,15 @@ fn planner(reg: &DataRegistry, seed: u64) -> Box<dyn AiPlanner<BattleState, Orde
 
 /// Play a few rounds, and describe what happened.
 fn play(reg: &DataRegistry, state: &mut BattleState, rounds: usize, seed: u64) -> Vec<String> {
-    let mut planners = [planner(reg, seed), planner(reg, seed + 1)];
+    let mut ai = AiDriver::new();
+    ai.insert(0, planner(reg, seed));
+    ai.insert(1, planner(reg, seed + 1));
     let mut log = Vec::new();
     for _ in 0..rounds {
         if state.is_over() {
             break;
         }
-        for side in state.living_sides() {
-            for _ in 0..64 {
-                if state.has_committed(side) || !state.is_planning() {
-                    break;
-                }
-                let order = planners[side as usize].next_order(reg, state, side);
-                if state.apply(reg, &order).is_err() {
-                    let _ = state.apply(reg, &Order::Commit { side });
-                    break;
-                }
-            }
-        }
+        ai.plan_round(reg, state);
         for event in state.resolve_round(reg) {
             if !matches!(event, Event::TickStarted { .. }) {
                 log.push(format!("{event:?}"));

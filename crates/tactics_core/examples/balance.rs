@@ -25,7 +25,7 @@
 //! second, imaginary game.
 
 use std::collections::HashMap;
-use tactics_core::ai::{AiConfig, AiPlanner, make_battle_planner};
+use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{
     BattleState, EndReason, Event, Order, SideState, UnitId, preview_attack,
 };
@@ -363,25 +363,13 @@ fn simulate(reg: &DataRegistry, games: usize) {
     for game in 0..games {
         let seed = 1000 + game as u64;
         let mut state = BattleState::from_map(reg, "river_crossing", seed).expect("battle");
-        let mut planners = [
-            planner(reg, seed, "massed_armor"),
-            planner(reg, seed + 1, "elastic_defense"),
-        ];
+        let mut ai = AiDriver::new();
+        ai.insert(0, planner(reg, seed, "massed_armor"));
+        ai.insert(1, planner(reg, seed + 1, "elastic_defense"));
         let mut rounds = 0;
         let mut last_hit: HashMap<UnitId, String> = HashMap::new();
         while !state.is_over() && rounds < 60 {
-            for side in state.living_sides() {
-                for _ in 0..64 {
-                    if state.has_committed(side) || !state.is_planning() {
-                        break;
-                    }
-                    let order = planners[side as usize].next_order(reg, &state, side);
-                    if state.apply(reg, &order).is_err() {
-                        let _ = state.apply(reg, &Order::Commit { side });
-                        break;
-                    }
-                }
-            }
+            ai.plan_round(reg, &mut state);
             rounds += 1;
             for event in state.resolve_round(reg) {
                 match event {

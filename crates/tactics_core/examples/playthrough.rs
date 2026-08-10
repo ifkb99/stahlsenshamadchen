@@ -8,8 +8,8 @@
 //!   cargo run -p tactics_core --example playthrough            # seed 42
 //!   cargo run -p tactics_core --example playthrough 1234       # custom seed
 
-use tactics_core::ai::{AiConfig, make_battle_planner};
-use tactics_core::battle::{BattleState, Event, Order};
+use tactics_core::ai::{AiConfig, AiDriver, make_battle_planner};
+use tactics_core::battle::{BattleState, Event};
 use tactics_core::data::DataRegistry;
 
 fn main() {
@@ -21,7 +21,9 @@ fn main() {
         .unwrap_or(42);
 
     let mut state = BattleState::from_map(&registry, "river_crossing", seed).expect("battle");
-    let mut planners = [
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
         make_battle_planner(
             &AiConfig {
                 planner: "mcts".into(),
@@ -31,6 +33,9 @@ fn main() {
             seed,
             &registry,
         ),
+    );
+    ai.insert(
+        1,
         make_battle_planner(
             &AiConfig {
                 planner: "utility".into(),
@@ -40,7 +45,7 @@ fn main() {
             seed + 1,
             &registry,
         ),
-    ];
+    );
 
     let name = |st: &BattleState, id: tactics_core::battle::UnitId| -> String {
         let u = &st.units[id.index()];
@@ -53,18 +58,11 @@ fn main() {
     let mut rounds = 0usize;
     while !state.is_over() && rounds < 200 {
         // Planning: every side writes orders for all of its units.
-        for side in state.living_sides() {
-            for _ in 0..64 {
-                if state.has_committed(side) || !state.is_planning() {
-                    break;
-                }
-                let order = planners[side as usize].next_order(&registry, &state, side);
-                if let Err(e) = state.apply(&registry, &order) {
-                    println!("!! side {side} illegal order {order:?}: {e}");
-                    let _ = state.apply(&registry, &Order::Commit { side });
-                }
+        ai.plan_round_with(&registry, &mut state, |d| {
+            if let Some(e) = &d.rejected {
+                println!("!! side {} illegal order {:?}: {e}", d.side, d.order);
             }
-        }
+        });
         rounds += 1;
 
         // Resolution: everyone moves and shoots at once. Ticks are only

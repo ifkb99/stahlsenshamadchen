@@ -38,7 +38,7 @@
 //! and the field it forgets is exactly the field that will regress unnoticed.
 
 use std::path::PathBuf;
-use tactics_core::ai::{AiConfig, AiPlanner, make_battle_planner};
+use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{BattleState, Order};
 use tactics_core::data::DataRegistry;
 
@@ -121,10 +121,9 @@ fn record_all(registry: &DataRegistry) -> String {
 /// planner and write every event out in order.
 fn record(registry: &DataRegistry, seed: u64) -> String {
     let mut state = BattleState::from_map(registry, "river_crossing", seed).expect("battle");
-    let mut planners: [Box<dyn AiPlanner<BattleState, Order>>; 2] = [
-        planner(registry, seed, "massed_armor"),
-        planner(registry, seed + 1, "elastic_defense"),
-    ];
+    let mut ai = AiDriver::new();
+    ai.insert(0, planner(registry, seed, "massed_armor"));
+    ai.insert(1, planner(registry, seed + 1, "elastic_defense"));
 
     let mut out = String::new();
     for _ in 0..ROUNDS {
@@ -134,20 +133,12 @@ fn record(registry: &DataRegistry, seed: u64) -> String {
         // Orders are part of what is being pinned: a planner that starts
         // choosing differently is as much a behaviour change as combat that
         // resolves differently, and both belong in the diff.
-        for side in state.living_sides() {
-            for _ in 0..64 {
-                if state.has_committed(side) || !state.is_planning() {
-                    break;
-                }
-                let order = planners[side as usize].next_order(registry, &state, side);
-                out.push_str(&format!("order {order:?}\n"));
-                if let Err(e) = state.apply(registry, &order) {
-                    out.push_str(&format!("  rejected: {e}\n"));
-                    let _ = state.apply(registry, &Order::Commit { side });
-                    break;
-                }
+        ai.plan_round_with(registry, &mut state, |d| {
+            out.push_str(&format!("order {:?}\n", d.order));
+            if let Some(e) = &d.rejected {
+                out.push_str(&format!("  rejected: {e}\n"));
             }
-        }
+        });
         for event in state.resolve_round(registry) {
             out.push_str(&format!("{event:?}\n"));
         }

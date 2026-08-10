@@ -21,10 +21,12 @@
 //! That separation is the point: a weak opponent running massed-armour
 //! doctrine should still recognisably fight like massed armour, just badly.
 
+mod driver;
 mod eval;
 mod mcts;
 mod utility;
 
+pub use driver::{AiDriver, Decision};
 pub use eval::{Evaluator, TileScore};
 pub use mcts::{MctsPlanner, determinize};
 pub use utility::UtilityPlanner;

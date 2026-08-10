@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use tactics_core::Hex;
-use tactics_core::ai::{AiPlanner, make_battle_planner};
+use tactics_core::ai::{AiDriver, make_battle_planner};
 use tactics_core::battle::{
     BattleState, EndReason, Event as BattleEvent, FireIntent, Order, SideState, UnitId, reachable,
 };
@@ -85,7 +85,7 @@ enum InputMode {
 #[derive(Resource)]
 struct Battle {
     state: BattleState,
-    planners: HashMap<u8, Box<dyn AiPlanner<BattleState, Order>>>,
+    ai: AiDriver,
     /// Events waiting to be shown to the player.
     anim: VecDeque<BattleEvent>,
     pace: Timer,
@@ -104,9 +104,8 @@ impl Battle {
     /// The side the player commands, if any. Simultaneous rounds mean this no
     /// longer depends on whose turn it is; there is no such thing.
     fn human_side(&self) -> Option<u8> {
-        (0..self.state.sides.len() as u8).find(|side| {
-            self.state.sides[*side as usize].ai.is_none() && !self.planners.contains_key(side)
-        })
+        (0..self.state.sides.len() as u8)
+            .find(|side| self.state.sides[*side as usize].ai.is_none() && !self.ai.controls(*side))
     }
 
     /// The side whose fog and orders the screen shows.
@@ -345,11 +344,11 @@ fn setup_battle(
 
     // Dev tool: STAHL_AUTOPLAY=1 puts every side under AI control.
     let autoplay = std::env::var("STAHL_AUTOPLAY").is_ok();
-    let mut planners: HashMap<u8, Box<dyn AiPlanner<BattleState, Order>>> = HashMap::new();
+    let mut ai = AiDriver::new();
     for (i, side) in state.sides.iter().enumerate() {
         match &side.ai {
             Some(cfg) => {
-                planners.insert(
+                ai.insert(
                     i as u8,
                     make_battle_planner(cfg, seed().wrapping_add(i as u64), registry),
                 );
@@ -360,7 +359,7 @@ fn setup_battle(
                     difficulty: 4,
                     doctrine: None,
                 };
-                planners.insert(
+                ai.insert(
                     i as u8,
                     make_battle_planner(&cfg, seed().wrapping_add(i as u64), registry),
                 );
@@ -448,7 +447,7 @@ fn setup_battle(
 
     commands.insert_resource(Battle {
         state,
-        planners,
+        ai,
         anim: VecDeque::new(),
         pace: Timer::from_seconds(0.28, TimerMode::Repeating),
         selected: None,
@@ -952,26 +951,10 @@ fn drive_ai(mods: Res<Mods>, mut battle: ResMut<Battle>, movers: Query<&Mover>) 
     if !battle.state.is_planning() {
         return;
     }
-    let sides: Vec<u8> = battle
-        .state
-        .living_sides()
-        .into_iter()
-        .filter(|side| battle.planners.contains_key(side) && !battle.state.has_committed(*side))
-        .collect();
-    for side in sides {
-        let battle = &mut *battle;
-        if !battle.state.is_planning() {
-            break;
-        }
-        let Some(planner) = battle.planners.get_mut(&side) else {
-            continue;
-        };
-        let order = planner.next_order(&mods.0, &battle.state, side);
-        if battle.state.apply(&mods.0, &order).is_err() {
-            // Planner confusion: never wedge the battle, just commit what it
-            // has and let the round resolve.
-            let _ = battle.state.apply(&mods.0, &Order::Commit { side });
-        }
+    // One decision per side per frame, not a whole round: an MCTS side can
+    // take seconds per order, and the UI has to stay responsive under it.
+    let battle = &mut *battle;
+    if battle.ai.step(&mods.0, &mut battle.state) {
         battle.range_dirty = true;
     }
 }
