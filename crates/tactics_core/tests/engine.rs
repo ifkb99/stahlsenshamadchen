@@ -189,7 +189,7 @@ fn crew_quality_scales_with_the_vehicle_it_sits_in() {
     let reg = registry();
     let recon = reg.vehicle("recon_car").unwrap().vision_range;
     let elsa = reg.character("elsa").unwrap().skills["observation"];
-    assert_eq!(elsa, 12, "Elsa is the school's eyes");
+    assert_eq!(elsa, 13, "Elsa is the school's eyes");
     assert!(
         reg.balance.vision(recon, elsa) > recon,
         "a trained observer sees further than the vehicle's paper range"
@@ -1835,5 +1835,93 @@ fn a_lost_girl_walks_back_rather_than_being_gone() {
     assert!(
         roster.get(girl).unwrap().status.is_ready(),
         "she made it back"
+    );
+}
+
+/// A trait changes *whether or when* a rule applies, which is what separates
+/// it from a skill. Juno's lead foot is the clearest case: the same girl in the
+/// same tank drives differently depending on what is under her tracks.
+#[test]
+fn a_trait_can_depend_on_where_the_check_is_happening() {
+    let reg = registry();
+    let mut roster = tactics_core::roster::Roster::new();
+    let juno = roster
+        .enlist_from_registry(&reg, 0, "juno")
+        .expect("juno exists");
+    assert!(
+        reg.character("juno")
+            .unwrap()
+            .traits
+            .contains(&"lead_foot".into()),
+        "this test is about her lead foot"
+    );
+
+    let on_road = roster
+        .skill_level(
+            &reg,
+            juno,
+            "driving",
+            &tactics_core::data::CheckContext {
+                terrain: Some("road"),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let off_road = roster
+        .skill_level(
+            &reg,
+            juno,
+            "driving",
+            &tactics_core::data::CheckContext {
+                terrain: Some("mud"),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(
+        on_road > off_road,
+        "a lead foot should be quick on a road and worse off it: {on_road} vs {off_road}"
+    );
+
+    // And the gift and the cost are both real, measured against the girl she
+    // would have been without it.
+    let plain = reg.skill("driving").unwrap().level_for(
+        &reg.core_index,
+        &roster.get(juno).unwrap().cores,
+        roster.get(juno).unwrap().skills.get("driving").copied(),
+    );
+    assert!(on_road > plain, "the gift");
+    assert!(off_road < plain, "and the cost");
+}
+
+/// Traits that are always on still have to cut both ways, or they are just a
+/// skill with a name.
+#[test]
+fn a_paired_trait_costs_something() {
+    let reg = registry();
+    let mut roster = tactics_core::roster::Roster::new();
+    let nadja = roster
+        .enlist_from_registry(&reg, 0, "nadja")
+        .expect("nadja exists");
+    let ctx = tactics_core::data::CheckContext::default();
+
+    let cores = roster.get(nadja).unwrap().cores.clone();
+    let plain = |skill: &str| {
+        reg.skill(skill).unwrap().level_for(
+            &reg.core_index,
+            &cores,
+            roster.get(nadja).unwrap().skills.get(skill).copied(),
+        )
+    };
+    assert!(
+        roster.skill_level(&reg, nadja, "gunnery", &ctx).unwrap() > plain("gunnery"),
+        "deliberate makes her a better shot"
+    );
+    assert!(
+        roster
+            .skill_level(&reg, nadja, "observation", &ctx)
+            .unwrap()
+            < plain("observation"),
+        "and she stops watching anything else while she does it"
     );
 }

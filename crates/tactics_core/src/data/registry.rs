@@ -2,7 +2,7 @@
 
 use super::defs::*;
 use super::manifest::ModManifest;
-use super::{Balance, CoreDef, CoreIndex, RoleDef, Scale, SkillDef};
+use super::{Balance, CoreDef, CoreIndex, RoleDef, Scale, SkillDef, TraitDef};
 use crate::map::MapFile;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -66,6 +66,7 @@ pub struct DataRegistry {
     pub core_index: CoreIndex,
     pub skills: HashMap<String, SkillDef>,
     pub roles: HashMap<String, RoleDef>,
+    pub traits: HashMap<String, TraitDef>,
     pub characters: HashMap<String, CharacterDef>,
     pub vehicles: HashMap<String, VehicleDef>,
     pub weapons: HashMap<String, WeaponDef>,
@@ -124,6 +125,9 @@ impl DataRegistry {
             if let Some(roles) = &manifest.roles {
                 registry.roles = roles.iter().map(|r| (r.id.clone(), r.clone())).collect();
             }
+            if let Some(traits) = &manifest.traits {
+                registry.traits = traits.iter().map(|t| (t.id.clone(), t.clone())).collect();
+            }
             registry.mods.push(manifest);
         }
         registry.validate_into(&mut report);
@@ -136,6 +140,10 @@ impl DataRegistry {
 
     pub fn role(&self, id: &str) -> Option<&RoleDef> {
         self.roles.get(id)
+    }
+
+    pub fn trait_def(&self, id: &str) -> Option<&TraitDef> {
+        self.traits.get(id)
     }
 
     pub fn terrain(&self, id: &str) -> Option<&TerrainDef> {
@@ -474,6 +482,7 @@ mod tests {
                     cores: None,
                     skills: None,
                     roles: None,
+                    traits: None,
                     dependencies: deps.iter().map(|s| s.to_string()).collect(),
                     scale: None,
                     balance: None,

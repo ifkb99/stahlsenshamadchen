@@ -38,6 +38,9 @@ pub struct CharacterDef {
     /// untrained and falls back to her cores at a penalty — not to zero.
     #[serde(default)]
     pub skills: std::collections::HashMap<String, i32>,
+    /// Trait ids she starts with. The rest she earns.
+    #[serde(default)]
+    pub traits: Vec<String>,
     /// Asset-relative path to a portrait image, e.g. `mods/base/portraits/anka.png`.
     #[serde(default)]
     pub portrait: Option<String>,

@@ -45,7 +45,10 @@
         "skills": {
             "driving": 15,
             "maintenance": 10
-        }
+        },
+        "traits": [
+            "lead_foot"
+        ]
     },
     {
         "id": "elsa",
@@ -59,8 +62,12 @@
         },
         "skills": {
             "signals": 12,
-            "driving": 10
-        }
+            "driving": 10,
+            "observation": 13
+        },
+        "traits": [
+            "eagle_eyed"
+        ]
     },
     {
         "id": "petra",
@@ -94,7 +101,10 @@
             "gunnery": 9,
             "driving": 9,
             "loading": 9
-        }
+        },
+        "traits": [
+            "eager"
+        ]
     },
     {
         "id": "irma",
@@ -143,7 +153,11 @@
         "skills": {
             "gunnery": 15,
             "first_aid": 9
-        }
+        },
+        "traits": [
+            "deliberate",
+            "loner"
+        ]
     },
     {
         "id": "greta",
@@ -157,7 +171,11 @@
         },
         "skills": {
             "signals": 12,
-            "driving": 12
-        }
+            "driving": 12,
+            "observation": 12
+        },
+        "traits": [
+            "eagle_eyed"
+        ]
     }
 ]

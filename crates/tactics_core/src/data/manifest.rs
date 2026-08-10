@@ -27,6 +27,9 @@ pub struct ModManifest {
     /// Jobs aboard a vehicle, and which skills each answers for.
     #[serde(default)]
     pub roles: Option<Vec<super::RoleDef>>,
+    /// Things that are true about a girl but are not numbers.
+    #[serde(default)]
+    pub traits: Option<Vec<super::TraitDef>>,
     /// What the engine's hexes, rounds and ticks mean in metres and seconds.
     ///
     /// Unlike a vehicle or a weapon, scale is a property of the game rather

@@ -1486,8 +1486,18 @@ fn format_unit(
         // The crewed figures, not the vehicle's paper ones: what this unit
         // actually does with these girls aboard is the interesting number,
         // and it is the only place the player can see the crew bonus land.
-        let speed = tactics_core::battle::move_points(registry, &state.roster, unit);
-        let vision = tactics_core::battle::stats::vision_range(registry, &state.roster, unit);
+        let speed = tactics_core::battle::move_points(
+            registry,
+            &state.roster,
+            unit,
+            state.terrain_at(unit.pos),
+        );
+        let vision = tactics_core::battle::stats::vision_range(
+            registry,
+            &state.roster,
+            unit,
+            state.terrain_at(unit.pos),
+        );
         lines.push(format!("Move {} ({})", scale.format_speed(speed), speed));
         lines.push(format!(
             "Sight {} ({})",

@@ -202,7 +202,7 @@ Traits come from two places:
 Traits are usually **paired** — an upside with a matching downside — because a
 trait that is only good is a stat with a name on it.
 
-### How a trait is written
+### How a trait is written — implemented
 
 Most traits are declarative: a condition and a modifier, in json, which keeps
 them validatable and lets `validate-mods` report a typo instead of a crash.
@@ -218,11 +218,31 @@ them validatable and lets `validate-mods` report a typo instead of a crash.
 }
 ```
 
+Conditions are a small closed vocabulary — `always`, `terrain`, `not_terrain`,
+`vehicle_class`, `alone`, `crewed` — so `validate-mods` can tell a modder that
+`terrian` is not a condition, rather than the trait silently doing nothing for
+the rest of the project.
+
 Traits that change *behaviour* rather than a number — a hothead firing when
 told to hold — get a **Lua hook** instead. The campaign host already vendors
 `mlua`, so the scripting surface exists and costs nothing new; it is the escape
 hatch for the handful of traits a declarative vocabulary cannot reach, not the
-normal way to write one.
+normal way to write one. Not yet built: nothing needs it until girls can
+disobey, which is slice 5.
+
+Acquired traits are also still to come. The data they need already exists —
+`Unit.last_hit_by`, `VehicleDef.safety`, `CrewFate` — so a girl who bails out
+of a burning Panther can come back afraid of fire. That is the loop worth
+having, and it feeds the visual-novel layer for free.
+
+### Unspecified crew means ordinary, not untrained
+
+A placement that names no crew gets a vehicle that performs exactly as its data
+says. The alternative — treating unspecified as untrained — made every such
+vehicle quietly slower and blinder than its own definition, which broke a
+pathing test in a way that took a while to read: the mover simply could not
+reach a tile the comment said cost "exactly one round's fuel". Paper stats
+should mean what they say; named girls modify from there, in both directions.
 
 | trait | gift | cost |
 | --- | --- | --- |

@@ -109,6 +109,96 @@ impl SkillDef {
     }
 }
 
+/// When a trait's effect applies.
+///
+/// Deliberately a small, closed vocabulary rather than a scripting language:
+/// `validate-mods` can then tell a modder that `terrian` is not a condition,
+/// instead of the trait silently doing nothing for the rest of the project.
+/// Traits that need real logic — a hothead who fires when told to hold — are
+/// behaviour rather than arithmetic and get a Lua hook instead.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraitCondition {
+    /// Everywhere, always. The plain modifier.
+    #[default]
+    Always,
+    /// Standing on this terrain.
+    Terrain(String),
+    /// Standing on anything but this terrain.
+    NotTerrain(String),
+    /// Riding in this class of vehicle.
+    VehicleClass(String),
+    /// The only crew member aboard.
+    Alone,
+    /// Sharing the vehicle with somebody.
+    Crewed,
+}
+
+impl TraitCondition {
+    pub fn holds(&self, ctx: &CheckContext) -> bool {
+        match self {
+            Self::Always => true,
+            Self::Terrain(id) => ctx.terrain == Some(id.as_str()),
+            Self::NotTerrain(id) => ctx.terrain.is_some_and(|t| t != id),
+            Self::VehicleClass(id) => ctx.vehicle_class == Some(id.as_str()),
+            Self::Alone => ctx.crew_size == 1,
+            Self::Crewed => ctx.crew_size > 1,
+        }
+    }
+}
+
+/// Where and when a check is happening.
+///
+/// A check happens at a place and a time, which is the reason abilities are
+/// worked out at the point of use rather than stored: terrain and company are
+/// simply arguments here, where a cached "driving skill" would have to be
+/// invalidated and recomputed anyway.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CheckContext<'a> {
+    pub terrain: Option<&'a str>,
+    pub vehicle_class: Option<&'a str>,
+    pub crew_size: usize,
+}
+
+/// One clause of a trait: a modifier to a skill, under a condition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraitEffect {
+    pub skill: String,
+    #[serde(default)]
+    pub when: TraitCondition,
+    pub modifier: i32,
+}
+
+/// Something true about a girl that is not a number.
+///
+/// The rule that separates a trait from a skill: **a skill changes how well a
+/// rule applies; a trait changes whether or when it applies.** Numbers are
+/// competence, conditions are personality.
+///
+/// Traits are usually *paired* — a gift with a matching cost — because a trait
+/// that is only good is a skill with a name on it. A lead foot is quick on the
+/// road and bogs off it; that is a person, where "+2 driving" is an upgrade.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraitDef {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub effects: Vec<TraitEffect>,
+}
+
+impl TraitDef {
+    /// This trait's contribution to a skill check here and now.
+    pub fn modifier(&self, skill: &str, ctx: &CheckContext) -> i32 {
+        self.effects
+            .iter()
+            .filter(|e| e.skill == skill && e.when.holds(ctx))
+            .map(|e| e.modifier)
+            .sum()
+    }
+}
+
 /// A job aboard a vehicle, and the skills that job is responsible for.
 ///
 /// This is what stops a crew from being a bag of interchangeable numbers: the

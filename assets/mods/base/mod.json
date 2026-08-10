@@ -219,5 +219,90 @@
                 "signals"
             ]
         }
+    ],
+    "traits": [
+        {
+            "id": "lead_foot",
+            "name": "Lead foot",
+            "description": "Quick where the going is good, and finds every ditch where it is not.",
+            "effects": [
+                {
+                    "skill": "driving",
+                    "when": {
+                        "terrain": "road"
+                    },
+                    "modifier": 3
+                },
+                {
+                    "skill": "driving",
+                    "when": {
+                        "not_terrain": "road"
+                    },
+                    "modifier": -2
+                }
+            ]
+        },
+        {
+            "id": "deliberate",
+            "name": "Deliberate",
+            "description": "Takes her time over the shot, and stops watching anything else while she does.",
+            "effects": [
+                {
+                    "skill": "gunnery",
+                    "modifier": 2
+                },
+                {
+                    "skill": "observation",
+                    "modifier": -2
+                }
+            ]
+        },
+        {
+            "id": "eagle_eyed",
+            "name": "Eagle-eyed",
+            "description": "Misses nothing in front of her. Says less about it than you would like.",
+            "effects": [
+                {
+                    "skill": "observation",
+                    "modifier": 2
+                },
+                {
+                    "skill": "signals",
+                    "modifier": -1
+                }
+            ]
+        },
+        {
+            "id": "eager",
+            "name": "Eager",
+            "description": "Loads like the war depends on it. Holds fire like it does not.",
+            "effects": [
+                {
+                    "skill": "loading",
+                    "modifier": 2
+                },
+                {
+                    "skill": "discipline",
+                    "modifier": -2
+                }
+            ]
+        },
+        {
+            "id": "loner",
+            "name": "Loner",
+            "description": "Steadier with nobody looking over her shoulder.",
+            "effects": [
+                {
+                    "skill": "gunnery",
+                    "when": "alone",
+                    "modifier": 2
+                },
+                {
+                    "skill": "gunnery",
+                    "when": "crewed",
+                    "modifier": -1
+                }
+            ]
+        }
     ]
 }
