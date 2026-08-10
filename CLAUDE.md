@@ -4,7 +4,9 @@ Engineering notes for this repo: how it fits together, the invariants worth
 protecting, and the known defects. Gameplay and design work lives in
 [TODO.md](TODO.md) — this file is for things that are wrong or fragile in the
 code rather than things not yet built. Where an item is already tracked in
-TODO.md it is cross-referenced, not repeated.
+TODO.md it is cross-referenced, not repeated. Finished work and the reasoning
+behind it lives in [DONE.md](DONE.md); read it before undoing a decision that
+looks arbitrary.
 
 **Start here:** `.claude/skills/tactics-dev/SKILL.md` is the working guide —
 the instruments this project has for answering questions about itself, the
@@ -112,7 +114,7 @@ STAHL_DEBUG=1 STAHL_BATTLE=river_crossing \
 On this project's Linux box the game needs `STAHL_PRESENT=immediate` or it
 loses the GPU a few seconds in — an NVIDIA Vulkan driver bug, not ours, proved
 with `cargo run -p stahlsenshamädchen --example minimal_window` (a stock Bevy
-window that reproduces it with no game code). See TODO.md under Bugs.
+window that reproduces it with no game code). See DONE.md.
 
 `scripts/dev/` holds a tour of each screen; the module doc lists every action.
 Two things about it are load-bearing:

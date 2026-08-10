@@ -9,9 +9,10 @@ description: How to work on Senshamädchen — the instruments, the change loop,
 for, how to tell whether a change did what you meant, and the specific ways
 this repo has already fooled people.
 
-Read `CLAUDE.md` for architecture and invariants, `TODO.md` for what is
-planned, and `assets/wiki/reference/` for design — especially `girls.md`, which
-is the model everything about crews hangs off.
+Read `CLAUDE.md` for architecture and invariants, `TODO.md` for what is left,
+`DONE.md` for why the built things are shaped as they are, and
+`assets/wiki/reference/` for design — especially `girls.md`, which is the model
+everything about crews hangs off.
 
 ## The four instruments
 
