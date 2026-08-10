@@ -31,10 +31,44 @@
 
 use super::{BattleState, Event, UnitId};
 use crate::data::DataRegistry;
-use crate::map::{FormationDef, UnitPlacement};
+use crate::map::{FormationDef, Objective, ObjectiveKind, UnitPlacement};
 use hexx::Hex;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+
+/// The nearest lane off the map that `side` is entitled to use, measured from
+/// `from`. `None` when this map offers that side no way out — which is not a
+/// failure: driving for an exit that does not exist is not a retreat, so a
+/// side without one holds.
+///
+/// One rule with three callers, which is why it lives here rather than in any
+/// of them: the commander brain ordering a beaten formation out, the player
+/// pressing `W` on a formation of her own, and the campaign handing a
+/// withdrawing army's battle its lane. They must agree — a player who orders a
+/// withdrawal should get the lane her opposite number would have chosen, and
+/// an army told on the map to fall back should leave by the same road its own
+/// commander would have picked.
+///
+/// Ties go to the first-declared lane (strict less-than), so the answer cannot
+/// flap between two equally distant exits from one round to the next.
+pub fn nearest_exit(state: &BattleState, side: u8, from: Hex) -> Option<String> {
+    let mut best: Option<(i32, &Objective)> = None;
+    for objective in state.map.objectives() {
+        if objective.kind != ObjectiveKind::Exit || !objective.open_to(side) {
+            continue;
+        }
+        let dist = objective
+            .hexes
+            .iter()
+            .map(|h| h.distance_to(from))
+            .min()
+            .unwrap_or(i32::MAX);
+        if best.is_none_or(|(b, _)| dist < b) {
+            best = Some((dist, objective));
+        }
+    }
+    best.map(|(_, o)| o.id.clone())
+}
 
 /// The skill that decides how far a leader's orders carry.
 ///

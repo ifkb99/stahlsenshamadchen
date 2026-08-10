@@ -74,7 +74,7 @@ stalemate, so there is finally a baseline to measure a rewrite against.
 - planners are held per side; command wants them per formation, with a commander planner owning subordinates that have their own doctrine
 - mission-type orders: a commander sets its subordinates' intents instead of a human doing it, and only within radio range
 - in battle, works similar to Combat Mission
-- on campaign map, can order units to conduct different types of missions. must be in radio range or have another unit relay instructions to modify their mission
+- on campaign map, can order units to conduct different types of missions. must be in radio range or have another unit relay instructions to modify their mission — engine side done (chunk 8: `OverworldOrder::SetMission`, advance/hold/withdraw, `overworld_radius` with relay, standing orders carried out on end-turn, withdrawal inherited into the battle). what is left is the campaign *UI* to give them, and a wider mission vocabulary (raid, screen) once the map has more to do
 #### Units
 - command unit. if you lose this unit you lose the battle
   - need to workshop this. should be able to send out smaller units that may not have a higher level command unit. maybe certain tier of commander can only handle so many units? should having higher tiers give some sort of bonus?

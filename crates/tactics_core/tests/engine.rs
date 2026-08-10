@@ -11,7 +11,8 @@ use tactics_core::battle::{
 use tactics_core::data::DataRegistry;
 use tactics_core::map::{HexMap, UnitPlacement};
 use tactics_core::overworld::{
-    OverworldEvent, OverworldOrder, OverworldState, make_overworld_planner,
+    Army, ArmyId, ArmyMission, OverworldError, OverworldEvent, OverworldOrder, OverworldState,
+    make_overworld_planner,
 };
 
 fn mods_root() -> PathBuf {
@@ -848,6 +849,425 @@ fn overworld_ai_moves_armies() {
         }
     }
     assert!(moved > 0, "overworld AI should move at least one army");
+}
+
+// --- campaign missions (chunk 8 of chain of command) -----------------------
+
+/// The campaign under a stated radio net. The base mod's own figure is four
+/// overworld hexes; these tests state their own so that what they are about is
+/// the rule rather than the tuning.
+fn registry_with_net(radius: u32, relay: bool) -> DataRegistry {
+    let mut reg = registry();
+    let mut rules = reg.command.clone().unwrap_or_default();
+    rules.overworld_radius = radius;
+    rules.relay = relay;
+    reg.command = Some(rules);
+    reg
+}
+
+/// Give a side a third company, so a chain of armies can be strung out across
+/// the map. It fields nothing: what these tests weigh is where an army *is*,
+/// and a battle is not one of the things that can happen to it.
+fn extra_army(state: &mut OverworldState, side: u8, name: &str, at: [i32; 2]) -> ArmyId {
+    let id = ArmyId(state.armies.len() as u32);
+    state.armies.push(Army {
+        id,
+        side,
+        name: name.into(),
+        pos: tactics_core::offset_to_hex(at[0], at[1]),
+        movement: 3,
+        moved: false,
+        units: Vec::new(),
+        alive: true,
+        mission: None,
+    });
+    id
+}
+
+/// Push the campaign round to the next turn of `side`, so contact is
+/// recomputed against wherever everybody now stands.
+fn next_turn_of(reg: &DataRegistry, state: &mut OverworldState, side: u8) -> Vec<OverworldEvent> {
+    let mut events = Vec::new();
+    for _ in 0..8 {
+        events.extend(
+            state
+                .apply(reg, &OverworldOrder::EndTurn)
+                .expect("end turn"),
+        );
+        if state.active_side == side {
+            break;
+        }
+    }
+    events
+}
+
+#[test]
+fn an_army_mission_is_stored_and_said_out_loud() {
+    let reg = registry();
+    let mut state = OverworldState::from_map(&reg, "frontier", 1).unwrap();
+    let army = state.senior_army(0).expect("side 0 has armies");
+    let bridge = tactics_core::offset_to_hex(6, 2);
+
+    let events = state
+        .apply(
+            &reg,
+            &OverworldOrder::SetMission {
+                army,
+                mission: ArmyMission::Advance { to: bridge },
+            },
+        )
+        .expect("her own army, on her own turn, within her own net");
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            OverworldEvent::ArmyMissionAssigned { army: a, mission: ArmyMission::Advance { to } }
+                if *a == army && *to == bridge
+        )),
+        "a decision somebody made is news: {events:?}"
+    );
+    assert_eq!(
+        state.army(army).unwrap().mission,
+        Some(ArmyMission::Advance { to: bridge })
+    );
+
+    // Countermanding is ordinary business and replaces silently.
+    state
+        .apply(
+            &reg,
+            &OverworldOrder::SetMission {
+                army,
+                mission: ArmyMission::Hold,
+            },
+        )
+        .expect("orders may be changed");
+    assert_eq!(state.army(army).unwrap().mission, Some(ArmyMission::Hold));
+
+    // Ground that is not there is refused, and so is somebody else's army.
+    assert_eq!(
+        state.apply(
+            &reg,
+            &OverworldOrder::SetMission {
+                army,
+                mission: ArmyMission::Advance {
+                    to: tactics_core::offset_to_hex(400, 400)
+                },
+            },
+        ),
+        Err(OverworldError::NotOnMap)
+    );
+    let enemy = state.senior_army(1).expect("side 1 has armies");
+    assert_eq!(
+        state.apply(
+            &reg,
+            &OverworldOrder::SetMission {
+                army: enemy,
+                mission: ArmyMission::Hold,
+            },
+        ),
+        Err(OverworldError::NotYourTurn)
+    );
+}
+
+#[test]
+fn an_army_out_of_radio_range_takes_no_new_orders() {
+    // frontier's two companies per side start six hexes apart, so a two-hex
+    // net with nobody relaying leaves the junior one on its own.
+    let reg = registry_with_net(2, false);
+    let mut state = OverworldState::from_map(&reg, "frontier", 1).unwrap();
+    let senior = state.senior_army(0).unwrap();
+    let junior = state
+        .side_armies(0)
+        .map(|a| a.id)
+        .find(|id| *id != senior)
+        .expect("frontier gives side 0 two companies");
+    assert!(!state.in_contact(junior), "she is six hexes from anybody");
+    assert!(state.in_contact(senior), "headquarters hears itself");
+
+    let order = OverworldOrder::SetMission {
+        army: junior,
+        mission: ArmyMission::Hold,
+    };
+    assert_eq!(state.apply(&reg, &order), Err(OverworldError::OutOfContact));
+    assert_eq!(
+        state.army(junior).unwrap().mission,
+        None,
+        "and nothing was quietly written down anyway"
+    );
+
+    // Closing up is what fixes it, and the campaign says so when it does.
+    let beside = state.army(senior).unwrap().pos + hexx::Hex::new(1, 0);
+    state.army_mut(junior).unwrap().pos = beside;
+    let events = next_turn_of(&reg, &mut state, 0);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::ArmyContactRestored { army } if *army == junior)),
+        "coming back on the net is news too: {events:?}"
+    );
+    state.apply(&reg, &order).expect("she can hear again");
+
+    // With no command block there is no net to be outside of: the same order,
+    // from the same six hexes away, is simply an order.
+    let wireless = registry_wireless();
+    let mut open = OverworldState::from_map(&wireless, "frontier", 1).unwrap();
+    assert!(open.out_of_contact.is_empty(), "nothing was ever computed");
+    open.apply(&wireless, &order)
+        .expect("a campaign with no radios has no radio range");
+}
+
+#[test]
+fn relay_carries_orders_through_a_chain_of_armies() {
+    // Three companies in a line, each three hexes from the next: the far one
+    // is six from headquarters and can only be reached through the middle.
+    let build = |reg: &DataRegistry| {
+        let mut state = OverworldState::from_map(reg, "frontier", 1).unwrap();
+        let senior = state.senior_army(0).unwrap();
+        state.army_mut(senior).unwrap().pos = tactics_core::offset_to_hex(1, 1);
+        let middle = extra_army(&mut state, 0, "3rd Company", [4, 1]);
+        let far = extra_army(&mut state, 0, "4th Company", [7, 1]);
+        // Recomputed at the top of a turn, so give it one.
+        let events = next_turn_of(reg, &mut state, 0);
+        (state, middle, far, events)
+    };
+
+    let relaying = registry_with_net(3, true);
+    let (state, middle, far, _) = build(&relaying);
+    assert!(state.in_contact(middle), "she is three hexes out");
+    assert!(
+        state.in_contact(far),
+        "and she is three hexes from her, which is what relaying is for"
+    );
+
+    let alone = registry_with_net(3, false);
+    let (mut state, middle, far, events) = build(&alone);
+    assert!(state.in_contact(middle), "still inside the net herself");
+    assert!(
+        !state.in_contact(far),
+        "with nobody passing the signal on, six hexes is six hexes"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::ArmyOutOfContact { army } if *army == far)),
+        "an army the player cannot order must be told about: {events:?}"
+    );
+    assert_eq!(
+        state.apply(
+            &alone,
+            &OverworldOrder::SetMission {
+                army: far,
+                mission: ArmyMission::Hold,
+            },
+        ),
+        Err(OverworldError::OutOfContact)
+    );
+}
+
+#[test]
+fn a_standing_mission_moves_the_army_when_its_turn_ends() {
+    let reg = registry();
+    let mut state = OverworldState::from_map(&reg, "frontier", 1).unwrap();
+    let army = state.senior_army(0).unwrap();
+    // Along the northern highway, well clear of the enemy: this test is about
+    // orders being carried out, not about what happens when they meet
+    // somebody.
+    let target = tactics_core::offset_to_hex(6, 2);
+    let start = state.army(army).unwrap().pos;
+    state
+        .apply(
+            &reg,
+            &OverworldOrder::SetMission {
+                army,
+                mission: ArmyMission::Advance { to: target },
+            },
+        )
+        .unwrap();
+
+    let events = state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::ArmyMoved { army: a, .. } if *a == army)),
+        "nobody ordered her anywhere this turn and she went anyway: {events:?}"
+    );
+    let after_one = state.army(army).unwrap().pos;
+    assert_ne!(after_one, start, "she set off");
+
+    // ...and keeps going, day after day, until she is standing on it.
+    let mut days = 1;
+    while state.army(army).unwrap().pos != target && days < 12 {
+        next_turn_of(&reg, &mut state, 0);
+        state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
+        days += 1;
+    }
+    assert_eq!(
+        state.army(army).unwrap().pos,
+        target,
+        "she should have arrived within {days} days"
+    );
+    assert!(days > 1, "or this test proves nothing about the days after");
+
+    // Arrived is arrived: the order stands, and standing on it is obeying it.
+    next_turn_of(&reg, &mut state, 0);
+    let events = state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::ArmyMoved { army: a, .. } if *a == army)),
+        "she is already there: {events:?}"
+    );
+    assert!(
+        state.army(army).unwrap().mission.is_some(),
+        "and she is still under orders, not released from them"
+    );
+}
+
+#[test]
+fn a_hand_moved_army_is_not_second_guessed_by_its_mission() {
+    let reg = registry();
+    let mut state = OverworldState::from_map(&reg, "frontier", 1).unwrap();
+    let army = state.senior_army(0).unwrap();
+    state
+        .apply(
+            &reg,
+            &OverworldOrder::SetMission {
+                army,
+                mission: ArmyMission::Advance {
+                    to: tactics_core::offset_to_hex(6, 2),
+                },
+            },
+        )
+        .unwrap();
+
+    // The player has changed her mind today, and hers is the newer decision.
+    let elsewhere = tactics_core::offset_to_hex(1, 3);
+    state
+        .apply(
+            &reg,
+            &OverworldOrder::MoveArmy {
+                army,
+                to: elsewhere,
+            },
+        )
+        .unwrap();
+    let by_hand = state.army(army).unwrap().pos;
+
+    let events = state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::ArmyMoved { army: a, .. } if *a == army)),
+        "her turn was already spent: {events:?}"
+    );
+    assert_eq!(state.army(army).unwrap().pos, by_hand);
+    assert!(
+        state.army(army).unwrap().mission.is_some(),
+        "the standing order survives the day it was overruled"
+    );
+}
+
+#[test]
+fn a_withdrawing_army_fights_its_battle_toward_the_exit() {
+    let reg = registry_wireless();
+    let file = reg.map("river_crossing").expect("shipped battle map");
+    let map = HexMap::from_map_file(file).expect("map parses");
+
+    // Two companies facing each other along the trunk road, each one a
+    // formation, exactly as the campaign's `deploy` assembles them.
+    let placement = |col: i32, side: u8, formation: &str, leads: bool| UnitPlacement {
+        at: [col, 20],
+        side,
+        vehicle: "medium_tank".into(),
+        crew: Vec::new(),
+        name: Some(format!("{formation}-{col}")),
+        facing: None,
+        formation: Some(formation.into()),
+        leads,
+    };
+    let placements = vec![
+        placement(10, 0, "kuhlmann_armor", true),
+        placement(11, 0, "kuhlmann_armor", false),
+        placement(30, 1, "valkyrie_line", true),
+        placement(31, 1, "valkyrie_line", false),
+    ];
+    let sides = vec![
+        SideState {
+            name: "Kuhlmann".into(),
+            ai: None,
+        },
+        SideState {
+            name: "Valkyries".into(),
+            ai: None,
+        },
+    ];
+    let mut state = BattleState::from_placements(
+        &reg,
+        map,
+        sides,
+        &placements,
+        &[Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+        std::sync::Arc::new(tactics_core::roster::Roster::new()),
+        11,
+    );
+
+    // The helper first, on its own terms: each side is sent down its own
+    // road, and a side the map offers no lane to is sent nowhere.
+    let west = state.side_units(0).next().unwrap().pos;
+    let east = state.side_units(1).next().unwrap().pos;
+    assert_eq!(
+        tactics_core::battle::nearest_exit(&state, 0, west).as_deref(),
+        Some("west_road")
+    );
+    assert_eq!(
+        tactics_core::battle::nearest_exit(&state, 1, east).as_deref(),
+        Some("east_road"),
+        "a lane belongs to the side that was given it, however close the other is"
+    );
+    assert_eq!(
+        tactics_core::battle::nearest_exit(&state, 2, west),
+        None,
+        "a side with no road home holds where it stands"
+    );
+
+    // Now the campaign's order, as the field-battle setup issues it: every
+    // formation of the withdrawing side, out by its nearest lane.
+    let index = state
+        .formations()
+        .iter()
+        .position(|f| f.side == 1)
+        .expect("side 1 fields a formation");
+    let via = tactics_core::battle::nearest_exit(&state, 1, east).unwrap();
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: FormationId(index as u32),
+                mission: Mission::Withdraw { via: via.clone() },
+            },
+        )
+        .expect("her own lane");
+
+    let lane: Vec<tactics_core::Hex> = state
+        .map
+        .objectives()
+        .iter()
+        .find(|o| o.id == via)
+        .unwrap()
+        .hexes
+        .clone();
+    let mut ai = AiDriver::new();
+    ai.insert(1, sharp_planner(&reg, 11, "massed_armor"));
+    ai.plan_round(&reg, &mut state);
+
+    let toward = |hex: tactics_core::Hex| lane.iter().map(|h| h.distance_to(hex)).min().unwrap();
+    for id in state.formations()[index].members.clone() {
+        let unit = state.unit(id).expect("planning harms nobody");
+        assert!(
+            toward(unit.planned_destination()) < toward(unit.pos),
+            "{} was told on the campaign map to break off, so she drives for the road",
+            unit.name
+        );
+    }
 }
 
 fn two_side_battle(
@@ -3506,6 +3926,8 @@ fn command_rules(radius: u32, relay: bool, base_ticks: u32) -> tactics_core::dat
         // which girl happens to be sitting in the radio seat.
         radius_per_signals: 0,
         relay,
+        // These are battle tests; the campaign's own radius has its own.
+        overworld_radius: 999,
         latency: tactics_core::data::ReactionRules {
             skill: "command".into(),
             base_ticks,
@@ -3665,6 +4087,7 @@ fn a_command_block_with_zero_coefficients_is_the_game_without_one() {
         radius: 999,
         radius_per_signals: 0,
         relay: true,
+        overworld_radius: 999,
         latency: tactics_core::data::ReactionRules {
             skill: "command".into(),
             base_ticks: 0,

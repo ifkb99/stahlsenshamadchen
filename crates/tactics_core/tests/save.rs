@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{BattleState, Event, Order};
 use tactics_core::data::DataRegistry;
-use tactics_core::overworld::OverworldState;
+use tactics_core::overworld::{ArmyMission, OverworldOrder, OverworldState};
 use tactics_core::roster::GirlStatus;
 use tactics_core::save::{SAVE_VERSION, SaveGame};
 
@@ -357,6 +357,77 @@ fn a_campaign_keeps_its_girls_and_their_scars() {
     );
 }
 
+/// Standing orders are the campaign's version of the property missions already
+/// have on the battlefield: they outlive the turn they were given in, which is
+/// only true if they outlive the save file too. The wire has to survive with
+/// them — an army restored into contact it does not have would accept an order
+/// nobody could deliver.
+#[test]
+fn a_campaign_keeps_its_standing_orders_and_its_silences() {
+    let reg = registry();
+    let mut state = OverworldState::from_map(&reg, "frontier", 3).expect("overworld");
+    let army = state.senior_army(0).expect("side 0 has armies");
+    let to = tactics_core::offset_to_hex(6, 2);
+    state
+        .apply(
+            &reg,
+            &OverworldOrder::SetMission {
+                army,
+                mission: ArmyMission::Advance { to },
+            },
+        )
+        .expect("her own army, within her own net");
+    let cut_off = state.out_of_contact.clone();
+    assert!(
+        !cut_off.is_empty(),
+        "frontier's junior companies start outside the four-hex net, which is \
+         what makes this test worth writing"
+    );
+
+    let text = SaveGame::new(&reg, Some(state), None).to_json().unwrap();
+    let restored = SaveGame::from_json(&reg, &text)
+        .unwrap()
+        .0
+        .overworld
+        .expect("campaign survives");
+
+    assert_eq!(
+        restored.army(army).unwrap().mission,
+        Some(ArmyMission::Advance { to }),
+        "she is still advancing on the same place"
+    );
+    assert_eq!(
+        restored.out_of_contact, cut_off,
+        "and the same companies are still off the net"
+    );
+    for id in &cut_off {
+        assert!(!restored.in_contact(*id));
+    }
+
+    // A campaign saved before any of this existed opens as one with no orders
+    // and nobody cut off, which is what it was.
+    let mut older: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let overworld = older
+        .get_mut("overworld")
+        .and_then(|o| o.as_object_mut())
+        .expect("the campaign is in there");
+    overworld.remove("out_of_contact").expect("field is saved");
+    for army in overworld
+        .get_mut("armies")
+        .and_then(|a| a.as_array_mut())
+        .expect("armies are a list")
+    {
+        army.as_object_mut().unwrap().remove("mission");
+    }
+    let older = SaveGame::from_json(&reg, &older.to_string())
+        .expect("a save from before campaign missions must still load")
+        .0
+        .overworld
+        .expect("campaign survives");
+    assert!(older.armies.iter().all(|a| a.mission.is_none()));
+    assert!(older.out_of_contact.is_empty());
+}
+
 #[test]
 fn a_save_from_another_version_is_refused_rather_than_misread() {
     let reg = registry();
@@ -456,6 +527,7 @@ fn a_mission_in_transit_survives_a_save() {
         radius: 999,
         radius_per_signals: 0,
         relay: true,
+        overworld_radius: 999,
         latency: tactics_core::data::ReactionRules {
             skill: "command".into(),
             base_ticks: 3,

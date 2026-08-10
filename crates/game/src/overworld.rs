@@ -16,7 +16,7 @@ use tactics_core::ai::AiPlanner;
 use tactics_core::battle::SideState;
 use tactics_core::map::MapKind;
 use tactics_core::overworld::{
-    ArmyId, OverworldEvent, OverworldOrder, OverworldState, make_overworld_planner,
+    ArmyId, ArmyMission, OverworldEvent, OverworldOrder, OverworldState, make_overworld_planner,
 };
 use tactics_core::save::SaveGame;
 
@@ -550,6 +550,36 @@ fn pump_events(
         OverworldEvent::ArmyDestroyed { army } => {
             log.push(format!("Army {} was destroyed.", army.0));
         }
+        OverworldEvent::ArmyMissionAssigned { army, mission } => {
+            if ours(&overworld.state, *army) {
+                let name = army_name(&overworld.state, *army);
+                log.push(match mission {
+                    ArmyMission::Advance { to } => {
+                        format!("{name} ordered to advance on {}.", place(*to))
+                    }
+                    ArmyMission::Hold => format!("{name} ordered to hold."),
+                    ArmyMission::Withdraw { to } => {
+                        format!("{name} ordered to fall back on {}.", place(*to))
+                    }
+                });
+            }
+        }
+        OverworldEvent::ArmyOutOfContact { army } => {
+            if ours(&overworld.state, *army) {
+                log.push(format!(
+                    "{} is out of radio contact.",
+                    army_name(&overworld.state, *army)
+                ));
+            }
+        }
+        OverworldEvent::ArmyContactRestored { army } => {
+            if ours(&overworld.state, *army) {
+                log.push(format!(
+                    "{} is back on the net.",
+                    army_name(&overworld.state, *army)
+                ));
+            }
+        }
         OverworldEvent::GameEnded { winner } => match winner {
             Some(w) => log.push(format!(
                 "Campaign over. {} rules the frontier.",
@@ -558,6 +588,44 @@ fn pump_events(
             None => log.push("Campaign over. Nobody is left standing."),
         },
     }
+}
+
+/// Whether this army is one of the player's, for events that would be a leak
+/// if they were not.
+///
+/// What an army has been *told*, and whether its side can still talk to it,
+/// are facts about the enemy's chain of command — the campaign's counterpart
+/// of the battle's command picture, where the rule is already that a side
+/// learns what it is reported and no more. Captures and destructions stay
+/// public, because a flag changing colour is something you can see. The engine
+/// emits all of it regardless, so a headless consumer and the tests still see
+/// both sides; this is a display rule, which is where it belongs.
+///
+/// With no human side at all (`STAHL_AUTOPLAY`) everything is narrated: there
+/// is nobody to keep it from, and watching both chains of command is the
+/// entire point of that switch.
+fn ours(state: &OverworldState, army: ArmyId) -> bool {
+    match state.sides.iter().position(|s| s.ai.is_none()) {
+        Some(side) => state.army(army).is_none_or(|a| a.side == side as u8),
+        None => true,
+    }
+}
+
+/// The army's name, or a neutral stand-in for one that has since been
+/// destroyed — an event about an army outlives the army, and "Army 3" in the
+/// middle of a sentence reads as a bug.
+fn army_name(state: &OverworldState, army: ArmyId) -> String {
+    state
+        .army(army)
+        .map(|a| a.name.clone())
+        .unwrap_or_else(|| format!("Army {}", army.0))
+}
+
+/// A hex as the map file writes it, which is the pair of numbers a player
+/// reading the campaign map has any hope of matching to a place.
+fn place(hex: Hex) -> String {
+    let [col, row] = tactics_core::hex_to_offset(hex);
+    format!("({col}, {row})")
 }
 
 /// A triggered battle waiting for the player to pick reinforcements. While
@@ -610,6 +678,7 @@ fn launch_battle(
                 army: *id,
                 side: army.side,
                 units: army.units.clone(),
+                mission: army.mission.clone(),
             });
         }
     }
@@ -1060,8 +1129,20 @@ fn update_ui(
                 army.movement,
                 if army.moved { " (spent)" } else { "" }
             ),
-            "Units:".into(),
         ];
+        // Standing orders and the wire, above the roster: what an army has
+        // been told and whether it can be told anything else are the two
+        // facts a player picks a move on.
+        lines.push(match &army.mission {
+            Some(ArmyMission::Advance { to }) => format!("Orders: advance on {}", place(*to)),
+            Some(ArmyMission::Hold) => "Orders: hold".into(),
+            Some(ArmyMission::Withdraw { to }) => format!("Orders: fall back on {}", place(*to)),
+            None => "Orders: none".into(),
+        });
+        if !state.in_contact(army.id) {
+            lines.push("Out of radio contact".into());
+        }
+        lines.push("Units:".into());
         for u in &army.units {
             let vehicle = mods
                 .0

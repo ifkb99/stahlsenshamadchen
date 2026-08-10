@@ -53,7 +53,24 @@ pub struct CommandRules {
     /// Whether contact chains through the people already in it. With relay on,
     /// a platoon strung out along a road stays under command as long as each
     /// link holds; with it off, everyone must hear the leader herself.
+    ///
+    /// Read by both scales: the battle's formation graph and the campaign's
+    /// army graph. One knob rather than two, because relaying is a property of
+    /// how a signals net is run, not of how far apart the stations happen to
+    /// be.
     pub relay: bool,
+    /// Command radius in *overworld* hexes, for the campaign's own contact
+    /// graph. A separate number from [`Self::radius`] and not derived from it,
+    /// because the two are measured in different units — an overworld hex is
+    /// forty battle hexes at the shipped scale, so one figure serving both
+    /// would make a headquarters either deaf on the map or omniscient on the
+    /// field.
+    ///
+    /// No `radius_per_signals` twin: an army is a stack of vehicles rather
+    /// than a crew, so there is no single girl whose skill the net should be
+    /// priced on until the comms units and the command girl herself exist.
+    /// When they do, this is where their multiplier lands.
+    pub overworld_radius: u32,
     /// How long a mission spends in transit, as a function of the *leader's*
     /// skill at [`ReactionRules::skill`] — `command` in the base game, because
     /// getting an order out clearly and quickly is her job and not her
@@ -73,6 +90,11 @@ impl Default for CommandRules {
             radius: 6,
             radius_per_signals: 2,
             relay: true,
+            // Four overworld hexes is 16 km at the shipped scale — a day's
+            // sustained march, so an army that drives out of its own
+            // headquarters' reach in one day is one that was sent somewhere on
+            // purpose rather than one that wandered.
+            overworld_radius: 4,
             latency: ReactionRules {
                 skill: "command".into(),
                 base_ticks: 2,
@@ -138,6 +160,7 @@ mod tests {
             radius: 999,
             radius_per_signals: 0,
             relay: true,
+            overworld_radius: 999,
             latency: ReactionRules {
                 skill: "command".into(),
                 base_ticks: 0,

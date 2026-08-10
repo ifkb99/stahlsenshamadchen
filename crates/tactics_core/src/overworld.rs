@@ -14,7 +14,7 @@ use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -62,6 +62,33 @@ pub struct CrewLoss {
     pub killed_by: Option<crate::data::DamageType>,
 }
 
+/// What an army has been told to do, until it is told something else.
+///
+/// The campaign half of the vocabulary [`crate::battle::Mission`] speaks on
+/// the battlefield, and deliberately the same shape: a plain snake_case serde
+/// enum, so it survives a save, a replay and a round trip through a brain that
+/// is not this process. What differs is what an operational order can mean —
+/// there is no `Recon` here, because moving toward the enemy to find him *is*
+/// an advance at four kilometres a hex, and reconnaissance is something the
+/// battle it causes is about.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArmyMission {
+    /// Move on `to` and take what is on the way. An army under this order
+    /// drives at it a turn at a time and fights whatever stands in the road,
+    /// because on the operational map going somewhere and attacking what is
+    /// between you and it are the same act.
+    Advance { to: Hex },
+    /// Stand. The neutral order — what a reserve is given, and what says "no
+    /// further" without cancelling the fact that orders exist at all.
+    Hold,
+    /// Fall back toward `to`. The movement is an advance's in reverse, but the
+    /// order is not the same order: an army withdrawing carries that intent
+    /// into any battle it is caught in, and its formations fight toward the
+    /// way off the map rather than for the ground.
+    Withdraw { to: Hex },
+}
+
 /// A stack of units moving as one piece on the strategic map.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Army {
@@ -75,6 +102,20 @@ pub struct Army {
     /// are written back here.
     pub units: Vec<ArmyUnit>,
     pub alive: bool,
+    /// Standing orders: what this army does with the turns nobody spends on
+    /// it by hand.
+    ///
+    /// Standing in the strict sense the battle's formations already use — it
+    /// is never cleared, not at the end of a turn and not when the army is cut
+    /// off from its headquarters. An army told to advance on the bridge is
+    /// still advancing on the bridge tomorrow, which is the entire reason the
+    /// order is worth giving: it is what lets a campaign day be played by
+    /// delegation rather than by moving every counter.
+    ///
+    /// `#[serde(default)]` so a campaign saved before missions existed opens
+    /// as one whose armies have no orders, which is what it was.
+    #[serde(default)]
+    pub mission: Option<ArmyMission>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,6 +124,17 @@ pub enum OverworldOrder {
     MoveArmy {
         army: ArmyId,
         to: Hex,
+    },
+    /// Give an army its standing orders, replacing whatever it was doing.
+    ///
+    /// Through [`OverworldState::apply`] like every other order and for the
+    /// same reason the battle's `SetMission` is: a mission that existed only
+    /// inside a planner would be one the log cannot report, the save cannot
+    /// carry and a replaced brain cannot see. Replacement is silent —
+    /// countermanding is the ordinary business of command.
+    SetMission {
+        army: ArmyId,
+        mission: ArmyMission,
     },
     EndTurn,
 }
@@ -121,6 +173,23 @@ pub enum OverworldEvent {
     ArmyDestroyed {
         army: ArmyId,
     },
+    /// An army was given standing orders. News in its own right: a mission is
+    /// a decision somebody made, and the campaign log carries it beside the
+    /// moves it will cause.
+    ArmyMissionAssigned {
+        army: ArmyId,
+        mission: ArmyMission,
+    },
+    /// This army can no longer be reached by its side's headquarters. It keeps
+    /// the orders it has and cannot be given new ones — an army silently
+    /// ignoring the player is indistinguishable from a bug, so it is said out
+    /// loud the turn it happens.
+    ArmyOutOfContact {
+        army: ArmyId,
+    },
+    ArmyContactRestored {
+        army: ArmyId,
+    },
     GameEnded {
         winner: Option<u8>,
     },
@@ -138,6 +207,13 @@ pub enum OverworldError {
     AlreadyMoved,
     #[error("no valid path to the destination")]
     NoPath,
+    /// Named as the battle layer names it ([`crate::battle::OrderError::NotOnMap`]),
+    /// because it is the same refusal at a different scale and two words for
+    /// it would be two things to learn.
+    #[error("tile is not on the map")]
+    NotOnMap,
+    #[error("army is out of radio contact and cannot be given new orders")]
+    OutOfContact,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +234,20 @@ pub struct OverworldState {
     pub owners: HashMap<Hex, u8>,
     pub turn: u32,
     pub active_side: u8,
+    /// Armies nobody at headquarters can reach, sorted by id.
+    ///
+    /// Parallel to the battle's `Formation::out_of_contact` and empty for the
+    /// same reason: a mod that declares no `command` block never has this
+    /// recomputed, so every army is in contact, no order is ever refused for
+    /// being unreachable and no event is emitted. The absence of the system is
+    /// the campaign as it was, with no branch in Rust to switch it off.
+    ///
+    /// No per-army snapshot of orders is kept, unlike the battle's [`CutOff`](crate::battle::CutOff):
+    /// an army's mission cannot change behind its back, because the only thing
+    /// that could change it is refused while it is cut off. Standing orders and
+    /// carried orders are therefore the same thing here.
+    #[serde(default)]
+    pub out_of_contact: Vec<ArmyId>,
     pub over: Option<Option<u8>>,
     /// Drives casualty resolution. Seeded, and consumed in a fixed order, so
     /// a campaign replays identically.
@@ -231,9 +321,10 @@ impl OverworldState {
                     })
                     .collect(),
                 alive: true,
+                mission: None,
             })
             .collect();
-        Ok(Self {
+        let mut state = Self {
             map: Arc::new(map),
             sides,
             roster,
@@ -242,9 +333,19 @@ impl OverworldState {
             owners: HashMap::new(),
             turn: 1,
             active_side: 0,
+            out_of_contact: Vec::new(),
             over: None,
             rng: ChaCha8Rng::seed_from_u64(seed),
-        })
+        };
+        // Who can hear whom on the morning of day one. The events are dropped
+        // because nothing has *changed* yet — an army that starts the campaign
+        // outside the net was deployed there, it did not lose contact — but the
+        // set itself has to be right from the first order, or a mission the
+        // wire could never carry would be accepted on day one and refused on
+        // day two for no reason the player could see.
+        let mut unheard = Vec::new();
+        state.recompute_contact(registry, state.active_side, &mut unheard);
+        Ok(state)
     }
 
     pub fn army(&self, id: ArmyId) -> Option<&Army> {
@@ -263,6 +364,114 @@ impl OverworldState {
         self.armies
             .iter()
             .filter(move |a| a.alive && a.side == side)
+    }
+
+    /// The army a side's signals net is rooted at: its first-declared living
+    /// one, by [`ArmyId`].
+    ///
+    /// **A documented placeholder.** Contact ought to root at a *person* — the
+    /// side's commanding girl, sitting in a headquarters or a command vehicle
+    /// with a radius priced on her crew's `signals`, the way a battle
+    /// formation's net is priced on its leader. Neither the command unit nor
+    /// the academy that would issue her exists yet (TODO.md, Chain of Command:
+    /// the command-unit item), so seniority stands in for command, exactly as
+    /// the battle layer's succession rule does: the first army the map wrote
+    /// down is the one carrying the headquarters. When the command unit
+    /// arrives, this function is the only thing that has to change.
+    pub fn senior_army(&self, side: u8) -> Option<ArmyId> {
+        self.side_armies(side).map(|a| a.id).min()
+    }
+
+    /// Whether this army can still be given new orders.
+    ///
+    /// True for everything in a campaign whose mod declares no `command`
+    /// block, and true for an army that no longer exists — the question a
+    /// caller is asking is "will an order reach her", and one that cannot be
+    /// given for some other reason is refused for that other reason.
+    pub fn in_contact(&self, army: ArmyId) -> bool {
+        !self.out_of_contact.contains(&army)
+    }
+
+    /// Work out which of `side`'s armies headquarters can still reach, and say
+    /// so when the answer changes.
+    ///
+    /// The graph is the battle's, one scale up: a breadth-first walk from the
+    /// [senior army](Self::senior_army), everybody inside the radius hearing
+    /// her, and — with `relay` on — passing the signal along at their own
+    /// radius, which is what makes a chain of companies strung across the map
+    /// worth keeping joined up. Armies are visited in id order at every step,
+    /// so both the resulting set and the events are the same on every machine.
+    ///
+    /// Recomputed for **one side at a time**, at the top of that side's turn.
+    /// That is when it matters — the gate on new orders reads the active
+    /// side's list, and nothing has moved since — and it is what keeps the
+    /// campaign log from announcing the enemy's radio troubles to a player who
+    /// has no business knowing them. Entries for other sides are carried over
+    /// untouched, minus any army that has since been destroyed.
+    ///
+    /// Does nothing at all when no mod declares command rules: `out_of_contact`
+    /// then stays empty for the whole campaign, [`Self::in_contact`] answers
+    /// `true` for everybody, and nothing costs anything.
+    fn recompute_contact(
+        &mut self,
+        registry: &DataRegistry,
+        side: u8,
+        events: &mut Vec<OverworldEvent>,
+    ) {
+        let Some(rules) = registry.command.as_ref() else {
+            return;
+        };
+        let radius = rules.overworld_radius as i32;
+        let mut heard: Vec<ArmyId> = Vec::new();
+        if let Some(root) = self.senior_army(side) {
+            heard.push(root);
+            let mut anchors = VecDeque::from([root]);
+            while let Some(anchor) = anchors.pop_front() {
+                let Some(from) = self.army(anchor).map(|a| a.pos) else {
+                    continue;
+                };
+                for army in self.side_armies(side) {
+                    if heard.contains(&army.id) || army.pos.distance_to(from) > radius {
+                        continue;
+                    }
+                    heard.push(army.id);
+                    if rules.relay {
+                        anchors.push_back(army.id);
+                    }
+                }
+                if !rules.relay {
+                    // Without relay the senior army is the only voice; nobody
+                    // she reached extends the net.
+                    break;
+                }
+            }
+        }
+
+        let mut next: Vec<ArmyId> = self
+            .out_of_contact
+            .iter()
+            .copied()
+            .filter(|id| self.army(*id).is_some_and(|a| a.side != side))
+            .collect();
+        next.extend(
+            self.side_armies(side)
+                .map(|a| a.id)
+                .filter(|id| !heard.contains(id)),
+        );
+        next.sort_unstable();
+        let was = std::mem::replace(&mut self.out_of_contact, next);
+        for id in &self.out_of_contact {
+            if !was.contains(id) {
+                events.push(OverworldEvent::ArmyOutOfContact { army: *id });
+            }
+        }
+        for id in &was {
+            // Still on the map: an army that came back into contact by being
+            // destroyed is not news anybody wants twice.
+            if !self.out_of_contact.contains(id) && self.army(*id).is_some() {
+                events.push(OverworldEvent::ArmyContactRestored { army: *id });
+            }
+        }
     }
 
     /// Soft fog: an army is hidden from `observer` only while it sits in
@@ -392,10 +601,55 @@ impl OverworldState {
         }
         let mut events = match order {
             OverworldOrder::MoveArmy { army, to } => self.apply_move(registry, *army, *to)?,
+            OverworldOrder::SetMission { army, mission } => {
+                self.apply_set_mission(*army, mission.clone())?
+            }
             OverworldOrder::EndTurn => self.apply_end_turn(registry),
         };
         self.check_victory(&mut events);
         Ok(events)
+    }
+
+    /// Record an army's standing orders, refusing anything it could not
+    /// actually be asked to do.
+    ///
+    /// Validated in the order a person would ask: does the army exist, is it
+    /// yours to command today, is what you are pointing at on the map, and —
+    /// last, because it is the only one that is about the *wire* rather than
+    /// the order — can the order reach it at all. Whether the ground is
+    /// reachable, whether the road is held, whether the withdrawal is wise:
+    /// none of that is checked, for the same reason the battle's `set_mission`
+    /// does not check it. A mission is an intention, not a route.
+    fn apply_set_mission(
+        &mut self,
+        id: ArmyId,
+        mission: ArmyMission,
+    ) -> Result<Vec<OverworldEvent>, OverworldError> {
+        let army = self.army(id).ok_or(OverworldError::NoSuchArmy)?;
+        if army.side != self.active_side {
+            return Err(OverworldError::NotYourTurn);
+        }
+        match &mission {
+            ArmyMission::Advance { to } | ArmyMission::Withdraw { to } => {
+                if !self.map.contains(*to) {
+                    return Err(OverworldError::NotOnMap);
+                }
+            }
+            // "Stand where you are" needs no tile to exist.
+            ArmyMission::Hold => {}
+        }
+        if !self.in_contact(id) {
+            return Err(OverworldError::OutOfContact);
+        }
+        // Silent replacement, exactly as the battle layer does it: a formation
+        // — or an army — holding two missions at once has no meaning anybody
+        // could act on. What is news is that an order was given at all, and
+        // that is the event.
+        self.army_mut(id).expect("checked above").mission = Some(mission.clone());
+        Ok(vec![OverworldEvent::ArmyMissionAssigned {
+            army: id,
+            mission,
+        }])
     }
 
     fn apply_move(
@@ -487,7 +741,57 @@ impl OverworldState {
         Ok(events)
     }
 
+    /// Carry out the standing orders of every army whose turn nobody spent by
+    /// hand. This is delegation, and it is the whole reason army missions
+    /// exist: a campaign day should be playable by telling four companies what
+    /// you want and pressing end-turn, not by walking each of them across the
+    /// map every day.
+    ///
+    /// The guard is `moved`, so an army the player drove somewhere herself is
+    /// never second-guessed by its own orders — hers is the newer decision.
+    /// An army already standing on its objective has arrived and does nothing
+    /// further; one under `Hold` was told to do nothing in the first place.
+    ///
+    /// A move that cannot be made this turn is skipped **without clearing the
+    /// mission**: the road may be blocked by a friend, or the only path may
+    /// run through an enemy that will not be there tomorrow. An army that
+    /// cannot comply today tries again tomorrow, which is what a standing
+    /// order means; forgetting it because of one bad day would be the system
+    /// quietly deciding the player did not mean it.
+    ///
+    /// Everything it does goes through [`Self::apply_move`], so a mission move
+    /// captures ground, triggers battles and stops short of enemies in exactly
+    /// the way a hand-ordered one does. There is deliberately no second path
+    /// for the AI to drive an army along.
+    fn run_standing_missions(&mut self, registry: &DataRegistry) -> Vec<OverworldEvent> {
+        let side = self.active_side;
+        let ordered: Vec<(ArmyId, Hex)> = self
+            .armies
+            .iter()
+            .filter(|a| a.alive && a.side == side && !a.moved)
+            .filter_map(|a| match a.mission.as_ref()? {
+                ArmyMission::Advance { to } | ArmyMission::Withdraw { to } => Some((a.id, *to)),
+                ArmyMission::Hold => None,
+            })
+            .collect();
+        let mut events = Vec::new();
+        for (id, to) in ordered {
+            // Arrived, destroyed since the list was taken, or overtaken by a
+            // battle that spent its turn: nothing to do either way.
+            if self.army(id).is_none_or(|a| a.moved || a.pos == to) {
+                continue;
+            }
+            if let Ok(more) = self.apply_move(registry, id, to) {
+                events.extend(more);
+            }
+        }
+        events
+    }
+
     fn apply_end_turn(&mut self, registry: &DataRegistry) -> Vec<OverworldEvent> {
+        // Before the day turns over, everybody who was told what to do and not
+        // told otherwise does it.
+        let mut events = self.run_standing_missions(registry);
         let side_count = self.sides.len() as u8;
         let mut next = self.active_side;
         for _ in 0..side_count {
@@ -508,10 +812,10 @@ impl OverworldState {
             army.moved = false;
         }
 
-        let mut events = vec![OverworldEvent::TurnStarted {
+        events.push(OverworldEvent::TurnStarted {
             side: next,
             turn: self.turn,
-        }];
+        });
         let amount: i32 = self
             .owners
             .iter()
@@ -524,6 +828,9 @@ impl OverworldState {
             self.sides[next as usize].funds += amount;
             events.push(OverworldEvent::Income { side: next, amount });
         }
+        // Last, with everybody standing where the night left them: who can be
+        // reached today decides which orders may be given today.
+        self.recompute_contact(registry, next, &mut events);
         events
     }
 
@@ -631,6 +938,13 @@ pub fn ai_reinforcements(
 
 /// Baseline overworld AI: push each army toward the most valuable visible
 /// target (weak enemy armies and uncaptured objectives).
+///
+/// It issues [`OverworldOrder::MoveArmy`] and nothing else, deliberately.
+/// Missions are how *someone else* — a player, or one day a campaign brain
+/// that plans in weeks rather than days — tells an army what to do with the
+/// turns nobody spends on it; this planner is the side's own hand and spends
+/// every turn itself, so telling its armies what to do and then doing it for
+/// them would be the same decision made twice.
 pub struct SimpleOverworldPlanner {
     rng: ChaCha8Rng,
     /// Chance to pick a suboptimal target, derived from difficulty.

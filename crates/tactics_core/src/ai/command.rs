@@ -308,24 +308,10 @@ impl SideCommand {
             .and_then(|id| state.unit(id))
             .or_else(|| formation.members.iter().find_map(|id| state.unit(*id)))
             .map(|u| u.pos)?;
-        let mut best: Option<(i32, &Objective)> = None;
-        for objective in state.map.objectives() {
-            if objective.kind != ObjectiveKind::Exit || !objective.open_to(formation.side) {
-                continue;
-            }
-            let dist = objective
-                .hexes
-                .iter()
-                .map(|h| h.distance_to(from))
-                .min()
-                .unwrap_or(i32::MAX);
-            // Strict less-than: the first-declared lane wins a tie, so this
-            // cannot flap between two equally distant exits.
-            if best.is_none_or(|(b, _)| dist < b) {
-                best = Some((dist, objective));
-            }
-        }
-        best.map(|(_, o)| o.id.clone())
+        // The lane itself is not this brain's rule to have: the player and the
+        // campaign choose a withdrawal route the same way, so they choose it in
+        // the same function.
+        crate::battle::nearest_exit(state, formation.side, from)
     }
 }
 

@@ -500,12 +500,47 @@ vocabulary. Three things are worth carrying forward:
   stated about the player's own crew (`set_intent` names her and says she is
   following her last orders), never about the enemy's.
 
-**8. Campaign missions.** Overworld vocabulary, radio range + relay, battle
-inheritance, withdrawal arrival. *Verify:* a campaign test that orders a
-mission out of radio range and watches it not arrive. *Difficulty: 3/5* —
-mirrors battle patterns that will be established by then, in cooler code;
-the one place deserving extra care is `apply_battle_result`, the
-under-tested seam where campaign state can corrupt silently.
+**8. Campaign missions.** ✅ Done. `ArmyMission` (advance / hold / withdraw) in
+the overworld order stream, a radio net in overworld hexes with relay, and a
+battle that inherits what its armies were doing. Four things are worth
+carrying forward:
+
+- **Standing orders execute as delegation, through the same door.** An army
+  that was not moved by hand this turn acts on its mission when the side ends
+  its turn, by calling `apply_move` internally — so a mission move captures,
+  triggers battles and stops short of enemies exactly as a hand-ordered one
+  does, and the game layer's `BattleTriggered` handling needed no changes at
+  all. An army that cannot comply today keeps its orders and tries again
+  tomorrow; forgetting a standing order because of one blocked road would be
+  the system deciding the player did not mean it.
+- **An army is a formation.** This was the missing half of "battle
+  inheritance": field battles deployed as flat pools, so there was nobody for a
+  campaign order to be *given* to. `deploy` now fills the terrain map's
+  declared formations, one army per formation in declaration order, first
+  vehicle leading — the case `CommandState::from_placements` had already
+  documented itself against. A side whose map declares no formations is the
+  flat pool it always was.
+- **Contact roots at the senior army, and that is a placeholder** wearing a
+  sign: the first-declared living army stands in for a headquarters until the
+  command unit on TODO exists, at which point `senior_army` is the only thing
+  that changes. `overworld_radius: 4` is its own number rather than a scaling
+  of the battle radius, because forty battle hexes to the overworld hex means
+  one figure would be deaf on the map or omniscient on the field. Consequence
+  worth knowing: `frontier` starts each side's second company six hexes out,
+  i.e. off the net on day one — the map predates the rule, and it is a map
+  question, not a code one.
+- **The wire is a display secret.** The engine emits contact and mission
+  events for every side; the campaign log only narrates the player's own,
+  because what an enemy army has been told and whether it can still be
+  reached are the operational counterpart of the command picture. Captures
+  and destructions stay public — a flag changing colour is something you can
+  see.
+
+Deferred deliberately: the campaign UI issues no missions yet (the panel
+*shows* orders and contact, but there is no key that gives them), and
+`Advance`/`Hold` do not map onto battle missions — the battle brain already
+advances on the ground the map declares worth holding, and overruling it with
+a hex chosen four kilometres away would be worse than saying nothing.
 
 **Later, enabled but not built:** external brains (NN/LLM) via the
 observation/order adapter; side-level mission types (eliminate, harass, raid)

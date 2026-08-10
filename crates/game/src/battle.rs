@@ -18,7 +18,7 @@ use tactics_core::battle::{
 };
 use tactics_core::map::{ObjectiveKind, UnitPlacement};
 use tactics_core::overworld::ArmyId;
-use tactics_core::overworld::{ArmyUnit, CrewLoss};
+use tactics_core::overworld::{ArmyMission, ArmyUnit, CrewLoss};
 use tactics_core::roster::{GirlId, Roster};
 
 /// One army committed to a field battle.
@@ -27,6 +27,10 @@ pub struct BattleForce {
     pub army: ArmyId,
     pub side: u8,
     pub units: Vec<ArmyUnit>,
+    /// The standing orders this army was carrying when it was committed, so
+    /// what was decided on the map can colour the fight it caused. See
+    /// `inherit_army_missions`.
+    pub mission: Option<ArmyMission>,
 }
 
 /// Why we are entering the battle state; set before switching to it.
@@ -434,7 +438,7 @@ fn setup_battle(
             map_id: "river_crossing".into(),
         });
 
-    let (state, field) = match &pending {
+    let (mut state, field) = match &pending {
         PendingBattle::Scenario { map_id } => (
             BattleState::from_map(registry, map_id, seed()).expect("scenario map builds"),
             None,
@@ -574,6 +578,21 @@ fn setup_battle(
          hovered hex, W withdraw.",
     );
 
+    // What was decided on the campaign map is what the formations here try to
+    // do. Issued after the log is cleared so the player can read the orders
+    // that arrived with her.
+    if let PendingBattle::Field {
+        forces,
+        attacker,
+        defender,
+        ..
+    } = &pending
+    {
+        for line in inherit_army_missions(registry, &mut state, forces, *attacker, *defender) {
+            log.push(line);
+        }
+    }
+
     let (map_center, _) = iso::project(center, 0, view.rotation(), center);
     focus.0 = map_center;
 
@@ -591,6 +610,68 @@ fn setup_battle(
         field,
         exit_timer: None,
     });
+}
+
+/// Hand the battle whatever its armies were already trying to do, and say so
+/// in the log.
+///
+/// Only [`ArmyMission::Withdraw`] maps onto a battle mission today, and only
+/// for the two *principal* armies — the one that attacked and the one that was
+/// attacked — because those are the two whose intent caused this fight;
+/// a neighbour who piled in came to help with somebody else's decision.
+/// A withdrawing army's formations are ordered out by the nearest lane their
+/// side may use, which is the same rule their own commander would have applied
+/// once they were beaten: the campaign's order is that they should not wait to
+/// be beaten first.
+///
+/// `Advance` and `Hold` deliberately do **not** map. The battle brain already
+/// advances on the ground the map declares worth holding, so translating them
+/// would either say what it is already saying or overrule it with a hex chosen
+/// four kilometres away — and an operational advance is not a tactical one. If
+/// they ever do map, it should be through the objectives, not around them.
+///
+/// The orders go through `BattleState::apply` like everyone else's, so they
+/// travel at the signals net's speed and appear in the log and in any replay.
+/// A map that offers the side no exit produces nothing at all.
+fn inherit_army_missions(
+    registry: &tactics_core::data::DataRegistry,
+    state: &mut BattleState,
+    forces: &[BattleForce],
+    attacker: ArmyId,
+    defender: ArmyId,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    for principal in [attacker, defender] {
+        let Some(force) = forces
+            .iter()
+            .find(|f| f.army == principal)
+            .filter(|f| matches!(f.mission, Some(ArmyMission::Withdraw { .. })))
+        else {
+            continue;
+        };
+        let side = force.side;
+        let ordered: Vec<usize> = state
+            .formations()
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.side == side)
+            .map(|(index, _)| index)
+            .collect();
+        for index in ordered {
+            let Some(via) = formation_exit(state, index) else {
+                continue;
+            };
+            let name = state.formations()[index].id.clone();
+            let order = Order::SetMission {
+                formation: FormationId(index as u32),
+                mission: Mission::Withdraw { via },
+            };
+            if state.apply(registry, &order).is_ok() {
+                lines.push(format!("{name} is under orders to break contact."));
+            }
+        }
+    }
+    lines
 }
 
 /// Line the attacking armies up along the west edge and the defenders along
@@ -635,14 +716,50 @@ fn deploy(
         spots.into_iter().map(|(_, _, hex)| hex).collect()
     };
 
+    // An army *is* a formation, which is what the design doc means by
+    // "`ArmyPlacement` on the overworld maps naturally". The declarations
+    // themselves belong to the terrain map — that is where a battlefield's
+    // order of battle is written, and it is the case `CommandState::from_placements`
+    // already documents itself against — so an army fills the next-declared
+    // formation of its own side, first army into the first-declared one, and
+    // its first vehicle leads it. A map that declares none for a side leaves
+    // that side the flat pool it has always been, so a field battle on a
+    // formationless map is exactly the battle it was.
+    let slots = |side: u8| -> Vec<String> {
+        map.formations()
+            .iter()
+            .filter(|f| f.side == side)
+            .map(|f| f.id.clone())
+            .collect()
+    };
+    let mut taken: HashMap<u8, usize> = HashMap::new();
+    let mut led: Vec<String> = Vec::new();
+
     let mut placements = Vec::new();
     let mut crews = Vec::new();
     let mut origins = Vec::new();
     for west in [true, false] {
         let mut spots = deployable(west).into_iter();
         for force in forces.iter().filter(|f| (f.side == attacker_side) == west) {
+            // More armies than the map named formations is an ordinary muster
+            // — three companies piling into a two-platoon map — and they wrap
+            // round rather than being left out of the chain of command.
+            let available = slots(force.side);
+            let formation = (!available.is_empty()).then(|| {
+                let next = taken.entry(force.side).or_default();
+                let id = available[*next % available.len()].clone();
+                *next += 1;
+                id
+            });
             for unit in &force.units {
                 let Some(hex) = spots.next() else { break };
+                // Seniority is arrival order, exactly as it is for a map's own
+                // placements: the first vehicle into a formation leads it, and
+                // succession works down the list from there.
+                let leads = formation.as_ref().is_some_and(|id| !led.contains(id));
+                if leads {
+                    led.push(formation.clone().expect("leads implies a formation"));
+                }
                 // The crew travels alongside as girl handles rather than in
                 // the placement: a `UnitPlacement` names crew by definition
                 // id, which is the thing this whole refactor is getting away
@@ -654,11 +771,8 @@ fn deploy(
                     crew: Vec::new(),
                     name: unit.name.clone(),
                     facing: None,
-                    // An army is not yet a formation: the campaign half of
-                    // the chain of command is a later chunk, so a field
-                    // battle is still one flat pool per side.
-                    formation: None,
-                    leads: false,
+                    formation: formation.clone(),
+                    leads,
                 });
                 crews.push(unit.crew.clone());
                 origins.push(force.army);
@@ -1543,7 +1657,7 @@ fn mission_from_keys(
         });
     }
     if keys.just_pressed(KeyCode::KeyW) {
-        return Some(match nearest_exit(state, formation) {
+        return Some(match formation_exit(state, formation) {
             Some(via) => Ok(Mission::Withdraw { via }),
             None => Err("There is no way off this map for your side.".into()),
         });
@@ -1554,34 +1668,19 @@ fn mission_from_keys(
 /// The retreat lane a formation would take: the nearest exit objective its
 /// side is entitled to use, measured from its leader.
 ///
-/// Deliberately the same rule the commander brain applies to its own
-/// formations (`SideCommand::wants_out`) — the player picking a formation and
-/// pressing `W` should get the lane her opposite number would have chosen,
-/// not a different one. Ties go to the first-declared lane so the answer
-/// cannot flap.
-fn nearest_exit(state: &BattleState, formation: usize) -> Option<String> {
+/// The rule itself lives in `tactics_core::battle::nearest_exit`, shared with
+/// the commander brain and with the campaign's withdrawal orders — the player
+/// picking a formation and pressing `W` should get the lane her opposite
+/// number would have chosen, not a different one. All this adds is the leader
+/// the lane is measured from.
+fn formation_exit(state: &BattleState, formation: usize) -> Option<String> {
     let formation = state.formations().get(formation)?;
     let from = formation
         .leader
         .and_then(|id| state.unit(id))
         .or_else(|| formation.members.iter().find_map(|id| state.unit(*id)))
         .map(|u| u.pos)?;
-    let mut best: Option<(i32, &str)> = None;
-    for objective in state.map.objectives() {
-        if objective.kind != ObjectiveKind::Exit || !objective.open_to(formation.side) {
-            continue;
-        }
-        let dist = objective
-            .hexes
-            .iter()
-            .map(|h| h.distance_to(from))
-            .min()
-            .unwrap_or(i32::MAX);
-        if best.is_none_or(|(b, _)| dist < b) {
-            best = Some((dist, objective.id.as_str()));
-        }
-    }
-    best.map(|(_, id)| id.to_string())
+    tactics_core::battle::nearest_exit(state, formation.side, from)
 }
 
 /// What the player may order a shot at on one hex.
@@ -2646,6 +2745,7 @@ mod tests {
                         name: None,
                     })
                     .collect(),
+                mission: None,
             })
             .collect();
 
@@ -2662,6 +2762,121 @@ mod tests {
                     placement.side,
                     objective.id,
                     placement.at
+                );
+            }
+        }
+    }
+
+    /// An army arriving on a battlefield is a formation on it, because
+    /// otherwise nothing the campaign decided has anybody to say it to: a
+    /// mission is given to a formation, and a field battle of flat pools
+    /// could inherit no orders at all.
+    #[test]
+    fn each_army_fills_one_of_the_maps_formations() {
+        let reg = registry();
+        let file = reg.map("river_crossing").expect("shipped battle map");
+        let map = tactics_core::map::HexMap::from_map_file(file).expect("map parses");
+        let forces: Vec<BattleForce> = (0..4)
+            .map(|i| BattleForce {
+                army: ArmyId(i),
+                side: (i % 2) as u8,
+                units: (0..2)
+                    .map(|_| ArmyUnit {
+                        vehicle: "medium_tank".into(),
+                        crew: Vec::new(),
+                        name: None,
+                    })
+                    .collect(),
+                mission: None,
+            })
+            .collect();
+
+        let (placements, _, _) = deploy(&reg, &map, &forces, 0);
+        let named: Vec<&str> = placements
+            .iter()
+            .filter_map(|p| p.formation.as_deref())
+            .collect();
+        assert_eq!(named.len(), placements.len(), "nobody is left unattached");
+        for def in map.formations() {
+            assert_eq!(
+                named.iter().filter(|id| **id == def.id).count(),
+                2,
+                "one army of two vehicles per declared formation: {}",
+                def.id
+            );
+            let leaders = placements
+                .iter()
+                .filter(|p| p.formation.as_deref() == Some(def.id.as_str()) && p.leads)
+                .count();
+            assert_eq!(leaders, 1, "exactly one leader in {}", def.id);
+        }
+    }
+
+    /// The campaign's decision reaches the battlefield: an army that was
+    /// falling back fights toward the way out, without the player having to
+    /// order every platoon out again by hand.
+    #[test]
+    fn a_withdrawing_army_hands_its_formations_the_way_out() {
+        let reg = registry();
+        let file = reg.map("river_crossing").expect("shipped battle map");
+        let map = tactics_core::map::HexMap::from_map_file(file).expect("map parses");
+        let forces: Vec<BattleForce> = [0u8, 1]
+            .iter()
+            .map(|side| BattleForce {
+                army: ArmyId(*side as u32),
+                side: *side,
+                units: (0..2)
+                    .map(|_| ArmyUnit {
+                        vehicle: "medium_tank".into(),
+                        crew: Vec::new(),
+                        name: None,
+                    })
+                    .collect(),
+                // Only the defender was pulling back.
+                mission: (*side == 1).then_some(ArmyMission::Withdraw {
+                    to: tactics_core::offset_to_hex(13, 4),
+                }),
+            })
+            .collect();
+
+        let (placements, crews, _) = deploy(&reg, &map, &forces, 0);
+        let sides = vec![
+            SideState {
+                name: "A".into(),
+                ai: None,
+            },
+            SideState {
+                name: "B".into(),
+                ai: None,
+            },
+        ];
+        let mut state = BattleState::from_placements(
+            &reg,
+            map,
+            sides,
+            &placements,
+            &crews,
+            std::sync::Arc::new(tactics_core::roster::Roster::new()),
+            9,
+        );
+        let lines = inherit_army_missions(&reg, &mut state, &forces, ArmyId(0), ArmyId(1));
+        // One army per side, so one formation per side exists: a declaration
+        // nobody joined is dropped rather than carried empty.
+        assert_eq!(lines.len(), 1, "side 1's formation was told");
+
+        for formation in state.formations() {
+            let ordered = formation.latest_mission();
+            if formation.side == 1 {
+                assert!(
+                    matches!(ordered, Some(Mission::Withdraw { via }) if via == "east_road"),
+                    "{} should be leaving by its own lane, got {ordered:?}",
+                    formation.id
+                );
+            } else {
+                assert!(
+                    ordered.is_none(),
+                    "{} was told nothing on the map and must be told nothing here",
+                    formation.id
                 );
             }
         }
