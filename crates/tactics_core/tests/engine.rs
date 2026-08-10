@@ -969,9 +969,12 @@ fn an_army_mission_is_stored_and_said_out_loud() {
 }
 
 #[test]
-fn an_army_out_of_radio_range_takes_no_new_orders() {
+fn an_army_mission_out_of_range_waits_and_then_transmits() {
     // frontier's two companies per side start six hexes apart, so a two-hex
-    // net with nobody relaying leaves the junior one on its own.
+    // net with nobody relaying leaves the junior one on its own. An order for
+    // her is *not* refused — it waits at headquarters and goes out on the
+    // first morning the wire is up, which is the whole of this chunk on the
+    // campaign side.
     let reg = registry_with_net(2, false);
     let mut state = OverworldState::from_map(&reg, "frontier", 1).unwrap();
     let senior = state.senior_army(0).unwrap();
@@ -987,32 +990,81 @@ fn an_army_out_of_radio_range_takes_no_new_orders() {
         army: junior,
         mission: ArmyMission::Hold,
     };
-    assert_eq!(state.apply(&reg, &order), Err(OverworldError::OutOfContact));
+    let queued = state.apply(&reg, &order).expect("accepted, not refused");
+    assert!(
+        queued
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::ArmyOrdersWaiting { army } if *army == junior)),
+        "an order parked without a word would be as bad as one dropped: {queued:?}"
+    );
     assert_eq!(
         state.army(junior).unwrap().mission,
         None,
-        "and nothing was quietly written down anyway"
+        "she has not been told anything yet"
+    );
+    assert_eq!(
+        state.waiting_missions,
+        vec![(junior, ArmyMission::Hold)],
+        "it is sitting in the tray"
     );
 
-    // Closing up is what fixes it, and the campaign says so when it does.
+    // A second order replaces the first rather than queueing behind it: only
+    // one of them was ever going to be transmitted.
+    let to = tactics_core::offset_to_hex(6, 2);
+    state
+        .apply(
+            &reg,
+            &OverworldOrder::SetMission {
+                army: junior,
+                mission: ArmyMission::Advance { to },
+            },
+        )
+        .expect("accepted too");
+    assert_eq!(
+        state.waiting_missions,
+        vec![(junior, ArmyMission::Advance { to })],
+        "the newer order is the one headquarters means"
+    );
+
+    // Closing up is what fixes it, and the campaign says so when it does —
+    // then the order transmits, in that order, as an ordinary assignment.
     let beside = state.army(senior).unwrap().pos + hexx::Hex::new(1, 0);
     state.army_mut(junior).unwrap().pos = beside;
     let events = next_turn_of(&reg, &mut state, 0);
+    let restored = events
+        .iter()
+        .position(|e| matches!(e, OverworldEvent::ArmyContactRestored { army } if *army == junior))
+        .expect("coming back on the net is news too");
+    let assigned = events
+        .iter()
+        .position(
+            |e| matches!(e, OverworldEvent::ArmyMissionAssigned { army, .. } if *army == junior),
+        )
+        .expect("and the order she could not be given lands with it");
     assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, OverworldEvent::ArmyContactRestored { army } if *army == junior)),
-        "coming back on the net is news too: {events:?}"
+        restored < assigned,
+        "the wire comes back before anything goes down it: {events:?}"
     );
-    state.apply(&reg, &order).expect("she can hear again");
+    assert_eq!(
+        state.army(junior).unwrap().mission,
+        Some(ArmyMission::Advance { to }),
+        "and it is the order she was actually given"
+    );
+    assert!(
+        state.waiting_missions.is_empty(),
+        "nothing is transmitted twice"
+    );
 
     // With no command block there is no net to be outside of: the same order,
-    // from the same six hexes away, is simply an order.
+    // from the same six hexes away, is simply an order, landing at once and
+    // never touching the queue.
     let wireless = registry_wireless();
     let mut open = OverworldState::from_map(&wireless, "frontier", 1).unwrap();
     assert!(open.out_of_contact.is_empty(), "nothing was ever computed");
     open.apply(&wireless, &order)
         .expect("a campaign with no radios has no radio range");
+    assert_eq!(open.army(junior).unwrap().mission, Some(ArmyMission::Hold));
+    assert!(open.waiting_missions.is_empty());
 }
 
 #[test]
@@ -1051,16 +1103,19 @@ fn relay_carries_orders_through_a_chain_of_armies() {
             .any(|e| matches!(e, OverworldEvent::ArmyOutOfContact { army } if *army == far)),
         "an army the player cannot order must be told about: {events:?}"
     );
-    assert_eq!(
-        state.apply(
+    // Her orders are taken and held rather than refused; what relaying buys
+    // is that they go out today instead of whenever she closes up.
+    state
+        .apply(
             &alone,
             &OverworldOrder::SetMission {
                 army: far,
                 mission: ArmyMission::Hold,
             },
-        ),
-        Err(OverworldError::OutOfContact)
-    );
+        )
+        .expect("accepted, and waiting for a wire");
+    assert_eq!(state.waiting_missions, vec![(far, ArmyMission::Hold)]);
+    assert_eq!(state.army(far).unwrap().mission, None);
 }
 
 #[test]
@@ -5064,4 +5119,347 @@ fn a_flag_carries_between_formations_where_no_radio_does() {
         !contact_of(&silent, false),
         "and a mod that declares no visual medium has none"
     );
+}
+
+// --- orders wait instead of dying (chunk 9b) --------------------------------
+
+/// A leader and one crew on an open road, with an enemy parked far enough
+/// east to be nobody's business. Under a two-hex radio with nobody relaying,
+/// the crew's ten hexes leave her stone deaf, and a test can drive her back
+/// onto the net by hand.
+fn radio_stage(reg: &DataRegistry, seed: u64) -> BattleState {
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "radio_stage",
+        "palette": { "g": "grass" },
+        "rows": ["g".repeat(30)],
+        "formations": [ { "id": "net", "name": "The Net", "side": 0 } ],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let mut leader = unit_at([0, 0], 0, "recon_car", "Leader");
+    leader.formation = Some("net".into());
+    leader.leads = true;
+    let mut crew = unit_at([10, 0], 0, "recon_car", "Stray");
+    crew.formation = Some("net".into());
+    let enemy = unit_at([29, 0], 1, "recon_car", "Far Foe");
+    let placements = vec![leader, crew, enemy];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    )
+}
+
+/// A two-hex radio, nobody relaying, no flags: the narrowest net there is, so
+/// a girl ten hexes out is out for a reason a test can state in one line.
+fn radio_rules() -> DataRegistry {
+    let mut reg = registry();
+    reg.command = Some(command_rules(2, false, 0));
+    strip_radios(&mut reg);
+    reg
+}
+
+/// Play a round out so contact is computed and the next planning phase opens.
+fn settle(reg: &DataRegistry, state: &mut BattleState) -> Vec<BattleEvent> {
+    commit_all(reg, state);
+    state.resolve_round(reg)
+}
+
+#[test]
+fn an_order_to_a_cut_off_unit_waits_at_the_radio() {
+    // The heart of the chunk: an order to a girl who cannot hear it is
+    // *accepted* and held, not refused. Refusing was the old model, and it
+    // made the player's only recourse "remember to click again", which is
+    // bookkeeping rather than command.
+    let reg = radio_rules();
+    let mut state = radio_stage(&reg, 4);
+    let crew = UnitId(1);
+    settle(&reg, &mut state);
+    assert!(!state.hears_orders(crew), "ten hexes on a two-hex radio");
+
+    let first = tactics_core::offset_to_hex(13, 0);
+    let events = state
+        .apply(
+            &reg,
+            &Order::Radio {
+                unit: crew,
+                to: Some(first),
+                fire: None,
+            },
+        )
+        .expect("accepted, not refused");
+    assert_eq!(
+        events,
+        vec![BattleEvent::OrdersWaiting { unit: crew }],
+        "and said out loud once: an order silently parked is as illegible as \
+         one silently dropped"
+    );
+    let hers = state.unit(crew).expect("she is alive");
+    assert!(
+        hers.intent.path.is_empty() && !hers.planned,
+        "not a step of it reached her"
+    );
+    assert_eq!(
+        state
+            .command
+            .waiting_for(crew)
+            .expect("it is at the radio")
+            .destination,
+        Some(first),
+        "the destination is what is held — never a path, which she will \
+         recompute from wherever she actually is"
+    );
+
+    // Countermanding something that never went out replaces it rather than
+    // queueing behind it. Two orders in the same tray is not a state anybody
+    // could act on, exactly as it is not for a formation's mission.
+    let second = tactics_core::offset_to_hex(7, 0);
+    state
+        .apply(
+            &reg,
+            &Order::Radio {
+                unit: crew,
+                to: Some(second),
+                fire: None,
+            },
+        )
+        .expect("accepted too");
+    assert_eq!(
+        state.command.waiting_for(crew).unwrap().destination,
+        Some(second)
+    );
+    assert_eq!(state.command.waiting().len(), 1, "one slot, one girl");
+}
+
+#[test]
+fn waiting_orders_arrive_with_contact_and_are_repathed() {
+    // Delivery is at the planning phase — WEGO's bargain is that resolution
+    // plays out what was planned — and what is delivered is the destination,
+    // re-pathed. She has driven eight hexes since it was given; a route
+    // computed back then would walk her through hexes she is nowhere near.
+    let reg = radio_rules();
+    let mut state = radio_stage(&reg, 4);
+    let crew = UnitId(1);
+    settle(&reg, &mut state);
+    let was = state.unit(crew).expect("alive").pos;
+
+    // Three hexes of grass is a wheeled car's round, and the destination has
+    // to be affordable from where she will *be*: nothing about the order was
+    // pathable from where she was when it was given, which is the point.
+    let to = tactics_core::offset_to_hex(4, 0);
+    state
+        .apply(
+            &reg,
+            &Order::Radio {
+                unit: crew,
+                to: Some(to),
+                fire: None,
+            },
+        )
+        .expect("accepted");
+
+    // She closes up on her commander overnight, which is what the whole
+    // system is waiting for.
+    let beside = tactics_core::offset_to_hex(1, 0);
+    state.unit_mut(crew).unwrap().pos = beside;
+    let events = settle(&reg, &mut state);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, BattleEvent::OrdersDelivered { unit } if *unit == crew))
+            .count(),
+        1,
+        "the order lands, once, and says so: {events:?}"
+    );
+    assert!(
+        state.command.waiting().is_empty(),
+        "and is not delivered again tomorrow"
+    );
+
+    let path = &state.unit(crew).expect("alive").intent.path;
+    assert_eq!(
+        path.last().copied(),
+        Some(to),
+        "she is going where she was told"
+    );
+    assert_eq!(
+        path.first().expect("a route").distance_to(beside),
+        1,
+        "and the first step is from where she is standing now"
+    );
+    assert!(
+        path.first().expect("a route").distance_to(was) > 1,
+        "which is nowhere near where she was when it was given ({was:?})"
+    );
+}
+
+#[test]
+fn clearing_reaches_the_radio_but_not_the_girl() {
+    // Not sending is free, so taking back an order that never went out needs
+    // no contact. Stopping *her* is a different thing entirely: she is
+    // driving on her last orders down a wire that is dead, and clearing her
+    // intent from here would be the commander countermanding into silence.
+    let reg = radio_rules();
+    let mut state = radio_stage(&reg, 4);
+    let crew = UnitId(1);
+    settle(&reg, &mut state);
+    assert!(!state.hears_orders(crew));
+
+    // Her own judgment about her own tank, which is what a planner issues and
+    // what needs no radio at all.
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: crew,
+                to: tactics_core::offset_to_hex(13, 0),
+            },
+        )
+        .expect("a crew decides her own route");
+    let hers = state.unit(crew).expect("alive").intent.clone();
+    assert!(!hers.path.is_empty(), "she is going somewhere");
+
+    state
+        .apply(
+            &reg,
+            &Order::Radio {
+                unit: crew,
+                to: Some(tactics_core::offset_to_hex(4, 0)),
+                fire: None,
+            },
+        )
+        .expect("accepted, and waiting");
+    assert!(state.command.waiting_for(crew).is_some());
+
+    state
+        .apply(&reg, &Order::ClearIntent { unit: crew })
+        .expect("clearing needs no wire");
+    assert!(
+        state.command.waiting_for(crew).is_none(),
+        "the message never leaves the radio"
+    );
+    assert_eq!(
+        state.unit(crew).expect("alive").intent,
+        hers,
+        "and she carries on: you cannot reach her to stop her"
+    );
+}
+
+#[test]
+fn a_dead_girl_takes_no_delivery() {
+    // An order for somebody who is not coming back is not news, it is an
+    // epitaph. The slot goes quietly.
+    let reg = radio_rules();
+    let mut state = radio_stage(&reg, 4);
+    let crew = UnitId(1);
+    settle(&reg, &mut state);
+    state
+        .apply(
+            &reg,
+            &Order::Radio {
+                unit: crew,
+                to: Some(tactics_core::offset_to_hex(13, 0)),
+                fire: None,
+            },
+        )
+        .expect("accepted");
+
+    strike_down(&mut state, crew);
+    let events = settle(&reg, &mut state);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::OrdersDelivered { .. })),
+        "nothing is delivered to a wreck: {events:?}"
+    );
+    assert!(
+        state.command.waiting().is_empty(),
+        "and the queue does not carry her for the rest of the battle"
+    );
+}
+
+#[test]
+fn a_radioed_order_to_a_girl_on_the_net_is_just_an_order() {
+    // The ordinary case, which has to stay the ordinary code: a commander
+    // talking to somebody who can hear her produces exactly what `SetMove`
+    // and `SetFire` produce, with nothing held and nothing announced.
+    let reg = radio_rules();
+    let mut radioed = radio_stage(&reg, 4);
+    let mut plain = radio_stage(&reg, 4);
+    let leader = UnitId(0);
+    let to = tactics_core::offset_to_hex(3, 0);
+    let at = tactics_core::offset_to_hex(6, 0);
+
+    let events = radioed
+        .apply(
+            &reg,
+            &Order::Radio {
+                unit: leader,
+                to: Some(to),
+                fire: Some(FireIntent::Area { at, weapon: 0 }),
+            },
+        )
+        .expect("her own commander, on the net");
+    assert!(
+        events.is_empty(),
+        "nothing waits and nothing is announced: {events:?}"
+    );
+    assert!(radioed.command.waiting().is_empty());
+
+    plain
+        .apply(&reg, &Order::SetMove { unit: leader, to })
+        .expect("move");
+    plain
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: leader,
+                fire: FireIntent::Area { at, weapon: 0 },
+            },
+        )
+        .expect("fire");
+    assert_eq!(
+        radioed.unit(leader).unwrap().intent,
+        plain.unit(leader).unwrap().intent,
+        "the wire changes when an order lands, never what it says"
+    );
+    assert!(radioed.unit(leader).unwrap().planned);
+
+    // And an order that was never legal is refused to the commander's face
+    // whether or not anybody could hear it — the queue must never become a
+    // way to smuggle a shot at a friendly past the rules.
+    let mut deaf = radio_stage(&reg, 4);
+    let crew = UnitId(1);
+    settle(&reg, &mut deaf);
+    assert!(!deaf.hears_orders(crew));
+    assert_eq!(
+        deaf.apply(
+            &reg,
+            &Order::Radio {
+                unit: crew,
+                to: None,
+                fire: Some(FireIntent::Target {
+                    target: UnitId(0),
+                    weapon: 0
+                }),
+            },
+        ),
+        Err(tactics_core::battle::OrderError::FriendlyTarget)
+    );
+    assert!(deaf.command.waiting().is_empty(), "and nothing was queued");
 }

@@ -190,6 +190,17 @@ pub enum OverworldEvent {
     ArmyContactRestored {
         army: ArmyId,
     },
+    /// An order for this army could not be got to it and is waiting at
+    /// headquarters until it can. It transmits at the first turn start that
+    /// finds the army back on the net, arriving as an ordinary
+    /// [`Self::ArmyMissionAssigned`].
+    ///
+    /// The campaign half of the battle's [`crate::battle::Event::OrdersWaiting`],
+    /// and it exists for the same reason: an order silently parked is as
+    /// illegible as one silently dropped.
+    ArmyOrdersWaiting {
+        army: ArmyId,
+    },
     GameEnded {
         winner: Option<u8>,
     },
@@ -212,8 +223,10 @@ pub enum OverworldError {
     /// it would be two things to learn.
     #[error("tile is not on the map")]
     NotOnMap,
-    #[error("army is out of radio contact and cannot be given new orders")]
-    OutOfContact,
+    // There is deliberately no `OutOfContact` refusal any more. An order to an
+    // army beyond the net used to be rejected; it now waits at headquarters
+    // and transmits when the wire comes back, so being unreachable is a delay
+    // rather than an error and there is nothing left for this variant to say.
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,6 +261,17 @@ pub struct OverworldState {
     /// carried orders are therefore the same thing here.
     #[serde(default)]
     pub out_of_contact: Vec<ArmyId>,
+    /// Missions given to armies nobody could reach, waiting at headquarters
+    /// in army-id order — one slot each, because a newer order replaces an
+    /// older one that never went out rather than queueing behind it.
+    ///
+    /// The campaign's counterpart of the battle's radioed-order queue, minus
+    /// the re-pathing: an army mission already names ground rather than a
+    /// route, so there is nothing to recompute when it finally transmits.
+    /// Empty for the whole campaign where no mod declares command rules —
+    /// everybody is in contact then, and an order given is an order received.
+    #[serde(default)]
+    pub waiting_missions: Vec<(ArmyId, ArmyMission)>,
     pub over: Option<Option<u8>>,
     /// Drives casualty resolution. Seeded, and consumed in a fixed order, so
     /// a campaign replays identically.
@@ -334,6 +358,7 @@ impl OverworldState {
             turn: 1,
             active_side: 0,
             out_of_contact: Vec::new(),
+            waiting_missions: Vec::new(),
             over: None,
             rng: ChaCha8Rng::seed_from_u64(seed),
         };
@@ -343,6 +368,9 @@ impl OverworldState {
         // set itself has to be right from the first order, or a mission the
         // wire could never carry would be accepted on day one and refused on
         // day two for no reason the player could see.
+        // No waiting missions are transmitted here, unlike at every later turn
+        // start: a campaign that has not begun cannot have been given an order
+        // yet, so the queue is necessarily empty.
         let mut unheard = Vec::new();
         state.recompute_contact(registry, state.active_side, &mut unheard);
         Ok(state)
@@ -638,8 +666,14 @@ impl OverworldState {
             // "Stand where you are" needs no tile to exist.
             ArmyMission::Hold => {}
         }
+        // An army nobody can reach is not refused its orders, it is *not yet*
+        // given them: the order waits at headquarters and goes out on the
+        // first morning the wire is up. Refusing was the earlier model and it
+        // made the player's only recourse "remember to ask again", which is
+        // bookkeeping rather than command.
         if !self.in_contact(id) {
-            return Err(OverworldError::OutOfContact);
+            self.hold_mission(id, mission);
+            return Ok(vec![OverworldEvent::ArmyOrdersWaiting { army: id }]);
         }
         // Silent replacement, exactly as the battle layer does it: a formation
         // — or an army — holding two missions at once has no meaning anybody
@@ -650,6 +684,49 @@ impl OverworldState {
             army: id,
             mission,
         }])
+    }
+
+    /// Park a mission for an army out of range, replacing anything already
+    /// parked for her. Kept in army-id order so what transmits first cannot
+    /// depend on the order the player happened to click in.
+    fn hold_mission(&mut self, id: ArmyId, mission: ArmyMission) {
+        match self.waiting_missions.iter_mut().find(|(a, _)| *a == id) {
+            Some(slot) => slot.1 = mission,
+            None => {
+                self.waiting_missions.push((id, mission));
+                self.waiting_missions.sort_by_key(|(a, _)| *a);
+            }
+        }
+    }
+
+    /// Send out every parked mission whose army is back on the net.
+    ///
+    /// Called at a turn start, immediately after contact is recomputed, so an
+    /// army that closed up overnight has its orders before it is asked to
+    /// carry any out. Only the side whose contact was just read is considered:
+    /// everybody else's entry in `out_of_contact` is yesterday's answer, and
+    /// transmitting on it would be headquarters talking down a wire nobody has
+    /// checked.
+    ///
+    /// What lands is an ordinary mission assignment — same field written, same
+    /// event — because a delayed order is not a different kind of order.
+    fn transmit_waiting_missions(&mut self, side: u8) -> Vec<OverworldEvent> {
+        let mut events = Vec::new();
+        let waiting = std::mem::take(&mut self.waiting_missions);
+        let mut still_waiting = Vec::new();
+        for (id, mission) in waiting {
+            // Destroyed while the order sat in the tray: dropped in silence,
+            // there being nobody to give it to.
+            let Some(army) = self.army(id) else { continue };
+            if army.side != side || !self.in_contact(id) {
+                still_waiting.push((id, mission));
+                continue;
+            }
+            self.army_mut(id).expect("checked above").mission = Some(mission.clone());
+            events.push(OverworldEvent::ArmyMissionAssigned { army: id, mission });
+        }
+        self.waiting_missions = still_waiting;
+        events
     }
 
     fn apply_move(
@@ -831,6 +908,9 @@ impl OverworldState {
         // Last, with everybody standing where the night left them: who can be
         // reached today decides which orders may be given today.
         self.recompute_contact(registry, next, &mut events);
+        // ...and whatever headquarters has been holding for the ones it can
+        // reach again goes out with the morning's traffic.
+        events.extend(self.transmit_waiting_missions(next));
         events
     }
 

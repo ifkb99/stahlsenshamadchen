@@ -52,6 +52,30 @@ pub enum Order {
     SetMove { unit: UnitId, to: Hex },
     /// Tell a unit what to shoot at.
     SetFire { unit: UnitId, fire: FireIntent },
+    /// The commander's own order to one crew, carried by the wire.
+    ///
+    /// Identical to [`Self::SetMove`] plus [`Self::SetFire`] for a girl who
+    /// can hear it, and *held at the radio* for one who cannot: it waits in
+    /// her formation's queue and is delivered at the first planning phase she
+    /// is back in contact for.
+    ///
+    /// The distinction between this and the two orders above is the whole
+    /// point of it, and it is a distinction about **who is speaking** rather
+    /// than about what is said. A planner issuing `SetMove` is a crew's own
+    /// judgment about her own tank — she does not need to be radioed her own
+    /// decision, and gating it on contact would make a cut-off girl freeze
+    /// instead of soldiering on. This is the *commander* talking, and a
+    /// commander who cannot be heard has not given an order yet. The engine
+    /// cannot tell one caller from another, so the caller says which it is by
+    /// which order it sends.
+    ///
+    /// Either half may be `None`: an order about the route says nothing about
+    /// the target, and vice versa.
+    Radio {
+        unit: UnitId,
+        to: Option<Hex>,
+        fire: Option<FireIntent>,
+    },
     /// Forget a unit's orders; it reverts to unplanned and holds fire.
     ClearIntent { unit: UnitId },
     /// Give a formation its standing mission, replacing any it already had.
@@ -177,6 +201,22 @@ pub enum Event {
     OutOfContact {
         unit: UnitId,
     },
+    /// A radioed order could not reach this girl and is waiting at the radio
+    /// until it can. She is still driving on her last orders in the meantime.
+    ///
+    /// Said out loud for exactly the reason the refusal it replaces was: an
+    /// order silently parked is as illegible as one silently dropped. The
+    /// player has to be able to tell "she has not been told yet" from "the
+    /// game ate my click", and the only difference between them is this line.
+    OrdersWaiting {
+        unit: UnitId,
+    },
+    /// A radioed order finally reached her, at the top of a round, and is now
+    /// her intent for it — re-pathed from where she actually is, which may be
+    /// nowhere near where she was when it was given.
+    OrdersDelivered {
+        unit: UnitId,
+    },
     /// The wires are back: this unit is inside the command net again and will
     /// hear what she is told. Emitted only on the change, so a platoon
     /// motoring along beside its leader says nothing for the whole battle.
@@ -285,9 +325,20 @@ impl BattleState {
                 self.set_fire(registry, *unit, *fire)?;
                 Ok(Vec::new())
             }
+            Order::Radio { unit, to, fire } => self.radio(registry, *unit, *to, *fire),
             Order::ClearIntent { unit } => {
-                let side = self.planning_unit_side(*unit)?;
-                let _ = side;
+                self.planning_unit_side(*unit)?;
+                // Not sending is free, so taking back what has not gone out
+                // needs no contact at all: the message never leaves the radio.
+                self.command.drop_orders(*unit);
+                // What it cannot do is reach *her*. A girl off the net is
+                // following her last orders and there is nobody to tell her to
+                // stop — clearing her intent here would be the commander
+                // countermanding an order down a wire she has just been told
+                // is dead.
+                if !self.hears_orders(*unit) {
+                    return Ok(Vec::new());
+                }
                 let u = self.unit_mut(*unit).ok_or(OrderError::NoSuchUnit)?;
                 u.intent = UnitIntent::default();
                 u.planned = false;
@@ -298,6 +349,100 @@ impl BattleState {
             }
             Order::Commit { side } => self.commit(*side),
         }
+    }
+
+    /// Whether a girl can currently hear her chain of command.
+    ///
+    /// True for a unit in no formation, for a unit who is not there at all,
+    /// and — because `out_of_contact` is only ever filled where a mod declares
+    /// command rules — for absolutely everybody in a game that never asked for
+    /// a signals net. That is what makes the queue below additive: with no
+    /// rules nothing is ever held, so no order behaves differently and the
+    /// determinism baseline cannot move.
+    pub fn hears_orders(&self, unit: UnitId) -> bool {
+        self.formation_of(unit).is_none_or(|f| f.in_contact(unit))
+    }
+
+    /// The commander's direct order to one crew: applied now if she can hear
+    /// it, held at the radio if she cannot.
+    ///
+    /// Validation runs **before** anything is queued, so the queue can never
+    /// hold an order that was never legal — a shot at a friend or at somebody
+    /// nobody has spotted is refused to the commander's face whether or not
+    /// the wire is up. The one thing deliberately *not* checked for a held
+    /// order is whether the destination can be pathed to: she will re-path
+    /// from wherever she is when it arrives, and refusing today on the traffic
+    /// of today would be answering a question nobody asked. That is exactly
+    /// how a [`Mission`] behaves, and for the same reason.
+    fn radio(
+        &mut self,
+        registry: &DataRegistry,
+        id: UnitId,
+        to: Option<Hex>,
+        fire: Option<FireIntent>,
+    ) -> Result<Vec<Event>, OrderError> {
+        self.planning_unit_side(id)?;
+        if let Some(fire) = fire {
+            self.check_fire(registry, id, fire)?;
+        }
+        if self.hears_orders(id) {
+            // Word for word what `SetMove` then `SetFire` would have done.
+            // There is deliberately no second code path for an order that
+            // arrives instantly: being in contact is the ordinary case, and it
+            // has to be the ordinary code.
+            if let Some(to) = to {
+                self.set_move(registry, id, to)?;
+            }
+            if let Some(fire) = fire {
+                self.set_fire(registry, id, fire)?;
+            }
+            return Ok(Vec::new());
+        }
+        self.command.hold_orders(id, to, fire);
+        Ok(vec![Event::OrdersWaiting { unit: id }])
+    }
+
+    /// Hand out every radioed order whose girl is back on the net.
+    ///
+    /// Run at the top of a round, once intents have been cleared, because
+    /// **delivery is a planning-phase event**: WEGO's bargain is that
+    /// resolution plays out what was planned, and an order landing mid-tick
+    /// would be new information acted on inside a round that had already been
+    /// committed. Walked in unit-id order, so what it emits cannot depend on a
+    /// hash.
+    ///
+    /// The destination is re-pathed here rather than replayed: she may be
+    /// half a map from where she stood when it was given. A route that no
+    /// longer exists drops the movement half silently in the code but not in
+    /// the log — the delivery is still announced, because what the player
+    /// needs to know is that the order got there.
+    fn deliver_waiting_orders(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
+        if self.command.waiting().is_empty() {
+            return;
+        }
+        let mut undelivered = Vec::new();
+        for (unit, orders) in self.command.take_waiting() {
+            // Dead or driven off the map: dropped without a word. An order to
+            // a girl who is not coming back is not news, it is an epitaph.
+            if self.unit(unit).is_none() {
+                continue;
+            }
+            if !self.hears_orders(unit) {
+                undelivered.push((unit, orders));
+                continue;
+            }
+            if let Some(to) = orders.destination {
+                let _ = self.set_move(registry, unit, to);
+            }
+            // The target may have burned while the order was in the drawer.
+            if let Some(fire) = orders.fire
+                && self.check_fire(registry, unit, fire).is_ok()
+            {
+                let _ = self.set_fire(registry, unit, fire);
+            }
+            events.push(Event::OrdersDelivered { unit });
+        }
+        self.command.keep_waiting(undelivered);
     }
 
     /// Record a formation's standing mission, refusing anything a formation
@@ -397,7 +542,27 @@ impl BattleState {
         id: UnitId,
         fire: FireIntent,
     ) -> Result<(), OrderError> {
-        let side = self.planning_unit_side(id)?;
+        self.planning_unit_side(id)?;
+        self.check_fire(registry, id, fire)?;
+        let unit = self.unit_mut(id).ok_or(OrderError::NoSuchUnit)?;
+        unit.intent.fire = fire;
+        unit.planned = true;
+        Ok(())
+    }
+
+    /// Everything about a fire order that can be judged when it is given.
+    ///
+    /// Split out of [`Self::set_fire`] so a radioed order can be checked
+    /// before it is queued: an order held for a girl who cannot hear it has to
+    /// have been legal when it was given, or the queue becomes a way to smuggle
+    /// a shot at a friendly past the rules by being out of contact at the time.
+    fn check_fire(
+        &self,
+        registry: &DataRegistry,
+        id: UnitId,
+        fire: FireIntent,
+    ) -> Result<(), OrderError> {
+        let side = self.unit(id).ok_or(OrderError::NoSuchUnit)?.side;
         // Validate only what cannot change as the round plays out. Range and
         // line of sight are deliberately not checked here: a unit may be
         // ordered to drive into a firing position and engage in the same
@@ -421,9 +586,6 @@ impl BattleState {
                 self.weapon_def(registry, id, weapon)?;
             }
         }
-        let unit = self.unit_mut(id).ok_or(OrderError::NoSuchUnit)?;
-        unit.intent.fire = fire;
-        unit.planned = true;
         Ok(())
     }
 
@@ -828,6 +990,11 @@ impl BattleState {
             committed: vec![false; self.sides.len()],
         };
         events.push(Event::RoundStarted { round: self.round });
+        // Last, and after the round is open: an order held at the radio is
+        // delivered *into* the planning phase it arrives for, which means the
+        // intent it becomes survives the clearing above and the player sees it
+        // on the board she is about to plan on.
+        self.deliver_waiting_orders(registry, events);
     }
 
     /// Drive off the map anyone standing on an exit they are entitled to use.

@@ -580,6 +580,17 @@ fn pump_events(
                 ));
             }
         }
+        // An order taken but not yet sent. The player has to hear this or the
+        // army looks like it is ignoring her; the assignment line follows on
+        // the morning it actually goes out.
+        OverworldEvent::ArmyOrdersWaiting { army } => {
+            if ours(&overworld.state, *army) {
+                log.push(format!(
+                    "No contact with {}. Orders held for transmission.",
+                    army_name(&overworld.state, *army)
+                ));
+            }
+        }
         OverworldEvent::GameEnded { winner } => match winner {
             Some(w) => log.push(format!(
                 "Campaign over. {} rules the frontier.",
@@ -1141,6 +1152,22 @@ fn update_ui(
         });
         if !state.in_contact(army.id) {
             lines.push("Out of radio contact".into());
+        }
+        // An order given but not yet sent is its own line rather than a
+        // rewrite of the one above: "what she is doing" and "what she is about
+        // to be told" are different facts, and a panel that showed only the
+        // second would have the player watching an army ignore orders it has
+        // never heard.
+        if let Some((_, mission)) = state.waiting_missions.iter().find(|(id, _)| *id == army.id) {
+            lines.push(match mission {
+                ArmyMission::Advance { to } => {
+                    format!("Waiting to transmit: advance on {}", place(*to))
+                }
+                ArmyMission::Hold => "Waiting to transmit: hold".into(),
+                ArmyMission::Withdraw { to } => {
+                    format!("Waiting to transmit: fall back on {}", place(*to))
+                }
+            });
         }
         lines.push("Units:".into());
         for u in &army.units {

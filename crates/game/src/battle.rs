@@ -1191,6 +1191,20 @@ fn pump_events(
             BattleEvent::ContactRestored { unit } => {
                 log.push(format!("{} is back in contact.", name(*unit)));
             }
+            // The player's own order, acknowledged rather than refused. This
+            // line replaces the flat refusal the input path used to print, and
+            // it has to be at least as loud: she clicked, something visibly
+            // did not happen on the board, and the only thing standing between
+            // that and "the game ate my click" is this sentence.
+            BattleEvent::OrdersWaiting { unit } => {
+                log.push(format!(
+                    "No contact with {} - orders will be radioed when she can hear them.",
+                    name(*unit)
+                ));
+            }
+            BattleEvent::OrdersDelivered { unit } => {
+                log.push(format!("{} has her orders.", name(*unit)));
+            }
             // The upward wire: a report reaching the commander is the log's
             // business even when the spot itself was already shown, because
             // who *told* her — and that somebody could — is the information.
@@ -1385,9 +1399,10 @@ fn handle_input(
             set_intent(
                 registry,
                 &mut battle,
-                &Order::SetFire {
+                &Order::Radio {
                     unit,
-                    fire: FireIntent::Hold,
+                    to: None,
+                    fire: Some(FireIntent::Hold),
                 },
                 &mut log,
             );
@@ -1471,9 +1486,10 @@ fn handle_input(
             set_intent(
                 registry,
                 &mut battle,
-                &Order::SetFire {
+                &Order::Radio {
                     unit,
-                    fire: FireIntent::Area { at: hex, weapon },
+                    to: None,
+                    fire: Some(FireIntent::Area { at: hex, weapon }),
                 },
                 &mut log,
             );
@@ -1520,7 +1536,11 @@ fn handle_input(
         set_intent(
             registry,
             &mut battle,
-            &Order::SetMove { unit, to: hex },
+            &Order::Radio {
+                unit,
+                to: Some(hex),
+                fire: None,
+            },
             &mut log,
         );
     }
@@ -1528,37 +1548,28 @@ fn handle_input(
 
 /// Apply one planning order and refresh the overlays that show it.
 ///
-/// Direct orders are contact-gated: a crew who cannot hear her chain of
-/// command cannot be told anything new, and the refusal names her and says
-/// what she will do instead. Silence would be the failure mode — an order
-/// that vanished would be indistinguishable from a bug, which is the bargain
-/// `OrderRefused` already makes for a crew that will not obey. Taking orders
-/// *back* (`ClearIntent`) is exempt: it is not something anyone has to hear.
+/// The player's direct orders travel as [`Order::Radio`] rather than
+/// `SetMove`/`SetFire`, because they are the *commander* speaking and a
+/// commander needs a wire. The engine decides what that costs: a girl on the
+/// net gets her orders instantly and identically to before, one who is not
+/// has them held at the radio and delivered when she can hear again. Nothing
+/// is gated here any more — the refusal this function used to print became an
+/// acknowledgement, and it now hangs off the `OrdersWaiting` event so the
+/// player's own order and the enemy's news arrive in the log by the same road.
+///
+/// Events come back out and go into the animation queue for exactly that
+/// reason; the mission path already does the same.
 fn set_intent(
     registry: &tactics_core::data::DataRegistry,
     battle: &mut Battle,
     order: &Order,
     log: &mut BattleLog,
 ) {
-    let addressed = match order {
-        Order::SetMove { unit, .. } | Order::SetFire { unit, .. } => Some(*unit),
-        _ => None,
-    };
-    if let Some(id) = addressed
-        && let Some(unit) = battle.state.unit(id)
-        && battle
-            .state
-            .formation_of(id)
-            .is_some_and(|f| !f.in_contact(id))
-    {
-        log.push(format!(
-            "No contact with {} - she is following her last orders.",
-            unit.name
-        ));
-        return;
-    }
     match battle.state.apply(registry, order) {
-        Ok(_) => battle.range_dirty = true,
+        Ok(events) => {
+            battle.anim.extend(events);
+            battle.range_dirty = true;
+        }
         Err(e) => log.push(format!("Order refused: {e}")),
     }
 }
@@ -1796,9 +1807,10 @@ fn engage_with_best(
     set_intent(
         registry,
         battle,
-        &Order::SetFire {
+        &Order::Radio {
             unit,
-            fire: FireIntent::Target { target, weapon },
+            to: None,
+            fire: Some(FireIntent::Target { target, weapon }),
         },
         log,
     );
@@ -2301,10 +2313,21 @@ fn format_formation(
             ));
             continue;
         }
-        let tag = if formation.in_contact(*id) {
+        // Two different silences, and the panel must not conflate them: one
+        // says she cannot hear you, the other says you have already spoken and
+        // she has not heard it yet. A player who cannot tell them apart cannot
+        // tell whether to reissue the order.
+        let mut tags: Vec<&str> = Vec::new();
+        if !formation.in_contact(*id) {
+            tags.push("out of contact");
+        }
+        if state.command.waiting_for(*id).is_some() {
+            tags.push("orders waiting");
+        }
+        let tag = if tags.is_empty() {
             String::new()
         } else {
-            " - out of contact".into()
+            format!(" - {}", tags.join(", "))
         };
         lines.push(format!("  {}{}", unit.name, tag));
     }

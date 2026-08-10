@@ -157,6 +157,19 @@ fn main() {
                 Event::OutOfContact { unit } => {
                     println!("   >> {} is out of contact", name(&state, *unit))
                 }
+                // The two halves of a direct order waiting for a wire. Only
+                // ever a human commander's, so the narrator never prints them
+                // — an AI side's units decide for themselves and need no
+                // radio to hear their own minds.
+                Event::OrdersWaiting { unit } => {
+                    println!(
+                        "   >> orders for {} are waiting at the radio",
+                        name(&state, *unit)
+                    )
+                }
+                Event::OrdersDelivered { unit } => {
+                    println!("   >> orders reach {}", name(&state, *unit))
+                }
                 Event::ContactRestored { unit } => {
                     println!("   >> {} is back in contact", name(&state, *unit))
                 }

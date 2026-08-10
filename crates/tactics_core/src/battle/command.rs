@@ -29,7 +29,7 @@
 //! events and to make AI decisions, and an iteration-order dependency in that
 //! walk is exactly the bug that hid in `fog::recompute` for months.
 
-use super::{BattleState, Event, UnitId};
+use super::{BattleState, Event, FireIntent, UnitId};
 use crate::data::DataRegistry;
 use crate::map::{FormationDef, Objective, ObjectiveKind, UnitPlacement};
 use hexx::Hex;
@@ -266,6 +266,31 @@ impl Formation {
     }
 }
 
+/// A commander's direct order to one crew, held at the radio until she can be
+/// reached.
+///
+/// The **destination**, never the path. She re-paths from wherever she is when
+/// the order finally arrives, which is the only honest thing to store: a route
+/// computed from the hex she stood on when the order was given would walk her
+/// through positions that stopped existing while the wire was dead. That is
+/// the same reason a [`Mission`] names ground rather than a route.
+///
+/// Both halves accumulate in one slot, because "drive there and shoot that"
+/// is one instruction to a person even when the UI sends it as two keystrokes.
+/// A newer order of either kind replaces the older half of its own kind and
+/// leaves the other standing — countermanding the route does not countermand
+/// the target.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WaitingOrders {
+    /// Where she is to end up, re-pathed on delivery.
+    #[serde(default)]
+    pub destination: Option<Hex>,
+    /// What she is to shoot at. Dropped on delivery if the target has since
+    /// died — an order to engage a wreck is not an order.
+    #[serde(default)]
+    pub fire: Option<FireIntent>,
+}
+
 /// One entry in a side's command picture: an enemy as last *reported*, which
 /// is a different thing from an enemy as currently seen. `fresh` is whether
 /// somebody in contact can see it right now; a stale contact is a ghost at
@@ -297,6 +322,19 @@ pub struct CommandState {
     /// the first recompute so a save from before pictures opens unchanged.
     #[serde(default)]
     pictures: Vec<Vec<Contact>>,
+    /// Radioed orders that have not reached the girl they were meant for,
+    /// in unit-id order.
+    ///
+    /// Only [`crate::battle::Order::Radio`] ever fills this — the commander's
+    /// own voice, which needs a wire. A planner's `SetMove` is a crew's own
+    /// judgment about her own tank and never queues, which is what keeps an
+    /// AI-driven battle bit-identical to the one before this existed.
+    ///
+    /// Empty for the whole battle where no mod declares command rules:
+    /// nobody is ever out of contact then, so a radioed order applies on the
+    /// spot and there is nothing to hold.
+    #[serde(default)]
+    waiting: Vec<(UnitId, WaitingOrders)>,
 }
 
 impl CommandState {
@@ -347,6 +385,7 @@ impl CommandState {
         Self {
             formations,
             pictures: Vec::new(),
+            waiting: Vec::new(),
         }
     }
 
@@ -395,6 +434,71 @@ impl CommandState {
             }
             None => false,
         }
+    }
+
+    /// Every radioed order still waiting for its girl, in unit-id order.
+    /// What the formation panel reads to say "orders waiting" beside her name.
+    pub fn waiting(&self) -> &[(UnitId, WaitingOrders)] {
+        &self.waiting
+    }
+
+    /// The orders held for one unit, if any.
+    pub fn waiting_for(&self, unit: UnitId) -> Option<&WaitingOrders> {
+        self.waiting
+            .iter()
+            .find(|(id, _)| *id == unit)
+            .map(|(_, orders)| orders)
+    }
+
+    /// Merge a radioed order into this unit's slot, creating it if she has
+    /// none. Each half replaces its own kind and leaves the other alone;
+    /// `None` for a half means "this order said nothing about that".
+    ///
+    /// Kept sorted by unit id, because this list is walked to deliver orders
+    /// and to emit events, and an insertion order is a hash order in disguise
+    /// the moment anything reorders the callers.
+    pub(super) fn hold_orders(
+        &mut self,
+        unit: UnitId,
+        destination: Option<Hex>,
+        fire: Option<FireIntent>,
+    ) {
+        if !self.waiting.iter().any(|(id, _)| *id == unit) {
+            self.waiting.push((unit, WaitingOrders::default()));
+            self.waiting.sort_by_key(|(id, _)| *id);
+        }
+        let slot = &mut self
+            .waiting
+            .iter_mut()
+            .find(|(id, _)| *id == unit)
+            .expect("present or just pushed")
+            .1;
+        if destination.is_some() {
+            slot.destination = destination;
+        }
+        if fire.is_some() {
+            slot.fire = fire;
+        }
+    }
+
+    /// Forget what was being held for this unit. Returns whether there was
+    /// anything to forget.
+    pub(super) fn drop_orders(&mut self, unit: UnitId) -> bool {
+        let before = self.waiting.len();
+        self.waiting.retain(|(id, _)| *id != unit);
+        self.waiting.len() != before
+    }
+
+    /// Take the whole queue for delivery; the caller puts back whatever could
+    /// not be delivered. Order is preserved, so what goes back is still sorted.
+    pub(super) fn take_waiting(&mut self) -> Vec<(UnitId, WaitingOrders)> {
+        std::mem::take(&mut self.waiting)
+    }
+
+    /// Put undelivered slots back, keeping the list sorted by unit id.
+    pub(super) fn keep_waiting(&mut self, waiting: Vec<(UnitId, WaitingOrders)>) {
+        self.waiting = waiting;
+        self.waiting.sort_by_key(|(id, _)| *id);
     }
 
     /// Put a mission in the air: it will replace the formation's standing one

@@ -383,6 +383,20 @@ fn a_campaign_keeps_its_standing_orders_and_its_silences() {
         "frontier's junior companies start outside the four-hex net, which is \
          what makes this test worth writing"
     );
+    // And an order for one of those companies, which headquarters is holding
+    // until it can be transmitted. A save that dropped it would leave the
+    // player waiting on an order that no longer exists anywhere.
+    let deaf = cut_off[0];
+    state
+        .apply(
+            &reg,
+            &OverworldOrder::SetMission {
+                army: deaf,
+                mission: ArmyMission::Hold,
+            },
+        )
+        .expect("accepted, and waiting for a wire");
+    assert_eq!(state.waiting_missions, vec![(deaf, ArmyMission::Hold)]);
 
     let text = SaveGame::new(&reg, Some(state), None).to_json().unwrap();
     let restored = SaveGame::from_json(&reg, &text)
@@ -400,6 +414,11 @@ fn a_campaign_keeps_its_standing_orders_and_its_silences() {
         restored.out_of_contact, cut_off,
         "and the same companies are still off the net"
     );
+    assert_eq!(
+        restored.waiting_missions,
+        vec![(deaf, ArmyMission::Hold)],
+        "with the same order still in the tray"
+    );
     for id in &cut_off {
         assert!(!restored.in_contact(*id));
     }
@@ -412,6 +431,9 @@ fn a_campaign_keeps_its_standing_orders_and_its_silences() {
         .and_then(|o| o.as_object_mut())
         .expect("the campaign is in there");
     overworld.remove("out_of_contact").expect("field is saved");
+    overworld
+        .remove("waiting_missions")
+        .expect("field is saved");
     for army in overworld
         .get_mut("armies")
         .and_then(|a| a.as_array_mut())
@@ -426,6 +448,7 @@ fn a_campaign_keeps_its_standing_orders_and_its_silences() {
         .expect("campaign survives");
     assert!(older.armies.iter().all(|a| a.mission.is_none()));
     assert!(older.out_of_contact.is_empty());
+    assert!(older.waiting_missions.is_empty());
 }
 
 #[test]
@@ -615,4 +638,95 @@ fn a_mission_in_transit_survives_a_save() {
         original.formations()[armor.index()].mission,
         "and leaves both platoons under the same standing order"
     );
+}
+
+/// An order held at the radio is the other thing command state carries that
+/// nobody has said out loud yet: the formation panel shows it, the next
+/// planning phase delivers it, and a save that forgot it would leave the
+/// player waiting for an order that no longer exists anywhere.
+#[test]
+fn an_order_waiting_at_the_radio_survives_a_save() {
+    let mut reg = registry();
+    // A one-hex net with nobody relaying, so somebody in a platoon that
+    // deploys strung out is certainly deaf. Declared here rather than in the
+    // base mod for the same reason the latency test does it: this is about the
+    // machinery, not about what the shipped game switches on.
+    reg.command = Some(tactics_core::data::CommandRules {
+        radius: 1,
+        visual_range: 0,
+        radius_per_signals: 0,
+        relay: false,
+        overworld_radius: 999,
+        latency: tactics_core::data::ReactionRules {
+            skill: "command".into(),
+            base_ticks: 0,
+            levels_per_tick: 0,
+            max_ticks: 5,
+        },
+    });
+    for vehicle in reg.vehicles.values_mut() {
+        vehicle.radio = None;
+    }
+    let mut state = BattleState::from_map(&reg, "river_crossing", 21).expect("battle");
+    // One quiet round, because contact is computed during resolution.
+    for side in state.living_sides() {
+        state.apply(&reg, &Order::Commit { side }).expect("commit");
+    }
+    state.resolve_round(&reg);
+
+    let deaf = state
+        .units
+        .iter()
+        .filter(|u| u.alive && u.side == 0)
+        .map(|u| u.id)
+        .find(|id| !state.hears_orders(*id))
+        .expect("a one-hex net leaves somebody outside it");
+    let bridge = state.map.objectives()[0].anchor();
+    state
+        .apply(
+            &reg,
+            &Order::Radio {
+                unit: deaf,
+                to: Some(bridge),
+                fire: None,
+            },
+        )
+        .expect("accepted, and waiting for a wire");
+    assert!(state.command.waiting_for(deaf).is_some());
+
+    let text = SaveGame::new(&reg, None, Some(state.clone()))
+        .to_json()
+        .expect("serialises");
+    let restored = SaveGame::from_json(&reg, &text)
+        .expect("deserialises")
+        .0
+        .battle
+        .expect("battle round-trips");
+    assert_eq!(
+        restored.command, state.command,
+        "the queue comes back with everything else the wire knows"
+    );
+    assert_eq!(
+        restored
+            .command
+            .waiting_for(deaf)
+            .expect("still at the radio")
+            .destination,
+        Some(bridge),
+    );
+
+    // And a save written before orders could wait opens as a battle in which
+    // none are, which is what it was.
+    let mut old: serde_json::Value = serde_json::from_str(&text).unwrap();
+    old["battle"]["command"]
+        .as_object_mut()
+        .unwrap()
+        .remove("waiting")
+        .expect("field is saved");
+    let older = SaveGame::from_json(&reg, &old.to_string())
+        .expect("a save from before the queue must still load")
+        .0
+        .battle
+        .expect("battle survives");
+    assert!(older.command.waiting().is_empty());
 }
