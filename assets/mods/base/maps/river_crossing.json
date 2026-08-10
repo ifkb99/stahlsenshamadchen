@@ -97,17 +97,108 @@
         "          111110000000111112222"
     ],
     "sides": [
-        { "name": "Kuhlmann Academy" },
-        { "name": "Iron Valkyries", "ai": { "planner": "utility", "difficulty": 3, "doctrine": "elastic_defense" } }
+        {
+            "name": "Kuhlmann Academy"
+        },
+        {
+            "name": "Iron Valkyries",
+            "ai": {
+                "planner": "utility",
+                "difficulty": 3,
+                "doctrine": "elastic_defense"
+            }
+        }
     ],
     "units": [
-        { "at": [10, 20], "side": 0, "vehicle": "medium_tank", "crew": ["anka", "rosa"] },
-        { "at": [12, 14], "side": 0, "vehicle": "recon_car", "crew": ["elsa"] },
-        { "at": [11, 26], "side": 0, "vehicle": "light_tank", "crew": ["juno", "mina"] },
-        { "at": [6, 20], "side": 0, "vehicle": "artillery", "crew": ["petra"] },
-        { "at": [30, 20], "side": 1, "vehicle": "medium_tank", "crew": ["irma"] },
-        { "at": [28, 14], "side": 1, "vehicle": "light_tank", "crew": ["sofia"] },
-        { "at": [30, 26], "side": 1, "vehicle": "tank_destroyer", "crew": ["nadja"] },
-        { "at": [27, 20], "side": 1, "vehicle": "recon_car", "crew": ["greta"] }
+        {
+            "at": [
+                10,
+                20
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "crew": [
+                "anka",
+                "rosa"
+            ]
+        },
+        {
+            "at": [
+                12,
+                14
+            ],
+            "side": 0,
+            "vehicle": "recon_car",
+            "crew": [
+                "elsa"
+            ]
+        },
+        {
+            "at": [
+                11,
+                26
+            ],
+            "side": 0,
+            "vehicle": "light_tank",
+            "crew": [
+                "mina",
+                "juno"
+            ]
+        },
+        {
+            "at": [
+                6,
+                20
+            ],
+            "side": 0,
+            "vehicle": "artillery",
+            "crew": [
+                "petra"
+            ]
+        },
+        {
+            "at": [
+                30,
+                20
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "crew": [
+                "irma"
+            ]
+        },
+        {
+            "at": [
+                28,
+                14
+            ],
+            "side": 1,
+            "vehicle": "light_tank",
+            "crew": [
+                "sofia"
+            ]
+        },
+        {
+            "at": [
+                30,
+                26
+            ],
+            "side": 1,
+            "vehicle": "tank_destroyer",
+            "crew": [
+                "nadja"
+            ]
+        },
+        {
+            "at": [
+                27,
+                20
+            ],
+            "side": 1,
+            "vehicle": "recon_car",
+            "crew": [
+                "greta"
+            ]
+        }
     ]
 }

@@ -41,9 +41,10 @@
 //! bailed out and could not reach friendly lines before the fighting stopped,
 //! and is making her own way back. It resolves on its own after a few days.
 
-use crate::data::{CharacterDef, CrewStats, DamageType, DataRegistry};
+use crate::data::{CharacterDef, DamageType, DataRegistry};
 use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Stable handle to a girl in a [`Roster`].
 ///
@@ -158,25 +159,38 @@ pub struct Girl {
     /// Which academy she belongs to, as a side index. Mutable on purpose:
     /// girls changing hands is a thing a 4x mode does.
     pub owner: u8,
-    /// Current ability, seeded from the definition and grown by play.
-    pub stats: CrewStats,
+    /// Temperament, positional in the registry's core order. Slow to change.
+    pub cores: Vec<i32>,
+    /// What she has been taught, by skill id. A skill missing here is
+    /// untrained, which means it falls back to her cores at a penalty rather
+    /// than to nothing.
+    pub skills: HashMap<String, i32>,
     pub xp: u32,
     pub status: GirlStatus,
     /// Battles survived. The crudest possible history, kept because it costs
     /// nothing and because "how many times have you done this" is the first
     /// question any progression or support system asks.
     pub battles: u32,
+    /// What is true about her that is not a number. Some she arrived with;
+    /// others she will pick up from what happens to her.
+    #[serde(default)]
+    pub traits: Vec<String>,
 }
 
 impl Girl {
     /// Stamp a new girl from a definition.
-    pub fn from_def(id: GirlId, owner: u8, def: &CharacterDef) -> Self {
+    ///
+    /// Takes the registry because cores are positional and only it knows the
+    /// order — which is the price of letting a mod decide what the cores are.
+    pub fn from_def(id: GirlId, owner: u8, def: &CharacterDef, registry: &DataRegistry) -> Self {
         Self {
             id,
             def: def.id.clone(),
             name: def.name.clone(),
             owner,
-            stats: def.stats,
+            cores: registry.core_index.values_from(&def.cores),
+            skills: def.skills.clone(),
+            traits: def.traits.clone(),
             xp: 0,
             status: GirlStatus::Ready,
             battles: 0,
@@ -258,9 +272,9 @@ impl Roster {
     }
 
     /// Add a girl stamped from a definition, returning her handle.
-    pub fn enlist(&mut self, owner: u8, def: &CharacterDef) -> GirlId {
+    pub fn enlist(&mut self, owner: u8, def: &CharacterDef, registry: &DataRegistry) -> GirlId {
         let id = GirlId(self.girls.len() as u32);
-        self.girls.push(Girl::from_def(id, owner, def));
+        self.girls.push(Girl::from_def(id, owner, def, registry));
         id
     }
 
@@ -275,7 +289,7 @@ impl Roster {
     ) -> Option<GirlId> {
         registry.character(def_id).map(|def| {
             let def = def.clone();
-            self.enlist(owner, &def)
+            self.enlist(owner, &def, registry)
         })
     }
 
@@ -311,20 +325,135 @@ impl Roster {
         self.girls.is_empty()
     }
 
-    /// The best value any of `crew` has for some stat, which is how a
-    /// vehicle's crew bonus is decided: one gunner lays the gun, one driver
-    /// drives, and the sharpest pair of eyes is the one that spots.
+    /// How well one girl performs a skill, trained or not.
     ///
-    /// Girls who are not [`GirlStatus::Ready`] contribute nothing, so a
-    /// wounded gunner costs her vehicle its gunnery bonus without needing a
-    /// separate code path.
-    pub fn best(&self, crew: &[GirlId], stat: impl Fn(&CrewStats) -> i32) -> i32 {
+    /// This is the only way to ask what someone can do. There is no stored
+    /// ability to read: a trained skill is her level, and an untrained one
+    /// falls back to the weighted mean of the skill's controlling cores minus
+    /// its penalty.
+    pub fn skill_level(
+        &self,
+        registry: &DataRegistry,
+        girl: GirlId,
+        skill: &str,
+        ctx: &crate::data::CheckContext,
+    ) -> Option<i32> {
+        let girl = self.get(girl)?;
+        let def = registry.skill(skill)?;
+        let base = def.level_for(
+            &registry.core_index,
+            &girl.cores,
+            girl.skills.get(skill).copied(),
+        );
+        // Traits arrive here rather than being baked into a stored number,
+        // which is what lets them be conditional on where she is and who she
+        // is with.
+        let from_traits: i32 = girl
+            .traits
+            .iter()
+            .filter_map(|id| registry.trait_def(id))
+            .map(|t| t.modifier(skill, ctx))
+            .sum();
+        Some(base + from_traits)
+    }
+
+    /// How well this crew performs a skill, given who is sitting where.
+    ///
+    /// The crew is positional: girl *i* fills the vehicle's *i*th crew slot,
+    /// so the gunner's gunnery is what lays the gun rather than the best
+    /// gunnery aboard. That is the difference between a crew and a bag of
+    /// numbers, and it is what makes moving a girl between tanks a decision.
+    ///
+    /// Three cases, in order:
+    ///
+    /// 1. **Somebody whose job this is.** If more than one seat answers for
+    ///    the skill — a heavy tank has a commander *and* a radio operator —
+    ///    the better of them is used.
+    /// 2. **Somebody covering.** With ten girls and four seats a tank, an
+    ///    empty seat is the normal case, so the best remaining crew member
+    ///    takes it at [`Balance::substitution_penalty`]. A commander can lay
+    ///    a gun; she is simply not the gunner.
+    /// 3. **Nobody fit.** An untrained average, because the vehicle has not
+    ///    stopped existing just because its crew is down.
+    ///
+    /// A skill no seat claims — discipline, athletics — is everybody's
+    /// business, and takes the best aboard with no penalty.
+    pub fn crew_skill(
+        &self,
+        registry: &DataRegistry,
+        vehicle: Option<&crate::data::VehicleDef>,
+        crew: &[GirlId],
+        skill: &str,
+        terrain: Option<&str>,
+    ) -> i32 {
+        let ctx = crate::data::CheckContext {
+            terrain,
+            vehicle_class: vehicle.map(|v| v.class.as_str()),
+            crew_size: crew.iter().filter(|id| self.get(**id).is_some()).count(),
+        };
+        let ready = |id: &GirlId| self.get(*id).is_some_and(|g| g.status.is_ready());
+        let level = |id: &GirlId| self.skill_level(registry, *id, skill, &ctx);
+
+        // Which seats answer for this skill, as indices into the crew.
+        let responsible: Vec<usize> = vehicle
+            .map(|v| {
+                v.crew_slots
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, role)| {
+                        registry
+                            .role(role)
+                            .is_some_and(|r| r.skills.iter().any(|s| s == skill))
+                    })
+                    .map(|(i, _)| i)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Nobody's job in particular: everyone's business, best aboard.
+        if responsible.is_empty() {
+            return crew
+                .iter()
+                .filter(|id| ready(id))
+                .filter_map(level)
+                .max()
+                .unwrap_or_else(|| self.unspecified(registry, skill));
+        }
+
+        let specialist = responsible
+            .iter()
+            .filter_map(|i| crew.get(*i))
+            .filter(|id| ready(id))
+            .filter_map(level)
+            .max();
+        if let Some(level) = specialist {
+            return level;
+        }
+
+        // Nobody in the seat: whoever else is aboard has a go at it.
         crew.iter()
-            .filter_map(|id| self.get(*id))
-            .filter(|g| g.status.is_ready())
-            .map(|g| stat(&g.stats))
+            .enumerate()
+            .filter(|(i, _)| !responsible.contains(i))
+            .map(|(_, id)| id)
+            .filter(|id| ready(id))
+            .filter_map(level)
             .max()
-            .unwrap_or(0)
+            .map(|best| best - registry.balance.substitution_penalty)
+            .unwrap_or_else(|| self.unspecified(registry, skill))
+    }
+
+    /// What a vehicle manages when nobody named is aboard.
+    ///
+    /// Ordinary, not untrained. A placement that names no crew — a test
+    /// fixture, a map that does not care, a generated skirmish — should get a
+    /// vehicle that performs exactly as its data says, because that is what
+    /// the data is *for*. Treating unspecified as untrained made every such
+    /// vehicle quietly slower and blinder than its own definition, which is a
+    /// nasty thing to debug from the outside.
+    ///
+    /// Named girls then modify from there, in both directions.
+    fn unspecified(&self, _registry: &DataRegistry, _skill: &str) -> i32 {
+        crate::data::AVERAGE
     }
 
     /// Stamp a throwaway roster for a set of placements, returning it
@@ -383,73 +512,260 @@ impl Roster {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::{AVERAGE, CoreDef, CoreIndex, SkillDef};
 
-    fn def(id: &str, gunnery: i32) -> CharacterDef {
+    /// A two-core, one-skill world, so the tests exercise the model rather
+    /// than the base mod's content.
+    fn registry() -> DataRegistry {
+        let cores = vec![
+            CoreDef {
+                id: "hands".into(),
+                name: "Hands".into(),
+                description: String::new(),
+            },
+            CoreDef {
+                id: "nerve".into(),
+                name: "Nerve".into(),
+                description: String::new(),
+            },
+        ];
+        let mut reg = DataRegistry {
+            core_index: CoreIndex::build(&cores),
+            cores,
+            ..Default::default()
+        };
+        reg.skills.insert(
+            "gunnery".into(),
+            SkillDef {
+                id: "gunnery".into(),
+                name: "Gunnery".into(),
+                cores: HashMap::from([("hands".into(), 1)]),
+                untrained_penalty: 4,
+            },
+        );
+        reg.roles.insert(
+            "gunner".into(),
+            crate::data::RoleDef {
+                id: "gunner".into(),
+                name: "Gunner".into(),
+                skills: vec!["gunnery".into()],
+            },
+        );
+        reg.roles.insert(
+            "commander".into(),
+            crate::data::RoleDef {
+                id: "commander".into(),
+                name: "Commander".into(),
+                skills: vec!["command".into()],
+            },
+        );
+        reg
+    }
+
+    /// Commander in seat 0, gunner in seat 1.
+    fn tank() -> crate::data::VehicleDef {
+        serde_json::from_value(serde_json::json!({
+            "id": "test_tank", "name": "Test Tank", "max_hp": 10,
+            "movement": { "class": "tracked", "points": 5 },
+            "armor": { "front": 5, "side": 3, "rear": 2 },
+            "vision_range": 10, "weapons": [],
+            "crew_slots": ["commander", "gunner"]
+        }))
+        .expect("test vehicle")
+    }
+
+    fn def(id: &str, hands: i32, gunnery: Option<i32>) -> CharacterDef {
         CharacterDef {
             id: id.into(),
             name: format!("{id} the tester"),
             portrait: None,
             bio: String::new(),
-            stats: CrewStats {
-                gunnery,
-                ..Default::default()
-            },
+            cores: HashMap::from([("hands".into(), hands)]),
+            skills: gunnery
+                .map(|g| HashMap::from([("gunnery".into(), g)]))
+                .unwrap_or_default(),
+            traits: Vec::new(),
         }
     }
 
     #[test]
     fn a_girl_starts_as_her_definition_but_is_not_bound_to_it() {
+        let reg = registry();
         let mut roster = Roster::new();
-        let id = roster.enlist(0, &def("anka", 3));
-        assert_eq!(roster.get(id).unwrap().stats.gunnery, 3);
+        let id = roster.enlist(0, &def("anka", 12, Some(13)), &reg);
+        assert_eq!(
+            roster.skill_level(&reg, id, "gunnery", &Default::default()),
+            Some(13)
+        );
 
-        // The whole point: the instance can move and the definition cannot.
-        roster.get_mut(id).unwrap().stats.gunnery = 4;
+        // The whole point: the instance moves and the definition does not.
+        roster
+            .get_mut(id)
+            .unwrap()
+            .skills
+            .insert("gunnery".into(), 14);
         roster.get_mut(id).unwrap().xp += 100;
-        assert_eq!(roster.get(id).unwrap().stats.gunnery, 4);
-        assert_eq!(def("anka", 3).stats.gunnery, 3);
+        assert_eq!(
+            roster.skill_level(&reg, id, "gunnery", &Default::default()),
+            Some(14)
+        );
+        assert_eq!(def("anka", 12, Some(13)).skills["gunnery"], 13);
+    }
+
+    #[test]
+    fn an_untrained_girl_falls_back_to_her_cores_rather_than_to_nothing() {
+        let reg = registry();
+        let mut roster = Roster::new();
+        let gifted = roster.enlist(0, &def("gifted", 16, None), &reg);
+        let ordinary = roster.enlist(0, &def("ordinary", 10, None), &reg);
+
+        // Untrained is core minus the penalty, so temperament is nearly all
+        // there is to go on.
+        assert_eq!(
+            roster.skill_level(&reg, gifted, "gunnery", &Default::default()),
+            Some(12)
+        );
+        assert_eq!(
+            roster.skill_level(&reg, ordinary, "gunnery", &Default::default()),
+            Some(6)
+        );
+
+        // Train the ordinary one and she overtakes the natural outright, which
+        // is the relationship between talent and experience the model wants.
+        roster
+            .get_mut(ordinary)
+            .unwrap()
+            .skills
+            .insert("gunnery".into(), 13);
+        assert!(
+            roster.skill_level(&reg, ordinary, "gunnery", &Default::default())
+                > roster.skill_level(&reg, gifted, "gunnery", &Default::default())
+        );
     }
 
     #[test]
     fn two_girls_from_one_definition_are_separate_people() {
+        let reg = registry();
         let mut roster = Roster::new();
-        let template = def("recruit", 2);
-        let a = roster.enlist(0, &template);
-        let b = roster.enlist(0, &template);
+        let template = def("recruit", 10, Some(9));
+        let a = roster.enlist(0, &template, &reg);
+        let b = roster.enlist(0, &template, &reg);
         assert_ne!(a, b);
-        roster.get_mut(a).unwrap().stats.gunnery = 5;
-        assert_eq!(roster.get(b).unwrap().stats.gunnery, 2);
+        roster
+            .get_mut(a)
+            .unwrap()
+            .skills
+            .insert("gunnery".into(), 14);
+        assert_eq!(
+            roster.skill_level(&reg, b, "gunnery", &Default::default()),
+            Some(9)
+        );
     }
 
     #[test]
-    fn a_wounded_crew_member_contributes_nothing_until_she_recovers() {
+    fn an_unknown_skill_is_none_rather_than_a_panic() {
+        let reg = registry();
         let mut roster = Roster::new();
-        let sharp = roster.enlist(0, &def("sharp", 5));
-        let dull = roster.enlist(0, &def("dull", 1));
-        let crew = [sharp, dull];
-        assert_eq!(roster.best(&crew, |s| s.gunnery), 5);
-
-        roster.get_mut(sharp).unwrap().status = GirlStatus::Wounded { days: 2 };
+        let id = roster.enlist(0, &def("anka", 10, None), &reg);
         assert_eq!(
-            roster.best(&crew, |s| s.gunnery),
-            1,
-            "the vehicle should fall back to whoever is still fit"
+            roster.skill_level(&reg, id, "telepathy", &Default::default()),
+            None
         );
-
-        roster.advance_day();
-        assert_eq!(
-            roster.get(sharp).unwrap().status,
-            GirlStatus::Wounded { days: 1 }
-        );
-        roster.advance_day();
-        assert!(roster.get(sharp).unwrap().status.is_ready());
-        assert_eq!(roster.best(&crew, |s| s.gunnery), 5);
     }
 
     #[test]
-    fn an_empty_or_unknown_crew_is_worth_nothing_rather_than_panicking() {
+    fn the_gunner_lays_the_gun_not_the_best_shot_aboard() {
+        // The point of roles. A brilliant commander does not make her tank
+        // shoot well if the girl in the gunner's seat cannot.
+        let reg = registry();
+        let tank = tank();
+        let mut roster = Roster::new();
+        let ace = roster.enlist(0, &def("ace", 10, Some(15)), &reg);
+        let novice = roster.enlist(0, &def("novice", 10, Some(8)), &reg);
+
+        // Ace commanding, novice on the gun.
+        assert_eq!(
+            roster.crew_skill(&reg, Some(&tank), &[ace, novice], "gunnery", None),
+            8
+        );
+        // The same two girls, seats swapped, shoot far better — which is what
+        // makes moving a girl between jobs a decision worth making.
+        assert_eq!(
+            roster.crew_skill(&reg, Some(&tank), &[novice, ace], "gunnery", None),
+            15
+        );
+    }
+
+    #[test]
+    fn somebody_covers_an_empty_seat_at_a_penalty() {
+        // Short-handed crews are the normal case: ten girls, four seats a tank.
+        let reg = registry();
+        let tank = tank();
+        let mut roster = Roster::new();
+        let alone = roster.enlist(0, &def("alone", 10, Some(13)), &reg);
+        assert_eq!(
+            roster.crew_skill(&reg, Some(&tank), &[alone], "gunnery", None),
+            13 - reg.balance.substitution_penalty,
+            "commanding with nobody on the gun, she reaches over and is worse at it"
+        );
+    }
+
+    #[test]
+    fn a_wounded_specialist_is_covered_rather_than_replaced() {
+        let reg = registry();
+        let tank = tank();
+        let mut roster = Roster::new();
+        let commander = roster.enlist(0, &def("commander", 10, Some(11)), &reg);
+        let gunner = roster.enlist(0, &def("gunner", 10, Some(15)), &reg);
+        let crew = [commander, gunner];
+        assert_eq!(
+            roster.crew_skill(&reg, Some(&tank), &crew, "gunnery", None),
+            15
+        );
+
+        roster.get_mut(gunner).unwrap().status = GirlStatus::Wounded { days: 2 };
+        assert_eq!(
+            roster.crew_skill(&reg, Some(&tank), &crew, "gunnery", None),
+            11 - reg.balance.substitution_penalty,
+            "the commander takes the gun, and is worse at it"
+        );
+
+        roster.advance_day();
+        roster.advance_day();
+        assert!(roster.get(gunner).unwrap().status.is_ready());
+        assert_eq!(
+            roster.crew_skill(&reg, Some(&tank), &crew, "gunnery", None),
+            15
+        );
+    }
+
+    #[test]
+    fn a_skill_no_seat_claims_is_everybodys_business() {
+        // Discipline and athletics belong to no job, so they take the best
+        // aboard with no substitution penalty.
+        let reg = registry();
+        let tank = tank();
+        let mut roster = Roster::new();
+        let a = roster.enlist(0, &def("a", 10, None), &reg);
+        let b = roster.enlist(0, &def("b", 16, None), &reg);
+        assert_eq!(
+            roster.crew_skill(&reg, Some(&tank), &[a, b], "unclaimed", None),
+            AVERAGE,
+            "an unknown skill falls back to an ordinary showing rather than panicking"
+        );
+    }
+
+    #[test]
+    fn a_vehicle_with_nobody_named_performs_exactly_as_its_data_says() {
+        // Ordinary, not untrained. A placement that names no crew should get
+        // the vehicle its definition describes; anything else means the paper
+        // stats quietly lie.
+        let reg = registry();
         let roster = Roster::new();
-        assert_eq!(roster.best(&[], |s| s.gunnery), 0);
-        assert_eq!(roster.best(&[GirlId(99)], |s| s.gunnery), 0);
+        assert_eq!(roster.crew_skill(&reg, None, &[], "gunnery", None), AVERAGE);
+        assert_eq!(
+            roster.crew_skill(&reg, None, &[GirlId(99)], "gunnery", None),
+            AVERAGE
+        );
     }
 }

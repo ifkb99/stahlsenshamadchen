@@ -1486,8 +1486,18 @@ fn format_unit(
         // The crewed figures, not the vehicle's paper ones: what this unit
         // actually does with these girls aboard is the interesting number,
         // and it is the only place the player can see the crew bonus land.
-        let speed = tactics_core::battle::move_points(registry, &state.roster, unit);
-        let vision = tactics_core::battle::stats::vision_range(registry, &state.roster, unit);
+        let speed = tactics_core::battle::move_points(
+            registry,
+            &state.roster,
+            unit,
+            state.terrain_at(unit.pos),
+        );
+        let vision = tactics_core::battle::stats::vision_range(
+            registry,
+            &state.roster,
+            unit,
+            state.terrain_at(unit.pos),
+        );
         lines.push(format!("Move {} ({})", scale.format_speed(speed), speed));
         lines.push(format!(
             "Sight {} ({})",
@@ -1511,10 +1521,28 @@ fn format_unit(
     lines.push("Crew:".into());
     for c in &unit.crew {
         if let Some(girl) = state.roster.get(*c) {
-            lines.push(format!(
-                "  {} (G{} D{} A{})",
-                girl.name, girl.stats.gunnery, girl.stats.driving, girl.stats.awareness
-            ));
+            // Her strongest training, named. Words rather than a stat block:
+            // girls read as people when described and as units when
+            // tabulated, and the exact numbers belong behind a toggle.
+            let mut best: Vec<(&String, &i32)> = girl.skills.iter().collect();
+            best.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+            let summary = best
+                .iter()
+                .take(2)
+                .map(|(id, level)| {
+                    let name = registry
+                        .skill(id)
+                        .map(|s| s.name.clone())
+                        .unwrap_or_else(|| (*id).clone());
+                    format!("{name} {level}")
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            if summary.is_empty() {
+                lines.push(format!("  {}", girl.name));
+            } else {
+                lines.push(format!("  {} ({summary})", girl.name));
+            }
         }
     }
     lines.push(String::new());

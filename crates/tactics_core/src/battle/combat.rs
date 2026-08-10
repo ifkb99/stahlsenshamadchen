@@ -184,9 +184,12 @@ fn hit_chance_inner(
     note(HitFactor::Range { hexes: dist }, falloff);
     chance += falloff;
 
-    let gunnery = registry
-        .balance
-        .accuracy(stats::gunnery(&state.roster, att));
+    let gunnery = registry.balance.accuracy(stats::gunnery(
+        registry,
+        &state.roster,
+        att,
+        state.terrain_at(att.pos),
+    ));
     note(HitFactor::Gunnery, gunnery);
     chance += gunnery;
 

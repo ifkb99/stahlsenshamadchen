@@ -20,36 +20,32 @@ pub enum MovementClass {
     Air,
 }
 
-/// Crew member stats. Characters are people; vehicles are hardware. A unit on
-/// the battlefield is always a crew inside a vehicle, and both sides of that
-/// pairing contribute to its performance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(default)]
-pub struct CrewStats {
-    /// Improves hit chance when firing.
-    pub gunnery: i32,
-    /// Improves movement (bonus movement points at high values).
-    pub driving: i32,
-    /// Improves vision range.
-    pub awareness: i32,
-    /// Resistance to panic (reserved for future morale systems).
-    pub morale: i32,
-    /// Buffs nearby friendly units (reserved for future aura systems).
-    pub leadership: i32,
-}
-
 /// A person. Rides in vehicles, has a face and a name.
+///
+/// Characters are people; vehicles are hardware, and a unit on the battlefield
+/// is always a crew inside one. What she can *do* is not written here — see
+/// [`crate::data::SkillDef`] — only who she is and what she has been taught.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CharacterDef {
     pub id: String,
     pub name: String,
+    /// Temperament, by core id. Anything unnamed sits at
+    /// [`crate::data::AVERAGE`], so a definition states only what makes her
+    /// unusual.
+    #[serde(default)]
+    pub cores: std::collections::HashMap<String, i32>,
+    /// What she has been taught, by skill id. A skill she is not listed for is
+    /// untrained and falls back to her cores at a penalty — not to zero.
+    #[serde(default)]
+    pub skills: std::collections::HashMap<String, i32>,
+    /// Trait ids she starts with. The rest she earns.
+    #[serde(default)]
+    pub traits: Vec<String>,
     /// Asset-relative path to a portrait image, e.g. `mods/base/portraits/anka.png`.
     #[serde(default)]
     pub portrait: Option<String>,
     #[serde(default)]
     pub bio: String,
-    #[serde(default)]
-    pub stats: CrewStats,
 }
 
 /// Directional armor. Which facing an incoming shot strikes is derived from

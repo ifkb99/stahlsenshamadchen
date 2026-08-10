@@ -394,6 +394,12 @@ impl BattleState {
             .filter(|u| u.side != side && self.fog.side(side).spotted.contains(&u.id))
     }
 
+    /// The terrain a unit is standing on, for checks that care where they
+    /// happen — a lead foot is quick on a road and bogs in a field.
+    pub fn terrain_at(&self, hex: Hex) -> Option<&str> {
+        self.map.get(hex).map(|t| t.terrain.as_str())
+    }
+
     pub fn alive_units(&self) -> impl Iterator<Item = &Unit> {
         self.units.iter().filter(|u| u.alive)
     }
@@ -452,24 +458,66 @@ impl BattleState {
 pub mod stats {
     use super::*;
 
-    /// Best gunnery among the crew.
-    pub fn gunnery(roster: &Roster, unit: &Unit) -> i32 {
-        roster.best(&unit.crew, |s| s.gunnery)
+    /// How well this crew lays its gun.
+    ///
+    /// Skill ids are data, so the strings here are the engine's contract with
+    /// the base mod rather than magic numbers: a mod that renames `gunnery` is
+    /// defining a different game. `terrain` is where the check is happening,
+    /// which traits may care about.
+    pub fn gunnery(
+        registry: &DataRegistry,
+        roster: &Roster,
+        unit: &Unit,
+        terrain: Option<&str>,
+    ) -> i32 {
+        roster.crew_skill(
+            registry,
+            registry.vehicle(&unit.vehicle),
+            &unit.crew,
+            "gunnery",
+            terrain,
+        )
     }
 
-    /// Vision range in hexes: vehicle base scaled by the crew's awareness.
-    pub fn vision_range(registry: &DataRegistry, roster: &Roster, unit: &Unit) -> u32 {
+    /// Vision range in hexes: vehicle base, scaled by how well the crew
+    /// observes. Spotting is a trained skill rather than a fact about
+    /// eyesight, which is why Elsa's "sees everything" is a high Perception
+    /// carrying an untrained `observation`.
+    pub fn vision_range(
+        registry: &DataRegistry,
+        roster: &Roster,
+        unit: &Unit,
+        terrain: Option<&str>,
+    ) -> u32 {
         let base = registry
             .vehicle(&unit.vehicle)
             .map(|v| v.vision_range)
             .unwrap_or(3);
-        registry
-            .balance
-            .vision(base, roster.best(&unit.crew, |s| s.awareness))
+        registry.balance.vision(
+            base,
+            roster.crew_skill(
+                registry,
+                registry.vehicle(&unit.vehicle),
+                &unit.crew,
+                "observation",
+                terrain,
+            ),
+        )
     }
 
-    /// Driving bonus used by [`super::move_points`].
-    pub fn driving(roster: &Roster, unit: &Unit) -> i32 {
-        roster.best(&unit.crew, |s| s.driving)
+    /// Driving skill used by [`super::move_points`].
+    pub fn driving(
+        registry: &DataRegistry,
+        roster: &Roster,
+        unit: &Unit,
+        terrain: Option<&str>,
+    ) -> i32 {
+        roster.crew_skill(
+            registry,
+            registry.vehicle(&unit.vehicle),
+            &unit.crew,
+            "driving",
+            terrain,
+        )
     }
 }

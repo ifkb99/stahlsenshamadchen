@@ -280,7 +280,7 @@ pub fn unit_vision(registry: &DataRegistry, state: &BattleState, id: UnitId) -> 
     look(
         state,
         unit.pos,
-        stats::vision_range(registry, &state.roster, unit),
+        stats::vision_range(registry, &state.roster, unit, state.terrain_at(unit.pos)),
     )
 }
 
@@ -305,7 +305,13 @@ pub fn recompute(registry: &DataRegistry, state: &mut BattleState) -> Vec<Event>
         // event order that follows from it — never depends on hash ordering.
         let key: Vec<(UnitId, Hex, u32)> = state
             .side_units(side)
-            .map(|u| (u.id, u.pos, stats::vision_range(registry, &state.roster, u)))
+            .map(|u| {
+                (
+                    u.id,
+                    u.pos,
+                    stats::vision_range(registry, &state.roster, u, state.terrain_at(u.pos)),
+                )
+            })
             .collect();
 
         if state.fog.visible_key.get(side as usize) != Some(&key) {

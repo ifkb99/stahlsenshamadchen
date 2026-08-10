@@ -335,7 +335,12 @@ impl BattleState {
                 continue;
             }
             let (side, start) = (unit.side, unit.pos);
-            let gained = movement::move_points(registry, &roster, unit);
+            let gained = movement::move_points(
+                registry,
+                &roster,
+                unit,
+                self.map.get(unit.pos).map(|t| t.terrain.as_str()),
+            );
             {
                 let unit = self.unit_mut(id).expect("alive above");
                 unit.move_credit += gained;

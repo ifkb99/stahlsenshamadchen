@@ -2,7 +2,7 @@
 
 use super::defs::*;
 use super::manifest::ModManifest;
-use super::{Balance, Scale};
+use super::{Balance, CoreDef, CoreIndex, RoleDef, Scale, SkillDef, TraitDef};
 use crate::map::MapFile;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -59,6 +59,14 @@ pub struct DataRegistry {
     pub scale: Scale,
     /// What a point of crew skill is worth. Single value, as [`Self::scale`].
     pub balance: Balance,
+    /// The axes of temperament this game has, in the order a girl's values are
+    /// stored. Declared by mod data, not by Rust.
+    pub cores: Vec<CoreDef>,
+    /// Core ids resolved to positions, so a check is an array index.
+    pub core_index: CoreIndex,
+    pub skills: HashMap<String, SkillDef>,
+    pub roles: HashMap<String, RoleDef>,
+    pub traits: HashMap<String, TraitDef>,
     pub characters: HashMap<String, CharacterDef>,
     pub vehicles: HashMap<String, VehicleDef>,
     pub weapons: HashMap<String, WeaponDef>,
@@ -107,10 +115,35 @@ impl DataRegistry {
             if let Some(balance) = manifest.balance {
                 registry.balance = balance;
             }
+            if let Some(cores) = &manifest.cores {
+                registry.cores = cores.clone();
+                registry.core_index = CoreIndex::build(cores);
+            }
+            if let Some(skills) = &manifest.skills {
+                registry.skills = skills.iter().map(|s| (s.id.clone(), s.clone())).collect();
+            }
+            if let Some(roles) = &manifest.roles {
+                registry.roles = roles.iter().map(|r| (r.id.clone(), r.clone())).collect();
+            }
+            if let Some(traits) = &manifest.traits {
+                registry.traits = traits.iter().map(|t| (t.id.clone(), t.clone())).collect();
+            }
             registry.mods.push(manifest);
         }
         registry.validate_into(&mut report);
         Ok((registry, report))
+    }
+
+    pub fn skill(&self, id: &str) -> Option<&SkillDef> {
+        self.skills.get(id)
+    }
+
+    pub fn role(&self, id: &str) -> Option<&RoleDef> {
+        self.roles.get(id)
+    }
+
+    pub fn trait_def(&self, id: &str) -> Option<&TraitDef> {
+        self.traits.get(id)
     }
 
     pub fn terrain(&self, id: &str) -> Option<&TerrainDef> {
@@ -278,7 +311,10 @@ impl DataRegistry {
         }
 
         for (field, value) in [
-            ("vision_per_awareness", self.balance.vision_per_awareness),
+            (
+                "vision_per_observation",
+                self.balance.vision_per_observation,
+            ),
             ("speed_per_driving", self.balance.speed_per_driving),
             ("accuracy_per_gunnery", self.balance.accuracy_per_gunnery),
         ] {
@@ -443,6 +479,10 @@ mod tests {
                     name: id.into(),
                     version: String::new(),
                     description: String::new(),
+                    cores: None,
+                    skills: None,
+                    roles: None,
+                    traits: None,
                     dependencies: deps.iter().map(|s| s.to_string()).collect(),
                     scale: None,
                     balance: None,

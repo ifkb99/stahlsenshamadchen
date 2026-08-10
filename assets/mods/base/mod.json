@@ -13,8 +13,296 @@
         "overworld_turn_hours": 24
     },
     "balance": {
-        "vision_per_awareness": 5,
         "speed_per_driving": 5,
-        "accuracy_per_gunnery": 3
-    }
+        "accuracy_per_gunnery": 3,
+        "substitution_penalty": 2,
+        "vision_per_observation": 5
+    },
+    "cores": [
+        {
+            "id": "strength",
+            "name": "Strength",
+            "description": "Physical power. Ramming a shell home, heaving track links, carrying a load on foot."
+        },
+        {
+            "id": "dexterity",
+            "name": "Dexterity",
+            "description": "Coordination. Laying a gun, handling a vehicle, steady hands."
+        },
+        {
+            "id": "intellect",
+            "name": "Intellect",
+            "description": "Reasoning and planning. Reading ground, and understanding an order correctly."
+        },
+        {
+            "id": "health",
+            "name": "Health",
+            "description": "Constitution and stamina. Lasting a long day, and surviving what happens to the vehicle."
+        },
+        {
+            "id": "will",
+            "name": "Will",
+            "description": "Mental resistance. Holding when it would be sensible to run."
+        },
+        {
+            "id": "perception",
+            "name": "Perception",
+            "description": "Noticing. What she sees, hears, and how soon."
+        },
+        {
+            "id": "speed",
+            "name": "Speed",
+            "description": "Reaction time. How quickly she acts once something changes."
+        },
+        {
+            "id": "presence",
+            "name": "Presence",
+            "description": "Authority. Whether an order lands and is obeyed."
+        },
+        {
+            "id": "charm",
+            "name": "Charm",
+            "description": "Rapport. Who she gets on with, and how morale travels."
+        }
+    ],
+    "skills": [
+        {
+            "id": "gunnery",
+            "name": "Gunnery",
+            "cores": {
+                "dexterity": 2,
+                "perception": 1,
+                "speed": 1
+            },
+            "untrained_penalty": 4
+        },
+        {
+            "id": "driving",
+            "name": "Driving",
+            "cores": {
+                "dexterity": 2,
+                "health": 1,
+                "speed": 1
+            },
+            "untrained_penalty": 3
+        },
+        {
+            "id": "loading",
+            "name": "Loading",
+            "cores": {
+                "strength": 2,
+                "dexterity": 1
+            },
+            "untrained_penalty": 3
+        },
+        {
+            "id": "observation",
+            "name": "Observation",
+            "cores": {
+                "perception": 3,
+                "intellect": 1
+            },
+            "untrained_penalty": 2
+        },
+        {
+            "id": "signals",
+            "name": "Signals",
+            "cores": {
+                "intellect": 2,
+                "perception": 1
+            },
+            "untrained_penalty": 4
+        },
+        {
+            "id": "maintenance",
+            "name": "Maintenance",
+            "cores": {
+                "intellect": 2,
+                "dexterity": 1,
+                "strength": 1
+            },
+            "untrained_penalty": 5
+        },
+        {
+            "id": "first_aid",
+            "name": "First Aid",
+            "cores": {
+                "intellect": 2,
+                "dexterity": 1
+            },
+            "untrained_penalty": 5
+        },
+        {
+            "id": "command",
+            "name": "Command",
+            "cores": {
+                "presence": 2,
+                "intellect": 1,
+                "charm": 1
+            },
+            "untrained_penalty": 6
+        },
+        {
+            "id": "discipline",
+            "name": "Discipline",
+            "cores": {
+                "will": 2,
+                "intellect": 1
+            },
+            "untrained_penalty": 3
+        },
+        {
+            "id": "small_arms",
+            "name": "Small Arms",
+            "cores": {
+                "dexterity": 2,
+                "perception": 1
+            },
+            "untrained_penalty": 2
+        },
+        {
+            "id": "fieldcraft",
+            "name": "Fieldcraft",
+            "cores": {
+                "perception": 2,
+                "intellect": 1
+            },
+            "untrained_penalty": 3
+        },
+        {
+            "id": "athletics",
+            "name": "Athletics",
+            "cores": {
+                "health": 2,
+                "strength": 1
+            },
+            "untrained_penalty": 2
+        }
+    ],
+    "roles": [
+        {
+            "id": "commander",
+            "name": "Commander",
+            "skills": [
+                "command",
+                "observation",
+                "signals"
+            ]
+        },
+        {
+            "id": "driver",
+            "name": "Driver",
+            "skills": [
+                "driving",
+                "maintenance"
+            ]
+        },
+        {
+            "id": "gunner",
+            "name": "Gunner",
+            "skills": [
+                "gunnery"
+            ]
+        },
+        {
+            "id": "loader",
+            "name": "Loader",
+            "skills": [
+                "loading",
+                "first_aid"
+            ]
+        },
+        {
+            "id": "radio",
+            "name": "Radio Operator",
+            "skills": [
+                "signals"
+            ]
+        }
+    ],
+    "traits": [
+        {
+            "id": "lead_foot",
+            "name": "Lead foot",
+            "description": "Quick where the going is good, and finds every ditch where it is not.",
+            "effects": [
+                {
+                    "skill": "driving",
+                    "when": {
+                        "terrain": "road"
+                    },
+                    "modifier": 3
+                },
+                {
+                    "skill": "driving",
+                    "when": {
+                        "not_terrain": "road"
+                    },
+                    "modifier": -2
+                }
+            ]
+        },
+        {
+            "id": "deliberate",
+            "name": "Deliberate",
+            "description": "Takes her time over the shot, and stops watching anything else while she does.",
+            "effects": [
+                {
+                    "skill": "gunnery",
+                    "modifier": 2
+                },
+                {
+                    "skill": "observation",
+                    "modifier": -2
+                }
+            ]
+        },
+        {
+            "id": "eagle_eyed",
+            "name": "Eagle-eyed",
+            "description": "Misses nothing in front of her. Says less about it than you would like.",
+            "effects": [
+                {
+                    "skill": "observation",
+                    "modifier": 2
+                },
+                {
+                    "skill": "signals",
+                    "modifier": -1
+                }
+            ]
+        },
+        {
+            "id": "eager",
+            "name": "Eager",
+            "description": "Loads like the war depends on it. Holds fire like it does not.",
+            "effects": [
+                {
+                    "skill": "loading",
+                    "modifier": 2
+                },
+                {
+                    "skill": "discipline",
+                    "modifier": -2
+                }
+            ]
+        },
+        {
+            "id": "loner",
+            "name": "Loner",
+            "description": "Steadier with nobody looking over her shoulder.",
+            "effects": [
+                {
+                    "skill": "gunnery",
+                    "when": "alone",
+                    "modifier": 2
+                },
+                {
+                    "skill": "gunnery",
+                    "when": "crewed",
+                    "modifier": -1
+                }
+            ]
+        }
+    ]
 }
