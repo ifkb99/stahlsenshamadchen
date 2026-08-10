@@ -427,28 +427,26 @@ The residual elastic tax (~5 in 36) is beaten formations leaving with
 survivors, which a wins-only table cannot credit — the campaign is where
 that trade pays.
 
-**4. Contact and order latency.** `command` block, contact graph + events,
-mission transit delay priced by `command`/`signals` checks. *Verify:*
-additivity (no block = today, pinned test at any coefficient — the
-reaction-latency post-mortem's tell); scripted battle showing
-`MissionAssigned` → `MissionReceived` lag in the log. *Difficulty: 3/5* —
-the machinery mirrors existing patterns (the contact graph is fog-shaped,
-the delay is the reaction currency), but this exact area killed one
-implementation already; the post-mortem in girls.md is required reading and
-the invariant tests are the referee.
+**4. Contact and order latency.** ✅ Done (`947d049`, machinery only — the
+base mod flip waited for chunk 5 so the baseline regenerated once):
+`CommandRules` block, leader-anchored contact graph with relay, mission
+transit priced on the leader's `command` check. The chunk's flagged conflict
+— dead leaders versus additivity — was resolved in chunk 5 by the
+standing-orders model below.
 
-**5. The command picture.** Reports travel up: `ContactReported` events,
-per-side picture state (contact, position, age, reporter), stale contacts,
-the brain switched from side fog to picture, the display switched with it,
-ghost markers in the game crate. The biggest chunk after 2 and the one that
-changes how the game *feels* the most. *Verify:* additivity (no command
-block: picture ≡ fog, display and baseline unchanged); an engine test where
-a cut-off scout's sighting provably never reaches the brain
-(`a_scout_out_of_contact_reports_nothing`); `balance --sim` before/after,
-since the brains now fight on degraded information. *Difficulty: 5/5* —
-changes what the brains know and what the player sees at once; fog honesty,
-serialization and balance all move together, and the failure modes are the
-quiet kind.
+**5. The command picture.** ✅ Done (`6c10014`), with one model amendment
+worth knowing: **a cut-off unit soldiers on the orders she was carrying**
+(snapshotted at the moment the wire dies) rather than reverting to her own
+judgment — the design's "falls back on standing orders", forced by
+measurement when leaders proved to die on first contact on every seed. The
+picture is per-side contacts-as-reported (seeing is not reporting; ghosts go
+stale, never vanish; `ContactReported` names the reporter), and the base mod
+now declares the block — the one deliberate baseline regeneration, and its
+diff was 62 pure insertions of wire events with zero lines changed: words,
+not deeds. Deferred from the original scope, both to chunk 7 where their
+consumers live: the *display* reading the picture (ghost markers), and any
+brain reading of enemy contacts (today's brain reads no enemy information
+at all, so there was nothing to switch).
 
 **6. Commander loss.** Pressure entry, succession, `CommandPassed`, optional
 `loss_condition` in map data. *Verify:* engine tests
