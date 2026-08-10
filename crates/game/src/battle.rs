@@ -928,6 +928,17 @@ fn pump_events(
             BattleEvent::ContactRestored { unit } => {
                 log.push(format!("{} is back in contact.", name(*unit)));
             }
+            // The upward wire: a report reaching the commander is the log's
+            // business even when the spot itself was already shown, because
+            // who *told* her — and that somebody could — is the information.
+            BattleEvent::ContactReported { unit, by, at } => {
+                log.push(format!(
+                    "{} reports {} at {:?}.",
+                    name(*by),
+                    name(*unit),
+                    at
+                ));
+            }
             BattleEvent::BattleEnded { winner, reason } => {
                 let text = match (winner, reason) {
                     (Some(w), EndReason::Objectives) => format!(

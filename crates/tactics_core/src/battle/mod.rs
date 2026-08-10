@@ -27,7 +27,7 @@ pub use combat::{
     AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, MAX_HIT, MIN_HIT,
     expected_damage, hit_breakdown, hit_chance, preview_attack, struck_facing, weapon_ready,
 };
-pub use command::{CommandState, Formation, FormationId, Mission};
+pub use command::{CommandState, Contact, CutOff, Formation, FormationId, Mission};
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
     destination_blocked, edge_cost as movement_edge_cost, move_points, path_to, reachable,

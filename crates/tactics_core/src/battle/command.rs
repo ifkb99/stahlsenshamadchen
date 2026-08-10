@@ -139,16 +139,37 @@ pub struct Formation {
     /// the delay is then zero and a mission never travels at all.
     #[serde(default)]
     pub incoming: Option<(Mission, u32)>,
-    /// Members who cannot currently hear their leader, in unit-id order.
+    /// Members who cannot currently hear their leader, in unit-id order,
+    /// each carrying the orders she had when the wire went dead.
+    ///
+    /// The snapshot is the load-bearing half. A cut-off crew does not go
+    /// rogue: she *continues her standing orders* — the design doc's words
+    /// for what commander loss means — and what she cannot do is hear
+    /// anything new. Snapshotting at the moment of losing contact is what
+    /// makes both true at once: the formation's mission can change behind
+    /// her back and she keeps soldiering on the plan she knows. It also
+    /// keeps the whole system additive even while leaders die on the first
+    /// contact (measured: some formation loses its leader in round 1 on
+    /// effectively every seed) — with the old "cut off means unmissioned"
+    /// model, declaring a command block silently deleted missions from half
+    /// the map by round two.
     ///
     /// Recomputed each tick, and only when there are command rules to
     /// recompute it against: with none, this stays empty for the whole
     /// battle, [`Self::in_contact`] answers `true` for everybody, and nothing
-    /// costs anything. Kept as the *exceptions* rather than the members in
-    /// contact for exactly that reason — the common state should be the empty
-    /// vector.
+    /// costs anything.
     #[serde(default)]
-    pub out_of_contact: Vec<UnitId>,
+    pub out_of_contact: Vec<CutOff>,
+}
+
+/// One member out of contact, and the orders she is soldiering on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CutOff {
+    pub unit: UnitId,
+    /// The formation mission as of the tick she lost contact — possibly
+    /// `None`, because being cut off with no orders is its own state: she
+    /// fights by her own judgment, exactly as an unmissioned unit does.
+    pub orders: Option<Mission>,
 }
 
 impl Formation {
@@ -164,7 +185,18 @@ impl Formation {
     /// whether a mission reaches her, and a mission that is not hers reaches
     /// her either way.
     pub fn in_contact(&self, unit: UnitId) -> bool {
-        !self.out_of_contact.contains(&unit)
+        !self.out_of_contact.iter().any(|c| c.unit == unit)
+    }
+
+    /// The orders this member is acting on: the formation's standing mission
+    /// if she can hear it, else whatever she was carrying when contact was
+    /// lost. This — not [`Self::mission`] — is what execution consults, and
+    /// the difference between the two is the whole point of the wire.
+    pub fn mission_for(&self, unit: UnitId) -> Option<&Mission> {
+        match self.out_of_contact.iter().find(|c| c.unit == unit) {
+            Some(cut) => cut.orders.as_ref(),
+            None => self.mission.as_ref(),
+        }
     }
 
     /// The most recent thing this formation has been told, whether or not it
@@ -184,6 +216,23 @@ impl Formation {
     }
 }
 
+/// One entry in a side's command picture: an enemy as last *reported*, which
+/// is a different thing from an enemy as currently seen. `fresh` is whether
+/// somebody in contact can see it right now; a stale contact is a ghost at
+/// the last reported position, and its age is `round` measured against the
+/// battle's current one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Contact {
+    pub unit: UnitId,
+    pub at: Hex,
+    /// Who filed the report — a person, so the log can say "Kesselring
+    /// reports armor at the bridge" instead of an anonymous marker moving.
+    pub reporter: UnitId,
+    /// The round the report was last refreshed.
+    pub round: u32,
+    pub fresh: bool,
+}
+
 /// Everything a battle knows about who answers to whom.
 ///
 /// Empty is a meaningful and common value: a map that declares no formations
@@ -193,6 +242,11 @@ impl Formation {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandState {
     formations: Vec<Formation>,
+    /// Each side's command picture, indexed by side and sorted by the
+    /// contact's unit id. Empty until command rules exist; sized lazily by
+    /// the first recompute so a save from before pictures opens unchanged.
+    #[serde(default)]
+    pictures: Vec<Vec<Contact>>,
 }
 
 impl CommandState {
@@ -239,7 +293,10 @@ impl CommandState {
                 })
             })
             .collect();
-        Self { formations }
+        Self {
+            formations,
+            pictures: Vec::new(),
+        }
     }
 
     /// Every formation in this battle, in the order its map declared them.
@@ -450,27 +507,146 @@ impl BattleState {
             }
 
             // `living` is in unit-id order, so this is too, and so are the
-            // events below it.
-            let cut_off: Vec<UnitId> = living
-                .into_iter()
+            // events below it. A member newly cut off snapshots the standing
+            // mission as her carried orders; one who was already cut off
+            // keeps the snapshot she has — the wire has been dead the whole
+            // time, so nothing newer can have reached her.
+            let formation = &self.command.formations[index];
+            let cut_off: Vec<CutOff> = living
+                .iter()
                 .filter(|id| !heard.contains(id))
+                .map(|id| CutOff {
+                    unit: *id,
+                    orders: formation
+                        .out_of_contact
+                        .iter()
+                        .find(|c| c.unit == *id)
+                        .map(|c| c.orders.clone())
+                        .unwrap_or_else(|| formation.mission.clone()),
+                })
                 .collect();
             let was = std::mem::replace(
                 &mut self.command.formations[index].out_of_contact,
                 cut_off.clone(),
             );
-            for id in &cut_off {
-                if !was.contains(id) {
-                    events.push(Event::OutOfContact { unit: *id });
+            for cut in &cut_off {
+                if !was.iter().any(|c| c.unit == cut.unit) {
+                    events.push(Event::OutOfContact { unit: cut.unit });
                 }
             }
-            for id in &was {
+            for cut in &was {
                 // Still on the field: a crew that came back into contact by
                 // dying is not news anybody wants twice.
-                if !cut_off.contains(id) && self.unit(*id).is_some() {
-                    events.push(Event::ContactRestored { unit: *id });
+                if !cut_off.iter().any(|c| c.unit == cut.unit) && self.unit(cut.unit).is_some() {
+                    events.push(Event::ContactRestored { unit: cut.unit });
                 }
             }
         }
+    }
+
+    /// The command picture: what `side`'s commander has been *told* is out
+    /// there, as opposed to what her units can currently see. Empty for a
+    /// battle whose mod declares no command rules — the display and the
+    /// brains then read the live fog, which is today's game.
+    pub fn picture(&self, side: u8) -> &[Contact] {
+        self.command
+            .pictures
+            .get(side as usize)
+            .map(|p| p.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Rebuild every side's command picture from what its in-contact units
+    /// can see, and say when something new is reported.
+    ///
+    /// The rule that earns this its place: **seeing is not reporting.** The
+    /// side's fog may spot an enemy through any unit's eyes, but the picture
+    /// only learns of it when a unit *in contact* sees it — a cut-off scout
+    /// discovers things nobody else knows, which is recon wasted, which is
+    /// what makes the wires worth protecting. A contact nobody currently
+    /// re-reports goes stale rather than vanishing: the commander keeps a
+    /// ghost at the last reported position, because "we lost sight of it" is
+    /// information and "it was never there" is a lie.
+    ///
+    /// Reports are instantaneous once a reporter exists; pricing them in
+    /// signals-check ticks the way outbound orders are priced is future
+    /// work, noted in the design doc rather than half-built here.
+    ///
+    /// Sides, enemies and reporters are all walked in index/id order, so the
+    /// events and the picture are the same on every machine. Does nothing
+    /// when no mod declares command rules.
+    pub(super) fn recompute_picture(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
+        if registry.command.is_none() {
+            return;
+        }
+        let sides = self.sides.len();
+        let mut pictures = std::mem::take(&mut self.command.pictures);
+        pictures.resize(sides, Vec::new());
+
+        for side in 0..sides as u8 {
+            // Sorted, because a HashSet's order must never reach an event.
+            let mut spotted: Vec<UnitId> = self.fog.side(side).spotted.iter().copied().collect();
+            spotted.sort_unstable();
+
+            let prior = std::mem::take(&mut pictures[side as usize]);
+            let mut next: Vec<Contact> = Vec::new();
+
+            for enemy in spotted {
+                let Some(target) = self.unit(enemy) else {
+                    continue;
+                };
+                // The lowest-id unit in contact that can see it files the
+                // report. Units outside any formation answer directly to
+                // their side and always report.
+                let reporter = self
+                    .side_units(side)
+                    .filter(|u| {
+                        self.command
+                            .formation_of(u.id)
+                            .is_none_or(|f| f.in_contact(u.id))
+                    })
+                    .find(|u| super::fog::sees(registry, self, u.id, target.pos))
+                    .map(|u| u.id);
+                if let Some(by) = reporter {
+                    let known = prior.iter().find(|c| c.unit == enemy);
+                    if known.is_none_or(|c| !c.fresh) {
+                        events.push(Event::ContactReported {
+                            unit: enemy,
+                            by,
+                            at: target.pos,
+                        });
+                    }
+                    next.push(Contact {
+                        unit: enemy,
+                        at: target.pos,
+                        reporter: by,
+                        round: self.round,
+                        fresh: true,
+                    });
+                }
+            }
+
+            // Everything previously known and not freshly reported stays as
+            // a ghost — unless we watched it die: a contact that was fresh
+            // while its vehicle was destroyed was seen going up, and keeping
+            // a ghost of something the whole net saw burn would be the
+            // picture lying in the other direction.
+            for old in prior {
+                if next.iter().any(|c| c.unit == old.unit) {
+                    continue;
+                }
+                let gone = self.units.get(old.unit.index()).is_none_or(|u| !u.alive);
+                if gone && old.fresh {
+                    continue;
+                }
+                next.push(Contact {
+                    fresh: false,
+                    ..old
+                });
+            }
+            next.sort_unstable_by_key(|c| c.unit);
+            pictures[side as usize] = next;
+        }
+        self.command.pictures = pictures;
     }
 }

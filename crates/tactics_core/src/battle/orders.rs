@@ -166,8 +166,9 @@ pub enum Event {
         mission: Mission,
     },
     /// This unit can no longer hear her chain of command: she is outside her
-    /// leader's radius (and outside any relay), so mission changes will not
-    /// reach her and she fights on her own judgment until they can.
+    /// leader's radius (and outside any relay). She soldiers on the standing
+    /// orders she was carrying when the wire went dead — mission *changes*
+    /// are what cannot reach her until contact is restored.
     ///
     /// Said out loud on the tick it happens, because a unit that quietly
     /// ignores what it was told is indistinguishable from a bug. That is the
@@ -181,6 +182,18 @@ pub enum Event {
     /// motoring along beside its leader says nothing for the whole battle.
     ContactRestored {
         unit: UnitId,
+    },
+    /// Somebody in contact laid eyes on an enemy and the report reached the
+    /// commander: `unit` is the enemy, `by` is the girl who filed it, `at` is
+    /// where she says it was. This is the upward half of command friction —
+    /// what the *side's* fog sees and what its commander has been *told* are
+    /// different pictures, and this event is the only bridge between them. A
+    /// spot by a cut-off unit produces no report at all, which is recon
+    /// wasted, which is what the wires are for.
+    ContactReported {
+        unit: UnitId,
+        by: UnitId,
+        at: Hex,
     },
     /// A vehicle drove off the map by an exit objective. It is out of the
     /// battle and its crew are going home; this is not [`Self::UnitDestroyed`]
@@ -474,6 +487,11 @@ impl BattleState {
         if self.resolve_exits(&mut events) {
             events.extend(fog::recompute(registry, self));
         }
+        // The picture is rebuilt last, once the tick's seeing is settled:
+        // after the post-fire fog recompute (a gun that revealed itself is
+        // reportable the same tick) and after exits (a reporter who has
+        // driven off the map files nothing from the road home).
+        self.recompute_picture(registry, &mut events);
         // Control is re-read every tick so driving onto the bridge takes it
         // there and then, but points are only paid at the end of a round —
         // an objective is worth holding for a *round*, and paying per tick

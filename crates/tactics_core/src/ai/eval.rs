@@ -130,17 +130,19 @@ impl Evaluator {
         // planner that scores through here becomes mission-aware at once,
         // and one that never sees a mission is bit-for-bit the old game.
         //
-        // A unit who cannot hear her chain of command scores as if she had
-        // never been told anything: back to weighing the whole map for
-        // herself, which is her own initiative and the only judgment left to
-        // her. The filter is the additivity hinge again — with no command
-        // rules nobody is ever out of contact, so it never fires and this is
-        // bit-for-bit the mission code above.
+        // A unit who cannot hear her chain of command soldiers on the orders
+        // she was carrying when the wire went dead — `mission_for` is that
+        // snapshot — rather than going rogue. Standing orders standing is
+        // what commander loss *means* in the design doc, and it is also what
+        // keeps a command block additive on maps where leaders die early:
+        // with the alternative "cut off means unmissioned" model, half the
+        // map's missions silently vanished by round two. With no command
+        // rules nobody is ever out of contact and `mission_for` is exactly
+        // `mission`, bit for bit.
         let standing = state
             .command
             .formation_of(unit)
-            .filter(|f| f.in_contact(unit))
-            .and_then(|f| f.mission.as_ref().map(|m| (m, f)));
+            .and_then(|f| f.mission_for(unit).map(|m| (m, f)));
         let objective = match standing {
             Some((mission, formation)) => self.mission_value(state, tile, mission, formation),
             None => self.objective_value(state, me.side, tile, hp_fraction),

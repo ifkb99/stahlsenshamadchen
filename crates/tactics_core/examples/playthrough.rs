@@ -160,6 +160,11 @@ fn main() {
                 Event::ContactRestored { unit } => {
                     println!("   >> {} is back in contact", name(&state, *unit))
                 }
+                Event::ContactReported { unit, by, at } => println!(
+                    "   >> {} reports {} at {at:?}",
+                    name(&state, *by),
+                    name(&state, *unit)
+                ),
                 Event::ObjectiveTaken {
                     objective, side, ..
                 } => println!(

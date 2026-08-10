@@ -28,6 +28,17 @@ fn registry() -> DataRegistry {
     registry
 }
 
+/// The base game with the radio switched off: command rules stripped, so a
+/// test about missions themselves — what they store, how they steer units,
+/// what the brain issues — is not also a test about latency and radio
+/// radius. The wire has its own tests, and its own zero-coefficient pin
+/// (`a_command_block_with_zero_coefficients_is_the_game_without_one`).
+fn registry_wireless() -> DataRegistry {
+    let mut reg = registry();
+    reg.command = None;
+    reg
+}
+
 /// Close every side's planning and play the round out.
 fn play_round(reg: &DataRegistry, state: &mut BattleState) -> Vec<BattleEvent> {
     let mut events = Vec::new();
@@ -1574,7 +1585,7 @@ fn setting_a_mission_stores_it_on_the_formation_and_says_so_out_loud() {
     // in state *and* produce the event a log can carry. Silence would be the
     // failure mode: a mission nobody can see is indistinguishable from one
     // that was dropped.
-    let reg = registry();
+    let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 5).expect("battle");
     let armor = formation_named(&state, "kuhlmann_armor");
     let bridge = state.map.objectives()[0].anchor();
@@ -1654,7 +1665,7 @@ fn a_mission_is_a_standing_order_and_outlives_the_round_it_was_given_in() {
 fn a_mission_for_a_formation_that_does_not_exist_is_refused() {
     // The handle arrives from outside — a save, a replay, a brain that is not
     // this process — so a stale one is an ordinary refusal, never a panic.
-    let reg = registry();
+    let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 7).expect("battle");
     let past_the_end = FormationId(state.formations().len() as u32);
     assert_eq!(
@@ -1675,7 +1686,7 @@ fn a_mission_set_after_the_side_has_committed_is_refused() {
     // in — the same bargain `SetFire` and `SetMove` already make. Ordering a
     // platoon about after the round has been sealed would let a side plan
     // twice.
-    let reg = registry();
+    let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 8).expect("battle");
     let armor = formation_named(&state, "kuhlmann_armor");
     let line = formation_named(&state, "valkyrie_line");
@@ -1716,7 +1727,7 @@ fn a_withdrawal_must_name_an_exit_this_side_may_use() {
     // name nobody declared, ground that is held rather than left by, and the
     // enemy's lane. `river_crossing` gives west_road to side 0 and east_road
     // to side 1, which is what makes the last one checkable at all.
-    let reg = registry();
+    let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 9).expect("battle");
     let armor = formation_named(&state, "kuhlmann_armor");
     let withdraw = |via: &str| Order::SetMission {
@@ -1760,7 +1771,7 @@ fn a_mission_that_names_ground_off_the_map_is_refused() {
     // executor's problem. Every variant that carries a hex is covered,
     // because `Hold`'s optional one is exactly the sort of field a validator
     // forgets.
-    let reg = registry();
+    let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 10).expect("battle");
     let armor = formation_named(&state, "kuhlmann_armor");
     let nowhere = tactics_core::offset_to_hex(500, 500);
@@ -3015,7 +3026,7 @@ fn a_map_with_formations_but_no_missions_fights_exactly_as_the_flat_pool_did() {
     // planners, one battle with its command state stripped — the event
     // streams must match to the byte, or the mission machinery is leaking
     // into battles that never asked for it.
-    let reg = registry();
+    let reg = registry_wireless();
     let run = |strip: bool| -> Vec<String> {
         let mut state = BattleState::from_map(&reg, "river_crossing", 21).unwrap();
         if strip {
@@ -3048,7 +3059,7 @@ fn a_map_with_formations_but_no_missions_fights_exactly_as_the_flat_pool_did() {
 
 #[test]
 fn a_formation_advances_on_the_ground_its_mission_names() {
-    let reg = registry();
+    let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 5).unwrap();
     let bridge = state
         .map
@@ -3094,7 +3105,7 @@ fn an_ordered_withdrawal_needs_no_wounds() {
     // *mission* is that order, so it pulls at full strength on full health —
     // which is what makes withdrawal a command decision rather than a
     // symptom.
-    let reg = registry();
+    let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 13).unwrap();
     let lane = state
         .map
@@ -3143,7 +3154,7 @@ fn the_command_planner_assigns_missions_once_and_units_follow_them() {
     // A centralized doctrine (low delegation), because a devolved one
     // deliberately assigns no ground at all — see
     // a_devolved_commander_issues_no_ground_missions.
-    let reg = registry();
+    let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 9).unwrap();
     let mut ai = AiDriver::new();
     ai.insert(
@@ -3205,7 +3216,7 @@ fn a_beaten_formation_is_ordered_out_by_its_commander() {
     // Withdrawal as a command decision: nobody in this formation consults
     // her own damage — the commander weighs the formation against her
     // doctrine's threshold and orders it out by the nearest lane.
-    let reg = registry();
+    let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 31).unwrap();
     let formation = formation_named(&state, "valkyrie_line");
     for id in state.formations()[formation.index()].members.clone() {
@@ -3246,7 +3257,7 @@ fn a_beaten_formation_is_ordered_out_by_its_commander() {
 
 #[test]
 fn initiative_moves_a_commander_on_and_obedience_does_not() {
-    let reg = registry();
+    let reg = registry_wireless();
 
     // The balanced doctrine carries initiative 0.5: with the bridge already
     // hers, her formations are re-aimed at ground she does not hold.
@@ -3314,7 +3325,7 @@ fn a_devolved_commander_issues_no_ground_missions() {
     // commander's only order is the one that is never devolved — leaving.
     // Measured before believed: pinning this doctrine to anchor hexes cost
     // it 16 of 24 wins against an unchanged opponent.
-    let reg = registry();
+    let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 17).unwrap();
     let mut ai = AiDriver::new();
     ai.insert(
@@ -3449,38 +3460,29 @@ fn a_command_block_with_zero_coefficients_is_the_game_without_one() {
     // its knob, which is the tell that a model is wrong rather than mistuned.
     // So the rules are declared at their most generous — everyone in radio
     // contact of everyone, orders that arrive instantly — and the battle they
-    // produce must be the same battle, event for event, as one whose registry
-    // has no `command` block at all. A command-planner side, so missions are
-    // actually being issued and could actually go astray.
+    // produce must be the same battle, decision for decision, as one whose
+    // registry has no `command` block at all. A command-planner side, so
+    // missions are actually being issued and could actually go astray.
     //
-    // The commanders are kept alive on purpose, identically in both runs, and
-    // that is worth reading carefully because it is the one thing the
-    // coefficients cannot switch off: a formation whose leader is destroyed
-    // has nobody speaking, so its members go out of contact whatever the
-    // radius says, and on `river_crossing` a platoon leader dies in the first
-    // round of nearly every seed. That divergence is a rule of the system
-    // rather than a leak in it — it has its own test in
-    // `a_dead_leader_leaves_her_formation_out_of_contact` — but it means the
-    // *coefficients* can only be pinned over a battle whose chain of command
-    // is intact, so this one holds the chain intact and pins them over six
-    // rounds instead of the one that would otherwise be available. Chunk 6,
-    // which gives a dead leader a successor, is where that exception should
-    // stop existing.
+    // Leaders die in this window — on `river_crossing` a platoon leader dies
+    // in the first round of nearly every seed — and the pin holds anyway,
+    // because a cut-off crew soldiers on the orders she was carrying rather
+    // than dropping them. What a block is *allowed* to add at zero
+    // coefficients is words, not deeds: the wire events (out of contact,
+    // restored, reports reaching the commander) are the system's information
+    // surface and exist whenever it does. So the comparison is exact after
+    // setting those three aside, and then requires that nothing else was set
+    // aside — a behaviour drift hiding among the wire events fails the
+    // second assertion instead of slipping through the first.
+    let wire = |line: &String| {
+        line.starts_with("OutOfContact")
+            || line.starts_with("ContactRestored")
+            || line.starts_with("ContactReported")
+    };
     let run = |rules: Option<tactics_core::data::CommandRules>| -> Vec<String> {
         let mut reg = registry();
         reg.command = rules;
         let mut state = BattleState::from_map(&reg, "river_crossing", 21).unwrap();
-        let leaders: Vec<UnitId> = state.formations().iter().filter_map(|f| f.leader).collect();
-        // Absurd hit points rather than a healing loop, because a commander
-        // can be killed inside a tick and there is no moment between the
-        // damage and the reaping to intervene. Both runs get the same absurd
-        // number, so the battles stay comparable; what the pin is measuring is
-        // the difference between two registries, not realism.
-        for id in &leaders {
-            if let Some(unit) = state.unit_mut(*id) {
-                unit.hp = 1_000_000;
-            }
-        }
         let mut ai = AiDriver::new();
         ai.insert(
             0,
@@ -3507,10 +3509,6 @@ fn a_command_block_with_zero_coefficients_is_the_game_without_one() {
             });
             log.extend(state.resolve_round(&reg).iter().map(|e| format!("{e:?}")));
         }
-        assert!(
-            leaders.iter().all(|id| state.unit(*id).is_some()),
-            "the pin needs its chain of command intact for the whole window"
-        );
         log
     };
     let without = run(None);
@@ -3523,6 +3521,10 @@ fn a_command_block_with_zero_coefficients_is_the_game_without_one() {
         without.iter().any(|line| line.contains("ShotHit")),
         "and fighting, rather than driving about out of contact"
     );
+    assert!(
+        !without.iter().any(wire),
+        "no block, no wires: the None run must contain no wire events at all"
+    );
     let zeroed = run(Some(tactics_core::data::CommandRules {
         radius: 999,
         radius_per_signals: 0,
@@ -3534,9 +3536,14 @@ fn a_command_block_with_zero_coefficients_is_the_game_without_one() {
             max_ticks: 0,
         },
     }));
+    let (spoken, deeds): (Vec<String>, Vec<String>) = zeroed.into_iter().partition(wire);
     assert_eq!(
-        zeroed, without,
-        "a command block at zero coefficients must be the game without one"
+        deeds, without,
+        "a command block at zero coefficients must change words, never deeds"
+    );
+    assert!(
+        spoken.iter().all(wire),
+        "and everything set aside really was wire traffic"
     );
 }
 
@@ -3607,14 +3614,15 @@ fn plan_one(
 }
 
 #[test]
-fn a_cut_off_unit_fights_by_her_own_judgment() {
-    // Out of contact is not paralysis and it is not obedience: it is a girl
-    // who never heard the order, weighing the map for herself exactly as she
-    // did before anyone was giving missions at all. Anything else would make
-    // the command system a tax rather than a texture.
+fn a_cut_off_unit_keeps_the_orders_she_had() {
+    // Out of contact is not amnesia and it is not license: a girl who loses
+    // the wire soldiers on the standing orders she was carrying when it went
+    // dead. What she cannot do is hear anything new. This inverts the first
+    // model this test pinned — "cut off means unmissioned" — which measured
+    // badly the moment leaders started dying on first contact: a command
+    // block silently deleted half the map's missions by round two, and a
+    // system whose presence deletes orders is a tax, not a texture.
     let reg = registry();
-    // Who is who, and where she starts, read off the deployment before any
-    // rules are applied to it.
     let (armor, follower, start) = {
         let probe = BattleState::from_map(&reg, "river_crossing", 5).unwrap();
         let armor = formation_named(&probe, "kuhlmann_armor");
@@ -3645,12 +3653,17 @@ fn a_cut_off_unit_fights_by_her_own_judgment() {
     assert_eq!(
         formation.mission,
         Some(mission.clone()),
-        "the platoon is under orders; she is simply not hearing them"
+        "the platoon is under orders"
     );
+    let carried = formation
+        .out_of_contact
+        .iter()
+        .map(|c| (c.unit, c.orders.clone()))
+        .collect::<Vec<_>>();
     assert_eq!(
-        formation.out_of_contact,
-        vec![follower],
-        "she is the one out of contact, and her commander is not"
+        carried,
+        vec![(follower, Some(mission.clone()))],
+        "she is the one out of contact, and she took the order with her"
     );
     assert_eq!(
         events
@@ -3662,7 +3675,7 @@ fn a_cut_off_unit_fights_by_her_own_judgment() {
     );
 
     // The same battle under rules that reach the whole map, so the two states
-    // differ in nothing but who can hear the order.
+    // differ in nothing but who can hear the wire.
     let heard_reg = {
         let mut r = registry();
         r.command = Some(command_rules(999, false, 0));
@@ -3676,8 +3689,8 @@ fn a_cut_off_unit_fights_by_her_own_judgment() {
         "nobody is cut off when the radius covers the map"
     );
 
-    // And the twin: the same state with its chain of command taken away
-    // entirely, which is what an unmissioned girl is.
+    // And the twin with no chain of command at all: what an unmissioned girl
+    // would do, which the deaf one must NOT match — she has orders.
     let mut twin = cut_off.clone();
     twin.command = Default::default();
 
@@ -3688,17 +3701,78 @@ fn a_cut_off_unit_fights_by_her_own_judgment() {
     let unmissioned = plan_one(&cut_off_reg, &mut b, follower, 77);
     let obedient = plan_one(&heard_reg, &mut c, follower, 77);
     assert_eq!(
-        deaf, unmissioned,
-        "a girl who never heard the order plans what she would have planned without one"
-    );
-    assert!(
-        start.distance_to(obedient) < start.distance_to(deaf),
-        "the same girl in contact stays near the ground she was told to hold: \
-         {obedient:?} against {deaf:?} from {start:?}"
+        deaf, obedient,
+        "cut off or not, she is executing the same standing order"
     );
     assert_ne!(
-        deaf, obedient,
-        "and the order does steer her when she can hear it, or this test proves nothing"
+        deaf, unmissioned,
+        "and it is the order steering her, not her own judgment"
+    );
+    assert!(
+        start.distance_to(deaf) <= start.distance_to(unmissioned),
+        "holding means staying: {deaf:?} against {unmissioned:?} from {start:?}"
+    );
+}
+
+#[test]
+fn an_order_never_heard_does_not_steer_her() {
+    // The counterpart: a girl already out of contact when the order is given
+    // never receives it. The formation's standing mission changes behind her
+    // back; she fights on what she knew — which was nothing.
+    let reg = registry();
+    let (armor, follower) = {
+        let probe = BattleState::from_map(&reg, "river_crossing", 5).unwrap();
+        let armor = formation_named(&probe, "kuhlmann_armor");
+        let formation = &probe.formations()[armor.index()];
+        let leader = formation.leader.expect("a commander");
+        let follower = *formation
+            .members
+            .iter()
+            .find(|id| **id != leader)
+            .expect("a subordinate");
+        (armor, follower)
+    };
+    let cut_off_reg = {
+        let mut r = registry();
+        r.command = Some(command_rules(2, false, 0));
+        r
+    };
+    // Round one, no mission: she goes out of contact carrying nothing.
+    let (mut state, _) = quiet_round(&cut_off_reg, None);
+    let start = state.unit(follower).unwrap().pos;
+    // Now the order goes out. It reaches the formation — the leader can hear
+    // herself — but not her.
+    state
+        .apply(
+            &cut_off_reg,
+            &Order::SetMission {
+                formation: armor,
+                mission: Mission::Hold { at: Some(start) },
+            },
+        )
+        .expect("a legal mission");
+    let formation = &state.formations()[armor.index()];
+    assert!(
+        formation.latest_mission().is_some(),
+        "the platoon has its orders"
+    );
+    assert_eq!(
+        formation
+            .out_of_contact
+            .iter()
+            .find(|c| c.unit == follower)
+            .map(|c| c.orders.clone()),
+        Some(None),
+        "but she is carrying the nothing she was cut off with"
+    );
+
+    let mut twin = state.clone();
+    twin.command = Default::default();
+    let deaf = plan_one(&cut_off_reg, &mut state, follower, 91);
+    let unmissioned = plan_one(&cut_off_reg, &mut twin, follower, 91);
+    assert_eq!(
+        deaf, unmissioned,
+        "an order she never heard cannot steer her"
     );
 }
 
@@ -3806,7 +3880,12 @@ fn a_dead_leader_leaves_her_formation_out_of_contact() {
         .filter(|id| *id != leader)
         .collect();
     assert_eq!(
-        formation.out_of_contact, orphans,
+        formation
+            .out_of_contact
+            .iter()
+            .map(|c| c.unit)
+            .collect::<Vec<_>>(),
+        orphans,
         "with nobody to hear, everyone still on the field is out of contact"
     );
     for id in orphans {
@@ -3818,4 +3897,144 @@ fn a_dead_leader_leaves_her_formation_out_of_contact() {
         );
         assert!(!formation.in_contact(id));
     }
+}
+
+// --- the command picture (chunk 5) -----------------------------------------
+
+/// A long open road: a leader in the west, her scout far to the east with an
+/// enemy recon car beyond — inside the scout's eyes, outside everybody's
+/// guns, and far outside the leader's radio unless a test says otherwise.
+fn picture_stage(reg: &DataRegistry, seed: u64) -> BattleState {
+    let row = "g".repeat(60);
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "picture_stage",
+        "palette": { "g": "grass" },
+        "rows": [row],
+        "formations": [ { "id": "net", "name": "The Net", "side": 0 } ],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let mut leader = unit_at([0, 0], 0, "recon_car", "Leader");
+    leader.formation = Some("net".into());
+    leader.leads = true;
+    let mut scout = unit_at([25, 0], 0, "recon_car", "Scout");
+    scout.formation = Some("net".into());
+    let enemy = unit_at([32, 0], 1, "recon_car", "Prowler");
+    let placements = vec![leader, scout, enemy];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    )
+}
+
+#[test]
+fn a_scout_out_of_contact_reports_nothing() {
+    // Seeing is not reporting. The side's fog spots through any unit's eyes;
+    // the commander's picture learns only what somebody on the net can tell
+    // her. A scout beyond the radio finds the enemy and nobody knows —
+    // which is recon wasted, and the whole reason the wires matter.
+    let mut reg = registry();
+    reg.command = Some(command_rules(8, false, 0));
+    let mut state = picture_stage(&reg, 3);
+    let (scout, enemy) = (UnitId(1), UnitId(2));
+
+    commit_all(&reg, &mut state);
+    let events = state.step_tick(&reg);
+    assert!(
+        state.fog.side(0).spotted.contains(&enemy),
+        "the side's fog does see him, through her"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::OutOfContact { unit } if *unit == scout)),
+        "and she is announced as off the net"
+    );
+    assert!(
+        !state.picture(0).iter().any(|c| c.unit == enemy),
+        "but the commander has heard nothing: a cut-off scout files no report"
+    );
+
+    // March the leader east until the scout is back on the net; the report
+    // goes through the moment somebody in contact can vouch for the sighting.
+    if let Some(unit) = state.unit_mut(UnitId(0)) {
+        unit.pos = tactics_core::offset_to_hex(20, 0);
+    }
+    let events = state.step_tick(&reg);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::ContactRestored { unit } if *unit == scout)),
+        "she is back on the net"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::ContactReported { unit, .. } if *unit == enemy)),
+        "and the sighting finally reaches the commander, said out loud"
+    );
+    let contact = state
+        .picture(0)
+        .iter()
+        .find(|c| c.unit == enemy)
+        .expect("the picture now carries him");
+    assert!(contact.fresh, "freshly, because somebody can see him now");
+}
+
+#[test]
+fn a_contact_no_longer_seen_goes_stale_not_absent() {
+    // "We lost sight of it" is information; "it was never there" is a lie.
+    // A contact nobody can re-report stays on the picture as a ghost at the
+    // last reported position, marked stale rather than deleted.
+    let mut reg = registry();
+    reg.command = Some(command_rules(999, false, 0));
+    let mut state = picture_stage(&reg, 4);
+    let enemy = UnitId(2);
+    let seen_at = state.unit(enemy).unwrap().pos;
+
+    commit_all(&reg, &mut state);
+    state.step_tick(&reg);
+    let contact = state
+        .picture(0)
+        .iter()
+        .find(|c| c.unit == enemy)
+        .expect("reported while seen");
+    assert!(contact.fresh);
+    assert_eq!(contact.at, seen_at);
+
+    // He slips away beyond every eye on the field.
+    if let Some(unit) = state.unit_mut(enemy) {
+        unit.pos = tactics_core::offset_to_hex(55, 0);
+    }
+    state.step_tick(&reg);
+    assert!(
+        !state.fog.side(0).spotted.contains(&enemy),
+        "nobody can see him any more"
+    );
+    let ghost = state
+        .picture(0)
+        .iter()
+        .find(|c| c.unit == enemy)
+        .expect("but the commander still has him on the map");
+    assert!(!ghost.fresh, "as a ghost");
+    assert_eq!(
+        ghost.at, seen_at,
+        "standing where he was last reported, not where he is"
+    );
 }

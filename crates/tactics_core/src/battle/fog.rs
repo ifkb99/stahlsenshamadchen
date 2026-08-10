@@ -284,6 +284,29 @@ pub fn unit_vision(registry: &DataRegistry, state: &BattleState, id: UnitId) -> 
     )
 }
 
+/// Whether `id` can currently see `target`, answered from the cache the last
+/// recompute left warm.
+///
+/// This exists for the command picture, which asks "can this reporter see
+/// that contact" for a handful of pairs every tick — the same question fog
+/// just computed for every unit on the field. Recomputing a two-thousand-hex
+/// field of view per pair took round resolution from ~1.1 ms to ~5.6 ms,
+/// measured; reading the cache costs a key comparison. The cold path (a
+/// cache that has not seen this position yet) falls back to the honest
+/// computation, so the answer cannot depend on cache temperature.
+pub(crate) fn sees(registry: &DataRegistry, state: &BattleState, id: UnitId, target: Hex) -> bool {
+    let Some(unit) = state.unit(id) else {
+        return false;
+    };
+    let range = stats::vision_range(registry, &state.roster, unit, state.terrain_at(unit.pos));
+    if let Some(tiles) = state.fog.cached(id, unit.pos, range) {
+        return tiles.contains(&target);
+    }
+    unit.pos.distance_to(target) <= range as i32
+        && state.map.contains(target)
+        && state.sight.clear(unit.pos, target)
+}
+
 /// Recompute all sides' fog. Returns `UnitSpotted` events for enemies that
 /// just became visible.
 ///
