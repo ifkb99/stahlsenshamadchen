@@ -69,6 +69,7 @@ TickStarted { tick: 0 }
 ShotFired { attacker: UnitId(3), from: Hex { x: -2, y: 20, z: -18 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
 ShotHit { attacker: UnitId(3), target: UnitId(6), damage: 4, facing: Front, remaining_hp: 5 }
 UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: -2, y: 20, z: -18 } }
+MoraleChanged { unit: UnitId(6), rung: "Wavering", obeys: true }
 TickStarted { tick: 1 }
 UnitMoved { unit: UnitId(2), path: [Hex { x: 5, y: 19, z: -24 }, Hex { x: 6, y: 19, z: -25 }] }
 UnitMoved { unit: UnitId(5), path: [Hex { x: 18, y: 18, z: -36 }, Hex { x: 18, y: 19, z: -37 }] }
@@ -882,6 +883,7 @@ UnitMoved { unit: UnitId(6), path: [Hex { x: 14, y: 25, z: -39 }, Hex { x: 15, y
 ShotFired { attacker: UnitId(0), from: Hex { x: 5, y: 23, z: -28 }, at: Hex { x: 15, y: 24, z: -39 }, weapon: "gun_75", blind: false, opportunity: false }
 ShotHit { attacker: UnitId(0), target: UnitId(6), damage: 5, facing: Side, remaining_hp: 4 }
 UnitSpotted { unit: UnitId(0), by_side: 1, at: Hex { x: 5, y: 23, z: -28 } }
+MoraleChanged { unit: UnitId(6), rung: "Wavering", obeys: true }
 TickStarted { tick: 8 }
 UnitMoved { unit: UnitId(2), path: [Hex { x: 6, y: 24, z: -30 }, Hex { x: 6, y: 25, z: -31 }] }
 ShotFired { attacker: UnitId(6), from: Hex { x: 15, y: 24, z: -39 }, at: Hex { x: 5, y: 23, z: -28 }, weapon: "gun_88", blind: false, opportunity: true }

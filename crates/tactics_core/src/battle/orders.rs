@@ -109,6 +109,21 @@ pub enum Event {
         by_side: u8,
         at: Hex,
     },
+    /// A crew moved up or down the morale ladder. Emitted so the player can
+    /// see a unit wavering *before* it costs them something, which is the
+    /// whole bargain that makes disobedience fair.
+    MoraleChanged {
+        unit: UnitId,
+        rung: String,
+        /// Whether they will still do as they are told on this rung.
+        obeys: bool,
+    },
+    /// A crew did not do what it was told, and why. Never silent: an order
+    /// that quietly fails is indistinguishable from a bug.
+    OrderRefused {
+        unit: UnitId,
+        rung: String,
+    },
     BattleEnded {
         winner: Option<u8>,
         reason: EndReason,
@@ -290,6 +305,8 @@ impl BattleState {
         self.resolve_fire(registry, &mut events);
         events.extend(fog::recompute(registry, self));
 
+        self.apply_pressure(registry, &mut events);
+
         if self.in_contact() || events.iter().any(|e| matches!(e, Event::ShotHit { .. })) {
             self.last_contact_round = self.round;
         }
@@ -300,7 +317,7 @@ impl BattleState {
 
         let next = tick + 1;
         if next >= registry.scale.ticks_per_round {
-            self.begin_round(&mut events);
+            self.begin_round(registry, &mut events);
         } else {
             self.phase = Phase::Resolving { tick: next };
         }
@@ -320,6 +337,28 @@ impl BattleState {
     /// Everyone advances along their ordered route as far as this tick's
     /// movement credit allows.
     fn resolve_movement(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
+        // A crew that has had enough will not drive into more of it. They are
+        // not out of the fight — firing is deliberately untouched below — they
+        // simply will not advance, which is what frightened people do.
+        let refusing: Vec<UnitId> = self
+            .units
+            .iter()
+            .filter(|u| u.alive && !u.intent.path.is_empty() && !self.obeys(registry, u))
+            .map(|u| u.id)
+            .collect();
+        for id in refusing {
+            let rung = self
+                .unit(id)
+                .map(|u| registry.morale.rung(u.pressure).name.clone())
+                .unwrap_or_default();
+            // Said out loud, and the order is cleared so the unit does not sit
+            // silently failing the same instruction for twelve ticks.
+            events.push(Event::OrderRefused { unit: id, rung });
+            if let Some(unit) = self.unit_mut(id) {
+                unit.intent.path.clear();
+            }
+        }
+
         let ids: Vec<UnitId> = self
             .units
             .iter()
@@ -423,9 +462,100 @@ impl BattleState {
         combat::reap(self, events);
     }
 
+    /// Turn this tick's events into pressure on the crews that felt them.
+    ///
+    /// Reads the events rather than being called from inside combat, so that
+    /// every source of fear is in one place and adding another — suppression,
+    /// a commander lost, being outflanked — is a line here rather than a hook
+    /// threaded through the shooting code.
+    fn apply_pressure(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
+        let rules = &registry.morale;
+        let mut before: Vec<(UnitId, String)> = self
+            .units
+            .iter()
+            .filter(|u| u.alive)
+            .map(|u| (u.id, rules.rung(u.pressure).id.clone()))
+            .collect();
+
+        let add = |state: &mut BattleState, id: UnitId, amount: u32| {
+            if let Some(unit) = state.unit_mut(id) {
+                unit.pressure = unit.pressure.saturating_add(amount);
+            }
+        };
+
+        // Collected first: the borrow of `events` has to end before units are
+        // touched, and iterating in event order keeps this deterministic.
+        let hits: Vec<UnitId> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::ShotHit { target, .. } => Some(*target),
+                _ => None,
+            })
+            .collect();
+        let losses: Vec<(u8, Hex)> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::UnitDestroyed { unit, at } => {
+                    self.units.get(unit.index()).map(|u| (u.side, *at))
+                }
+                _ => None,
+            })
+            .collect();
+
+        for id in hits {
+            add(self, id, rules.hit);
+        }
+        for (side, at) in losses {
+            // Watching a friend go up is worse than hearing about it, so this
+            // only reaches the ones who could see it happen.
+            let watchers: Vec<UnitId> = self
+                .units
+                .iter()
+                .filter(|u| u.alive && u.side == side && self.fog.side(side).visible.contains(&at))
+                .map(|u| u.id)
+                .collect();
+            for id in watchers {
+                add(self, id, rules.ally_destroyed);
+            }
+        }
+
+        // Say what changed, once, and only for crews that actually moved.
+        before.retain(|(id, _)| self.unit(*id).is_some());
+        for (id, was) in before {
+            let Some(unit) = self.unit(id) else { continue };
+            let now = rules.rung(unit.pressure);
+            if now.id != was {
+                events.push(Event::MoraleChanged {
+                    unit: id,
+                    rung: now.name.clone(),
+                    obeys: now.obeys,
+                });
+            }
+        }
+    }
+
     /// Open a new round: clear last round's orders and let sides plan again.
-    fn begin_round(&mut self, events: &mut Vec<Event>) {
+    fn begin_round(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
         self.round += 1;
+        // Crews settle between rounds. A disciplined one settles faster, which
+        // is what makes discipline worth training rather than merely a saving
+        // throw at the worst moment.
+        let ids: Vec<UnitId> = self.units.iter().map(|u| u.id).collect();
+        for id in ids {
+            let level = self.units.get(id.index()).map(|u| {
+                self.roster.crew_skill(
+                    registry,
+                    registry.vehicle(&u.vehicle),
+                    &u.crew,
+                    &registry.morale.skill,
+                    self.terrain_at(u.pos),
+                )
+            });
+            let shed = level.map(|l| registry.morale.recovered(l)).unwrap_or(0);
+            if let Some(unit) = self.units.get_mut(id.index()) {
+                unit.pressure = unit.pressure.saturating_sub(shed);
+            }
+        }
         for unit in self.units.iter_mut() {
             unit.intent = UnitIntent::default();
             unit.planned = false;

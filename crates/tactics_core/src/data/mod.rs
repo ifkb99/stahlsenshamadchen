@@ -4,6 +4,7 @@ mod balance;
 mod cores;
 mod defs;
 mod manifest;
+mod morale;
 mod registry;
 mod scale;
 
@@ -14,5 +15,6 @@ pub use cores::{
 };
 pub use defs::*;
 pub use manifest::ModManifest;
+pub use morale::{MoraleRules, MoraleRung};
 pub use registry::{DataError, DataRegistry, ValidationReport, parse_color};
 pub use scale::Scale;

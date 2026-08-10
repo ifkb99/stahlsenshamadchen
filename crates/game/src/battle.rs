@@ -771,6 +771,28 @@ fn pump_events(
                     log.push(format!("Enemy spotted: {}", name(*unit)));
                 }
             }
+            // Said in the log, because a girl doing something other than what
+            // she was told has to be attributable or it reads as a bug.
+            BattleEvent::MoraleChanged { unit, rung, obeys } => {
+                let who = battle
+                    .state
+                    .unit(*unit)
+                    .map(|u| u.name.clone())
+                    .unwrap_or_else(|| "A crew".into());
+                log.push(if *obeys {
+                    format!("{who} is {rung}.")
+                } else {
+                    format!("{who} is {rung} and will not advance.")
+                });
+            }
+            BattleEvent::OrderRefused { unit, rung } => {
+                let who = battle
+                    .state
+                    .unit(*unit)
+                    .map(|u| u.name.clone())
+                    .unwrap_or_else(|| "A crew".into());
+                log.push(format!("{who} refuses to advance - {rung}."));
+            }
             BattleEvent::BattleEnded { winner, reason } => {
                 let text = match (winner, reason) {
                     (Some(w), _) => format!("Victory: {}", battle.state.sides[*w as usize].name),

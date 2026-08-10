@@ -124,6 +124,14 @@ fn main() {
                     name(&state, *unit),
                     state.sides[*by_side as usize].name
                 ),
+                Event::MoraleChanged { unit, rung, obeys } => println!(
+                    "{} is {rung}{}",
+                    name(&state, *unit),
+                    if *obeys { "" } else { " and will not advance" }
+                ),
+                Event::OrderRefused { unit, rung } => {
+                    println!("{} refuses to advance ({rung})", name(&state, *unit))
+                }
                 Event::BattleEnded { winner, reason } => println!(
                     "=== battle over after {rounds} rounds: {:?} wins ({reason:?}) ===",
                     winner.map(|w| state.sides[w as usize].name.clone())

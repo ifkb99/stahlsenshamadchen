@@ -1989,3 +1989,138 @@ fn a_gentle_mod_removes_reaction_delay_entirely() {
         assert_eq!(reg.reaction.delay(level), 0, "level {level}");
     }
 }
+
+/// A crew that has taken enough will not drive into more of it. They are not
+/// out of the fight — they still shoot — they simply stop advancing, which is
+/// what frightened people do.
+#[test]
+fn a_breaking_crew_refuses_to_advance_and_says_so() {
+    let reg = registry();
+    let mut state = duel(&reg, 21);
+
+    // Put one crew past the last rung of the ladder.
+    let breaking = reg
+        .morale
+        .rungs
+        .last()
+        .expect("the shipped ladder has rungs")
+        .at_pressure;
+    state.units[0].pressure = breaking;
+    assert!(
+        !state.obeys(&reg, state.unit(UnitId(0)).unwrap()),
+        "this test needs a crew that has stopped obeying"
+    );
+
+    // Open ground toward the enemy, not the enemy's own tile, which is
+    // occupied and therefore unpathable.
+    let forward = tactics_core::offset_to_hex(1, 1);
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: UnitId(0),
+                to: forward,
+            },
+        )
+        .expect("the order is accepted; it is the crew who decline");
+    let events = play_round(&reg, &mut state);
+
+    // Asserted as behaviour rather than as a position: a duel can kill her
+    // during the round, and a dead unit has no position to compare.
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            BattleEvent::UnitMoved { unit, .. } if *unit == UnitId(0)
+        )),
+        "a breaking crew should not have advanced a hex: {events:?}"
+    );
+    // And it must be attributable. An order that quietly fails is
+    // indistinguishable from a bug.
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            BattleEvent::OrderRefused { unit, .. } if *unit == UnitId(0)
+        )),
+        "the refusal has to be said out loud: {events:?}"
+    );
+}
+
+/// The player has to be able to see a crew wavering *before* it costs them
+/// something, or licence to disobey reads as the game cheating.
+#[test]
+fn crews_report_moving_up_the_ladder() {
+    let reg = registry();
+    let mut state = duel(&reg, 22);
+    for side in state.living_sides() {
+        state.apply(&reg, &Order::Commit { side }).unwrap();
+    }
+
+    // Fight until somebody has been hurt enough to move a rung.
+    let mut said = false;
+    for _ in 0..6 {
+        if state.is_over() {
+            break;
+        }
+        let events = play_round(&reg, &mut state);
+        if events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::MoraleChanged { .. }))
+        {
+            said = true;
+            break;
+        }
+        for side in state.living_sides() {
+            let _ = state.apply(&reg, &Order::Commit { side });
+        }
+    }
+    assert!(said, "taking fire should eventually be reported as morale");
+}
+
+/// Difficulty is a mod. A one-rung ladder has to produce girls who always do
+/// as they are told, with nothing in Rust switched off to achieve it.
+#[test]
+fn a_gentle_mod_has_girls_who_never_refuse() {
+    let mut reg = registry();
+    reg.morale = tactics_core::data::MoraleRules {
+        rungs: vec![tactics_core::data::MoraleRung {
+            id: "steady".into(),
+            name: "Steady".into(),
+            at_pressure: 0,
+            obeys: true,
+        }],
+        ..reg.morale.clone()
+    };
+
+    let mut state = duel(&reg, 23);
+    state.units[0].pressure = 10_000;
+    assert!(
+        state.obeys(&reg, state.unit(UnitId(0)).unwrap()),
+        "under a one-rung ladder no amount of pressure stops her"
+    );
+
+    // Open ground toward the enemy, not the enemy's own tile, which is
+    // occupied and therefore unpathable.
+    let forward = tactics_core::offset_to_hex(1, 1);
+    let start = state.unit(UnitId(0)).unwrap().pos;
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: UnitId(0),
+                to: forward,
+            },
+        )
+        .expect("ordered forward");
+    let events = play_round(&reg, &mut state);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::OrderRefused { .. })),
+        "nobody refuses in the gentle game: {events:?}"
+    );
+    assert_ne!(
+        state.unit(UnitId(0)).map(|u| u.pos),
+        Some(start),
+        "and she actually advances"
+    );
+}
