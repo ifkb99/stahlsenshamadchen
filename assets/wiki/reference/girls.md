@@ -26,17 +26,38 @@ mod data** rather than in Rust: `mod.json` declares which cores exist, so a mod
 They are resolved to indices when the registry loads, so a check costs an array
 index rather than a string hash.
 
-The base game ships four.
+The base game ships six.
 
 | core | what it is | what it feeds |
 | --- | --- | --- |
-| **Nerve** | steadiness under fire | morale; how much reactivity survives being shot at |
-| **Wits** | quickness and perception | reactivity; spotting; how fast she reports contact |
-| **Hands** | coordination | aiming and handling |
-| **Presence** | authority | leadership; order clarity; steadying others |
+| **Nerve** | steadiness under fire | holding when hit; how much speed survives being shot at |
+| **Wits** | quickness and perception | reaction speed; spotting; how fast she notices a change |
+| **Intellect** | reasoning and planning | making a plan worth following; reading ground; understanding a complex order correctly |
+| **Hands** | coordination | laying a gun, driving, loading, repairing |
+| **Presence** | authority | whether an order lands and is obeyed; steadying people nearby |
+| **Charm** | rapport | who she gets on with; morale spreading through a formation; supports |
 
-**Training** — competence. Learned skills: gunnery, driving, signals, command.
-This is the bulk of any ability.
+Wits and Intellect are deliberately separate. Noticing a tank at tick four and
+knowing what to do about it are different talents, and "quick but not clever"
+is a person worth being able to write. Presence and Charm split the same way:
+being *obeyed* and being *liked* are not the same thing, and a feared martinet
+and a beloved section leader should play differently.
+
+**Training** — competence. Learned skills, each naming the cores it draws on:
+
+| skill | cores | what it does |
+| --- | --- | --- |
+| **gunnery** | Hands, Wits | laying and firing |
+| **driving** | Hands, Nerve | handling, rough ground, not bogging |
+| **loading** | Hands, Nerve | rate of fire |
+| **signals** | Intellect, Wits | working the radio; relaying contact and orders |
+| **maintenance** | Hands, Intellect | field repair, keeping a vehicle running |
+| **first aid** | Intellect, Hands | treating a wounded crewmate before she is a casualty |
+| **command** | Presence, Intellect | giving orders that arrive and are followed |
+
+More command skills arrive with chain of command — tactics, reconnaissance and
+supply are the obvious ones — so the skill list is data and adding to it should
+never need a code change.
 
 **Traits** — character. Named, situational, and usually paired: a gift and a
 cost together. See below.
@@ -317,3 +338,31 @@ Worth reading before building any of this.
   advantage/disadvantage point economy. The backbone of the model above.
 - **Fire Emblem** — already a stated inspiration: growth rates as per-character
   tendency, and supports as the payoff for caring.
+
+## Build order
+
+Staged so each slice is verifiable on its own. The determinism baseline and
+`examples/balance.rs` are the instruments: every slice should be able to say
+what it moved.
+
+1. **Cores and checks as data.** `cores` and `skills` blocks in `mod.json`, a
+   `checks` definition, `CharacterDef`/`Girl` restructured, `crew.json` rewritten
+   on the 10-centred scale. Reroute the three existing consumers — aiming,
+   driving, spotting — through checks. Behaviour should land close to today's;
+   the balance harness says how close.
+2. **Roles instead of best-of.** `VehicleDef.crew_slots` already names them and
+   has never been read. This is where crews get weaker and the roster needs
+   retuning.
+3. **Traits.** Declarative condition-and-modifier, with the Lua hook for the
+   behavioural ones. Innate first, acquired-from-events second — the casualty
+   data needed for the latter already exists.
+4. **Reaction latency.** Ticks of delay before acting on a new order or a new
+   situation. This is the slice that makes girls read as people rather than
+   robots, and it needs the morale ladder to be legible.
+5. **Morale ladder and full latitude.** Steady / wavering / breaking, visible
+   before it matters, with a stated cause in the log whenever a girl does
+   something other than what she was told.
+
+Chain of command lands on top of 4 and 5: an order that takes time to arrive
+(signals, Presence) and time to act on (reaction latency) is the same currency
+twice, so the two systems compose rather than collide.
