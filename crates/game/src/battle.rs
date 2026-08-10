@@ -13,7 +13,8 @@ use std::sync::Arc;
 use tactics_core::Hex;
 use tactics_core::ai::{AiDriver, make_battle_planner};
 use tactics_core::battle::{
-    BattleState, EndReason, Event as BattleEvent, FireIntent, Order, SideState, UnitId, reachable,
+    BattleState, EndReason, Event as BattleEvent, FireIntent, Mission, Order, SideState, UnitId,
+    reachable,
 };
 use tactics_core::map::{ObjectiveKind, UnitPlacement};
 use tactics_core::overworld::ArmyId;
@@ -896,6 +897,28 @@ fn pump_events(
                     Some(s) => format!("{what} taken by {}.", battle.state.sides[*s as usize].name),
                     None => format!("{what} is contested."),
                 });
+            }
+            // A formation being given a mission is the one command event that
+            // exists so far, and it goes in the log for the reason the whole
+            // system is built around legibility: four vehicles turning north
+            // together should be explained by a line the player already read,
+            // not inferred afterwards. Nothing in the game issues one yet.
+            BattleEvent::MissionAssigned { formation, mission } => {
+                let who = battle
+                    .state
+                    .map
+                    .formations()
+                    .iter()
+                    .find(|f| &f.id == formation)
+                    .map(|f| f.display_name().to_string())
+                    .unwrap_or_else(|| formation.clone());
+                let what = match mission {
+                    Mission::Advance { .. } => "advance",
+                    Mission::Hold { .. } => "hold",
+                    Mission::Recon { .. } => "reconnoitre",
+                    Mission::Withdraw { .. } => "withdraw",
+                };
+                log.push(format!("{who} ordered to {what}."));
             }
             BattleEvent::BattleEnded { winner, reason } => {
                 let text = match (winner, reason) {

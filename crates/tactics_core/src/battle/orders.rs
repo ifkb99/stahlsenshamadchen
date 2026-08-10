@@ -6,7 +6,10 @@
 //! together.
 
 use super::STALEMATE_ROUNDS;
-use super::{BattleResult, BattleState, EndReason, Phase, UnitId, combat, fog, movement};
+use super::{
+    BattleResult, BattleState, EndReason, FormationId, Mission, Phase, UnitId, combat, fog,
+    movement,
+};
 use crate::data::{ArmorFacing, DataRegistry};
 use crate::map::ObjectiveKind;
 use hexx::Hex;
@@ -51,6 +54,17 @@ pub enum Order {
     SetFire { unit: UnitId, fire: FireIntent },
     /// Forget a unit's orders; it reverts to unplanned and holds fire.
     ClearIntent { unit: UnitId },
+    /// Give a formation its standing mission, replacing any it already had.
+    ///
+    /// Unlike the orders above this one outlives the round: a unit's intent is
+    /// cleared when the round opens, a formation's mission is not. It travels
+    /// through the same entry point as everything else precisely so that the
+    /// human, the built-in brain and any future external one command in one
+    /// vocabulary that saves and replays already know how to carry.
+    SetMission {
+        formation: FormationId,
+        mission: Mission,
+    },
     /// This side is done planning. When every side with units has committed,
     /// the round starts resolving.
     Commit { side: u8 },
@@ -125,6 +139,19 @@ pub enum Event {
         unit: UnitId,
         rung: String,
     },
+    /// A formation was told what to do. Carries the formation's *string* id
+    /// rather than its handle, because this exists to be read: a mission the
+    /// player or the AI set is news, and a log that cannot say "the
+    /// Reconnaissance Section was sent to the upper ford" leaves the player
+    /// guessing why four vehicles suddenly drove north.
+    ///
+    /// Assignment is immediate for now. Once orders travel at the speed of a
+    /// signals net this is the moment the order was *sent*, and a
+    /// `MissionReceived` will say when it landed.
+    MissionAssigned {
+        formation: String,
+        mission: Mission,
+    },
     /// A vehicle drove off the map by an exit objective. It is out of the
     /// battle and its crew are going home; this is not [`Self::UnitDestroyed`]
     /// and must never be presented as one.
@@ -170,6 +197,10 @@ pub enum OrderError {
     FriendlyTarget,
     #[error("tile is not on the map")]
     NotOnMap,
+    #[error("no such formation in this battle")]
+    NoSuchFormation,
+    #[error("no exit by that name this side may use")]
+    NoSuchExit,
 }
 
 impl BattleState {
@@ -203,8 +234,72 @@ impl BattleState {
                 u.planned = false;
                 Ok(Vec::new())
             }
+            Order::SetMission { formation, mission } => {
+                self.set_mission(*formation, mission.clone())
+            }
             Order::Commit { side } => self.commit(*side),
         }
+    }
+
+    /// Record a formation's standing mission, refusing anything a formation
+    /// could not actually be asked to do.
+    ///
+    /// Validated in the order a person would: does the formation exist, may
+    /// its side still speak this round, and is what it was told to do a thing
+    /// on this map. Only what cannot change as the battle plays out is
+    /// checked — the same bargain [`Self::set_fire`] makes. Whether the ground
+    /// is *reachable*, whether the enemy is on it, whether the withdrawal is
+    /// wise: all of that is the executor's problem, and refusing on it here
+    /// would make a mission a route rather than an intention.
+    fn set_mission(
+        &mut self,
+        formation: FormationId,
+        mission: Mission,
+    ) -> Result<Vec<Event>, OrderError> {
+        let f = self
+            .command
+            .get(formation)
+            .ok_or(OrderError::NoSuchFormation)?;
+        let (side, id) = (f.side, f.id.clone());
+        // Mirrors `planning_unit_side`: a side that has handed in its orders
+        // does not get to keep issuing them, and a mission is an order.
+        if self.has_committed(side) {
+            return Err(OrderError::AlreadyCommitted);
+        }
+        match &mission {
+            Mission::Advance { to } | Mission::Recon { toward: to } => {
+                if !self.map.contains(*to) {
+                    return Err(OrderError::NotOnMap);
+                }
+            }
+            // `None` is "stand where you are", which needs no tile to exist.
+            Mission::Hold { at } => {
+                if let Some(at) = at
+                    && !self.map.contains(*at)
+                {
+                    return Err(OrderError::NotOnMap);
+                }
+            }
+            Mission::Withdraw { via } => {
+                // A withdrawal has to name a lane that is really there and
+                // really this side's, or the formation would drive to the
+                // map's edge and sit in the open waiting for a way out that
+                // was never written down.
+                let usable = self
+                    .map
+                    .objectives()
+                    .iter()
+                    .any(|o| o.id == *via && o.kind == ObjectiveKind::Exit && o.open_to(side));
+                if !usable {
+                    return Err(OrderError::NoSuchExit);
+                }
+            }
+        }
+        self.command.set_mission(formation, mission.clone());
+        Ok(vec![Event::MissionAssigned {
+            formation: id,
+            mission,
+        }])
     }
 
     /// The side owning `unit`, rejecting orders from a side that already

@@ -136,6 +136,13 @@ fn main() {
                     "   >> {} drives off the map by {objective}",
                     name(&state, *unit)
                 ),
+                // Nothing issues one yet — the brain that will is the other
+                // half of this chunk — but the narrator carries it from the
+                // start, because an event no reader ever prints is one that
+                // quietly stops carrying the story.
+                Event::MissionAssigned { formation, mission } => {
+                    println!("   >> {formation} ordered to {mission:?}")
+                }
                 Event::ObjectiveTaken {
                     objective, side, ..
                 } => println!(

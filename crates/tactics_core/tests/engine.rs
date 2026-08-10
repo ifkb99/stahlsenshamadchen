@@ -5,8 +5,8 @@ use tactics_core::ai::{
     AiConfig, AiDriver, AiPlanner, Evaluator, UtilityPlanner, make_battle_planner,
 };
 use tactics_core::battle::{
-    BattleState, EndReason, Event as BattleEvent, FireIntent, Order, STALEMATE_ROUNDS, SideState,
-    UnitId, los_clear, reachable,
+    BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Mission, Order,
+    STALEMATE_ROUNDS, SideState, UnitId, los_clear, reachable,
 };
 use tactics_core::data::DataRegistry;
 use tactics_core::map::{HexMap, UnitPlacement};
@@ -1552,6 +1552,241 @@ fn a_map_that_declares_no_formations_has_no_chain_of_command() {
     let state = standoff(&reg, 1);
     assert!(state.formations().is_empty());
     assert!(state.formation_of(UnitId(0)).is_none());
+}
+
+/// The formation a test orders about: `river_crossing`'s first, which is
+/// Kuhlmann's armored platoon on side 0. Named through the map rather than by
+/// a bare index so that a map edit that reorders the declarations fails here
+/// loudly instead of quietly testing a different platoon.
+fn formation_named(state: &BattleState, id: &str) -> FormationId {
+    let index = state
+        .formations()
+        .iter()
+        .position(|f| f.id == id)
+        .unwrap_or_else(|| panic!("river_crossing declares no formation `{id}`"));
+    FormationId(index as u32)
+}
+
+#[test]
+fn setting_a_mission_stores_it_on_the_formation_and_says_so_out_loud() {
+    // The whole point of routing missions through `apply` is that the human,
+    // the AI and a replay all speak one vocabulary — so the order has to land
+    // in state *and* produce the event a log can carry. Silence would be the
+    // failure mode: a mission nobody can see is indistinguishable from one
+    // that was dropped.
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 5).expect("battle");
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let bridge = state.map.objectives()[0].anchor();
+
+    let events = state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: armor,
+                mission: Mission::Advance { to: bridge },
+            },
+        )
+        .expect("the bridge is on the map and the platoon exists");
+    assert_eq!(
+        events,
+        vec![BattleEvent::MissionAssigned {
+            formation: "kuhlmann_armor".into(),
+            mission: Mission::Advance { to: bridge },
+        }],
+        "the event names the formation a reader would recognise, not its index"
+    );
+    assert_eq!(
+        state.formations()[armor.index()].mission,
+        Some(Mission::Advance { to: bridge })
+    );
+
+    // A second mission replaces the first rather than queueing behind it:
+    // countermanding an order is ordinary business, and a formation holding
+    // two missions at once means nothing anyone could act on.
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: armor,
+                mission: Mission::Hold { at: None },
+            },
+        )
+        .expect("countermanding is legal");
+    assert_eq!(
+        state.formations()[armor.index()].mission,
+        Some(Mission::Hold { at: None })
+    );
+}
+
+#[test]
+fn a_mission_is_a_standing_order_and_outlives_the_round_it_was_given_in() {
+    // The distinction the whole command layer rests on: a unit's intent is
+    // this round's instructions and is wiped when the next one opens, while a
+    // formation told to take the bridge is still taking it tomorrow. If
+    // `begin_round` ever cleared this, missions would silently become
+    // per-round orders and every executor built on top would be wrong.
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 6).expect("battle");
+    let recon = formation_named(&state, "kuhlmann_recon");
+    let ford = state.map.objectives()[1].anchor();
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: recon,
+                mission: Mission::Recon { toward: ford },
+            },
+        )
+        .expect("the upper ford is on the map");
+
+    let round = state.round;
+    play_round(&reg, &mut state);
+    assert!(state.round > round, "a whole round must have gone by");
+    assert_eq!(
+        state.formations()[recon.index()].mission,
+        Some(Mission::Recon { toward: ford }),
+        "a standing order stands"
+    );
+}
+
+#[test]
+fn a_mission_for_a_formation_that_does_not_exist_is_refused() {
+    // The handle arrives from outside — a save, a replay, a brain that is not
+    // this process — so a stale one is an ordinary refusal, never a panic.
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 7).expect("battle");
+    let past_the_end = FormationId(state.formations().len() as u32);
+    assert_eq!(
+        state.apply(
+            &reg,
+            &Order::SetMission {
+                formation: past_the_end,
+                mission: Mission::Hold { at: None },
+            },
+        ),
+        Err(tactics_core::battle::OrderError::NoSuchFormation),
+    );
+}
+
+#[test]
+fn a_mission_set_after_the_side_has_committed_is_refused() {
+    // A mission is an order, and orders close when a side hands its planning
+    // in — the same bargain `SetFire` and `SetMove` already make. Ordering a
+    // platoon about after the round has been sealed would let a side plan
+    // twice.
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 8).expect("battle");
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let line = formation_named(&state, "valkyrie_line");
+    state
+        .apply(&reg, &Order::Commit { side: 0 })
+        .expect("commit");
+
+    assert_eq!(
+        state.apply(
+            &reg,
+            &Order::SetMission {
+                formation: armor,
+                mission: Mission::Hold { at: None },
+            },
+        ),
+        Err(tactics_core::battle::OrderError::AlreadyCommitted),
+    );
+    // The other army has not committed and is unaffected: the refusal is
+    // about whose side spoke, not about the phase.
+    assert!(
+        state
+            .apply(
+                &reg,
+                &Order::SetMission {
+                    formation: line,
+                    mission: Mission::Hold { at: None },
+                },
+            )
+            .is_ok(),
+        "side 1 is still planning"
+    );
+}
+
+#[test]
+fn a_withdrawal_must_name_an_exit_this_side_may_use() {
+    // Three ways to get this wrong, all of which would otherwise send a
+    // formation to the map edge to wait for a way out that is not there: a
+    // name nobody declared, ground that is held rather than left by, and the
+    // enemy's lane. `river_crossing` gives west_road to side 0 and east_road
+    // to side 1, which is what makes the last one checkable at all.
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 9).expect("battle");
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let withdraw = |via: &str| Order::SetMission {
+        formation: armor,
+        mission: Mission::Withdraw { via: via.into() },
+    };
+    let refused = Err(tactics_core::battle::OrderError::NoSuchExit);
+
+    assert_eq!(
+        state.apply(&reg, &withdraw("the_scenic_route")),
+        refused,
+        "no objective by that name"
+    );
+    assert_eq!(
+        state.apply(&reg, &withdraw("bridge")),
+        refused,
+        "the bridge is ground to hold, not a way off the map"
+    );
+    assert_eq!(
+        state.apply(&reg, &withdraw("east_road")),
+        refused,
+        "the eastern road is the Valkyries' lane"
+    );
+    assert!(
+        state.apply(&reg, &withdraw("west_road")).is_ok(),
+        "but her own road is hers to leave by"
+    );
+    assert_eq!(
+        state.formations()[armor.index()].mission,
+        Some(Mission::Withdraw {
+            via: "west_road".into()
+        }),
+        "and only the accepted one is remembered"
+    );
+}
+
+#[test]
+fn a_mission_that_names_ground_off_the_map_is_refused() {
+    // Only what cannot change as the round plays out is checked — a hex being
+    // on the map is that; the ground being reachable or wise is the
+    // executor's problem. Every variant that carries a hex is covered,
+    // because `Hold`'s optional one is exactly the sort of field a validator
+    // forgets.
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 10).expect("battle");
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let nowhere = tactics_core::offset_to_hex(500, 500);
+    assert!(!state.map.contains(nowhere));
+    let not_on_map = Err(tactics_core::battle::OrderError::NotOnMap);
+    for mission in [
+        Mission::Advance { to: nowhere },
+        Mission::Recon { toward: nowhere },
+        Mission::Hold { at: Some(nowhere) },
+    ] {
+        assert_eq!(
+            state.apply(
+                &reg,
+                &Order::SetMission {
+                    formation: armor,
+                    mission: mission.clone(),
+                },
+            ),
+            not_on_map,
+            "{mission:?} names a tile that is not there"
+        );
+    }
+    assert!(
+        state.formations()[armor.index()].mission.is_none(),
+        "a refused mission leaves the formation as it was"
+    );
 }
 
 fn standoff(reg: &DataRegistry, seed: u64) -> BattleState {

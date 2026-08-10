@@ -244,6 +244,76 @@ fn a_saved_battle_remembers_who_answers_to_whom() {
     );
 }
 
+/// A mission is the longest-lived thing a side ever says: it survives the
+/// round it was given in, so it had better survive the save taken during that
+/// round too. It needs nothing put back on load — plain data, no map-sized
+/// index behind it — which is precisely the claim this checks, since a field
+/// that silently came back `None` would look exactly like a formation nobody
+/// had ordered yet.
+#[test]
+fn a_standing_mission_survives_being_saved_and_reloaded() {
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 15).expect("battle");
+    let recon = tactics_core::battle::FormationId(
+        state
+            .formations()
+            .iter()
+            .position(|f| f.id == "kuhlmann_recon")
+            .expect("river_crossing declares it") as u32,
+    );
+    let bridge = state.map.objectives()[0].anchor();
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: recon,
+                mission: tactics_core::battle::Mission::Advance { to: bridge },
+            },
+        )
+        .expect("the bridge is on the map");
+    // Mid-fight, and past the round the order was given in: a save taken two
+    // rounds later must still know what the platoon was told.
+    play(&reg, &mut state, 2, 15);
+
+    let text = SaveGame::new(&reg, None, Some(state.clone()))
+        .to_json()
+        .expect("serialises");
+    let restored = SaveGame::from_json(&reg, &text)
+        .expect("deserialises")
+        .0
+        .battle
+        .expect("battle round-trips");
+    assert_eq!(
+        restored.formations()[recon.index()].mission,
+        Some(tactics_core::battle::Mission::Advance { to: bridge }),
+        "a reloaded formation is still under orders"
+    );
+    assert_eq!(restored.command, state.command);
+
+    // And a save written before missions existed opens as a formation that
+    // simply has not been told anything, which is a legal state.
+    let mut old: serde_json::Value = serde_json::from_str(&text).unwrap();
+    for formation in old["battle"]["command"]["formations"]
+        .as_array_mut()
+        .expect("command state is saved")
+    {
+        formation
+            .as_object_mut()
+            .unwrap()
+            .remove("mission")
+            .expect("field is saved");
+    }
+    let older = SaveGame::from_json(&reg, &old.to_string())
+        .expect("a save from before missions must still load")
+        .0
+        .battle
+        .expect("battle survives");
+    assert!(
+        older.formations().iter().all(|f| f.mission.is_none()),
+        "no orders is a state, not a broken file"
+    );
+}
+
 /// The campaign is the half a player would actually mind losing: a girl with
 /// nine battles behind her and a wound that has three days left on it.
 #[test]
