@@ -129,9 +129,17 @@ impl Evaluator {
         // the mission is read from battle state rather than passed in: every
         // planner that scores through here becomes mission-aware at once,
         // and one that never sees a mission is bit-for-bit the old game.
+        //
+        // A unit who cannot hear her chain of command scores as if she had
+        // never been told anything: back to weighing the whole map for
+        // herself, which is her own initiative and the only judgment left to
+        // her. The filter is the additivity hinge again — with no command
+        // rules nobody is ever out of contact, so it never fires and this is
+        // bit-for-bit the mission code above.
         let standing = state
             .command
             .formation_of(unit)
+            .filter(|f| f.in_contact(unit))
             .and_then(|f| f.mission.as_ref().map(|m| (m, f)));
         let objective = match standing {
             Some((mission, formation)) => self.mission_value(state, tile, mission, formation),

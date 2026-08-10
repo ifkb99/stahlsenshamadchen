@@ -1,6 +1,7 @@
 //! Moddable game data: JSON definitions and the registry that loads them.
 
 mod balance;
+mod command;
 mod cores;
 mod defs;
 mod manifest;
@@ -9,6 +10,7 @@ mod registry;
 mod scale;
 
 pub use balance::{Balance, ReactionRules};
+pub use command::CommandRules;
 pub use cores::{
     AVERAGE, CheckContext, CoreDef, CoreIndex, RoleDef, SkillDef, TraitCondition, TraitDef,
     TraitEffect,

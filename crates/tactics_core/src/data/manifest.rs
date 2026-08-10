@@ -38,6 +38,13 @@ pub struct ModManifest {
     /// ships a one-rung ladder has girls who never waver.
     #[serde(default)]
     pub morale: Option<super::MoraleRules>,
+    /// How far an order carries and how long it takes to arrive. Replaced
+    /// wholesale like the blocks above; a mod that declares none has a side
+    /// whose every unit is always in contact and whose missions land the
+    /// instant they are given, which is the game before chains of command
+    /// existed.
+    #[serde(default)]
+    pub command: Option<super::CommandRules>,
     /// What the engine's hexes, rounds and ticks mean in metres and seconds.
     ///
     /// Unlike a vehicle or a weapon, scale is a property of the game rather

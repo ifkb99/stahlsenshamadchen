@@ -7,15 +7,18 @@
 //! [`crate::map::FormationDef`]); this is what a battle makes of the
 //! declaration once the units it names actually exist.
 //!
-//! Nothing reads this yet. It is populated and serialized so that the shapes
-//! everything after it depends on — ids, membership, seniority, and now the
-//! standing [`Mission`] a formation is under — are settled and provably inert
-//! first: the determinism baseline is fought on `river_crossing`, which now
-//! declares formations, so an unchanged event stream is a proof that no
-//! decision consults them. Missions can be *set* (through
-//! [`crate::battle::Order::SetMission`], validated like any other order) and
-//! are carried through saves; what reads one to move a tank is the executor
-//! half of this chunk and lands next.
+//! A formation carries three things now. Its **membership** (who answers to
+//! whom, and which of them leads), its standing [`Mission`], and — once a mod
+//! declares a [`crate::data::CommandRules`] block — the state of the wires:
+//! which members can currently hear their leader, and any mission still in
+//! transit toward her.
+//!
+//! Those last two exist only where a mod asked for them. With
+//! `registry.command == None` the contact set is never computed and stays
+//! empty, so [`Formation::in_contact`] answers `true` for everybody and no
+//! mission ever travels: the game is exactly the one that was here before, and
+//! the determinism baseline — fought on `river_crossing`, which declares four
+//! formations — is what proves it rather than an argument.
 //!
 //! # Order
 //!
@@ -26,10 +29,21 @@
 //! events and to make AI decisions, and an iteration-order dependency in that
 //! walk is exactly the bug that hid in `fog::recompute` for months.
 
-use super::UnitId;
+use super::{BattleState, Event, UnitId};
+use crate::data::DataRegistry;
 use crate::map::{FormationDef, UnitPlacement};
 use hexx::Hex;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+
+/// The skill that decides how far a leader's orders carry.
+///
+/// A string rather than a data field, for the same reason `gunnery` and
+/// `observation` are strings in [`crate::battle::stats`]: skill *ids* are the
+/// engine's contract with the base mod, and a mod that renames them is
+/// defining a different game. What the radius is worth per point of it is
+/// data, in [`crate::data::CommandRules::radius_per_signals`].
+const SIGNALS: &str = "signals";
 
 /// Stable handle to a formation: an index into [`CommandState::formations`].
 ///
@@ -57,9 +71,8 @@ impl FormationId {
 /// and a round trip through something outside this process without losing
 /// meaning.
 ///
-/// Nothing reads a mission yet. The executors that will carry these out are
-/// the other half of this build chunk; what is settled here is the vocabulary
-/// and where it is kept, so that half has something to consume.
+/// What reads one is [`crate::ai::Evaluator::score_tile`], through the
+/// formation a unit belongs to — and only when she is in contact to hear it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Mission {
@@ -111,12 +124,63 @@ pub struct Formation {
     /// accident what a silent map means.
     #[serde(default)]
     pub mission: Option<Mission>,
+    /// A mission still travelling, and how many ticks it has left to travel.
+    ///
+    /// Missions stop being instantaneous once a mod declares a `command`
+    /// block: the order is *sent* when it is issued (that is the
+    /// [`crate::battle::Event::MissionAssigned`] the log already carries) and
+    /// *arrives* some ticks later, when it moves into [`Self::mission`] and is
+    /// announced again as `MissionReceived`. A second order issued while the
+    /// first is still in the air replaces it — countermanding is ordinary
+    /// business, and two missions in transit at once is not a state anyone
+    /// could act on.
+    ///
+    /// `None` for every battle whose mod declares no command rules, because
+    /// the delay is then zero and a mission never travels at all.
+    #[serde(default)]
+    pub incoming: Option<(Mission, u32)>,
+    /// Members who cannot currently hear their leader, in unit-id order.
+    ///
+    /// Recomputed each tick, and only when there are command rules to
+    /// recompute it against: with none, this stays empty for the whole
+    /// battle, [`Self::in_contact`] answers `true` for everybody, and nothing
+    /// costs anything. Kept as the *exceptions* rather than the members in
+    /// contact for exactly that reason — the common state should be the empty
+    /// vector.
+    #[serde(default)]
+    pub out_of_contact: Vec<UnitId>,
 }
 
 impl Formation {
     /// Whether this unit answers to this formation.
     pub fn contains(&self, unit: UnitId) -> bool {
         self.members.contains(&unit)
+    }
+
+    /// Whether this unit can currently hear her chain of command.
+    ///
+    /// True for a unit that is not in this formation at all, which is the
+    /// right answer for the question this is asked: callers want to know
+    /// whether a mission reaches her, and a mission that is not hers reaches
+    /// her either way.
+    pub fn in_contact(&self, unit: UnitId) -> bool {
+        !self.out_of_contact.contains(&unit)
+    }
+
+    /// The most recent thing this formation has been told, whether or not it
+    /// has arrived yet.
+    ///
+    /// What a commander should compare against before issuing anything: an
+    /// order already in the air is one she has given, and re-sending it every
+    /// round of the transit window would fill the log with the same sentence
+    /// and reset the clock each time. What the *executors* act on is
+    /// [`Self::mission`] — deliberately different, because the whole point of
+    /// latency is that the formation does not yet know.
+    pub fn latest_mission(&self) -> Option<&Mission> {
+        self.incoming
+            .as_ref()
+            .map(|(mission, _)| mission)
+            .or(self.mission.as_ref())
     }
 }
 
@@ -170,6 +234,8 @@ impl CommandState {
                     members: members.into_iter().map(|(id, _)| id).collect(),
                     doctrine: def.doctrine.clone(),
                     mission: None,
+                    incoming: None,
+                    out_of_contact: Vec::new(),
                 })
             })
             .collect();
@@ -213,9 +279,198 @@ impl CommandState {
         match self.formations.get_mut(formation.index()) {
             Some(f) => {
                 f.mission = Some(mission);
+                // Anything still travelling has been overtaken by this. It
+                // cannot be allowed to land afterwards and quietly countermand
+                // the order that arrived first.
+                f.incoming = None;
                 true
             }
             None => false,
+        }
+    }
+
+    /// Put a mission in the air: it will replace the formation's standing one
+    /// in `ticks` ticks, not now. Returns whether the formation exists.
+    ///
+    /// Only ever called with `ticks > 0` — a delay of zero is a mission that
+    /// arrived, and goes through [`Self::set_mission`] like any other, which
+    /// is what makes the no-rules game the *same code path* rather than the
+    /// same code path plus a branch.
+    pub fn set_incoming(&mut self, formation: FormationId, mission: Mission, ticks: u32) -> bool {
+        match self.formations.get_mut(formation.index()) {
+            Some(f) => {
+                f.incoming = Some((mission, ticks));
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+impl BattleState {
+    /// Ticks a mission spends travelling to this formation.
+    ///
+    /// Priced on the *leader's* crew, because getting an order out clearly is
+    /// her job: her skill at whatever the rules name (the base game's
+    /// `command`) is the check, taken where she is standing so terrain and
+    /// traits reach it like every other check. Zero when no mod declares
+    /// command rules, which is the whole of the additivity story for latency.
+    ///
+    /// A formation whose leader is off the board is priced at an ordinary
+    /// level rather than refused. Succession — who is in charge once she is
+    /// gone, and how much worse she is at it — is a later chunk; until then
+    /// the honest placeholder is "somebody passed it on, at ordinary speed"
+    /// rather than either extreme.
+    pub(super) fn mission_delay(&self, registry: &DataRegistry, formation: FormationId) -> u32 {
+        let Some(rules) = registry.command.as_ref() else {
+            return 0;
+        };
+        let Some(f) = self.command.get(formation) else {
+            return 0;
+        };
+        let level = f
+            .leader
+            .and_then(|id| self.unit(id))
+            .map(|u| {
+                self.roster.crew_skill(
+                    registry,
+                    registry.vehicle(&u.vehicle),
+                    &u.crew,
+                    &rules.latency.skill,
+                    self.terrain_at(u.pos),
+                )
+            })
+            .unwrap_or(crate::data::AVERAGE);
+        rules.delay(level)
+    }
+
+    /// Bring every travelling mission one tick closer, and hand over the ones
+    /// that have arrived.
+    ///
+    /// Run at the top of a tick, before anything moves, so that a one-tick
+    /// delay means "it reaches them as the round starts moving" rather than
+    /// "a round late". Formations are walked in declaration order, so what
+    /// this says cannot depend on a hash.
+    pub(super) fn deliver_missions(&mut self, events: &mut Vec<Event>) {
+        for formation in &mut self.command.formations {
+            let arrived = match &mut formation.incoming {
+                Some((_, ticks)) => {
+                    *ticks = ticks.saturating_sub(1);
+                    *ticks == 0
+                }
+                None => false,
+            };
+            if arrived && let Some((mission, _)) = formation.incoming.take() {
+                formation.mission = Some(mission.clone());
+                events.push(Event::MissionReceived {
+                    formation: formation.id.clone(),
+                    mission,
+                });
+            }
+        }
+    }
+
+    /// Work out who can still hear their leader, and say so when the answer
+    /// changes.
+    ///
+    /// Cheap and total rather than incremental, for the reason fog settled on
+    /// the same shape: contact depends on where everybody is standing, which
+    /// half the units change every tick, so a diff would cost more than the
+    /// answer. There are single digits of formations and of members.
+    ///
+    /// The graph is a breadth-first walk from the leader. Without `relay` she
+    /// is the only anchor and everyone must be inside *her* radius; with it,
+    /// anybody already in contact passes the signal on at her own radius,
+    /// which is what makes a well-crewed radio vehicle worth a seat in the
+    /// order of battle. Members are visited in unit-id order at every step, so
+    /// the events and the resulting set are the same on every machine.
+    ///
+    /// A formation whose leader is dead or has driven off the map is entirely
+    /// out of contact: nobody is speaking. Succession — the next girl taking
+    /// over, and being worse at it — is chunk 6 of the command build order and
+    /// deliberately not smuggled in here.
+    ///
+    /// Does nothing at all when no mod declares command rules. Not an
+    /// optimisation: it is what makes `out_of_contact` empty forever in a
+    /// battle that never asked for a chain of command, so every caller reading
+    /// [`Formation::in_contact`] gets `true` and the old game back.
+    pub(super) fn recompute_contact(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
+        let Some(rules) = registry.command.as_ref() else {
+            return;
+        };
+        for index in 0..self.command.formations.len() {
+            let formation = &self.command.formations[index];
+            let leader = formation.leader;
+            // Only units still on the field can be in or out of contact. The
+            // dead and the departed are neither, and saying so about them
+            // would be noise in the log at the worst possible moment.
+            let living: Vec<UnitId> = formation
+                .members
+                .iter()
+                .copied()
+                .filter(|id| self.unit(*id).is_some())
+                .collect();
+
+            let mut heard: Vec<UnitId> = Vec::new();
+            if let Some(leader) = leader.filter(|id| self.unit(*id).is_some()) {
+                heard.push(leader);
+                let mut anchors = VecDeque::from([leader]);
+                while let Some(anchor) = anchors.pop_front() {
+                    let Some(unit) = self.unit(anchor) else {
+                        continue;
+                    };
+                    let signals = self.roster.crew_skill(
+                        registry,
+                        registry.vehicle(&unit.vehicle),
+                        &unit.crew,
+                        SIGNALS,
+                        self.terrain_at(unit.pos),
+                    );
+                    let (from, radius) = (unit.pos, rules.radius_for(signals) as i32);
+                    for id in &living {
+                        if heard.contains(id) {
+                            continue;
+                        }
+                        let Some(member) = self.unit(*id) else {
+                            continue;
+                        };
+                        if member.pos.distance_to(from) <= radius {
+                            heard.push(*id);
+                            if rules.relay {
+                                anchors.push_back(*id);
+                            }
+                        }
+                    }
+                    if !rules.relay {
+                        // Without relay the leader is the only voice; nobody
+                        // she reached extends the net.
+                        break;
+                    }
+                }
+            }
+
+            // `living` is in unit-id order, so this is too, and so are the
+            // events below it.
+            let cut_off: Vec<UnitId> = living
+                .into_iter()
+                .filter(|id| !heard.contains(id))
+                .collect();
+            let was = std::mem::replace(
+                &mut self.command.formations[index].out_of_contact,
+                cut_off.clone(),
+            );
+            for id in &cut_off {
+                if !was.contains(id) {
+                    events.push(Event::OutOfContact { unit: *id });
+                }
+            }
+            for id in &was {
+                // Still on the field: a crew that came back into contact by
+                // dying is not news anybody wants twice.
+                if !cut_off.contains(id) && self.unit(*id).is_some() {
+                    events.push(Event::ContactRestored { unit: *id });
+                }
+            }
         }
     }
 }

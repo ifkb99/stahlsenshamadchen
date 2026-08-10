@@ -898,27 +898,35 @@ fn pump_events(
                     None => format!("{what} is contested."),
                 });
             }
-            // A formation being given a mission is the one command event that
-            // exists so far, and it goes in the log for the reason the whole
-            // system is built around legibility: four vehicles turning north
-            // together should be explained by a line the player already read,
-            // not inferred afterwards. Nothing in the game issues one yet.
+            // A formation being given a mission goes in the log for the reason
+            // the whole system is built around legibility: four vehicles
+            // turning north together should be explained by a line the player
+            // already read, not inferred afterwards. Nothing in the game
+            // issues one yet.
             BattleEvent::MissionAssigned { formation, mission } => {
-                let who = battle
-                    .state
-                    .map
-                    .formations()
-                    .iter()
-                    .find(|f| &f.id == formation)
-                    .map(|f| f.display_name().to_string())
-                    .unwrap_or_else(|| formation.clone());
-                let what = match mission {
-                    Mission::Advance { .. } => "advance",
-                    Mission::Hold { .. } => "hold",
-                    Mission::Recon { .. } => "reconnoitre",
-                    Mission::Withdraw { .. } => "withdraw",
-                };
-                log.push(format!("{who} ordered to {what}."));
+                let who = formation_name(&battle.state, formation);
+                log.push(format!("{who} ordered to {}.", mission_verb(mission)));
+            }
+            // ...and the same order arriving, some ticks later, when the mod
+            // prices a signals net. The gap between the two lines is the thing
+            // the player is meant to feel: her platoon carried on doing the
+            // last thing it heard, and the log says why.
+            BattleEvent::MissionReceived { formation, mission } => {
+                let who = formation_name(&battle.state, formation);
+                log.push(format!(
+                    "{who} receives the order to {}.",
+                    mission_verb(mission)
+                ));
+            }
+            // A unit that has stopped answering the radio is announced for the
+            // same reason a wavering crew is: she is about to do something
+            // other than what she was told, and silent deviation is
+            // indistinguishable from a bug.
+            BattleEvent::OutOfContact { unit } => {
+                log.push(format!("{} is out of contact.", name(*unit)));
+            }
+            BattleEvent::ContactRestored { unit } => {
+                log.push(format!("{} is back in contact.", name(*unit)));
             }
             BattleEvent::BattleEnded { winner, reason } => {
                 let text = match (winner, reason) {
@@ -952,6 +960,30 @@ fn pump_events(
                 battle.exit_timer = Some(Timer::from_seconds(2.5, TimerMode::Once));
             }
         }
+    }
+}
+
+/// What to call a formation in the log: the name its map gave it, falling back
+/// to the bare id so a formation from a mod this build does not know about is
+/// still named rather than silently anonymous.
+fn formation_name(state: &BattleState, id: &str) -> String {
+    state
+        .map
+        .formations()
+        .iter()
+        .find(|f| f.id == id)
+        .map(|f| f.display_name().to_string())
+        .unwrap_or_else(|| id.to_string())
+}
+
+/// A mission as a verb, so the two halves of an order travelling read as the
+/// same sentence sent and received.
+fn mission_verb(mission: &Mission) -> &'static str {
+    match mission {
+        Mission::Advance { .. } => "advance",
+        Mission::Hold { .. } => "hold",
+        Mission::Recon { .. } => "reconnoitre",
+        Mission::Withdraw { .. } => "withdraw",
     }
 }
 

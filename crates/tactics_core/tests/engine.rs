@@ -3343,3 +3343,479 @@ fn a_devolved_commander_issues_no_ground_missions() {
         "and the side still finishes planning"
     );
 }
+
+// --- contact and order latency (chunk 4 of chain of command) ----------------
+
+/// Command rules built white-box, because the base mod deliberately declares
+/// none yet: this chunk is the machinery, and chunk 5 is where the shipped
+/// game switches it on. Building them here is what lets these tests state the
+/// rules at any coefficient — including the zero coefficients that must give
+/// back today's game exactly — without moving the determinism baseline an
+/// inch.
+fn command_rules(radius: u32, relay: bool, base_ticks: u32) -> tactics_core::data::CommandRules {
+    tactics_core::data::CommandRules {
+        radius,
+        // Zero per point, so these tests are about the rules rather than about
+        // which girl happens to be sitting in the radio seat.
+        radius_per_signals: 0,
+        relay,
+        latency: tactics_core::data::ReactionRules {
+            skill: "command".into(),
+            base_ticks,
+            levels_per_tick: 0,
+            max_ticks: 5,
+        },
+    }
+}
+
+/// Close every side's planning without giving anybody anything to do.
+fn commit_all(reg: &DataRegistry, state: &mut BattleState) {
+    for side in state.living_sides() {
+        if !state.has_committed(side) {
+            state.apply(reg, &Order::Commit { side }).expect("commit");
+        }
+    }
+}
+
+#[test]
+fn orders_take_time_to_arrive_when_the_radio_says_so() {
+    // The heart of the chunk: an order is sent when it is issued and arrives
+    // later. Two ticks of latency means the formation spends the opening of
+    // the round doing the last thing it heard, which is the whole point —
+    // and, per the reaction-latency post-mortem, the delay is on the *new
+    // information* reaching them, never on executing a plan they already had.
+    let mut reg = registry();
+    reg.command = Some(command_rules(999, true, 2));
+    let mut state = BattleState::from_map(&reg, "river_crossing", 5).expect("battle");
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let bridge = state.map.objectives()[0].anchor();
+
+    let events = state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: armor,
+                mission: Mission::Advance { to: bridge },
+            },
+        )
+        .expect("the bridge is on the map");
+    assert_eq!(
+        events,
+        vec![BattleEvent::MissionAssigned {
+            formation: "kuhlmann_armor".into(),
+            mission: Mission::Advance { to: bridge },
+        }],
+        "the order is sent the moment it is given, and said out loud"
+    );
+    assert!(
+        state.formations()[armor.index()].mission.is_none(),
+        "but the platoon plans this round without having heard it"
+    );
+
+    commit_all(&reg, &mut state);
+    let first = state.step_tick(&reg);
+    assert!(
+        !first
+            .iter()
+            .any(|e| matches!(e, BattleEvent::MissionReceived { .. })),
+        "still in the air after one tick"
+    );
+    assert!(state.formations()[armor.index()].mission.is_none());
+
+    let second = state.step_tick(&reg);
+    assert!(
+        second.iter().any(|e| matches!(
+            e,
+            BattleEvent::MissionReceived { formation, mission }
+                if formation == "kuhlmann_armor" && *mission == Mission::Advance { to: bridge }
+        )),
+        "it lands on the second tick, and the log says so: {second:?}"
+    );
+    assert_eq!(
+        state.formations()[armor.index()].mission,
+        Some(Mission::Advance { to: bridge }),
+        "and only then is it what the platoon is doing"
+    );
+    assert!(
+        state.formations()[armor.index()].incoming.is_none(),
+        "nothing is left travelling"
+    );
+}
+
+#[test]
+fn a_command_block_with_zero_coefficients_is_the_game_without_one() {
+    // The additivity pin, and the one this chunk most needs: the first
+    // reaction-latency attempt died because it broke tests at *any* setting of
+    // its knob, which is the tell that a model is wrong rather than mistuned.
+    // So the rules are declared at their most generous — everyone in radio
+    // contact of everyone, orders that arrive instantly — and the battle they
+    // produce must be the same battle, event for event, as one whose registry
+    // has no `command` block at all. A command-planner side, so missions are
+    // actually being issued and could actually go astray.
+    //
+    // The commanders are kept alive on purpose, identically in both runs, and
+    // that is worth reading carefully because it is the one thing the
+    // coefficients cannot switch off: a formation whose leader is destroyed
+    // has nobody speaking, so its members go out of contact whatever the
+    // radius says, and on `river_crossing` a platoon leader dies in the first
+    // round of nearly every seed. That divergence is a rule of the system
+    // rather than a leak in it — it has its own test in
+    // `a_dead_leader_leaves_her_formation_out_of_contact` — but it means the
+    // *coefficients* can only be pinned over a battle whose chain of command
+    // is intact, so this one holds the chain intact and pins them over six
+    // rounds instead of the one that would otherwise be available. Chunk 6,
+    // which gives a dead leader a successor, is where that exception should
+    // stop existing.
+    let run = |rules: Option<tactics_core::data::CommandRules>| -> Vec<String> {
+        let mut reg = registry();
+        reg.command = rules;
+        let mut state = BattleState::from_map(&reg, "river_crossing", 21).unwrap();
+        let leaders: Vec<UnitId> = state.formations().iter().filter_map(|f| f.leader).collect();
+        // Absurd hit points rather than a healing loop, because a commander
+        // can be killed inside a tick and there is no moment between the
+        // damage and the reaping to intervene. Both runs get the same absurd
+        // number, so the battles stay comparable; what the pin is measuring is
+        // the difference between two registries, not realism.
+        for id in &leaders {
+            if let Some(unit) = state.unit_mut(*id) {
+                unit.hp = 1_000_000;
+            }
+        }
+        let mut ai = AiDriver::new();
+        ai.insert(
+            0,
+            make_battle_planner(
+                &AiConfig {
+                    planner: "command".into(),
+                    difficulty: 5,
+                    doctrine: Some("massed_armor".into()),
+                },
+                21,
+                &reg,
+            ),
+        );
+        ai.insert(1, sharp_planner(&reg, 22, "elastic_defense"));
+        let mut log = Vec::new();
+        for _ in 0..6 {
+            if state.is_over() {
+                break;
+            }
+            // Planning-phase events too: a mission going astray in transit
+            // would show up here first.
+            ai.plan_round_with(&reg, &mut state, |d| {
+                log.extend(d.events.iter().map(|e| format!("{e:?}")));
+            });
+            log.extend(state.resolve_round(&reg).iter().map(|e| format!("{e:?}")));
+        }
+        assert!(
+            leaders.iter().all(|id| state.unit(*id).is_some()),
+            "the pin needs its chain of command intact for the whole window"
+        );
+        log
+    };
+    let without = run(None);
+    assert!(!without.is_empty(), "the battle should do something");
+    assert!(
+        without.iter().any(|line| line.contains("MissionAssigned")),
+        "and it should be issuing missions, or this proves nothing"
+    );
+    assert!(
+        without.iter().any(|line| line.contains("ShotHit")),
+        "and fighting, rather than driving about out of contact"
+    );
+    let zeroed = run(Some(tactics_core::data::CommandRules {
+        radius: 999,
+        radius_per_signals: 0,
+        relay: true,
+        latency: tactics_core::data::ReactionRules {
+            skill: "command".into(),
+            base_ticks: 0,
+            levels_per_tick: 0,
+            max_ticks: 0,
+        },
+    }));
+    assert_eq!(
+        zeroed, without,
+        "a command block at zero coefficients must be the game without one"
+    );
+}
+
+/// Play the opening round of `river_crossing` under these command rules with
+/// nobody ordered to do anything, so that contact is computed against the
+/// deployment as declared. Returns the battle in its second planning phase and
+/// everything the round said.
+fn quiet_round(
+    reg: &DataRegistry,
+    mission: Option<(FormationId, Mission)>,
+) -> (BattleState, Vec<BattleEvent>) {
+    let mut state = BattleState::from_map(reg, "river_crossing", 5).expect("battle");
+    if let Some((formation, mission)) = mission {
+        state
+            .apply(reg, &Order::SetMission { formation, mission })
+            .expect("a legal mission");
+    }
+    commit_all(reg, &mut state);
+    let events = state.resolve_round(reg);
+    (state, events)
+}
+
+/// Plan exactly one unit, by handing every other unit on her side a
+/// hold-fire order first so the planner has a single decision left to make.
+///
+/// That isolation is the point: the evaluator's mass term reads what her
+/// neighbours are *planning*, so planning a whole side would let a difference
+/// in somebody else's orders leak into hers and make a comparison meaningless.
+fn plan_one(
+    reg: &DataRegistry,
+    state: &mut BattleState,
+    unit: UnitId,
+    seed: u64,
+) -> tactics_core::Hex {
+    let side = state.unit(unit).expect("she is alive").side;
+    let others: Vec<UnitId> = state
+        .side_units(side)
+        .map(|u| u.id)
+        .filter(|id| *id != unit)
+        .collect();
+    for id in others {
+        state
+            .apply(
+                reg,
+                &Order::SetFire {
+                    unit: id,
+                    fire: FireIntent::Hold,
+                },
+            )
+            .expect("holding fire is always legal");
+    }
+    let mut planner = UtilityPlanner::new(
+        Evaluator::new(reg.doctrine("massed_armor").expect("base doctrine").clone()),
+        0.0,
+        seed,
+    );
+    loop {
+        let order = planner.next_order(reg, state, side);
+        if matches!(order, Order::Commit { .. }) {
+            break;
+        }
+        let _ = state.apply(reg, &order);
+    }
+    state
+        .unit(unit)
+        .expect("planning harms nobody")
+        .planned_destination()
+}
+
+#[test]
+fn a_cut_off_unit_fights_by_her_own_judgment() {
+    // Out of contact is not paralysis and it is not obedience: it is a girl
+    // who never heard the order, weighing the map for herself exactly as she
+    // did before anyone was giving missions at all. Anything else would make
+    // the command system a tax rather than a texture.
+    let reg = registry();
+    // Who is who, and where she starts, read off the deployment before any
+    // rules are applied to it.
+    let (armor, follower, start) = {
+        let probe = BattleState::from_map(&reg, "river_crossing", 5).unwrap();
+        let armor = formation_named(&probe, "kuhlmann_armor");
+        let formation = &probe.formations()[armor.index()];
+        let leader = formation.leader.expect("the platoon has a commander");
+        let follower = *formation
+            .members
+            .iter()
+            .find(|id| **id != leader)
+            .expect("and somebody to command");
+        (armor, follower, probe.unit(follower).unwrap().pos)
+    };
+    // Ground to hold, rather than ground to take: the map's own objectives
+    // already pull everyone toward the bridge, so a mission to advance on it
+    // would be indistinguishable from her own judgment and this test would
+    // pass while proving nothing.
+    let mission = Mission::Hold { at: Some(start) };
+
+    let cut_off_reg = {
+        let mut r = registry();
+        // Two hexes and no relay: the platoon deploys strung out, so the
+        // second tank cannot hear her commander.
+        r.command = Some(command_rules(2, false, 0));
+        r
+    };
+    let (cut_off, events) = quiet_round(&cut_off_reg, Some((armor, mission.clone())));
+    let formation = &cut_off.formations()[armor.index()];
+    assert_eq!(
+        formation.mission,
+        Some(mission.clone()),
+        "the platoon is under orders; she is simply not hearing them"
+    );
+    assert_eq!(
+        formation.out_of_contact,
+        vec![follower],
+        "she is the one out of contact, and her commander is not"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, BattleEvent::OutOfContact { unit } if *unit == follower))
+            .count(),
+        1,
+        "said once, not once a tick"
+    );
+
+    // The same battle under rules that reach the whole map, so the two states
+    // differ in nothing but who can hear the order.
+    let heard_reg = {
+        let mut r = registry();
+        r.command = Some(command_rules(999, false, 0));
+        r
+    };
+    let (in_contact, _) = quiet_round(&heard_reg, Some((armor, mission)));
+    assert!(
+        in_contact.formations()[armor.index()]
+            .out_of_contact
+            .is_empty(),
+        "nobody is cut off when the radius covers the map"
+    );
+
+    // And the twin: the same state with its chain of command taken away
+    // entirely, which is what an unmissioned girl is.
+    let mut twin = cut_off.clone();
+    twin.command = Default::default();
+
+    let mut a = cut_off.clone();
+    let mut b = twin;
+    let mut c = in_contact;
+    let deaf = plan_one(&cut_off_reg, &mut a, follower, 77);
+    let unmissioned = plan_one(&cut_off_reg, &mut b, follower, 77);
+    let obedient = plan_one(&heard_reg, &mut c, follower, 77);
+    assert_eq!(
+        deaf, unmissioned,
+        "a girl who never heard the order plans what she would have planned without one"
+    );
+    assert!(
+        start.distance_to(obedient) < start.distance_to(deaf),
+        "the same girl in contact stays near the ground she was told to hold: \
+         {obedient:?} against {deaf:?} from {start:?}"
+    );
+    assert_ne!(
+        deaf, obedient,
+        "and the order does steer her when she can hear it, or this test proves nothing"
+    );
+}
+
+#[test]
+fn contact_lost_is_said_once_and_restored_out_loud() {
+    let mut reg = registry();
+    reg.command = Some(command_rules(3, false, 0));
+    let mut state = BattleState::from_map(&reg, "river_crossing", 8).expect("battle");
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let formation = &state.formations()[armor.index()];
+    let leader = formation.leader.expect("a commander");
+    let follower = *formation
+        .members
+        .iter()
+        .find(|id| **id != leader)
+        .expect("somebody to command");
+    let beside = state.unit(leader).unwrap().pos + tactics_core::Hex::new(1, 0);
+    let away = state.unit(leader).unwrap().pos + tactics_core::Hex::new(0, 8);
+    assert!(state.map.contains(beside) && state.map.contains(away));
+    assert!(state.unit_at(beside).is_none() && state.unit_at(away).is_none());
+
+    // She starts alongside her commander, so the opening tick has nothing to
+    // report about her.
+    state.unit_mut(follower).unwrap().pos = beside;
+    commit_all(&reg, &mut state);
+    let quiet = state.step_tick(&reg);
+    assert!(
+        !quiet.iter().any(|e| matches!(
+            e,
+            BattleEvent::OutOfContact { unit } | BattleEvent::ContactRestored { unit } if *unit == follower
+        )),
+        "a platoon driving together says nothing: {quiet:?}"
+    );
+
+    // Then she drives out of earshot. Once.
+    state.unit_mut(follower).unwrap().pos = away;
+    let lost = state.step_tick(&reg);
+    assert_eq!(
+        lost.iter()
+            .filter(|e| matches!(e, BattleEvent::OutOfContact { unit } if *unit == follower))
+            .count(),
+        1,
+        "losing contact is news exactly once: {lost:?}"
+    );
+    let still = state.step_tick(&reg);
+    assert!(
+        !still
+            .iter()
+            .any(|e| matches!(e, BattleEvent::OutOfContact { .. })),
+        "staying out of contact is not news again every tick: {still:?}"
+    );
+
+    // And back, which the player must also hear: a unit silently starting to
+    // obey again is as confusing as one silently ignoring orders.
+    state.unit_mut(follower).unwrap().pos = beside;
+    let back = state.step_tick(&reg);
+    assert_eq!(
+        back.iter()
+            .filter(|e| matches!(e, BattleEvent::ContactRestored { unit } if *unit == follower))
+            .count(),
+        1,
+        "restored contact is said out loud: {back:?}"
+    );
+    assert!(
+        state.formations()[armor.index()].out_of_contact.is_empty(),
+        "and the state agrees with the log"
+    );
+}
+
+#[test]
+fn a_dead_leader_leaves_her_formation_out_of_contact() {
+    // Nobody is speaking. Succession — the next girl taking over, and being
+    // worse at it — is a later chunk; until then the honest state is a platoon
+    // that has stopped hearing anything, and it must be stated rather than
+    // silently inferred by whoever reads `leader`.
+    let mut reg = registry();
+    // A radius that covers the whole map, so what this proves is the absence
+    // of a commander rather than the distance to one.
+    reg.command = Some(command_rules(999, true, 0));
+    let mut state = BattleState::from_map(&reg, "river_crossing", 3).expect("battle");
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let leader = state.formations()[armor.index()]
+        .leader
+        .expect("a commander");
+
+    commit_all(&reg, &mut state);
+    let quiet = state.step_tick(&reg);
+    assert!(
+        !quiet
+            .iter()
+            .any(|e| matches!(e, BattleEvent::OutOfContact { .. })),
+        "everyone is in contact while she is alive"
+    );
+
+    let commander = state.unit_mut(leader).expect("she is alive");
+    commander.hp = 0;
+    commander.alive = false;
+
+    let events = state.step_tick(&reg);
+    let formation = &state.formations()[armor.index()];
+    let orphans: Vec<UnitId> = formation
+        .members
+        .iter()
+        .copied()
+        .filter(|id| *id != leader)
+        .collect();
+    assert_eq!(
+        formation.out_of_contact, orphans,
+        "with nobody to hear, everyone still on the field is out of contact"
+    );
+    for id in orphans {
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, BattleEvent::OutOfContact { unit } if *unit == id)),
+            "and each of them is said out loud: {events:?}"
+        );
+        assert!(!formation.in_contact(id));
+    }
+}

@@ -143,12 +143,22 @@ fn main() {
                     "   >> {} drives off the map by {objective}",
                     name(&state, *unit)
                 ),
-                // Nothing issues one yet — the brain that will is the other
-                // half of this chunk — but the narrator carries it from the
-                // start, because an event no reader ever prints is one that
-                // quietly stops carrying the story.
                 Event::MissionAssigned { formation, mission } => {
                     println!("   >> {formation} ordered to {mission:?}")
+                }
+                // The two halves of an order travelling: sent above, arrived
+                // here. A narrator that printed only the first would make a
+                // formation look disobedient for the ticks in between, which
+                // is exactly the confusion the latency events exist to
+                // prevent.
+                Event::MissionReceived { formation, mission } => {
+                    println!("   >> {formation} receives its orders: {mission:?}")
+                }
+                Event::OutOfContact { unit } => {
+                    println!("   >> {} is out of contact", name(&state, *unit))
+                }
+                Event::ContactRestored { unit } => {
+                    println!("   >> {} is back in contact", name(&state, *unit))
                 }
                 Event::ObjectiveTaken {
                     objective, side, ..

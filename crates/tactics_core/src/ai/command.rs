@@ -174,7 +174,13 @@ impl SideCommand {
             // is stated as well as computed, because a retreat that
             // un-happens is the kind of flicker that makes an AI look
             // broken.
-            if matches!(formation.mission, Some(Mission::Withdraw { .. })) {
+            // What she has *said*, not what has arrived: an order still
+            // travelling is one she has already given, and a commander who
+            // forgot that would re-send it every round of the transit window
+            // — burying the log and resetting the clock each time, so a
+            // delayed mission would never land at all.
+            let ordered = formation.latest_mission();
+            if matches!(ordered, Some(Mission::Withdraw { .. })) {
                 continue;
             }
             let doctrine = self.doctrine_for(index);
@@ -216,7 +222,7 @@ impl SideCommand {
             };
             // Standing orders stand. Re-issuing an identical mission every
             // round would bury the log in news that nothing changed.
-            if formation.mission.as_ref() != Some(&desired) {
+            if ordered != Some(&desired) {
                 orders.push(Order::SetMission {
                     formation: FormationId(index as u32),
                     mission: desired,

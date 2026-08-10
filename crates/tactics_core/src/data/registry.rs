@@ -3,7 +3,8 @@
 use super::defs::*;
 use super::manifest::ModManifest;
 use super::{
-    Balance, CoreDef, CoreIndex, MoraleRules, ReactionRules, RoleDef, Scale, SkillDef, TraitDef,
+    Balance, CommandRules, CoreDef, CoreIndex, MoraleRules, ReactionRules, RoleDef, Scale,
+    SkillDef, TraitDef,
 };
 use crate::map::MapFile;
 use serde::Deserialize;
@@ -65,6 +66,17 @@ pub struct DataRegistry {
     pub reaction: ReactionRules,
     /// What a crew can take before it stops doing as it is told.
     pub morale: MoraleRules,
+    /// How far an order carries and how long it takes to arrive, or `None`
+    /// when no mod declares a `command` block.
+    ///
+    /// The only rule block that is optional rather than defaulted, and the
+    /// reason is the additivity rule read strictly: "no chain of command" is
+    /// not a chain of command with generous numbers, it is the absence of a
+    /// system — nothing is recomputed, nothing is delayed, and there is no
+    /// per-tick cost to a battle that never asked for it. A block with zero
+    /// coefficients must produce the same battle, and does; that is a pinned
+    /// test rather than a hope.
+    pub command: Option<CommandRules>,
     /// The axes of temperament this game has, in the order a girl's values are
     /// stored. Declared by mod data, not by Rust.
     pub cores: Vec<CoreDef>,
@@ -126,6 +138,9 @@ impl DataRegistry {
             }
             if let Some(morale) = &manifest.morale {
                 registry.morale = morale.clone();
+            }
+            if let Some(command) = &manifest.command {
+                registry.command = Some(command.clone());
             }
             if let Some(cores) = &manifest.cores {
                 registry.cores = cores.clone();
@@ -497,6 +512,7 @@ mod tests {
                     traits: None,
                     reaction: None,
                     morale: None,
+                    command: None,
                     dependencies: deps.iter().map(|s| s.to_string()).collect(),
                     scale: None,
                     balance: None,

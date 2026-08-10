@@ -145,12 +145,42 @@ pub enum Event {
     /// Reconnaissance Section was sent to the upper ford" leaves the player
     /// guessing why four vehicles suddenly drove north.
     ///
-    /// Assignment is immediate for now. Once orders travel at the speed of a
-    /// signals net this is the moment the order was *sent*, and a
-    /// `MissionReceived` will say when it landed.
+    /// This is the moment the order was *sent*. With no command rules in
+    /// force it is also the moment it landed; with them, the formation is
+    /// still ignorant of it until [`Self::MissionReceived`] says otherwise.
     MissionAssigned {
         formation: String,
         mission: Mission,
+    },
+    /// A mission finished travelling and is now the formation's standing
+    /// order. Only ever emitted when a mod prices latency — with no `command`
+    /// block a mission arrives the instant it is given, and saying so twice
+    /// would be noise.
+    ///
+    /// The gap between this and [`Self::MissionAssigned`] is the whole point
+    /// of the system and has to be *watchable*: a player who sees her platoon
+    /// keep driving north for two ticks after she redirected it should be
+    /// reading the reason in the log, not inventing one.
+    MissionReceived {
+        formation: String,
+        mission: Mission,
+    },
+    /// This unit can no longer hear her chain of command: she is outside her
+    /// leader's radius (and outside any relay), so mission changes will not
+    /// reach her and she fights on her own judgment until they can.
+    ///
+    /// Said out loud on the tick it happens, because a unit that quietly
+    /// ignores what it was told is indistinguishable from a bug. That is the
+    /// same bargain the morale ladder makes: latitude to deviate is only fair
+    /// when the player can see it coming and name the cause.
+    OutOfContact {
+        unit: UnitId,
+    },
+    /// The wires are back: this unit is inside the command net again and will
+    /// hear what she is told. Emitted only on the change, so a platoon
+    /// motoring along beside its leader says nothing for the whole battle.
+    ContactRestored {
+        unit: UnitId,
     },
     /// A vehicle drove off the map by an exit objective. It is out of the
     /// battle and its crew are going home; this is not [`Self::UnitDestroyed`]
@@ -235,7 +265,7 @@ impl BattleState {
                 Ok(Vec::new())
             }
             Order::SetMission { formation, mission } => {
-                self.set_mission(*formation, mission.clone())
+                self.set_mission(registry, *formation, mission.clone())
             }
             Order::Commit { side } => self.commit(*side),
         }
@@ -253,6 +283,7 @@ impl BattleState {
     /// would make a mission a route rather than an intention.
     fn set_mission(
         &mut self,
+        registry: &DataRegistry,
         formation: FormationId,
         mission: Mission,
     ) -> Result<Vec<Event>, OrderError> {
@@ -295,7 +326,16 @@ impl BattleState {
                 }
             }
         }
-        self.command.set_mission(formation, mission.clone());
+        // An order is sent here; whether it has *arrived* is the signals net's
+        // business. A delay of zero — which is every battle whose mod declares
+        // no `command` block — puts it straight onto the formation, so the old
+        // game is this same line rather than a branch around it.
+        let delay = self.mission_delay(registry, formation);
+        if delay == 0 {
+            self.command.set_mission(formation, mission.clone());
+        } else {
+            self.command.set_incoming(formation, mission.clone(), delay);
+        }
         Ok(vec![Event::MissionAssigned {
             formation: id,
             mission,
@@ -413,8 +453,17 @@ impl BattleState {
             }
         }
 
+        // Orders in transit land at the top of the tick, before anybody
+        // drives: a mission that took one tick to arrive is one the formation
+        // acts on as this tick's movement resolves, not a round later.
+        self.deliver_missions(&mut events);
+
         self.resolve_movement(registry, &mut events);
         events.extend(fog::recompute(registry, self));
+        // Contact is read after everyone has moved and before anyone shoots,
+        // so a vehicle that drove out of its leader's radius is out of contact
+        // in the same tick it left rather than the next one.
+        self.recompute_contact(registry, &mut events);
         self.resolve_fire(registry, &mut events);
         events.extend(fog::recompute(registry, self));
 

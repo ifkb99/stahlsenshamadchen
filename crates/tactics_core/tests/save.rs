@@ -439,3 +439,107 @@ fn a_save_from_before_this_existed_is_still_accepted() {
     assert!(save.overworld.is_some());
     assert!(warnings.is_empty());
 }
+
+/// An order in transit is the most fragile thing command state carries: it is
+/// a countdown, and a save that restored the mission but forgot how far it had
+/// travelled would either deliver it twice or never. So this is the
+/// fork-and-compare property again, aimed at the clock rather than the board —
+/// the restored battle has to hear the order on the same tick the unsaved one
+/// does.
+#[test]
+fn a_mission_in_transit_survives_a_save() {
+    let mut reg = registry();
+    // Declared here rather than in the base mod: this chunk is the machinery,
+    // and the shipped game switches it on a chunk later. `levels_per_tick: 0`
+    // so the delay is the stated three ticks whoever is commanding.
+    reg.command = Some(tactics_core::data::CommandRules {
+        radius: 999,
+        radius_per_signals: 0,
+        relay: true,
+        latency: tactics_core::data::ReactionRules {
+            skill: "command".into(),
+            base_ticks: 3,
+            levels_per_tick: 0,
+            max_ticks: 5,
+        },
+    });
+    let mut original = BattleState::from_map(&reg, "river_crossing", 19).expect("battle");
+    let armor = tactics_core::battle::FormationId(
+        original
+            .formations()
+            .iter()
+            .position(|f| f.id == "kuhlmann_armor")
+            .expect("river_crossing declares it") as u32,
+    );
+    let bridge = original.map.objectives()[0].anchor();
+    original
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: armor,
+                mission: tactics_core::battle::Mission::Advance { to: bridge },
+            },
+        )
+        .expect("the bridge is on the map");
+
+    // One tick in: the order is still travelling, which is the state worth
+    // saving.
+    for side in original.living_sides() {
+        if !original.has_committed(side) {
+            original
+                .apply(&reg, &Order::Commit { side })
+                .expect("commit");
+        }
+    }
+    original.step_tick(&reg);
+    assert!(
+        original.formations()[armor.index()].mission.is_none(),
+        "it has not landed yet, or this test is about nothing"
+    );
+    let in_flight = original.formations()[armor.index()]
+        .incoming
+        .clone()
+        .expect("a mission in the air");
+
+    let text = SaveGame::new(&reg, None, Some(original.clone()))
+        .to_json()
+        .expect("serialises");
+    let mut restored = SaveGame::from_json(&reg, &text)
+        .expect("deserialises")
+        .0
+        .battle
+        .expect("battle round-trips");
+    assert_eq!(
+        restored.formations()[armor.index()].incoming,
+        Some(in_flight),
+        "the same mission with the same ticks left on it"
+    );
+
+    // And it lands on schedule in both, which is the property that matters:
+    // two ticks later, in the same tick, for the same reason.
+    let landed = |state: &mut BattleState| -> Vec<u32> {
+        let mut ticks = Vec::new();
+        for tick in 0..4u32 {
+            let events = state.step_tick(&reg);
+            if events
+                .iter()
+                .any(|e| matches!(e, Event::MissionReceived { .. }))
+            {
+                ticks.push(tick);
+            }
+        }
+        ticks
+    };
+    let expected = landed(&mut original);
+    assert_eq!(expected, vec![1], "two ticks of the three had already run");
+    assert_eq!(
+        landed(&mut restored),
+        expected,
+        "a reloaded order arrives exactly when the unsaved one would"
+    );
+    assert_eq!(
+        restored.formations()[armor.index()].mission,
+        original.formations()[armor.index()].mission,
+        "and leaves both platoons under the same standing order"
+    );
+}
