@@ -405,44 +405,27 @@ times now lives in `ai::AiDriver`; verified as a pure refactor (committed
 determinism baseline passes unregenerated, playthrough and `balance --sim`
 output byte-identical, battle-fight tour plays on screen).
 
-**1. Formations as data.** Map/army format fields, validation in
-`validate-mods`, `CommandState` on `BattleState` (populated, inert), save
-round-trip. No behaviour change anywhere. *Verify:* baseline byte-identical;
-new save test covers command state; validation tests for the referential
-mistakes. *Difficulty: 2/5* — mechanical and fully specified; the only trap
-is keeping `CommandState`'s internal order deterministic
-(declaration order, never a hash map's).
+**1. Formations as data.** ✅ Done (`4a131c7`): format fields, validation,
+inert `CommandState`, save round-trip; baseline unregenerated, river_crossing
+declares four formations and the stream did not move.
 
-**2. Missions and executors.** `Order::SetMission`, mission context threaded
-through `Evaluator`, `SideCommand` with a first commander brain (assign
-missions from objectives + doctrine, reusing the objective-scoring logic that
-exists) and per-formation executors. The brain is constructed for the side's
-commanding girl from the start, even while it only reads her doctrine — the
-seam costs nothing now and is what her traits and the theater plug into.
-`river_crossing` gains formations so the shipped scenario exercises it.
-*Verify:* the additivity test — a map with no formations produces a
-byte-identical event stream; `balance --sim` before and after, with the
-numbers in the commit; new engine tests
-(`a_formation_advances_on_the_ground_its_mission_names`, etc.). This chunk
-also stands up the **delegation-tax measurement**: the same army fought as a
-flat per-unit pool versus as mission-run formations, over the 24-battle
-harness. The tax will not be zero at first; the point is to *see* it, and to
-drive it toward zero by chunk 6, because delegation is the default posture
-and a delegation the player pays for is one they will refuse.
-*Difficulty: 5/5* — the heart. Touches the evaluator (the additivity hinge),
-introduces the hierarchy, and every later chunk inherits its shapes. If it
-must be split for cost: the `SetMission` plumbing and validation is a 2/5
-sub-chunk; the mission-context evaluator, `SideCommand` and the first brain
-are the 5/5 remainder and should be one careful pass.
+**2. Missions and executors.** ✅ Done (`333b0cd` plumbing, `74f5bad`
+consumption): missions in the order stream, mission-aware evaluator (read
+from state, so every planner sees them and none-mission paths are
+bit-identical), `SideCommand` with the first brain and per-formation
+executors, delegation-tax table in `balance --sim`. Judgment call recorded
+in the commit: a Withdraw mission damps offensive appetites rather than
+out-shouting them.
 
-**3. Willingness moves to the commander.** `initiative`/`delegation` read;
-withdrawal becomes a mission a leader issues, with the evaluator's global exit
-gate demoted to the fallback for leaderless/cut-off units. *Verify:* `balance
---sim` on doctrine matchups (elastic_defense's 16-7 dominance is the
-baseline to watch, not to fix — see the open question on balance targets);
-exits still taken, never on round one. *Difficulty: 4/5* — small in lines,
-large in judgment: it re-homes behaviour the evaluator sweep tuned, and
-whether the result fights *sensibly* is a call the tests cannot make alone.
+**3. Willingness moves to the commander.** ✅ Done (`79be5b6`): the brain
+orders beaten formations out (never rescinded, never devolved), doctrine
+colours missions (Advance vs Hold), initiative gates retargeting, delegation
+read twice — as mission strictness in the evaluator and as the **directive
+command** rule in the brain: delegation ≥ 0.6 assigns no ground at all,
+because pinning elastic defence to anchors measurably cost it 16 of 24 wins.
+The residual elastic tax (~5 in 36) is beaten formations leaving with
+survivors, which a wins-only table cannot credit — the campaign is where
+that trade pays.
 
 **4. Contact and order latency.** `command` block, contact graph + events,
 mission transit delay priced by `command`/`signals` checks. *Verify:*
