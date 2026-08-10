@@ -104,6 +104,9 @@ pub struct Unit {
     /// Damage type of the last hit this unit took, if any. Read by the
     /// campaign when working out what became of the crew.
     pub last_hit_by: Option<crate::data::DamageType>,
+    /// How much this crew has had to take. Walks them up the morale ladder;
+    /// shed a little at the end of every round.
+    pub pressure: u32,
     pub alive: bool,
 }
 
@@ -368,6 +371,7 @@ impl BattleState {
             move_credit: 0,
             cooldowns: vec![0; vehicle.weapons.len()],
             last_hit_by: None,
+            pressure: 0,
             alive: true,
         });
         id
@@ -392,6 +396,23 @@ impl BattleState {
     pub fn spotted_enemy_at(&self, hex: Hex, side: u8) -> Option<&Unit> {
         self.unit_at(hex)
             .filter(|u| u.side != side && self.fog.side(side).spotted.contains(&u.id))
+    }
+
+    /// Which rung of the morale ladder a unit is standing on.
+    ///
+    /// Derived from pressure rather than stored, so it cannot go stale and so
+    /// a mod that changes the ladder changes every unit at once.
+    pub fn morale<'r>(
+        &self,
+        registry: &'r DataRegistry,
+        unit: &Unit,
+    ) -> &'r crate::data::MoraleRung {
+        registry.morale.rung(unit.pressure)
+    }
+
+    /// Whether this crew will still do as it is told.
+    pub fn obeys(&self, registry: &DataRegistry, unit: &Unit) -> bool {
+        self.morale(registry, unit).obeys
     }
 
     /// The terrain a unit is standing on, for checks that care where they

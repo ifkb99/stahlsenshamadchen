@@ -34,6 +34,10 @@ pub struct ModManifest {
     /// other rule blocks — a difficulty mod says only what it changes.
     #[serde(default)]
     pub reaction: Option<super::ReactionRules>,
+    /// What a crew can take before it stops doing as it is told. A mod that
+    /// ships a one-rung ladder has girls who never waver.
+    #[serde(default)]
+    pub morale: Option<super::MoraleRules>,
     /// What the engine's hexes, rounds and ticks mean in metres and seconds.
     ///
     /// Unlike a vehicle or a weapon, scale is a property of the game rather

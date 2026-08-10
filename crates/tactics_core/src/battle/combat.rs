@@ -600,6 +600,15 @@ pub fn best_opportunity_shot(
     unit: UnitId,
 ) -> Option<(usize, UnitId)> {
     let att = state.unit(unit)?;
+    // Opportunity fire is the crew reacting to something nobody told them
+    // about, so it costs them their reaction time. Ordered fire is untouched:
+    // they knew what they were shooting at before the round began, and taxing
+    // that would model rate of fire twice over.
+    let tick = state.resolving_tick().unwrap_or(0);
+    if tick < super::stats::reaction_delay(registry, &state.roster, att, state.terrain_at(att.pos))
+    {
+        return None;
+    }
     let vehicle = registry.vehicle(&att.vehicle)?;
     let spotted = &state.fog.side(att.side).spotted;
 

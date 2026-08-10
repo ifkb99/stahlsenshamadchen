@@ -678,6 +678,19 @@ fn pump_events(
     for event in &drained {
         match event {
             BattleEvent::RoundStarted { round } => {
+                // Collapse quiet rounds. The log keeps eight lines, and a
+                // banner every round eats all of them — which defeats the
+                // whole point of reporting morale and refusals, since the
+                // player is meant to see a crew wavering *before* it costs
+                // them. A round in which nothing happened does not need
+                // announcing twice.
+                let quiet = log
+                    .0
+                    .back()
+                    .is_some_and(|last| last.starts_with("- Round "));
+                if quiet {
+                    log.0.pop_back();
+                }
                 log.push(format!("- Round {round}: orders -"));
                 battle.range_dirty = true;
             }
@@ -770,6 +783,28 @@ fn pump_events(
                 if battle.state.sides[*by_side as usize].ai.is_none() {
                     log.push(format!("Enemy spotted: {}", name(*unit)));
                 }
+            }
+            // Said in the log, because a girl doing something other than what
+            // she was told has to be attributable or it reads as a bug.
+            BattleEvent::MoraleChanged { unit, rung, obeys } => {
+                let who = battle
+                    .state
+                    .unit(*unit)
+                    .map(|u| u.name.clone())
+                    .unwrap_or_else(|| "A crew".into());
+                log.push(if *obeys {
+                    format!("{who} is {rung}.")
+                } else {
+                    format!("{who} is {rung} and will not advance.")
+                });
+            }
+            BattleEvent::OrderRefused { unit, rung } => {
+                let who = battle
+                    .state
+                    .unit(*unit)
+                    .map(|u| u.name.clone())
+                    .unwrap_or_else(|| "A crew".into());
+                log.push(format!("{who} refuses to advance - {rung}."));
             }
             BattleEvent::BattleEnded { winner, reason } => {
                 let text = match (winner, reason) {

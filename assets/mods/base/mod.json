@@ -319,5 +319,32 @@
         "base_ticks": 2,
         "levels_per_tick": 4,
         "max_ticks": 5
+    },
+    "morale": {
+        "skill": "discipline",
+        "rungs": [
+            {
+                "id": "steady",
+                "name": "Steady",
+                "at_pressure": 0,
+                "obeys": true
+            },
+            {
+                "id": "wavering",
+                "name": "Wavering",
+                "at_pressure": 6,
+                "obeys": true
+            },
+            {
+                "id": "breaking",
+                "name": "Breaking",
+                "at_pressure": 12,
+                "obeys": false
+            }
+        ],
+        "hit": 3,
+        "ally_destroyed": 4,
+        "recovery": 2,
+        "recovery_per_skill": 4
     }
 }
