@@ -1185,6 +1185,15 @@ fn pump_events(
             // same reason a wavering crew is: she is about to do something
             // other than what she was told, and silent deviation is
             // indistinguishable from a bug.
+            // The plan advancing is an order the player gave when she queued
+            // the leg; saying both halves keeps the turn legible.
+            BattleEvent::MissionCompleted { formation, mission } => {
+                let who = formation_name(&battle.state, formation);
+                log.push(format!(
+                    "{who} has done it: {} complete. Moving to the next order.",
+                    mission_sentence(&battle.state, Some(mission))
+                ));
+            }
             BattleEvent::OutOfContact { unit } => {
                 log.push(format!("{} is out of contact.", name(*unit)));
             }
@@ -1439,9 +1448,15 @@ fn handle_input(
     {
         match asked {
             Ok(mission) => {
-                let order = Order::SetMission {
-                    formation: FormationId(index as u32),
-                    mission,
+                // Shift queues instead of replacing: "…and then this." The
+                // engine refuses a leg behind a stand-fast or a retreat, and
+                // that refusal reaches the log like any other.
+                let queue = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+                let formation = FormationId(index as u32);
+                let order = if queue {
+                    Order::QueueMission { formation, mission }
+                } else {
+                    Order::SetMission { formation, mission }
                 };
                 let battle = &mut *battle;
                 match battle.state.apply(registry, &order) {
@@ -2289,12 +2304,21 @@ fn format_formation(
             mission_sentence(state, formation.mission.as_ref())
         ),
     ];
-    if let Some((mission, ticks)) = &formation.incoming {
+    if let Some((change, ticks)) = &formation.incoming {
+        // An amendment reads differently from a countermand, because the
+        // player who queued a leg should not fear it will replace her plan.
+        let verb = match change {
+            tactics_core::battle::MissionChange::Replace(_) => "In the air",
+            tactics_core::battle::MissionChange::Append(_) => "In the air (and then)",
+        };
         lines.push(format!(
-            "In the air: {} ({})",
-            mission_sentence(state, Some(mission)),
+            "{verb}: {} ({})",
+            mission_sentence(state, Some(change.mission())),
             registry.scale.format_duration(*ticks)
         ));
+    }
+    for leg in &formation.plan {
+        lines.push(format!("Then: {}", mission_sentence(state, Some(leg))));
     }
     lines.push(String::new());
     lines.push("Members:".into());
@@ -2332,7 +2356,7 @@ fn format_formation(
         lines.push(format!("  {}{}", unit.name, tag));
     }
     lines.push(String::new());
-    lines.push("G advance / H hold / R recon".into());
+    lines.push("G advance / H hold / R recon (Shift queues)".into());
     lines.push("on the hovered hex; W withdraw.".into());
     lines.push("F next formation, Esc drops it.".into());
     if let Some(hex) = hovered {

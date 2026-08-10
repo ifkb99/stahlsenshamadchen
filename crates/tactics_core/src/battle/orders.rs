@@ -89,6 +89,14 @@ pub enum Order {
         formation: FormationId,
         mission: Mission,
     },
+    /// "…and then this": add a mission to the end of a formation's plan
+    /// instead of replacing it. Refused behind a terminal mission — nothing
+    /// follows a stand-fast or a retreat — and travels the wire exactly as a
+    /// replacement does; the radio does not care what the envelope says.
+    QueueMission {
+        formation: FormationId,
+        mission: Mission,
+    },
     /// This side is done planning. When every side with units has committed,
     /// the round starts resolving.
     Commit { side: u8 },
@@ -186,6 +194,15 @@ pub enum Event {
     /// keep driving north for two ticks after she redirected it should be
     /// reading the reason in the log, not inventing one.
     MissionReceived {
+        formation: String,
+        mission: Mission,
+    },
+    /// A formation finished the leg it was on and takes up the next one in
+    /// its plan. Announced because a formation changing direction with no
+    /// visible order behind it reads as disobedience — the promotion IS the
+    /// order, given when the plan was, and the log owes the player that
+    /// connection.
+    MissionCompleted {
         formation: String,
         mission: Mission,
     },
@@ -300,6 +317,8 @@ pub enum OrderError {
     NoSuchFormation,
     #[error("no exit by that name this side may use")]
     NoSuchExit,
+    #[error("nothing follows a stand-fast or a retreat")]
+    MissionIsTerminal,
 }
 
 impl BattleState {
@@ -346,6 +365,9 @@ impl BattleState {
             }
             Order::SetMission { formation, mission } => {
                 self.set_mission(registry, *formation, mission.clone())
+            }
+            Order::QueueMission { formation, mission } => {
+                self.push_mission(registry, *formation, mission.clone())
             }
             Order::Commit { side } => self.commit(*side),
         }
@@ -471,7 +493,70 @@ impl BattleState {
         if self.has_committed(side) {
             return Err(OrderError::AlreadyCommitted);
         }
-        match &mission {
+        self.check_mission_target(side, &mission)?;
+        // An order is sent here; whether it has *arrived* is the signals net's
+        // business. A delay of zero — which is every battle whose mod declares
+        // no `command` block — puts it straight onto the formation, so the old
+        // game is this same line rather than a branch around it.
+        let delay = self.mission_delay(registry, formation);
+        if delay == 0 {
+            self.command.set_mission(formation, mission.clone());
+        } else {
+            self.command.set_incoming(
+                formation,
+                crate::battle::MissionChange::Replace(mission.clone()),
+                delay,
+            );
+        }
+        Ok(vec![Event::MissionAssigned {
+            formation: id,
+            mission,
+        }])
+    }
+
+    /// Add a mission to the end of a formation's plan — the queueing half of
+    /// [`Self::set_mission`], sharing its validation and its wire.
+    fn push_mission(
+        &mut self,
+        registry: &DataRegistry,
+        formation: FormationId,
+        mission: Mission,
+    ) -> Result<Vec<Event>, OrderError> {
+        let f = self
+            .command
+            .get(formation)
+            .ok_or(OrderError::NoSuchFormation)?;
+        let (side, id) = (f.side, f.id.clone());
+        if self.has_committed(side) {
+            return Err(OrderError::AlreadyCommitted);
+        }
+        // "What would this follow" is a question about the pipeline's tail:
+        // the order in the air, else the back of the plan, else the standing
+        // mission. Queueing behind a leg that can never end is an order that
+        // can never begin, and it is refused here rather than left to sit.
+        if f.latest_mission().is_some_and(|m| m.terminal()) {
+            return Err(OrderError::MissionIsTerminal);
+        }
+        self.check_mission_target(side, &mission)?;
+        let delay = self.mission_delay(registry, formation);
+        if delay == 0 {
+            self.command.queue_mission(formation, mission.clone());
+        } else {
+            self.command.set_incoming(
+                formation,
+                crate::battle::MissionChange::Append(mission.clone()),
+                delay,
+            );
+        }
+        Ok(vec![Event::MissionAssigned {
+            formation: id,
+            mission,
+        }])
+    }
+
+    /// Whether a mission's target is somewhere this side could be sent.
+    fn check_mission_target(&self, side: u8, mission: &Mission) -> Result<(), OrderError> {
+        match mission {
             Mission::Advance { to } | Mission::Recon { toward: to } => {
                 if !self.map.contains(*to) {
                     return Err(OrderError::NotOnMap);
@@ -500,20 +585,7 @@ impl BattleState {
                 }
             }
         }
-        // An order is sent here; whether it has *arrived* is the signals net's
-        // business. A delay of zero — which is every battle whose mod declares
-        // no `command` block — puts it straight onto the formation, so the old
-        // game is this same line rather than a branch around it.
-        let delay = self.mission_delay(registry, formation);
-        if delay == 0 {
-            self.command.set_mission(formation, mission.clone());
-        } else {
-            self.command.set_incoming(formation, mission.clone(), delay);
-        }
-        Ok(vec![Event::MissionAssigned {
-            formation: id,
-            mission,
-        }])
+        Ok(())
     }
 
     /// The side owning `unit`, rejecting orders from a side that already
@@ -990,6 +1062,9 @@ impl BattleState {
             committed: vec![false; self.sides.len()],
         };
         events.push(Event::RoundStarted { round: self.round });
+        // Plans advance at the top of the round, so a promoted leg steers the
+        // planning that is about to happen rather than arriving a round late.
+        self.promote_missions(registry, events);
         // Last, and after the round is open: an order held at the radio is
         // delivered *into* the planning phase it arrives for, which means the
         // intent it becomes survives the clearing above and the player sees it

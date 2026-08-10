@@ -127,6 +127,16 @@ pub enum Mission {
     Withdraw { via: String },
 }
 
+impl Mission {
+    /// Whether anything can follow this mission in a plan. A stand-fast has
+    /// no end to reach and a retreat has no afterwards worth planning on
+    /// this battlefield, so queueing behind either is refused out loud
+    /// rather than left to sit as a leg that can never begin.
+    pub fn terminal(&self) -> bool {
+        matches!(self, Self::Hold { .. } | Self::Withdraw { .. })
+    }
+}
+
 /// One formation with its declaration resolved against the units on the field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Formation {
@@ -174,21 +184,34 @@ pub struct Formation {
     /// accident what a silent map means.
     #[serde(default)]
     pub mission: Option<Mission>,
-    /// A mission still travelling, and how many ticks it has left to travel.
+    /// The rest of the plan: missions queued behind the standing one, in the
+    /// order they will be taken up.
     ///
-    /// Missions stop being instantaneous once a mod declares a `command`
-    /// block: the order is *sent* when it is issued (that is the
-    /// [`crate::battle::Event::MissionAssigned`] the log already carries) and
-    /// *arrives* some ticks later, when it moves into [`Self::mission`] and is
-    /// announced again as `MissionReceived`. A second order issued while the
-    /// first is still in the air replaces it — countermanding is ordinary
-    /// business, and two missions in transit at once is not a state anyone
-    /// could act on.
+    /// Transmitted once and executed locally — the leader has known the
+    /// whole plan since it arrived, so promotion from one leg to the next
+    /// costs no wire and no latency, which is the Auftragstaktik shape and
+    /// also the cheap one. Promotion happens when the standing mission
+    /// *completes* (see `promote_missions`); `Hold` and `Withdraw` never
+    /// complete, so nothing may be queued behind them and validation says so
+    /// out loud rather than letting an impossible plan sit silently.
+    #[serde(default)]
+    pub plan: std::collections::VecDeque<Mission>,
+    /// An order still travelling, what it will do to the plan when it lands,
+    /// and how many ticks it has left to travel.
+    ///
+    /// Orders stop being instantaneous once a mod declares a `command`
+    /// block: sent when issued (the
+    /// [`crate::battle::Event::MissionAssigned`] the log already carries),
+    /// arriving some ticks later as `MissionReceived`. A second order issued
+    /// while one is in the air replaces it — countermanding is ordinary
+    /// business, and two orders in transit at once is not a state anyone
+    /// could act on. An amendment (`Append`) travels exactly like a
+    /// replacement: the wire does not care what the envelope says.
     ///
     /// `None` for every battle whose mod declares no command rules, because
-    /// the delay is then zero and a mission never travels at all.
+    /// the delay is then zero and an order never travels at all.
     #[serde(default)]
-    pub incoming: Option<(Mission, u32)>,
+    pub incoming: Option<(MissionChange, u32)>,
     /// Members who cannot currently hear their leader, in unit-id order,
     /// each carrying the orders she had when the wire went dead.
     ///
@@ -210,6 +233,26 @@ pub struct Formation {
     /// costs anything.
     #[serde(default)]
     pub out_of_contact: Vec<CutOff>,
+}
+
+/// What an order in transit will do to the formation's plan when it lands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MissionChange {
+    /// This mission becomes the standing one and everything queued behind
+    /// the old one is off — a countermand replaces the plan, not a line of
+    /// it.
+    Replace(Mission),
+    /// This mission joins the end of the plan: "…and then this."
+    Append(Mission),
+}
+
+impl MissionChange {
+    pub fn mission(&self) -> &Mission {
+        match self {
+            Self::Replace(mission) | Self::Append(mission) => mission,
+        }
+    }
 }
 
 /// One member out of contact, and the orders she is soldiering on.
@@ -249,20 +292,25 @@ impl Formation {
         }
     }
 
-    /// The most recent thing this formation has been told, whether or not it
-    /// has arrived yet.
+    /// The tail of the pipeline: the last thing this formation will end up
+    /// doing once everything sent, queued and standing has run its course.
     ///
     /// What a commander should compare against before issuing anything: an
-    /// order already in the air is one she has given, and re-sending it every
-    /// round of the transit window would fill the log with the same sentence
-    /// and reset the clock each time. What the *executors* act on is
-    /// [`Self::mission`] — deliberately different, because the whole point of
-    /// latency is that the formation does not yet know.
+    /// order already in the air or in the plan is one she has given, and
+    /// re-sending it would fill the log with the same sentence and reset
+    /// the clock each time. It is also what queue-validation tests for a
+    /// terminal mission, because "what would this follow" is a question
+    /// about the tail. What the *executors* act on is [`Self::mission`] —
+    /// deliberately different, because the whole point of latency is that
+    /// the formation does not yet know.
     pub fn latest_mission(&self) -> Option<&Mission> {
-        self.incoming
-            .as_ref()
-            .map(|(mission, _)| mission)
-            .or(self.mission.as_ref())
+        match &self.incoming {
+            // A replacement in the air supersedes the whole plan; an
+            // amendment in the air lands at the end of it. Either way the
+            // travelling order is the tail.
+            Some((change, _)) => Some(change.mission()),
+            None => self.plan.back().or(self.mission.as_ref()),
+        }
     }
 }
 
@@ -377,6 +425,7 @@ impl CommandState {
                     members: members.into_iter().map(|(id, _)| id).collect(),
                     doctrine: def.doctrine.clone(),
                     mission: None,
+                    plan: std::collections::VecDeque::new(),
                     incoming: None,
                     out_of_contact: Vec::new(),
                 })
@@ -426,10 +475,12 @@ impl CommandState {
         match self.formations.get_mut(formation.index()) {
             Some(f) => {
                 f.mission = Some(mission);
-                // Anything still travelling has been overtaken by this. It
-                // cannot be allowed to land afterwards and quietly countermand
-                // the order that arrived first.
+                // Anything still travelling or still queued has been
+                // overtaken by this: a countermand replaces the plan, and
+                // letting an old leg land or begin afterwards would quietly
+                // undo the order that arrived last.
                 f.incoming = None;
+                f.plan.clear();
                 true
             }
             None => false,
@@ -501,17 +552,41 @@ impl CommandState {
         self.waiting.sort_by_key(|(id, _)| *id);
     }
 
-    /// Put a mission in the air: it will replace the formation's standing one
-    /// in `ticks` ticks, not now. Returns whether the formation exists.
+    /// Put an order in the air: it will change the formation's plan in
+    /// `ticks` ticks, not now. Returns whether the formation exists.
     ///
-    /// Only ever called with `ticks > 0` — a delay of zero is a mission that
-    /// arrived, and goes through [`Self::set_mission`] like any other, which
-    /// is what makes the no-rules game the *same code path* rather than the
-    /// same code path plus a branch.
-    pub fn set_incoming(&mut self, formation: FormationId, mission: Mission, ticks: u32) -> bool {
+    /// Only ever called with `ticks > 0` — a delay of zero is an order that
+    /// arrived, and goes through [`Self::set_mission`] or
+    /// [`Self::queue_mission`] like any other, which is what makes the
+    /// no-rules game the *same code path* rather than the same code path
+    /// plus a branch.
+    pub fn set_incoming(
+        &mut self,
+        formation: FormationId,
+        change: MissionChange,
+        ticks: u32,
+    ) -> bool {
         match self.formations.get_mut(formation.index()) {
             Some(f) => {
-                f.incoming = Some((mission, ticks));
+                f.incoming = Some((change, ticks));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Add a mission to the end of a formation's plan — or make it the
+    /// standing one, if the formation had nothing to do: an amendment to an
+    /// empty plan is simply the first order. Returns whether the formation
+    /// exists.
+    pub fn queue_mission(&mut self, formation: FormationId, mission: Mission) -> bool {
+        match self.formations.get_mut(formation.index()) {
+            Some(f) => {
+                if f.mission.is_none() {
+                    f.mission = Some(mission);
+                } else {
+                    f.plan.push_back(mission);
+                }
                 true
             }
             None => false,
@@ -574,8 +649,21 @@ impl BattleState {
                 }
                 None => false,
             };
-            if arrived && let Some((mission, _)) = formation.incoming.take() {
-                formation.mission = Some(mission.clone());
+            if arrived && let Some((change, _)) = formation.incoming.take() {
+                let mission = change.mission().clone();
+                match change {
+                    MissionChange::Replace(mission) => {
+                        formation.mission = Some(mission);
+                        formation.plan.clear();
+                    }
+                    MissionChange::Append(mission) => {
+                        if formation.mission.is_none() {
+                            formation.mission = Some(mission);
+                        } else {
+                            formation.plan.push_back(mission);
+                        }
+                    }
+                }
                 events.push(Event::MissionReceived {
                     formation: formation.id.clone(),
                     mission,
@@ -640,6 +728,67 @@ impl BattleState {
                     to,
                 });
             }
+        }
+    }
+
+    /// Move every formation whose standing mission is *done* on to the next
+    /// leg of its plan, and say so.
+    ///
+    /// Runs at the top of a round, so the new leg steers this round's
+    /// planning. Promotion costs no wire and no latency on purpose: the plan
+    /// was transmitted once and the formation has known all of it since —
+    /// which is also why a cut-off member does not stall the plan; she is
+    /// soldiering on her snapshot while the rest move on, and catches up
+    /// when the net does.
+    ///
+    /// Completion is the mission's own meaning: an advance is done when a
+    /// member stands on the ground (within one hex), a reconnaissance when a
+    /// member has eyes on the target tile. `Hold` and `Withdraw` never
+    /// complete — validation refuses to queue behind them, so a plan can
+    /// only ever be waiting behind a leg that can actually end. A completed
+    /// mission with nothing queued stands: the reward that pulled the
+    /// formation there is the same one that keeps it there, and announcing a
+    /// completion nobody acts on every round would be noise.
+    pub(super) fn promote_missions(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
+        for index in 0..self.command.formations.len() {
+            let formation = &self.command.formations[index];
+            if formation.plan.is_empty() {
+                continue;
+            }
+            let done = match &formation.mission {
+                // A plan behind no standing mission begins immediately; the
+                // orders layer prevents the state, but a save edited by hand
+                // should start marching rather than sit wedged.
+                None => true,
+                Some(Mission::Advance { to }) => formation
+                    .members
+                    .iter()
+                    .filter_map(|id| self.unit(*id))
+                    .any(|u| u.pos.distance_to(*to) <= 1),
+                Some(Mission::Recon { toward }) => formation
+                    .members
+                    .iter()
+                    .any(|id| super::fog::sees(registry, self, *id, *toward)),
+                Some(Mission::Hold { .. }) | Some(Mission::Withdraw { .. }) => false,
+            };
+            if !done {
+                continue;
+            }
+            let formation = &mut self.command.formations[index];
+            let completed = formation.mission.take();
+            let next = formation.plan.pop_front().expect("checked non-empty");
+            formation.mission = Some(next.clone());
+            let id = formation.id.clone();
+            if let Some(completed) = completed {
+                events.push(Event::MissionCompleted {
+                    formation: id.clone(),
+                    mission: completed,
+                });
+            }
+            events.push(Event::MissionAssigned {
+                formation: id,
+                mission: next,
+            });
         }
     }
 

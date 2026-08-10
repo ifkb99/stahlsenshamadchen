@@ -5463,3 +5463,199 @@ fn a_radioed_order_to_a_girl_on_the_net_is_just_an_order() {
     );
     assert!(deaf.command.waiting().is_empty(), "and nothing was queued");
 }
+
+// --- mission sequences (chunk 9c) ------------------------------------------
+
+#[test]
+fn a_plan_advances_when_its_first_leg_is_done() {
+    // "Advance to the ford, then hold it." The plan is transmitted once and
+    // promoted locally: when a member stands on the first leg's ground, the
+    // next leg becomes the standing mission with no wire and no latency —
+    // the leader has known the whole plan since it arrived.
+    let reg = registry_wireless();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 45).unwrap();
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let leader = state.formations()[armor.index()].leader.unwrap();
+    // A first leg two hexes from where the leader already stands, so one
+    // round of driving completes it.
+    let start = state.unit(leader).unwrap().pos;
+    let near = start + tactics_core::Hex::new(2, 0);
+    assert!(state.map.contains(near));
+    let hold_at = near;
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: armor,
+                mission: Mission::Advance { to: near },
+            },
+        )
+        .unwrap();
+    state
+        .apply(
+            &reg,
+            &Order::QueueMission {
+                formation: armor,
+                mission: Mission::Hold { at: Some(hold_at) },
+            },
+        )
+        .unwrap();
+    assert_eq!(state.formations()[armor.index()].plan.len(), 1);
+
+    let mut ai = AiDriver::new();
+    ai.insert(0, sharp_planner(&reg, 45, "massed_armor"));
+    let mut log: Vec<String> = Vec::new();
+    for _ in 0..4 {
+        if state.is_over() {
+            break;
+        }
+        ai.plan_round(&reg, &mut state);
+        let _ = state.apply(&reg, &Order::Commit { side: 1 });
+        log.extend(state.resolve_round(&reg).iter().map(|e| format!("{e:?}")));
+        if state.formations()[armor.index()].mission == Some(Mission::Hold { at: Some(hold_at) }) {
+            break;
+        }
+    }
+    assert_eq!(
+        state.formations()[armor.index()].mission,
+        Some(Mission::Hold { at: Some(hold_at) }),
+        "the second leg is standing once the first is done"
+    );
+    assert!(
+        state.formations()[armor.index()].plan.is_empty(),
+        "and the plan has been consumed"
+    );
+    assert!(
+        log.iter().any(|l| l.starts_with("MissionCompleted")),
+        "the completion was announced: {log:?}"
+    );
+}
+
+#[test]
+fn nothing_follows_a_stand_fast_or_a_retreat() {
+    let reg = registry_wireless();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 46).unwrap();
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let anywhere = state.map.objectives()[0].anchor();
+
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: armor,
+                mission: Mission::Hold { at: None },
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        state.apply(
+            &reg,
+            &Order::QueueMission {
+                formation: armor,
+                mission: Mission::Advance { to: anywhere },
+            },
+        ),
+        Err(tactics_core::battle::OrderError::MissionIsTerminal),
+        "a stand-fast has no afterwards"
+    );
+
+    // A withdrawal may end a plan — "take the bridge, then get out" is a
+    // legitimate raid — but nothing may follow it.
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: armor,
+                mission: Mission::Advance { to: anywhere },
+            },
+        )
+        .unwrap();
+    state
+        .apply(
+            &reg,
+            &Order::QueueMission {
+                formation: armor,
+                mission: Mission::Withdraw {
+                    via: "west_road".into(),
+                },
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        state.apply(
+            &reg,
+            &Order::QueueMission {
+                formation: armor,
+                mission: Mission::Advance { to: anywhere },
+            },
+        ),
+        Err(tactics_core::battle::OrderError::MissionIsTerminal),
+        "and neither has a retreat"
+    );
+}
+
+#[test]
+fn an_amendment_travels_the_wire_like_any_order() {
+    // A queued leg is still an order: with a command block it spends its
+    // ticks in the air, and a countermand issued while it travels replaces
+    // the whole plan — the wire does not care what the envelope says.
+    let mut reg = registry();
+    reg.command = Some(command_rules(999, true, 2));
+    strip_radios(&mut reg);
+    let mut state = BattleState::from_map(&reg, "river_crossing", 47).unwrap();
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let bridge = state.map.objectives()[0].anchor();
+
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: armor,
+                mission: Mission::Advance { to: bridge },
+            },
+        )
+        .unwrap();
+    // First order lands (2 ticks), then the amendment goes into the air.
+    commit_all(&reg, &mut state);
+    state.step_tick(&reg);
+    state.step_tick(&reg);
+    assert!(state.formations()[armor.index()].mission.is_some());
+    state.resolve_round(&reg);
+
+    state
+        .apply(
+            &reg,
+            &Order::QueueMission {
+                formation: armor,
+                mission: Mission::Recon { toward: bridge },
+            },
+        )
+        .unwrap();
+    let f = &state.formations()[armor.index()];
+    assert!(
+        matches!(
+            f.incoming,
+            Some((tactics_core::battle::MissionChange::Append(_), _))
+        ),
+        "the amendment is in the air, not in the plan"
+    );
+    assert!(f.plan.is_empty());
+
+    // Countermanded before it lands: the replacement wins and the amendment
+    // never existed.
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: armor,
+                mission: Mission::Hold { at: None },
+            },
+        )
+        .unwrap();
+    commit_all(&reg, &mut state);
+    state.step_tick(&reg);
+    state.step_tick(&reg);
+    let f = &state.formations()[armor.index()];
+    assert_eq!(f.mission, Some(Mission::Hold { at: None }));
+    assert!(f.plan.is_empty(), "the countermand replaced the whole plan");
+}

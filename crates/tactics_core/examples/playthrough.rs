@@ -154,6 +154,9 @@ fn main() {
                 Event::MissionReceived { formation, mission } => {
                     println!("   >> {formation} receives its orders: {mission:?}")
                 }
+                Event::MissionCompleted { formation, mission } => {
+                    println!("   >> {formation} completes {mission:?} and takes up the next order")
+                }
                 Event::OutOfContact { unit } => {
                     println!("   >> {} is out of contact", name(&state, *unit))
                 }

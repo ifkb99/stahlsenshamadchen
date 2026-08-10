@@ -28,7 +28,8 @@ pub use combat::{
     expected_damage, hit_breakdown, hit_chance, preview_attack, struck_facing, weapon_ready,
 };
 pub use command::{
-    CommandState, Contact, CutOff, Formation, FormationId, Mission, WaitingOrders, nearest_exit,
+    CommandState, Contact, CutOff, Formation, FormationId, Mission, MissionChange, WaitingOrders,
+    nearest_exit,
 };
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
