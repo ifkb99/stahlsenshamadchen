@@ -456,7 +456,12 @@ pub mod stats {
     /// here are the engine's contract with the base mod rather than magic
     /// numbers: a mod that renames `gunnery` is defining a different game.
     pub fn gunnery(registry: &DataRegistry, roster: &Roster, unit: &Unit) -> i32 {
-        roster.crew_skill(registry, &unit.crew, "gunnery")
+        roster.crew_skill(
+            registry,
+            registry.vehicle(&unit.vehicle),
+            &unit.crew,
+            "gunnery",
+        )
     }
 
     /// Vision range in hexes: vehicle base, scaled by how well the crew
@@ -467,13 +472,24 @@ pub mod stats {
             .vehicle(&unit.vehicle)
             .map(|v| v.vision_range)
             .unwrap_or(3);
-        registry
-            .balance
-            .vision(base, roster.crew_skill(registry, &unit.crew, "observation"))
+        registry.balance.vision(
+            base,
+            roster.crew_skill(
+                registry,
+                registry.vehicle(&unit.vehicle),
+                &unit.crew,
+                "observation",
+            ),
+        )
     }
 
     /// Driving skill used by [`super::move_points`].
     pub fn driving(registry: &DataRegistry, roster: &Roster, unit: &Unit) -> i32 {
-        roster.crew_skill(registry, &unit.crew, "driving")
+        roster.crew_skill(
+            registry,
+            registry.vehicle(&unit.vehicle),
+            &unit.crew,
+            "driving",
+        )
     }
 }

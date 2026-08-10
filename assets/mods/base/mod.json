@@ -13,9 +13,10 @@
         "overworld_turn_hours": 24
     },
     "balance": {
-        "vision_per_awareness": 5,
         "speed_per_driving": 5,
-        "accuracy_per_gunnery": 3
+        "accuracy_per_gunnery": 3,
+        "substitution_penalty": 2,
+        "vision_per_observation": 5
     },
     "cores": [
         {
@@ -176,6 +177,47 @@
                 "strength": 1
             },
             "untrained_penalty": 2
+        }
+    ],
+    "roles": [
+        {
+            "id": "commander",
+            "name": "Commander",
+            "skills": [
+                "command",
+                "observation",
+                "signals"
+            ]
+        },
+        {
+            "id": "driver",
+            "name": "Driver",
+            "skills": [
+                "driving",
+                "maintenance"
+            ]
+        },
+        {
+            "id": "gunner",
+            "name": "Gunner",
+            "skills": [
+                "gunnery"
+            ]
+        },
+        {
+            "id": "loader",
+            "name": "Loader",
+            "skills": [
+                "loading",
+                "first_aid"
+            ]
+        },
+        {
+            "id": "radio",
+            "name": "Radio Operator",
+            "skills": [
+                "signals"
+            ]
         }
     ]
 }

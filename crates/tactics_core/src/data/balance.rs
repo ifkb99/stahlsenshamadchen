@@ -45,6 +45,14 @@ pub struct Balance {
     /// has no base to be a fraction of — but it lived as a bare `* 3` in
     /// `combat.rs`, which is the same design smell.
     pub accuracy_per_gunnery: i32,
+    /// How much worse someone is at a job that is not hers.
+    ///
+    /// Crews are short-handed far more often than they are complete — the
+    /// school has ten girls and its tanks have four seats each — so somebody
+    /// covering an empty gunner's seat is the normal case, not an edge one.
+    /// A penalty rather than nothing, because a commander can lay a gun; she
+    /// is just not the gunner.
+    pub substitution_penalty: i32,
 }
 
 impl Default for Balance {
@@ -53,6 +61,7 @@ impl Default for Balance {
             vision_per_observation: 5,
             speed_per_driving: 5,
             accuracy_per_gunnery: 3,
+            substitution_penalty: 2,
         }
     }
 }

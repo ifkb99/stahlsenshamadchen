@@ -301,14 +301,37 @@ read — becomes cores plus training plus traits plus condition.
 
 Two consequences worth stating in advance:
 
-- **Best-of-crew has to go.** `Roster::best` takes the highest value across a
-  crew, which means an extra crew member can only help and nobody is ever a
-  liability. Once abilities derive from training, roles decide *which* training
-  applies: the gunner's gunnery, the driver's driving. `VehicleDef.crew_slots`
-  already names those roles in every vehicle's json and has never been read.
-- **Crews get weaker**, because the best member no longer covers for everyone.
-  The whole roster needs rebalancing, which is what
-  `cargo run --release -p tactics_core --example balance` is for.
+- ~~**Best-of-crew has to go.**~~ Done. Seats are positional: girl *i* fills the
+  vehicle's *i*th `crew_slots` entry, and a `roles` block in mod data says which
+  skills each seat answers for. The gunner's gunnery lays the gun.
+- **Substitution is the normal case, not the edge one.** The school has ten
+  girls and its tanks have four seats each, so an empty seat is ordinary. The
+  best remaining crew member covers it at `balance.substitution_penalty`,
+  because a commander can lay a gun — she is simply not the gunner.
+
+### Two things roles exposed immediately
+
+Neither was caused by the change; both were hidden by best-of, where a second
+crew member barely mattered.
+
+**The demo scenario is lopsided.** Kuhlmann fields six girls to the Valkyries'
+four, across four vehicles each. Under best-of that was nearly invisible. With
+seats it decides battles: the first run after the change went 5-0.
+
+**Seat order in a map file is now meaningful, and `river_crossing` had it
+backwards.** Juno drives like the brakes are a suggestion (driving 15) and was
+sitting in the commander's seat, while Mina — gunnery 15 — was driving. Swapping
+those two girls moved the crew hit rate from 58% to 65% and the result from 5-0
+to a single win in twelve. That is the system working: who sits where is now a
+decision with a measurable price.
+
+### Known limitation: seats are positional
+
+A placement lists crew in seat order, so a crew of two fills seats one and two
+and cannot skip to the gunner's seat. That is why Mina commands a light tank
+she ought to be gunning. Explicit seat assignment is the fix, and it belongs
+with the "move girls between tanks" screen on the roadmap rather than being
+bolted onto the map format now.
 
 ## What to take from GURPS, and what to leave
 

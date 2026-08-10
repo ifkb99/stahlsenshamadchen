@@ -109,6 +109,23 @@ impl SkillDef {
     }
 }
 
+/// A job aboard a vehicle, and the skills that job is responsible for.
+///
+/// This is what stops a crew from being a bag of interchangeable numbers: the
+/// gunner's gunnery is what lays the gun, not the best gunnery aboard. A girl
+/// is therefore worth something specific in a specific seat, which is the
+/// whole point of being able to move her.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoleDef {
+    pub id: String,
+    pub name: String,
+    /// Skills this seat answers for. More than one seat may claim a skill —
+    /// a heavy tank has both a commander and a radio operator who can work
+    /// the set — and the better of them is used.
+    #[serde(default)]
+    pub skills: Vec<String>,
+}
+
 /// Core ids resolved to positions, so a check is an array index.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoreIndex {
