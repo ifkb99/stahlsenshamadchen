@@ -22,7 +22,7 @@ pub fn move_points(registry: &DataRegistry, roster: &Roster, unit: &Unit) -> u32
         .unwrap_or(0);
     registry
         .balance
-        .speed(base, super::stats::driving(roster, unit))
+        .speed(base, super::stats::driving(registry, roster, unit))
 }
 
 /// Cost of stepping from `from` onto `to`, or `None` if that step is

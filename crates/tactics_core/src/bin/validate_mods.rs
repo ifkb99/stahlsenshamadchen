@@ -88,8 +88,8 @@ fn report_scale(registry: &DataRegistry) {
         s.overworld_turn_hours,
     );
     println!(
-        "  crew: +{}% sight per awareness, +{}% speed per driving, {:+} hit per gunnery",
-        registry.balance.vision_per_awareness,
+        "  crew: +{}% sight per observation, +{}% speed per driving, {:+} hit per gunnery",
+        registry.balance.vision_per_observation,
         registry.balance.speed_per_driving,
         registry.balance.accuracy_per_gunnery,
     );

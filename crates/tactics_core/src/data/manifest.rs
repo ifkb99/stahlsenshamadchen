@@ -14,6 +14,16 @@ pub struct ModManifest {
     /// definitions with the same id.
     #[serde(default)]
     pub dependencies: Vec<String>,
+    /// The axes of temperament in this game. Like [`Self::scale`], a whole
+    /// block replaces the previous one rather than merging: a mod that
+    /// redefines the cores is defining a different kind of person, and a
+    /// half-merged set would be neither.
+    #[serde(default)]
+    pub cores: Option<Vec<super::CoreDef>>,
+    /// Trainable skills, each naming the cores it draws on. Replaced
+    /// wholesale for the same reason.
+    #[serde(default)]
+    pub skills: Option<Vec<super::SkillDef>>,
     /// What the engine's hexes, rounds and ticks mean in metres and seconds.
     ///
     /// Unlike a vehicle or a weapon, scale is a property of the game rather

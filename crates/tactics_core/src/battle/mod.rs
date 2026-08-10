@@ -452,12 +452,16 @@ impl BattleState {
 pub mod stats {
     use super::*;
 
-    /// Best gunnery among the crew.
-    pub fn gunnery(roster: &Roster, unit: &Unit) -> i32 {
-        roster.best(&unit.crew, |s| s.gunnery)
+    /// How well this crew lays its gun. Skill ids are data, so the strings
+    /// here are the engine's contract with the base mod rather than magic
+    /// numbers: a mod that renames `gunnery` is defining a different game.
+    pub fn gunnery(registry: &DataRegistry, roster: &Roster, unit: &Unit) -> i32 {
+        roster.crew_skill(registry, &unit.crew, "gunnery")
     }
 
-    /// Vision range in hexes: vehicle base scaled by the crew's awareness.
+    /// Vision range in hexes: vehicle base, scaled by how well the crew
+    /// observes. Spotting is a trained skill rather than a fact about
+    /// eyesight, which is why Elsa's "sees everything" is `observation 12`.
     pub fn vision_range(registry: &DataRegistry, roster: &Roster, unit: &Unit) -> u32 {
         let base = registry
             .vehicle(&unit.vehicle)
@@ -465,11 +469,11 @@ pub mod stats {
             .unwrap_or(3);
         registry
             .balance
-            .vision(base, roster.best(&unit.crew, |s| s.awareness))
+            .vision(base, roster.crew_skill(registry, &unit.crew, "observation"))
     }
 
-    /// Driving bonus used by [`super::move_points`].
-    pub fn driving(roster: &Roster, unit: &Unit) -> i32 {
-        roster.best(&unit.crew, |s| s.driving)
+    /// Driving skill used by [`super::move_points`].
+    pub fn driving(registry: &DataRegistry, roster: &Roster, unit: &Unit) -> i32 {
+        roster.crew_skill(registry, &unit.crew, "driving")
     }
 }

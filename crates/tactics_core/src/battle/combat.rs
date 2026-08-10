@@ -186,7 +186,7 @@ fn hit_chance_inner(
 
     let gunnery = registry
         .balance
-        .accuracy(stats::gunnery(&state.roster, att));
+        .accuracy(stats::gunnery(registry, &state.roster, att));
     note(HitFactor::Gunnery, gunnery);
     chance += gunnery;
 

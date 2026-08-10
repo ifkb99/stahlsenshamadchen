@@ -35,7 +35,7 @@ pub struct Balance {
     /// Percent of the vehicle's base vision range added per point of the
     /// crew's best awareness. At the default 5, a gifted scout (awareness 5)
     /// sees a quarter further than the same car with a novice aboard.
-    pub vision_per_awareness: i32,
+    pub vision_per_observation: i32,
     /// Percent of the vehicle's base movement allowance added per point of
     /// the crew's best driving. Because movement points are a speed, this
     /// reads directly: +25% on a 30 km/h medium tank is 36 km/h.
@@ -50,7 +50,7 @@ pub struct Balance {
 impl Default for Balance {
     fn default() -> Self {
         Self {
-            vision_per_awareness: 5,
+            vision_per_observation: 5,
             speed_per_driving: 5,
             accuracy_per_gunnery: 3,
         }
@@ -78,22 +78,34 @@ impl Balance {
         rounded.max(1) as u32
     }
 
-    /// Vision range for a vehicle with `base` sight and a crew whose best
-    /// awareness is `awareness`.
-    pub fn vision(&self, base: u32, awareness: i32) -> u32 {
-        Self::scaled(base, self.vision_per_awareness, awareness)
+    /// How far a skill level sits from ordinary.
+    ///
+    /// Every crew effect is measured from [`crate::data::AVERAGE`] rather than
+    /// from zero, and this is the change of meaning that matters most in the
+    /// stat rework: an ordinary crew now changes nothing, and a *poor* one is
+    /// a penalty. Under the old 0-5 stats every crew member could only help,
+    /// so nobody was ever a liability and it never mattered who rode in which
+    /// tank.
+    fn margin(level: i32) -> i32 {
+        level - crate::data::AVERAGE
     }
 
-    /// Movement allowance for a vehicle with `base` points and a crew whose
-    /// best driving is `driving`.
+    /// Vision range for a vehicle with `base` sight and a crew observing at
+    /// `observation`.
+    pub fn vision(&self, base: u32, observation: i32) -> u32 {
+        Self::scaled(base, self.vision_per_observation, Self::margin(observation))
+    }
+
+    /// Movement allowance for a vehicle with `base` points and a crew driving
+    /// at `driving`.
     pub fn speed(&self, base: u32, driving: i32) -> u32 {
-        Self::scaled(base, self.speed_per_driving, driving)
+        Self::scaled(base, self.speed_per_driving, Self::margin(driving))
     }
 
-    /// Hit chance bonus, in percentage points, for a crew whose best gunnery
-    /// is `gunnery`.
+    /// Hit chance change, in percentage points, for a crew shooting at
+    /// `gunnery`. Negative for a crew worse than ordinary.
     pub fn accuracy(&self, gunnery: i32) -> i32 {
-        gunnery * self.accuracy_per_gunnery
+        Self::margin(gunnery) * self.accuracy_per_gunnery
     }
 }
 
@@ -104,21 +116,34 @@ mod tests {
     #[test]
     fn a_gifted_crew_is_worth_a_quarter_of_the_vehicle() {
         let balance = Balance::default();
-        // The recon car sees 20 and the tank destroyer 10; the same scout is
-        // worth five hexes in one and three in the other, which is the point
-        // of scaling against the base rather than adding a flat bonus.
-        assert_eq!(balance.vision(20, 5), 25);
-        assert_eq!(balance.vision(10, 5), 13); // 12.5, rounded to nearest
-        assert_eq!(balance.speed(5, 5), 6); // 6.25 -> 6, i.e. 30 -> 36 km/h
-        assert_eq!(balance.speed(3, 5), 4); // the heavy tank finally notices
+        // Skill 15 is five above ordinary. The recon car sees 20 and the tank
+        // destroyer 10; the same scout is worth five hexes in one and three in
+        // the other, which is the point of scaling against the base rather
+        // than adding a flat bonus.
+        assert_eq!(balance.vision(20, 15), 25);
+        assert_eq!(balance.vision(10, 15), 13); // 12.5, rounded to nearest
+        assert_eq!(balance.speed(5, 15), 6); // 6.25 -> 6, i.e. 30 -> 36 km/h
+        assert_eq!(balance.speed(3, 15), 4); // the heavy tank finally notices
     }
 
     #[test]
-    fn an_untrained_crew_changes_nothing() {
+    fn an_ordinary_crew_changes_nothing() {
+        // Effects are measured from AVERAGE, so a competent-but-unremarkable
+        // crew leaves the vehicle exactly as designed.
         let balance = Balance::default();
-        assert_eq!(balance.vision(12, 0), 12);
-        assert_eq!(balance.speed(7, 0), 7);
-        assert_eq!(balance.accuracy(0), 0);
+        assert_eq!(balance.vision(12, crate::data::AVERAGE), 12);
+        assert_eq!(balance.speed(7, crate::data::AVERAGE), 7);
+        assert_eq!(balance.accuracy(crate::data::AVERAGE), 0);
+    }
+
+    #[test]
+    fn a_poor_crew_is_a_liability() {
+        // The property the old 0-5 stats could not express: every crew member
+        // could only ever help, so it never mattered who rode in which tank.
+        let balance = Balance::default();
+        assert!(balance.vision(20, 6) < 20, "a bad observer sees less");
+        assert!(balance.speed(6, 6) < 6, "a bad driver is slower");
+        assert!(balance.accuracy(6) < 0, "a bad gunner shoots worse");
     }
 
     #[test]

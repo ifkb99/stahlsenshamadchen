@@ -188,13 +188,20 @@ fn crew_quality_scales_with_the_vehicle_it_sits_in() {
     // of the vehicle's own base cannot be devalued that way again.
     let reg = registry();
     let recon = reg.vehicle("recon_car").unwrap().vision_range;
-    let elsa = reg.character("elsa").unwrap().stats.awareness;
-    assert_eq!(elsa, 5);
-    assert_eq!(reg.balance.vision(recon, elsa), 25, "20 hexes + 25%");
-    assert_eq!(reg.balance.vision(recon, 0), recon);
+    let elsa = reg.character("elsa").unwrap().skills["observation"];
+    assert_eq!(elsa, 12, "Elsa is the school's eyes");
+    assert!(
+        reg.balance.vision(recon, elsa) > recon,
+        "a trained observer sees further than the vehicle's paper range"
+    );
+    assert_eq!(
+        reg.balance.vision(recon, tactics_core::data::AVERAGE),
+        recon,
+        "an ordinary crew changes nothing, which is what makes a poor one a penalty"
+    );
 
     let heavy = reg.vehicle("heavy_tank").unwrap().movement.points;
-    let juno = reg.character("juno").unwrap().stats.driving;
+    let juno = reg.character("juno").unwrap().skills["driving"];
     assert!(
         reg.balance.speed(heavy, juno) > heavy,
         "a gifted driver must move a slow tank at all, which `driving / 5` did not"

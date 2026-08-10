@@ -121,6 +121,42 @@
                 "intellect": 1
             },
             "untrained_penalty": 6
+        },
+        {
+            "id": "discipline",
+            "name": "Discipline",
+            "cores": {
+                "nerve": 2,
+                "intellect": 1
+            },
+            "untrained_penalty": 3
+        },
+        {
+            "id": "small_arms",
+            "name": "Small Arms",
+            "cores": {
+                "hands": 2,
+                "wits": 1
+            },
+            "untrained_penalty": 2
+        },
+        {
+            "id": "fieldcraft",
+            "name": "Fieldcraft",
+            "cores": {
+                "wits": 2,
+                "intellect": 1
+            },
+            "untrained_penalty": 3
+        },
+        {
+            "id": "athletics",
+            "name": "Athletics",
+            "cores": {
+                "nerve": 2,
+                "hands": 1
+            },
+            "untrained_penalty": 2
         }
     ]
 }

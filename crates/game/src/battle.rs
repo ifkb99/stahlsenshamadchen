@@ -1511,10 +1511,28 @@ fn format_unit(
     lines.push("Crew:".into());
     for c in &unit.crew {
         if let Some(girl) = state.roster.get(*c) {
-            lines.push(format!(
-                "  {} (G{} D{} A{})",
-                girl.name, girl.stats.gunnery, girl.stats.driving, girl.stats.awareness
-            ));
+            // Her strongest training, named. Words rather than a stat block:
+            // girls read as people when described and as units when
+            // tabulated, and the exact numbers belong behind a toggle.
+            let mut best: Vec<(&String, &i32)> = girl.skills.iter().collect();
+            best.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+            let summary = best
+                .iter()
+                .take(2)
+                .map(|(id, level)| {
+                    let name = registry
+                        .skill(id)
+                        .map(|s| s.name.clone())
+                        .unwrap_or_else(|| (*id).clone());
+                    format!("{name} {level}")
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            if summary.is_empty() {
+                lines.push(format!("  {}", girl.name));
+            } else {
+                lines.push(format!("  {} ({summary})", girl.name));
+            }
         }
     }
     lines.push(String::new());
