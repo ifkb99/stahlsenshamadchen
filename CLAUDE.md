@@ -6,6 +6,11 @@ protecting, and the known defects. Gameplay and design work lives in
 code rather than things not yet built. Where an item is already tracked in
 TODO.md it is cross-referenced, not repeated.
 
+**Start here:** `.claude/skills/tactics-dev/SKILL.md` is the working guide —
+the instruments this project has for answering questions about itself, the
+change loop, and the specific ways it has fooled people before. This file
+covers what the code *is*; that one covers how to work on it.
+
 ## Commands
 
 ```sh
