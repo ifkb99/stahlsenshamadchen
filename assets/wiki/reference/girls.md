@@ -20,7 +20,13 @@ different people rather than different numbers.
 
 ## The four layers
 
-**Cores** — temperament. Four values, slow to change, set at recruitment.
+**Cores** — temperament. Slow to change, set at recruitment, and **defined in
+mod data** rather than in Rust: `mod.json` declares which cores exist, so a mod
+— or another game built on this engine — can have a different set entirely.
+They are resolved to indices when the registry loads, so a check costs an array
+index rather than a string hash.
+
+The base game ships four.
 
 | core | what it is | what it feeds |
 | --- | --- | --- |
@@ -38,29 +44,53 @@ cost together. See below.
 **Condition** — right now. Wounded, suppressed, exhausted, out of contact.
 Temporary, and the reason the same girl performs differently in two battles.
 
-### Derived characteristics
+### Checks, not derived stats
 
-Some abilities are not trained at all — they fall straight out of the cores,
-the way GURPS derives Basic Speed, Will and Perception from its primaries.
+There are no secondary stats. There is no stored "Reactivity" or "Perception"
+number. **Every tool and every action declares which cores it draws on**, and
+the answer is worked out where it is needed.
 
-| derived | from | governs |
-| --- | --- | --- |
-| **Reactivity** | Wits and Nerve | ticks of delay before acting on a new order or a new situation |
-| **Perception** | Wits | spotting range and how quickly a contact resolves |
-| **Will** | Nerve, steadied by a commander's Presence | morale checks, resisting suppression |
+```json
+{
+  "id": "lay_gun",
+  "skill": "gunnery",
+  "cores": { "hands": 2, "wits": 1 },
+  "untrained_penalty": 4
+}
+```
 
-Reactivity is deliberately the analogue of GURPS Basic Speed, which decides who
-acts first. Here it decides the same thing, measured in the ticks the round is
-already divided into.
+A weapon names a check, or defines its own — a howitzer firing indirect can
+lean on Wits where a tank gun leans on Hands, and that is a content decision
+rather than a code change. Spotting, order latency, relaying a message and
+holding under fire are all checks with different core mixes.
+
+This is closer to how GURPS actually works than a secondary-characteristic
+model is. In GURPS every skill names a *controlling attribute* — Guns is
+DX-based, Electronics Operation is IQ-based — and a skill level is written
+relative to it. The attribute is attached to the action, not to an intermediate
+number.
+
+Two reasons it is the right shape here:
+
+**A check happens at a place and time; a stat does not.** Suppression, terrain,
+being buttoned up, having just been fired on, and a trait that only applies in
+woods are all modifiers arriving at the point of use. With a stored derived
+stat they have to be bolted on, and the "real" value ends up recomputed at
+every use anyway. It also means no cached value can go stale.
+
+**It is the moddable shape.** Adding a weapon that rewards a steady hand, a
+vehicle that punishes a nervous driver, or a whole new kind of order is data.
+The rule is: **Rust decides *when* a check happens; data decides what it is
+made of.**
 
 An ability is all four:
 
 ```text
-aiming = gunnery training
-       + Hands modifier          (small)
-       + veterancy
-       - suppression
-       ± traits that apply here
+check = trained skill, or (controlling cores - untrained penalty)
+      + weighted core contribution
+      + veterancy
+      - condition (suppression, wounds, being out of contact)
+      ± traits that apply to this check, here, now
 ```
 
 ### Cores do three jobs
@@ -74,8 +104,9 @@ A girl who has never been trained as a gunner can still shoot, at Hands minus a
 few. So:
 
 ```text
-gunnery ability = trained level, if she has one
-                  otherwise Hands - 4
+gunnery = trained level, if she has one
+          otherwise Hands - 4      (so an average 10 shoots at 6: badly, but
+                                    not helplessly)
 ```
 
 The consequence is elegant and self-balancing: **cores matter most when
@@ -119,6 +150,28 @@ Traits come from two places:
 
 Traits are usually **paired** — an upside with a matching downside — because a
 trait that is only good is a stat with a name on it.
+
+### How a trait is written
+
+Most traits are declarative: a condition and a modifier, in json, which keeps
+them validatable and lets `validate-mods` report a typo instead of a crash.
+
+```json
+{
+  "id": "lead_foot",
+  "name": "Lead foot",
+  "effects": [
+    { "check": "drive", "when": { "terrain": "road" },  "modifier":  2 },
+    { "check": "drive", "when": { "terrain_not": "road" }, "modifier": -2 }
+  ]
+}
+```
+
+Traits that change *behaviour* rather than a number — a hothead firing when
+told to hold — get a **Lua hook** instead. The campaign host already vendors
+`mlua`, so the scripting surface exists and costs nothing new; it is the escape
+hatch for the handful of traits a declarative vocabulary cannot reach, not the
+normal way to write one.
 
 | trait | gift | cost |
 | --- | --- | --- |
@@ -178,17 +231,17 @@ is **legible, attributable, and predictable in advance**:
 Without those three, full latitude reads as the game being broken. With them,
 it is the best thing in it.
 
-## Open: the scale
+## The scale
 
-Cores are currently 0-5 integers inherited from `CrewStats`. GURPS centres on
-10, with 8-12 as ordinary human range and 14+ as remarkable, which buys two
-things a 0-5 scale cannot: **"average" is a real place on the scale**, and
-there is room for skill defaults to subtract from without hitting the floor.
+**Centred on 10, GURPS-style.** 8-12 is the ordinary human range, 14 and above
+is remarkable, and 6 is a real weakness rather than a rounding error.
 
-A 0-5 scale makes `Hands - 4` almost meaningless for anyone below 4. That
-argues for moving to a 10-centred scale, which is a content change across
-`crew.json` and the `balance` block rather than a hard one — but it should be
-decided before any of this is written, not after.
+Two things this buys that the old 0-5 scale could not. **"Average" becomes a
+place on the scale** — a girl at 10 Hands is unremarkable rather than
+mid-table, which is what lets descriptions be written honestly. And there is
+**room to subtract from**: an untrained penalty of 4 is meaningful against a 10
+and meaningless against a 3, so skill defaults only work at all on a scale like
+this.
 
 ## What this replaces
 
