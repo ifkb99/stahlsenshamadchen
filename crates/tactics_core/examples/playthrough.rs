@@ -132,6 +132,12 @@ fn main() {
                 Event::OrderRefused { unit, rung } => {
                     println!("{} refuses to advance ({rung})", name(&state, *unit))
                 }
+                Event::UnitExited {
+                    unit, objective, ..
+                } => println!(
+                    "   >> {} drives off the map by {objective}",
+                    name(&state, *unit)
+                ),
                 Event::ObjectiveTaken {
                     objective, side, ..
                 } => println!(

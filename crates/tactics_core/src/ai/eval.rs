@@ -8,6 +8,7 @@
 use super::{best_weapon_against, visible_enemies};
 use crate::battle::{BattleState, UnitId};
 use crate::data::{DataRegistry, DoctrineDef};
+use crate::map::ObjectiveKind;
 use hexx::Hex;
 
 /// What holding a tile is worth, and the shot that comes with it.
@@ -112,7 +113,7 @@ impl Evaluator {
         // at all. Measured against the old behaviour it is the whole fix —
         // without it, holding the best ground in sight is unbeatable play,
         // and two sides doing that never meet.
-        let objective = self.objective_value(state, me.side, tile);
+        let objective = self.objective_value(state, me.side, tile, hp_fraction);
 
         // Advance: with something to shoot, close on it. With no contact and
         // no objectives, push toward the middle of the map to find some —
@@ -162,12 +163,43 @@ impl Evaluator {
     /// shots, 23 of 24 decided, 9.3 rounds — is here, which is why the
     /// engine-side numbers are half what they first were rather than the
     /// doctrine values being odd fractions.
-    fn objective_value(&self, state: &BattleState, side: u8, tile: Hex) -> f32 {
+    /// Exits are the exception, and the reason this is not one formula. Ground
+    /// worth *leaving* by cannot be worth walking to in general — a unit that
+    /// valued the exit the way it values the bridge would drive off the map on
+    /// the first round and call it a victory. The pull toward an exit is
+    /// therefore gated on the doctrine's `withdraw_threshold` and the
+    /// vehicle's own damage: intact crews cannot see the lane at all, and a
+    /// crew that is nearly finished under a doctrine that expects to fall back
+    /// will run for it. That is the whole of withdrawal for now; who is
+    /// *permitted* to leave belongs to the chain of command, not to the
+    /// evaluator.
+    fn objective_value(&self, state: &BattleState, side: u8, tile: Hex, hp_fraction: f32) -> f32 {
+        // How badly this crew wants out: nothing at all until the doctrine's
+        // withdrawal threshold is crossed, then rising as the vehicle is shot
+        // to pieces. An intact tank under any doctrine scores every exit at
+        // zero, which is what stops the lane being a free win.
+        let flight = ((self.doctrine.withdraw_threshold - hp_fraction)
+            / self.doctrine.withdraw_threshold.max(0.01))
+        .clamp(0.0, 1.0);
+
         let mut best: Option<f32> = None;
         for (objective, held) in state.objectives() {
-            let weight = objective.value as f32
-                * self.doctrine.objective_value
-                * if held == Some(side) { 0.5 } else { 1.0 };
+            // Ground reserved to the other side is somebody else's business.
+            if !objective.open_to(side) {
+                continue;
+            }
+            let appetite = match objective.kind {
+                ObjectiveKind::Hold => {
+                    // Ground already held is worth half: still worth sitting
+                    // on, not worth marching across the map for.
+                    if held == Some(side) { 0.5 } else { 1.0 }
+                }
+                ObjectiveKind::Exit => flight,
+            };
+            if appetite <= 0.0 {
+                continue;
+            }
+            let weight = objective.value as f32 * self.doctrine.objective_value * appetite;
             let distance = objective
                 .hexes
                 .iter()
@@ -215,8 +247,13 @@ impl Evaluator {
         // every objective on the map for a favourable exchange of tanks and
         // then lose on points. Weighted against material rather than added to
         // it so the result stays inside [-1, 1] and the two are comparable.
+        // Only ground that can be *held* counts here. An exit is scored by
+        // driving off it, which shows up in the score rather than in who
+        // stands where, and folding it in would dilute the fraction by ground
+        // nobody can ever hold.
         let ground: f32 = state
             .objectives()
+            .filter(|(o, _)| o.kind == ObjectiveKind::Hold)
             .map(|(objective, held)| match held {
                 Some(s) if s == side => objective.value as f32,
                 Some(_) => -(objective.value as f32),
@@ -227,6 +264,7 @@ impl Evaluator {
             .map
             .objectives()
             .iter()
+            .filter(|o| o.kind == ObjectiveKind::Hold)
             .map(|o| o.value as f32)
             .sum::<f32>();
         if at_stake <= 0.0 {

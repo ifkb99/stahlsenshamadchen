@@ -108,6 +108,15 @@ pub struct Unit {
     /// shed a little at the end of every round.
     pub pressure: u32,
     pub alive: bool,
+    /// This vehicle drove off the map by an exit objective.
+    ///
+    /// Off the board — so `alive` is false and nothing can see it, shoot it
+    /// or be blocked by it — but emphatically *not* destroyed: the campaign
+    /// counts it among the survivors and its crew walk home. Everything that
+    /// classifies a unit at the end of a battle has to ask this before it
+    /// reads `alive`, or a successful withdrawal is recorded as a massacre.
+    #[serde(default)]
+    pub exited: bool,
 }
 
 impl Unit {
@@ -407,6 +416,7 @@ impl BattleState {
             last_hit_by: None,
             pressure: 0,
             alive: true,
+            exited: false,
         });
         id
     }
@@ -461,6 +471,24 @@ impl BattleState {
 
     pub fn side_units(&self, side: u8) -> impl Iterator<Item = &Unit> {
         self.alive_units().filter(move |u| u.side == side)
+    }
+
+    /// Everyone who came through the battle: still on the board, or driven
+    /// off it by an exit.
+    ///
+    /// Distinct from [`Self::alive_units`] on purpose. `alive` answers "is
+    /// this on the battlefield", which is what targeting, movement and fog
+    /// want; this answers "did she come home", which is what the campaign
+    /// wants. Reading `alive` for the second question records a successful
+    /// withdrawal as a burned-out vehicle and a dead crew.
+    pub fn surviving_units(&self) -> impl Iterator<Item = &Unit> {
+        self.units.iter().filter(|u| u.alive || u.exited)
+    }
+
+    /// Vehicles actually destroyed — the complement of
+    /// [`Self::surviving_units`], and never merely `!alive`.
+    pub fn lost_units(&self) -> impl Iterator<Item = &Unit> {
+        self.units.iter().filter(|u| !u.alive && !u.exited)
     }
 
     pub fn is_over(&self) -> bool {

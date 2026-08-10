@@ -8,6 +8,7 @@
 use super::STALEMATE_ROUNDS;
 use super::{BattleResult, BattleState, EndReason, Phase, UnitId, combat, fog, movement};
 use crate::data::{ArmorFacing, DataRegistry};
+use crate::map::ObjectiveKind;
 use hexx::Hex;
 use serde::{Deserialize, Serialize};
 
@@ -123,6 +124,14 @@ pub enum Event {
     OrderRefused {
         unit: UnitId,
         rung: String,
+    },
+    /// A vehicle drove off the map by an exit objective. It is out of the
+    /// battle and its crew are going home; this is not [`Self::UnitDestroyed`]
+    /// and must never be presented as one.
+    UnitExited {
+        unit: UnitId,
+        objective: String,
+        at: Hex,
     },
     /// Ground changed hands. Only emitted on a change, so a side sitting on
     /// the bridge for twenty rounds says this once.
@@ -316,6 +325,11 @@ impl BattleState {
 
         self.apply_pressure(registry, &mut events);
 
+        // Exits are settled before control, so a vehicle that drives off the
+        // map is gone before anyone asks who is standing where.
+        if self.resolve_exits(&mut events) {
+            events.extend(fog::recompute(registry, self));
+        }
         // Control is re-read every tick so driving onto the bridge takes it
         // there and then, but points are only paid at the end of a round —
         // an objective is worth holding for a *round*, and paying per tick
@@ -604,6 +618,52 @@ impl BattleState {
         events.push(Event::RoundStarted { round: self.round });
     }
 
+    /// Drive off the map anyone standing on an exit they are entitled to use.
+    ///
+    /// Returns whether anybody left, because a unit leaving changes what its
+    /// side can see and the fog is only free to recompute when nothing moved.
+    ///
+    /// Exits are all-or-nothing and immediate: a vehicle that reaches the
+    /// lane is out. There is deliberately no "you may only leave if damaged"
+    /// rule here — whether leaving is *allowed* is a matter for orders and
+    /// the chain of command, not for the hex it happens on.
+    ///
+    /// Objectives are walked in map-file order and units in id order, so what
+    /// this emits cannot depend on hash iteration order.
+    fn resolve_exits(&mut self, events: &mut Vec<Event>) -> bool {
+        let map = std::sync::Arc::clone(&self.map);
+        let mut any = false;
+        for objective in map
+            .objectives()
+            .iter()
+            .filter(|o| o.kind == ObjectiveKind::Exit)
+        {
+            for index in 0..self.units.len() {
+                let unit = &self.units[index];
+                if !unit.alive || !objective.open_to(unit.side) || !objective.contains(unit.pos) {
+                    continue;
+                }
+                let (id, side, at) = (unit.id, unit.side, unit.pos);
+                let unit = &mut self.units[index];
+                // Off the board but not destroyed. `exited` is what keeps the
+                // campaign from mourning her.
+                unit.alive = false;
+                unit.exited = true;
+                unit.intent = UnitIntent::default();
+                if let Some(score) = self.score.get_mut(side as usize) {
+                    *score += objective.value;
+                }
+                events.push(Event::UnitExited {
+                    unit: id,
+                    objective: objective.id.clone(),
+                    at,
+                });
+                any = true;
+            }
+        }
+        any
+    }
+
     /// Work out who is standing on each objective, and hand it over when that
     /// answer changes.
     ///
@@ -620,6 +680,12 @@ impl BattleState {
         // refcount and frees `self` to be written to inside the loop.
         let map = std::sync::Arc::clone(&self.map);
         for (index, objective) in map.objectives().iter().enumerate() {
+            // An exit is not ground anyone holds — you pass through it, and
+            // `resolve_exits` has already taken anyone who did. Its slot in
+            // `objective_held` stays `None` for the whole battle.
+            if objective.kind == ObjectiveKind::Exit {
+                continue;
+            }
             let mut occupiers: Vec<u8> = self
                 .units
                 .iter()
@@ -664,20 +730,16 @@ impl BattleState {
         if self.over.is_some() {
             return;
         }
-        let living = self.living_sides();
-        if living.len() <= 1 {
-            // Even a wipeout is read off the objectives first: a side that
-            // took the bridge and was then destroyed to the last tank has
-            // still taken the bridge, and mutual destruction over ground
-            // somebody held is not the same battle as mutual destruction in
-            // an empty field.
-            let winner = living.first().copied().or_else(|| self.leader());
-            self.finish(winner, EndReason::Eliminated, events);
-            return;
-        }
-        // A map that sets no `victory_score` cannot end this way, which is
-        // what keeps objectives an additive rule: say nothing and the battle
-        // is fought to the death exactly as it always was.
+        // The score is read *before* the board, because the mission being
+        // accomplished outranks the force being spent. That ordering is not
+        // pedantry: a side whose mission is to withdraw reaches its target on
+        // the same tick its last vehicle drives off the map, and checking the
+        // board first would hand that battle to the enemy for holding a field
+        // nobody wanted.
+        //
+        // A map that sets no `victory_score` cannot end this way at all,
+        // which is what keeps objectives an additive rule: say nothing and
+        // the battle is fought to the death exactly as it always was.
         if let Some(target) = self.map.victory_score()
             && let Some(side) = self
                 .score
@@ -686,6 +748,16 @@ impl BattleState {
                 .map(|s| s as u8)
         {
             self.finish(Some(side), EndReason::Objectives, events);
+            return;
+        }
+        let living = self.living_sides();
+        if living.len() <= 1 {
+            // A side still on the board when the other has nothing left has
+            // won, whatever the score says. `leader` only breaks the tie when
+            // *nobody* is left: mutual destruction over ground somebody held
+            // is not the same battle as mutual destruction in an empty field.
+            let winner = living.first().copied().or_else(|| self.leader());
+            self.finish(winner, EndReason::Eliminated, events);
             return;
         }
         if self.round.saturating_sub(self.last_contact_round) >= STALEMATE_ROUNDS {

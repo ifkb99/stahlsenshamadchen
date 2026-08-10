@@ -36,9 +36,9 @@ battles currently end in stalemate rather than a decision.
 
 ### Objectives
 
-A battle map may declare `objectives` — named sets of hexes worth points to
-whoever holds them — and optionally a `victory_score`. The rules are small and
-the consequences are not:
+A battle map may declare `objectives` — named sets of hexes, each either ground
+to `hold` or an `exit` to leave by — and optionally a `victory_score`. The
+rules are small and the consequences are not:
 
 - **Objectives are map data, not battle state.** They live on `HexMap`
   (`map.objectives()`), because which hexes are the bridge cannot change during
@@ -53,6 +53,21 @@ the consequences are not:
   shooting; `BattleState::leader()` then says who won it. `winner: None` now
   means the score was actually level. Anything reading a battle result must
   handle `(Some(winner), Stalemate)`.
+- **An exit is not ground, and leaving is not dying.** A vehicle that reaches
+  an `exit` it is entitled to use (`side` restricts it — an exit anyone may
+  take is a lane both armies take on round one) leaves the board: `alive` goes
+  false and `exited` goes true. **Never classify a unit at the end of a battle
+  by `!alive`.** Use `surviving_units()` and `lost_units()`; `alive` means "on
+  the battlefield", which is what targeting, movement and fog want, and reading
+  it for "did she come home" records a successful withdrawal as a dead crew.
+- **`check_victory` reads the score before the board.** A withdrawing force
+  reaches its target on the same tick its last vehicle drives off; checking
+  elimination first would hand that battle to whoever was still standing.
+- **The AI will not run for an exit unless it is losing.** The pull is gated on
+  the doctrine's `withdraw_threshold` against the vehicle's own damage, so an
+  intact crew scores every exit at zero. Without that gate the lane is a free
+  win — every unit drives off on the first round. Whether a unit is *permitted*
+  to leave is a chain-of-command question and deliberately not the evaluator's.
 - **A map that declares no objectives behaves exactly as before**, including in
   the evaluator — `a_map_that_names_no_objectives_is_fought_exactly_as_it_was_before`
   pins that by requiring two doctrines with wildly different `objective_value`

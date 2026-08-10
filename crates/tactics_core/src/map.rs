@@ -120,13 +120,39 @@ pub struct ObjectiveSpec {
     /// because the things worth fighting for — a bridge, a crossroads, a
     /// village — are rarely one tile wide.
     pub at: Vec<[i32; 2]>,
-    /// Points its holder collects at the end of each round.
+    /// Points collected for it: per round for ground held, per vehicle for
+    /// ground driven off.
     #[serde(default = "default_objective_value")]
     pub value: u32,
+    #[serde(default)]
+    pub kind: ObjectiveKind,
+    /// The side this objective belongs to, if only one may use it. Absent
+    /// means anybody's — which is what contested ground is, and is why `hold`
+    /// leaves it alone. An `exit` almost always names a side: a lane off the
+    /// map that either army may use is a lane both armies will use on turn
+    /// one.
+    #[serde(default)]
+    pub side: Option<u8>,
 }
 
 fn default_objective_value() -> u32 {
     1
+}
+
+/// What a side is supposed to do with an objective.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObjectiveKind {
+    /// Ground worth standing on. Pays its value every round to whoever holds
+    /// it. The default, so a map that says nothing means what every map that
+    /// predates exits meant.
+    #[default]
+    Hold,
+    /// Ground worth *leaving* by. A vehicle that reaches it drives off the
+    /// map — out of the battle, but home rather than burning — and pays its
+    /// value once. This is what a withdrawal, a breakthrough and a raid that
+    /// means to get away again are all made of.
+    Exit,
 }
 
 /// An objective with its hexes resolved, as a battle uses it.
@@ -136,6 +162,15 @@ pub struct Objective {
     pub name: String,
     pub hexes: Vec<Hex>,
     pub value: u32,
+    pub kind: ObjectiveKind,
+    pub side: Option<u8>,
+}
+
+impl Objective {
+    /// Whether `side` is allowed to score this one.
+    pub fn open_to(&self, side: u8) -> bool {
+        self.side.is_none_or(|s| s == side)
+    }
 }
 
 impl Objective {
@@ -336,6 +371,8 @@ impl HexMap {
                     .map(|at| crate::offset_to_hex(at[0], at[1]))
                     .collect(),
                 value: spec.value,
+                kind: spec.kind,
+                side: spec.side,
             })
             .collect();
         Ok(Self {
@@ -544,6 +581,27 @@ impl MapFile {
                         self.id, objective.id, at[0], at[1]
                     ));
                 }
+            }
+            if let Some(side) = objective.side
+                && side as usize >= self.sides.len()
+            {
+                report.errors.push(format!(
+                    "map `{}`: objective `{}` belongs to side {side} but only {} sides are \
+                     declared",
+                    self.id,
+                    objective.id,
+                    self.sides.len()
+                ));
+            }
+            // An exit anybody may drive off is a lane both armies leave by on
+            // the first round, which is not a battle. Warned rather than
+            // refused: a scenario about two forces disengaging from each
+            // other is a real thing to want.
+            if objective.kind == ObjectiveKind::Exit && objective.side.is_none() {
+                report.warnings.push(format!(
+                    "map `{}`: exit `{}` names no side, so every side may leave by it",
+                    self.id, objective.id
+                ));
             }
         }
         if self.victory_score.is_some() && self.objectives.is_empty() {

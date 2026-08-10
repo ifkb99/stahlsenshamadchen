@@ -15,7 +15,7 @@ use tactics_core::ai::{AiPlanner, make_battle_planner};
 use tactics_core::battle::{
     BattleState, EndReason, Event as BattleEvent, FireIntent, Order, SideState, UnitId, reachable,
 };
-use tactics_core::map::UnitPlacement;
+use tactics_core::map::{ObjectiveKind, UnitPlacement};
 use tactics_core::overworld::ArmyId;
 use tactics_core::overworld::{ArmyUnit, CrewLoss};
 use tactics_core::roster::{GirlId, Roster};
@@ -212,6 +212,11 @@ struct ObjectiveMarker {
 /// Ground nobody has taken yet: a pale amber that reads as "worth something"
 /// without belonging to either side's colour.
 const OBJECTIVE_NEUTRAL: Color = Color::srgba(1.0, 0.85, 0.35, 0.30);
+
+/// An exit lane. Deliberately not the amber of ground to be taken — an exit
+/// is somewhere to go, not something to hold, and colouring the two alike
+/// would invite the player to garrison their own way out.
+const OBJECTIVE_EXIT: Color = Color::srgba(0.45, 0.8, 1.0, 0.30);
 
 #[derive(Component)]
 struct RoundBanner;
@@ -842,6 +847,22 @@ fn pump_events(
                     .unwrap_or_else(|| "A crew".into());
                 log.push(format!("{who} refuses to advance - {rung}."));
             }
+            // Withdrawing is not dying, and the screen has to say so plainly:
+            // the sprite vanishes either way, and a player who reads a
+            // successful withdrawal as a loss has been told a lie by the UI.
+            BattleEvent::UnitExited { unit, at, .. } => {
+                log.push(format!("{} withdraws off the map.", name(*unit)));
+                spawn_puff(
+                    &mut commands,
+                    *at,
+                    view.rotation(),
+                    view.center(),
+                    Color::srgb(0.6, 0.85, 1.0),
+                );
+                if let Some(entity) = entity_of(*unit) {
+                    commands.entity(entity).despawn();
+                }
+            }
             // Ground changing hands is worth saying out loud: it is the only
             // thing that moves the score, and a battle decided on points that
             // never mentioned the points would read as arbitrary.
@@ -1398,6 +1419,13 @@ fn update_objective_markers(
     mut markers: Query<(&ObjectiveMarker, &mut Sprite)>,
 ) {
     for (marker, mut sprite) in &mut markers {
+        let objective = battle.state.map.objectives().get(marker.index);
+        // An exit is never held, so it would sit on the neutral colour
+        // forever and read as ground nobody had bothered to take.
+        if objective.is_some_and(|o| o.kind == ObjectiveKind::Exit) {
+            sprite.color = OBJECTIVE_EXIT;
+            continue;
+        }
         sprite.color = match battle
             .state
             .objective_held
@@ -1804,7 +1832,10 @@ fn finish_battle(
                 survivors.len() - 1
             });
         }
-        for unit in battle.state.alive_units() {
+        // `surviving_units`, not `alive_units`: a crew that drove off the map
+        // by an exit is off the board but came home, and reading `alive` here
+        // would hand the campaign a withdrawal as a burnt-out vehicle.
+        for unit in battle.state.surviving_units() {
             let Some(army) = field.origins.get(unit.id.index()) else {
                 continue;
             };
@@ -1822,7 +1853,7 @@ fn finish_battle(
         // who and what killed it; the campaign decides what that cost them,
         // because whether this game kills its characters is a campaign rule.
         let mut losses = Vec::new();
-        for unit in battle.state.units.iter().filter(|u| !u.alive) {
+        for unit in battle.state.lost_units() {
             for girl in &unit.crew {
                 losses.push(CrewLoss {
                     girl: *girl,

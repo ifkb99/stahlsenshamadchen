@@ -1155,6 +1155,189 @@ fn reaching_the_victory_score_ends_the_battle_outright() {
 }
 
 #[test]
+fn driving_off_an_exit_takes_the_crew_home_rather_than_killing_them() {
+    // The distinction the whole exit mechanism rests on. `alive` is "on the
+    // battlefield" and answers targeting and fog; it is not "came home", and
+    // the campaign reads the second.
+    let reg = registry();
+    let mut state = objective_battle(
+        &reg,
+        serde_json::json!([{
+            "id": "west_road", "at": [[0, 0]], "value": 5,
+            "kind": "exit", "side": 0
+        }]),
+        None,
+        vec![
+            unit_at([1, 0], 0, "medium_tank", "Leaver"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+    );
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: UnitId(0),
+                to: tactics_core::offset_to_hex(0, 0),
+            },
+        )
+        .expect("west can reach the road");
+    let events = play_round(&reg, &mut state);
+
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            BattleEvent::UnitExited { unit, objective, .. }
+                if *unit == UnitId(0) && objective == "west_road"
+        )),
+        "leaving is announced in its own right, never as a destruction"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::UnitDestroyed { .. })),
+        "nobody was destroyed"
+    );
+
+    let leaver = &state.units[0];
+    assert!(!leaver.alive, "she is off the board");
+    assert!(leaver.exited, "but she left under her own power");
+    assert_eq!(state.score(0), 5, "and the exit paid its value once");
+
+    assert!(
+        state.surviving_units().any(|u| u.id == UnitId(0)),
+        "the campaign must count her among the survivors"
+    );
+    assert!(
+        !state.lost_units().any(|u| u.id == UnitId(0)),
+        "and must not count her among the losses"
+    );
+}
+
+#[test]
+fn an_exit_belongs_to_the_side_it_names() {
+    // An exit anyone may use is a lane both armies leave by on round one.
+    let reg = registry();
+    let mut state = objective_battle(
+        &reg,
+        serde_json::json!([{
+            "id": "west_road", "at": [[0, 0], [10, 0]], "value": 5,
+            "kind": "exit", "side": 0
+        }]),
+        None,
+        // Side 1 starts standing on a hex of side 0's exit. Both stay behind
+        // the curtain: the rule under test is eligibility, and a firefight
+        // would settle it by killing somebody instead.
+        vec![
+            unit_at([1, 0], 0, "medium_tank", "West"),
+            unit_at([10, 0], 1, "medium_tank", "Squatter"),
+        ],
+    );
+    play_round(&reg, &mut state);
+    assert!(
+        state.units[1].alive && !state.units[1].exited,
+        "side 1 may not leave by side 0's road"
+    );
+    assert_eq!(state.score(1), 0);
+}
+
+#[test]
+fn an_exit_is_not_ground_anybody_holds() {
+    let reg = registry();
+    let mut state = objective_battle(
+        &reg,
+        serde_json::json!([{
+            "id": "west_road", "at": [[0, 0]], "value": 5,
+            "kind": "exit", "side": 0
+        }]),
+        None,
+        curtained_pair(),
+    );
+    play_round(&reg, &mut state);
+    assert_eq!(
+        state.objective_held,
+        vec![None],
+        "an exit is passed through, not held, so it never pays per round"
+    );
+}
+
+#[test]
+fn a_withdrawal_that_reaches_its_target_wins_on_the_tick_it_completes() {
+    // Elimination is checked *after* the score for exactly this case: the
+    // last vehicle of a withdrawing force leaves the board and reaches the
+    // target in the same tick. Checking the board first would award the
+    // battle to an enemy holding a field nobody wanted.
+    let reg = registry();
+    let mut state = objective_battle(
+        &reg,
+        serde_json::json!([{
+            "id": "west_road", "at": [[0, 0]], "value": 10,
+            "kind": "exit", "side": 0
+        }]),
+        Some(10),
+        vec![
+            unit_at([1, 0], 0, "medium_tank", "Last Out"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+    );
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: UnitId(0),
+                to: tactics_core::offset_to_hex(0, 0),
+            },
+        )
+        .expect("west can reach the road");
+    let events = play_round(&reg, &mut state);
+
+    let ended = events.iter().find_map(|e| match e {
+        BattleEvent::BattleEnded { winner, reason } => Some((*winner, *reason)),
+        _ => None,
+    });
+    assert_eq!(
+        ended,
+        Some((Some(0), EndReason::Objectives)),
+        "the force that got away won, though it has nothing left on the field"
+    );
+}
+
+#[test]
+fn an_intact_crew_will_not_run_for_the_exit_but_a_broken_one_will() {
+    // Withdrawal has to be conditional or the lane is a free win: every unit
+    // would drive off on round one. The gate is the doctrine's
+    // `withdraw_threshold` against the vehicle's own damage.
+    let reg = registry();
+    let state = objective_battle(
+        &reg,
+        serde_json::json!([{
+            "id": "west_road", "at": [[0, 0]], "value": 5,
+            "kind": "exit", "side": 0
+        }]),
+        None,
+        curtained_pair(),
+    );
+    let eval = Evaluator::new(reg.doctrine("elastic_defense").cloned().unwrap());
+    let exit = tactics_core::offset_to_hex(0, 0);
+    let away = tactics_core::offset_to_hex(4, 0);
+
+    let healthy = state.units[0].hp;
+    assert!(
+        eval.score_tile(&reg, &state, UnitId(0), exit).score
+            <= eval.score_tile(&reg, &state, UnitId(0), away).score,
+        "an undamaged crew cannot see the exit at all"
+    );
+
+    let mut hurt = state;
+    hurt.units[0].hp = 1;
+    assert!(hurt.units[0].hp < healthy);
+    assert!(
+        eval.score_tile(&reg, &hurt, UnitId(0), exit).score
+            > eval.score_tile(&reg, &hurt, UnitId(0), away).score,
+        "a crew that is nearly finished should run for the road"
+    );
+}
+
+#[test]
 fn a_map_that_names_no_objectives_is_fought_exactly_as_it_was_before() {
     // Objectives have to be an additive rule whose absence is the old game —
     // the same constraint difficulty-as-a-mod puts on every harsh system. The
