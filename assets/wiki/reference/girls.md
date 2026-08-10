@@ -26,34 +26,64 @@ mod data** rather than in Rust: `mod.json` declares which cores exist, so a mod
 They are resolved to indices when the registry loads, so a check costs an array
 index rather than a string hash.
 
-The base game ships six.
+The base game ships the GURPS attribute set, plus two the genre needs.
 
-| core | what it is | what it feeds |
+| core | GURPS | what it is |
 | --- | --- | --- |
-| **Nerve** | steadiness under fire | holding when hit; how much speed survives being shot at |
-| **Wits** | quickness and perception | reaction speed; spotting; how fast she notices a change |
-| **Intellect** | reasoning and planning | making a plan worth following; reading ground; understanding a complex order correctly |
-| **Hands** | coordination | laying a gun, driving, loading, repairing |
-| **Presence** | authority | whether an order lands and is obeyed; steadying people nearby |
-| **Charm** | rapport | who she gets on with; morale spreading through a formation; supports |
+| **Strength** | ST | ramming a shell home, heaving track links, carrying a load on foot |
+| **Dexterity** | DX | laying a gun, handling a vehicle, steady hands |
+| **Intellect** | IQ | reasoning and planning; understanding an order correctly |
+| **Health** | HT | lasting a long day, and surviving what happens to the vehicle |
+| **Will** | Will | holding when it would be sensible to run |
+| **Perception** | Per | what she notices, and how soon |
+| **Speed** | Basic Speed | how quickly she acts once something changes |
+| **Presence** | — | whether an order lands and is obeyed |
+| **Charm** | — | who she gets on with, and how morale travels |
 
-Wits and Intellect are deliberately separate. Noticing a tank at tick four and
-knowing what to do about it are different talents, and "quick but not clever"
-is a person worth being able to write. Presence and Charm split the same way:
-being *obeyed* and being *liked* are not the same thing, and a feared martinet
+Taking the whole set costs nothing at runtime — cores are a `Vec<i32>` resolved
+to indices at load — and it buys depth that a smaller set was quietly throwing
+away. The first sketch had four, and two of them were doing double duty:
+"nerve" was Health *and* Will, so a girl who was physically tough and a girl
+who was mentally unbreakable could not be told apart; "wits" was Perception
+*and* Basic Speed, which conflated seeing a tank with reacting to it. Those are
+exactly the distinctions that make a person recognisable.
+
+GURPS treats Will, Perception and Basic Speed as secondary characteristics
+derived from IQ and HT, but lets you buy them up separately. Here they are
+simply stored, which is the same freedom with less arithmetic.
+
+Presence and Charm are not GURPS attributes — in GURPS, Charisma is an
+advantage. They earn a slot here because this is a game about command, and
+because being *obeyed* and being *liked* need to come apart: a feared martinet
 and a beloved section leader should play differently.
+
+**The rule that keeps this honest: every core must be named by at least one
+skill.** A core nothing reads is exactly the dead weight `morale` and
+`leadership` were in the old `CrewStats` — declared for years, never once
+consulted.
 
 **Training** — competence. Learned skills, each naming the cores it draws on:
 
 | skill | cores | what it does |
 | --- | --- | --- |
-| **gunnery** | Hands, Wits | laying and firing |
-| **driving** | Hands, Nerve | handling, rough ground, not bogging |
-| **loading** | Hands, Nerve | rate of fire |
-| **signals** | Intellect, Wits | working the radio; relaying contact and orders |
-| **maintenance** | Hands, Intellect | field repair, keeping a vehicle running |
-| **first aid** | Intellect, Hands | treating a wounded crewmate before she is a casualty |
-| **command** | Presence, Intellect | giving orders that arrive and are followed |
+| **gunnery** | Dexterity, Perception, Speed | laying and firing |
+| **driving** | Dexterity, Health, Speed | handling, rough ground, not bogging |
+| **loading** | Strength, Dexterity | rate of fire |
+| **observation** | Perception, Intellect | spotting, and how soon |
+| **signals** | Intellect, Perception | working the radio; relaying contact and orders |
+| **maintenance** | Intellect, Dexterity, Strength | field repair |
+| **first aid** | Intellect, Dexterity | treating a crewmate before she is a casualty |
+| **command** | Presence, Intellect, Charm | orders that arrive and are followed |
+| **discipline** | Will, Intellect | following an order under pressure; holding fire when told |
+| **small arms** | Dexterity, Perception | personal weapons, for dismounts |
+| **fieldcraft** | Perception, Intellect | cover, concealment, moving unseen on foot |
+| **athletics** | Health, Strength | foot movement, endurance, obstacles |
+
+Discipline is the one to watch. It draws on Will to stand the pressure and
+Intellect to have understood what was actually asked, which makes obedience
+*trainable* rather than pure temperament — and opens a real character axis:
+steady-but-dim follows the letter of an order into a ditch, while
+clever-but-undisciplined improvises constantly.
 
 More command skills arrive with chain of command — tactics, reconnaissance and
 supply are the obvious ones — so the skill list is data and adding to it should

@@ -3,70 +3,161 @@
         "id": "anka",
         "name": "Anka Weiss",
         "bio": "Calm under fire. Commands the school's medium tank like she was born in it.",
-        "cores": { "nerve": 13, "wits": 10, "intellect": 11, "hands": 10, "presence": 13, "charm": 11 },
-        "skills": { "gunnery": 11, "driving": 9, "signals": 10, "command": 12 }
+        "cores": {
+            "will": 13,
+            "presence": 13,
+            "intellect": 11,
+            "charm": 11
+        },
+        "skills": {
+            "gunnery": 11,
+            "driving": 9,
+            "signals": 10,
+            "command": 12
+        }
     },
     {
         "id": "mina",
         "name": "Mina Falkenrath",
         "bio": "Gunnery prodigy with a grudge against paper targets.",
-        "cores": { "nerve": 9, "wits": 10, "intellect": 10, "hands": 14, "presence": 8, "charm": 9 },
-        "skills": { "gunnery": 15, "loading": 10 }
+        "cores": {
+            "dexterity": 14,
+            "will": 9,
+            "perception": 11,
+            "charm": 9,
+            "presence": 8
+        },
+        "skills": {
+            "gunnery": 15,
+            "loading": 10
+        }
     },
     {
         "id": "juno",
         "name": "Juno Akiyama",
         "bio": "Drives like the brakes are a suggestion.",
-        "cores": { "nerve": 11, "wits": 12, "intellect": 9, "hands": 14, "presence": 9, "charm": 11 },
-        "skills": { "driving": 15, "maintenance": 10 }
+        "cores": {
+            "dexterity": 14,
+            "speed": 13,
+            "health": 12,
+            "intellect": 9
+        },
+        "skills": {
+            "driving": 15,
+            "maintenance": 10
+        }
     },
     {
         "id": "elsa",
         "name": "Elsa Brandt",
         "bio": "Sees everything, says little. The recon section is hers.",
-        "cores": { "nerve": 11, "wits": 15, "intellect": 12, "hands": 10, "presence": 10, "charm": 8 },
-        "skills": { "signals": 12, "driving": 10 }
+        "cores": {
+            "perception": 15,
+            "intellect": 12,
+            "charm": 8,
+            "speed": 11
+        },
+        "skills": {
+            "signals": 12,
+            "driving": 10
+        }
     },
     {
         "id": "petra",
         "name": "Petra Voss",
         "bio": "Firing solutions by intuition, confirmed by mathematics.",
-        "cores": { "nerve": 10, "wits": 11, "intellect": 14, "hands": 12, "presence": 10, "charm": 9 },
-        "skills": { "gunnery": 13, "maintenance": 11 }
+        "cores": {
+            "intellect": 14,
+            "dexterity": 12,
+            "perception": 11,
+            "strength": 9
+        },
+        "skills": {
+            "gunnery": 13,
+            "maintenance": 11
+        }
     },
     {
         "id": "rosa",
         "name": "Rosa Steiner",
         "bio": "First-year. Enthusiasm outweighs experience, barely.",
-        "cores": { "nerve": 14, "wits": 9, "intellect": 9, "hands": 10, "presence": 8, "charm": 13 },
-        "skills": { "gunnery": 9, "driving": 9, "loading": 9 }
+        "cores": {
+            "will": 14,
+            "charm": 13,
+            "health": 12,
+            "strength": 12,
+            "perception": 9,
+            "intellect": 9,
+            "presence": 8
+        },
+        "skills": {
+            "gunnery": 9,
+            "driving": 9,
+            "loading": 9
+        }
     },
     {
         "id": "irma",
         "name": "Irma Krieger",
         "bio": "Captain of the Iron Valkyries. Textbook doctrine, ruthlessly applied.",
-        "cores": { "nerve": 13, "wits": 10, "intellect": 13, "hands": 11, "presence": 14, "charm": 8 },
-        "skills": { "command": 14, "gunnery": 12, "signals": 11 }
+        "cores": {
+            "presence": 14,
+            "intellect": 13,
+            "will": 13,
+            "charm": 8,
+            "dexterity": 11
+        },
+        "skills": {
+            "command": 14,
+            "gunnery": 12,
+            "signals": 11
+        }
     },
     {
         "id": "sofia",
         "name": "Sofia Ravenna",
         "bio": "Valkyrie flanker. Fights on instinct and espresso.",
-        "cores": { "nerve": 10, "wits": 13, "intellect": 9, "hands": 12, "presence": 9, "charm": 12 },
-        "skills": { "driving": 13, "gunnery": 10 }
+        "cores": {
+            "speed": 14,
+            "perception": 12,
+            "dexterity": 12,
+            "charm": 12,
+            "intellect": 9
+        },
+        "skills": {
+            "driving": 13,
+            "gunnery": 10
+        }
     },
     {
         "id": "nadja",
         "name": "Nadja Orlov",
         "bio": "Tank destroyer ace. Patience of a glacier, temper of an avalanche.",
-        "cores": { "nerve": 9, "wits": 12, "intellect": 11, "hands": 14, "presence": 10, "charm": 7 },
-        "skills": { "gunnery": 15, "first_aid": 9 }
+        "cores": {
+            "dexterity": 14,
+            "perception": 12,
+            "will": 9,
+            "charm": 7,
+            "strength": 11
+        },
+        "skills": {
+            "gunnery": 15,
+            "first_aid": 9
+        }
     },
     {
         "id": "greta",
         "name": "Greta Müller",
         "bio": "Valkyrie scout. Writes home about the scenery between contacts.",
-        "cores": { "nerve": 11, "wits": 14, "intellect": 11, "hands": 10, "presence": 9, "charm": 12 },
-        "skills": { "signals": 12, "driving": 12 }
+        "cores": {
+            "perception": 14,
+            "charm": 12,
+            "speed": 12,
+            "intellect": 11
+        },
+        "skills": {
+            "signals": 12,
+            "driving": 12
+        }
     }
 ]
