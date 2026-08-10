@@ -103,7 +103,7 @@
         {
             "name": "Iron Valkyries",
             "ai": {
-                "planner": "utility",
+                "planner": "command",
                 "difficulty": 3,
                 "doctrine": "elastic_defense"
             }

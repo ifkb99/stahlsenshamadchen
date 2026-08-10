@@ -2986,3 +2986,213 @@ fn a_gentle_mod_has_girls_who_never_refuse() {
         "and she actually advances"
     );
 }
+
+// --- missions steering units (chunk 2 of chain of command) -----------------
+
+/// A sharp-eyed utility planner for one side, for tests that assert where
+/// units choose to go: difficulty 5 is zero scoring noise, so the assertion
+/// is about the evaluator rather than the dice.
+fn sharp_planner(
+    reg: &DataRegistry,
+    seed: u64,
+    doctrine: &str,
+) -> Box<dyn AiPlanner<BattleState, Order>> {
+    make_battle_planner(
+        &AiConfig {
+            planner: "utility".into(),
+            difficulty: 5,
+            doctrine: Some(doctrine.into()),
+        },
+        seed,
+        reg,
+    )
+}
+
+#[test]
+fn a_map_with_formations_but_no_missions_fights_exactly_as_the_flat_pool_did() {
+    // The additivity hinge for the whole command system: formations that
+    // have been given nothing to do must change nothing. Same seed, same
+    // planners, one battle with its command state stripped — the event
+    // streams must match to the byte, or the mission machinery is leaking
+    // into battles that never asked for it.
+    let reg = registry();
+    let run = |strip: bool| -> Vec<String> {
+        let mut state = BattleState::from_map(&reg, "river_crossing", 21).unwrap();
+        if strip {
+            state.command = Default::default();
+        }
+        let mut ai = AiDriver::new();
+        ai.insert(0, sharp_planner(&reg, 21, "massed_armor"));
+        ai.insert(1, sharp_planner(&reg, 22, "elastic_defense"));
+        let mut log = Vec::new();
+        for _ in 0..8 {
+            if state.is_over() {
+                break;
+            }
+            ai.plan_round(&reg, &mut state);
+            log.extend(state.resolve_round(&reg).iter().map(|e| format!("{e:?}")));
+        }
+        log
+    };
+    let with_formations = run(false);
+    assert!(
+        !with_formations.is_empty(),
+        "the battle should do something"
+    );
+    assert_eq!(
+        with_formations,
+        run(true),
+        "unmissioned formations must fight exactly as the flat pool did"
+    );
+}
+
+#[test]
+fn a_formation_advances_on_the_ground_its_mission_names() {
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 5).unwrap();
+    let bridge = state
+        .map
+        .objectives()
+        .iter()
+        .find(|o| o.id == "bridge")
+        .expect("river_crossing has a bridge")
+        .anchor();
+    let formation = formation_named(&state, "kuhlmann_armor");
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation,
+                mission: Mission::Advance { to: bridge },
+            },
+        )
+        .unwrap();
+
+    let mut ai = AiDriver::new();
+    ai.insert(0, sharp_planner(&reg, 5, "massed_armor"));
+    ai.plan_round(&reg, &mut state);
+
+    let members = state.formations()[formation.index()].members.clone();
+    for id in members {
+        let unit = state.unit(id).expect("nobody has died in planning");
+        let before = unit.pos.distance_to(bridge);
+        let after = unit.planned_destination().distance_to(bridge);
+        assert!(
+            after < before,
+            "{} was ordered to the bridge and planned from {} to {} hexes away",
+            unit.name,
+            before,
+            after
+        );
+    }
+}
+
+#[test]
+fn an_ordered_withdrawal_needs_no_wounds() {
+    // The evaluator's own exit pull is gated on damage, because an exit
+    // nobody was ordered to take must not tempt an intact crew. A withdraw
+    // *mission* is that order, so it pulls at full strength on full health —
+    // which is what makes withdrawal a command decision rather than a
+    // symptom.
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 13).unwrap();
+    let lane = state
+        .map
+        .objectives()
+        .iter()
+        .find(|o| o.id == "west_road")
+        .expect("river_crossing has a western retreat lane")
+        .hexes
+        .clone();
+    let formation = formation_named(&state, "kuhlmann_armor");
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation,
+                mission: Mission::Withdraw {
+                    via: "west_road".into(),
+                },
+            },
+        )
+        .unwrap();
+
+    let mut ai = AiDriver::new();
+    ai.insert(0, sharp_planner(&reg, 13, "massed_armor"));
+    ai.plan_round(&reg, &mut state);
+
+    let toward = |hex: tactics_core::Hex| lane.iter().map(|h| h.distance_to(hex)).min().unwrap();
+    let members = state.formations()[formation.index()].members.clone();
+    for id in members {
+        let unit = state.unit(id).expect("planning harms nobody");
+        assert_eq!(
+            unit.hp,
+            reg.vehicle(&unit.vehicle).unwrap().max_hp,
+            "intact"
+        );
+        assert!(
+            toward(unit.planned_destination()) < toward(unit.pos),
+            "{} is unhurt and was still ordered out, so she heads for the lane",
+            unit.name
+        );
+    }
+}
+
+#[test]
+fn the_command_planner_assigns_missions_once_and_units_follow_them() {
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 9).unwrap();
+    let mut ai = AiDriver::new();
+    ai.insert(
+        1,
+        make_battle_planner(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: Some("elastic_defense".into()),
+            },
+            9,
+            &reg,
+        ),
+    );
+
+    // Round one: the commander divides the ground among her formations and
+    // the driver carries the announcements out of the planning phase.
+    let mut assigned = 0;
+    ai.plan_round_with(&reg, &mut state, |d| {
+        assigned += d
+            .events
+            .iter()
+            .filter(|e| matches!(e, BattleEvent::MissionAssigned { .. }))
+            .count();
+    });
+    let valkyrie_formations: Vec<_> = state.formations().iter().filter(|f| f.side == 1).collect();
+    assert_eq!(
+        assigned,
+        valkyrie_formations.len(),
+        "every formation gets a mission and each is said once"
+    );
+    assert!(
+        valkyrie_formations.iter().all(|f| f.mission.is_some()),
+        "the missions are standing on the formations"
+    );
+    assert!(state.has_committed(1), "and the side finishes its planning");
+
+    // Round two: standing orders stand. The brain reviews and finds nothing
+    // to change, so the log hears nothing.
+    let _ = state.apply(&reg, &Order::Commit { side: 0 });
+    state.resolve_round(&reg);
+    assert!(state.is_planning(), "a new round has opened");
+    let mut reassigned = 0;
+    ai.plan_round_with(&reg, &mut state, |d| {
+        reassigned += d
+            .events
+            .iter()
+            .filter(|e| matches!(e, BattleEvent::MissionAssigned { .. }))
+            .count();
+    });
+    assert_eq!(
+        reassigned, 0,
+        "an unchanged mission is not news, and re-announcing it every round would be"
+    );
+}

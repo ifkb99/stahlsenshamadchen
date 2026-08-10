@@ -22,7 +22,7 @@
 //! right.
 
 use super::AiPlanner;
-use crate::battle::{BattleState, Order, OrderError};
+use crate::battle::{BattleState, Event, Order, OrderError};
 use crate::data::DataRegistry;
 use std::collections::HashMap;
 
@@ -40,6 +40,12 @@ const MAX_ORDERS_PER_SIDE: usize = 64;
 pub struct Decision {
     pub side: u8,
     pub order: Order,
+    /// What the order announced when it was applied. Planning orders were
+    /// silent for the whole life of this engine, so the driver used to drop
+    /// these; missions changed that — `MissionAssigned` is planning-phase
+    /// news, and a driver that swallowed it would make every AI-issued
+    /// mission invisible to the log and the player.
+    pub events: Vec<Event>,
     /// Why the battle refused the order, if it did. A refusal force-commits
     /// the side.
     pub rejected: Option<OrderError>,
@@ -82,31 +88,33 @@ impl AiDriver {
         }
         let planner = self.planners.get_mut(&side)?;
         let order = planner.next_order(registry, state, side);
-        let rejected = match state.apply(registry, &order) {
-            Ok(_) => None,
+        let (events, rejected) = match state.apply(registry, &order) {
+            Ok(events) => (events, None),
             Err(error) => {
                 // Never wedge the battle: commit what the side has and let
                 // the round resolve. The error still reaches the caller.
                 let _ = state.apply(registry, &Order::Commit { side });
-                Some(error)
+                (Vec::new(), Some(error))
             }
         };
         Some(Decision {
             side,
             order,
+            events,
             rejected,
         })
     }
 
     /// One decision for every uncommitted side this driver controls. Returns
-    /// whether anything was decided, so a caller keeping derived state (the
-    /// game's range overlays) knows the board's intents moved.
-    pub fn step(&mut self, registry: &DataRegistry, state: &mut BattleState) -> bool {
-        let mut acted = false;
+    /// what was decided — an empty vec means nothing moved, and a caller
+    /// keeping derived state (the game's range overlays, its event log)
+    /// reads both facts off the same return.
+    pub fn step(&mut self, registry: &DataRegistry, state: &mut BattleState) -> Vec<Decision> {
+        let mut decisions = Vec::new();
         for side in state.living_sides() {
-            acted |= self.step_side(registry, state, side).is_some();
+            decisions.extend(self.step_side(registry, state, side));
         }
-        acted
+        decisions
     }
 
     /// Drive every side this driver controls to a commit. Sides are planned

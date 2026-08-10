@@ -120,14 +120,45 @@ impl Evaluator {
         // at all. Measured against the old behaviour it is the whole fix —
         // without it, holding the best ground in sight is unbeatable play,
         // and two sides doing that never meet.
-        let objective = self.objective_value(state, me.side, tile, hp_fraction);
+        //
+        // A standing mission replaces this term outright rather than adding
+        // to it: the commander has decided which ground matters, and a unit
+        // under orders stops weighing the whole map for itself. A unit in no
+        // formation, or in one that has not been given a mission, scores
+        // exactly as it always did — which is the additivity hinge, and why
+        // the mission is read from battle state rather than passed in: every
+        // planner that scores through here becomes mission-aware at once,
+        // and one that never sees a mission is bit-for-bit the old game.
+        let standing = state
+            .command
+            .formation_of(unit)
+            .and_then(|f| f.mission.as_ref().map(|m| (m, f)));
+        let objective = match standing {
+            Some((mission, formation)) => self.mission_value(state, tile, mission, formation),
+            None => self.objective_value(state, me.side, tile, hp_fraction),
+        };
+
+        // A crew ordered out stops valuing the fight. Without this, a shot
+        // worth taking outbids any walkable gradient — measured on
+        // river_crossing, the chance to shoot a spotted scout was worth ~4.6
+        // to a withdrawing tank against the ~0.5 per hex its lane could pull,
+        // so the "withdrawal" stood on the best firing line instead. A rear
+        // guard still answers what is in front of it (a quarter, not zero),
+        // but it does not *seek* — and the advance-toward-contact term is
+        // actively arguing with the order, so it goes entirely.
+        let withdrawing = matches!(standing, Some((crate::battle::Mission::Withdraw { .. }, _)));
+        let attack_scale = if withdrawing { 0.25 } else { 1.0 };
 
         // Advance: with something to shoot, close on it. With no contact and
         // no objectives, push toward the middle of the map to find some —
         // which is all this could do before objectives existed, and is still
         // what a map that names none gets.
         let advance = match enemies.iter().map(|e| e.pos.distance_to(tile)).min() {
+            Some(_) if withdrawing => 0.0,
             Some(nearest) => -(nearest as f32) * 0.3 * doctrine.aggression,
+            // Under a mission the slope already says which way to walk, and
+            // "inwards" would argue with it on a map with nothing to hold.
+            None if standing.is_some() => 0.0,
             None if state.map.objectives().is_empty() => {
                 -(state.map.center().distance_to(tile) as f32) * 0.15 * doctrine.scouting
             }
@@ -137,7 +168,8 @@ impl Evaluator {
         };
 
         TileScore {
-            score: attack_value * 2.0 * (0.5 + doctrine.aggression) - threat * caution
+            score: attack_value * attack_scale * 2.0 * (0.5 + doctrine.aggression)
+                - threat * caution
                 + terrain_value
                 + mass
                 + objective
@@ -231,6 +263,100 @@ impl Evaluator {
             }
         }
         best.unwrap_or(0.0)
+    }
+
+    /// What standing on `tile` is worth to a unit whose formation is under
+    /// `mission`. The mission counterpart of [`Self::objective_value`], and
+    /// the same shape on purpose: a reward for being there and a distance
+    /// slope leading there, because a greedy one-round planner can only
+    /// follow a gradient it can see from the tiles it can reach.
+    ///
+    /// The numbers are a first pass, stated against the map-objective scale
+    /// so they mean something: `MISSION_WEIGHT` is 2.0 because that is what
+    /// a typical piece of ground is worth in the shipped maps, so "go where
+    /// you were told" pulls about as hard as "take the ford" used to. The
+    /// balance harness's delegation-tax table is the instrument that judges
+    /// them; tuning belongs to chunk 3.
+    fn mission_value(
+        &self,
+        state: &BattleState,
+        tile: Hex,
+        mission: &crate::battle::Mission,
+        formation: &crate::battle::Formation,
+    ) -> f32 {
+        use crate::battle::Mission;
+        /// Worth of a mission's ground, in objective-value units.
+        const MISSION_WEIGHT: f32 = 2.0;
+        let doctrine = &self.doctrine;
+        match mission {
+            // Take the ground and stand on it: reward for arriving, slope
+            // for the road there — the objective shape with the commander
+            // choosing the objective.
+            Mission::Advance { to } => {
+                let dist = to.distance_to(tile);
+                let reward = if dist <= 1 { 1.5 } else { 0.0 };
+                MISSION_WEIGHT * doctrine.objective_value * (reward - 0.15 * dist as f32)
+            }
+            // Stand where told. `None` anchors on the leader rather than a
+            // stored hex or a centroid: she is where the formation is, the
+            // anchor cannot drift as members wander the way a centroid
+            // would, and for the leader herself every move scores worse
+            // than staying — which is what holding *is*.
+            Mission::Hold { at } => {
+                let anchor = at.or_else(|| {
+                    formation
+                        .leader
+                        .and_then(|id| state.unit(id))
+                        .map(|u| u.pos)
+                });
+                match anchor {
+                    Some(anchor) => {
+                        let dist = anchor.distance_to(tile) as f32;
+                        MISSION_WEIGHT * doctrine.objective_value * (0.75 - 0.15 * dist)
+                    }
+                    // Nobody left to anchor on: the mission has no ground to
+                    // say anything about.
+                    None => 0.0,
+                }
+            }
+            // Go and look. Scaled by scouting rather than objective_value,
+            // because it is the doctrine's appetite for unscouted ground
+            // that says how hard eyes-forward pulls; the smaller reward
+            // keeps a scout probing near the target rather than parking on
+            // it as if it were a bridge to hold.
+            Mission::Recon { toward } => {
+                let dist = toward.distance_to(tile);
+                let reward = if dist <= 2 { 0.75 } else { 0.0 };
+                MISSION_WEIGHT * doctrine.scouting * (reward - 0.15 * dist as f32)
+            }
+            // Leave by the named lane. Deliberately ungated by damage: the
+            // per-unit flight gate in `objective_value` exists because an
+            // exit nobody was ordered to take must not pull, and being
+            // ordered is exactly the permission it was standing in for.
+            Mission::Withdraw { via } => {
+                let lane = state
+                    .map
+                    .objectives()
+                    .iter()
+                    .find(|o| o.id == *via && o.kind == ObjectiveKind::Exit);
+                match lane {
+                    Some(objective) => {
+                        let dist = objective
+                            .hexes
+                            .iter()
+                            .map(|h| h.distance_to(tile))
+                            .min()
+                            .unwrap_or(0);
+                        let reward = if objective.contains(tile) { 1.5 } else { 0.0 };
+                        EXIT_URGENCY * doctrine.objective_value * (reward - 0.15 * dist as f32)
+                    }
+                    // Validation refuses a mission naming no real exit, so
+                    // this only happens if the lane was defined by a mod
+                    // that then changed; score nothing rather than panic.
+                    None => 0.0,
+                }
+            }
+        }
     }
 
     /// How the battle stands for `side`, in [-1, 1]. Aggressive doctrines

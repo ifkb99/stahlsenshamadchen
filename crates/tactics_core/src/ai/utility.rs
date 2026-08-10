@@ -71,7 +71,12 @@ impl UtilityPlanner {
     }
 
     /// Decide everything one unit will do this round.
-    fn plan_unit(
+    ///
+    /// Crate-visible because [`super::SideCommand`] routes each unit to a
+    /// per-formation instance of this planner: the executor half of chain of
+    /// command *is* this planner, aimed by whatever mission the evaluator
+    /// finds on the unit's formation.
+    pub(crate) fn plan_unit(
         &mut self,
         registry: &DataRegistry,
         state: &BattleState,

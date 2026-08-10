@@ -21,11 +21,13 @@
 //! That separation is the point: a weak opponent running massed-armour
 //! doctrine should still recognisably fight like massed armour, just badly.
 
+mod command;
 mod driver;
 mod eval;
 mod mcts;
 mod utility;
 
+pub use command::SideCommand;
 pub use driver::{AiDriver, Decision};
 pub use eval::{Evaluator, TileScore};
 pub use mcts::{MctsPlanner, determinize};
@@ -62,7 +64,7 @@ fn default_difficulty() -> u8 {
 
 /// Planner names the engine ships. Map validation warns about anything else,
 /// since planners are Rust rather than mod data.
-pub const BUILTIN_PLANNERS: &[&str] = &["utility", "mcts"];
+pub const BUILTIN_PLANNERS: &[&str] = &["utility", "mcts", "command"];
 
 /// How a planner is built.
 ///
@@ -99,6 +101,9 @@ impl PlannerRegistry {
         });
         registry.register("mcts", |config, seed, data, planners| {
             Box::new(MctsPlanner::from_config(config, seed, data, planners))
+        });
+        registry.register("command", |config, seed, data, _planners| {
+            Box::new(SideCommand::from_config(config, seed, data))
         });
         registry
     }

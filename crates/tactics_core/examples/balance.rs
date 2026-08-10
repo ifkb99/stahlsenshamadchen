@@ -57,6 +57,7 @@ fn main() {
     flags(&registry);
     if sim {
         simulate(&registry, games);
+        delegation_tax(&registry, games);
     } else {
         println!("\n(pass --sim to fight {games} battles and see what these numbers do)");
     }
@@ -490,13 +491,88 @@ fn planner(
     seed: u64,
     doctrine: &str,
 ) -> Box<dyn AiPlanner<BattleState, Order>> {
+    planner_with(reg, seed, "utility", doctrine)
+}
+
+fn planner_with(
+    reg: &DataRegistry,
+    seed: u64,
+    kind: &str,
+    doctrine: &str,
+) -> Box<dyn AiPlanner<BattleState, Order>> {
     make_battle_planner(
         &AiConfig {
-            planner: "utility".into(),
+            planner: kind.into(),
             difficulty: 3,
             doctrine: Some(doctrine.into()),
         },
         seed,
         reg,
     )
+}
+
+/// What a side pays for fighting through its chain of command instead of
+/// micromanaging every vehicle. The opponent is held constant — flat utility
+/// — and one side at a time switches to the `command` planner, so the drop
+/// in its wins is attributable to delegation and nothing else.
+///
+/// This table exists because delegation is the campaign's default posture:
+/// the player is meant to rely on missions, and a delegation that costs
+/// battles is one they will rightly refuse to pay for. Zero is the target;
+/// the design doc's build order drives it there across chunks 2 through 7.
+fn delegation_tax(reg: &DataRegistry, games: usize) {
+    heading(&format!(
+        "delegation tax: {games} battles per pairing, opponent held constant"
+    ));
+    let run = |p0: &str, p1: &str| -> (usize, usize, usize, f32) {
+        let (mut wins_massed, mut wins_elastic, mut draws) = (0, 0, 0);
+        let mut rounds_total = 0u32;
+        for game in 0..games {
+            let seed = 1000 + game as u64;
+            let mut state = BattleState::from_map(reg, "river_crossing", seed).expect("battle");
+            let mut ai = AiDriver::new();
+            ai.insert(0, planner_with(reg, seed, p0, "massed_armor"));
+            ai.insert(1, planner_with(reg, seed + 1, p1, "elastic_defense"));
+            let mut rounds = 0;
+            while !state.is_over() && rounds < 60 {
+                ai.plan_round(reg, &mut state);
+                state.resolve_round(reg);
+                rounds += 1;
+            }
+            rounds_total += rounds;
+            match state.over.and_then(|r| r.winner) {
+                Some(0) => wins_massed += 1,
+                Some(1) => wins_elastic += 1,
+                _ => draws += 1,
+            }
+        }
+        (
+            wins_massed,
+            wins_elastic,
+            draws,
+            rounds_total as f32 / games.max(1) as f32,
+        )
+    };
+    let flat = run("utility", "utility");
+    let massed_cmd = run("command", "utility");
+    let elastic_cmd = run("utility", "command");
+
+    println!(
+        "  {:<28} {:>7} {:>8} {:>6} {:>7}",
+        "pairing", "massed", "elastic", "draws", "rounds"
+    );
+    for (name, t) in [
+        ("both flat", flat),
+        ("massed under command", massed_cmd),
+        ("elastic under command", elastic_cmd),
+    ] {
+        println!(
+            "  {:<28} {:>7} {:>8} {:>6} {:>7.1}",
+            name, t.0, t.1, t.2, t.3
+        );
+    }
+    println!(
+        "\n  a side's tax is its win drop against the same flat opponent when it\n  \
+         fights through missions instead; zero is the target"
+    );
 }

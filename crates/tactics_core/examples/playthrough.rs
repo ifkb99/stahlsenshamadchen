@@ -57,10 +57,17 @@ fn main() {
 
     let mut rounds = 0usize;
     while !state.is_over() && rounds < 200 {
-        // Planning: every side writes orders for all of its units.
+        // Planning: every side writes orders for all of its units. Orders
+        // are mostly silent, but a mission being assigned is worth hearing
+        // as it happens rather than buried in the resolution.
         ai.plan_round_with(&registry, &mut state, |d| {
             if let Some(e) = &d.rejected {
                 println!("!! side {} illegal order {:?}: {e}", d.side, d.order);
+            }
+            for ev in &d.events {
+                if let Event::MissionAssigned { formation, mission } = ev {
+                    println!("[side {}] {formation} ordered to {mission:?}", d.side);
+                }
             }
         });
         rounds += 1;

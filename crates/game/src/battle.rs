@@ -982,8 +982,15 @@ fn drive_ai(mods: Res<Mods>, mut battle: ResMut<Battle>, movers: Query<&Mover>) 
     // One decision per side per frame, not a whole round: an MCTS side can
     // take seconds per order, and the UI has to stay responsive under it.
     let battle = &mut *battle;
-    if battle.ai.step(&mods.0, &mut battle.state) {
+    let decisions = battle.ai.step(&mods.0, &mut battle.state);
+    if !decisions.is_empty() {
         battle.range_dirty = true;
+        // Planning orders used to be silent, but a mission being assigned is
+        // news the log carries; route whatever the orders announced through
+        // the same animation queue every other event takes.
+        for decision in decisions {
+            battle.anim.extend(decision.events);
+        }
     }
 }
 
