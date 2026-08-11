@@ -5872,3 +5872,169 @@ fn a_formation_keeps_its_interval_and_its_sight_lines() {
         "a friend who cannot see you is not support: {interval} vs {masked}"
     );
 }
+
+/// A two-car section under one leader on a long road, ordered east, with a
+/// gun tank visible far beyond — inside their eyes, outside everyone's guns,
+/// so contact exists and nobody dies while the section moves.
+fn bounding_stage(
+    reg: &DataRegistry,
+    enemy_at: i32,
+    doctrine: Option<&str>,
+    seed: u64,
+) -> BattleState {
+    let row = "g".repeat(40);
+    let mut formation = serde_json::json!({ "id": "section", "name": "The Section", "side": 0 });
+    if let Some(doctrine) = doctrine {
+        formation["doctrine"] = serde_json::json!(doctrine);
+    }
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "bounding_stage",
+        "palette": { "g": "grass" },
+        "rows": [row.clone(), row.clone(), row],
+        "formations": [ formation ],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let mut lead = unit_at([2, 1], 0, "recon_car", "Lead");
+    lead.formation = Some("section".into());
+    lead.leads = true;
+    let mut wing = unit_at([2, 2], 0, "recon_car", "Wing");
+    wing.formation = Some("section".into());
+    let enemy = unit_at([enemy_at, 1], 1, "medium_tank", "Gun Tank");
+    let placements = vec![lead, wing, enemy];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    )
+}
+
+/// Plan one executor-only round for side 0 and say who moved.
+fn bound_once(reg: &DataRegistry, state: &mut BattleState, seed: u64) -> Vec<bool> {
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
+        Box::new(tactics_core::ai::SideCommand::executor_only(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: None,
+            },
+            seed,
+            reg,
+        )),
+    );
+    ai.plan_round(reg, state);
+    [UnitId(0), UnitId(1)]
+        .iter()
+        .map(|id| !state.unit(*id).unwrap().intent.path.is_empty())
+        .collect()
+}
+
+#[test]
+fn a_section_in_contact_bounds_by_element() {
+    // Fire and movement, with WEGO rounds as the bounds: in contact and
+    // under a movement mission, one element advances while the other stands
+    // with guns up, and the elements swap every round.
+    let reg = registry_wireless();
+    let mut state = bounding_stage(&reg, 16, None, 61);
+    assert!(
+        !state.fog.side(0).spotted.is_empty(),
+        "the stage needs contact"
+    );
+    let section = formation_named(&state, "section");
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: section,
+                mission: Mission::Advance {
+                    to: tactics_core::offset_to_hex(30, 1),
+                },
+            },
+        )
+        .unwrap();
+
+    let first = bound_once(&reg, &mut state, 61);
+    assert_eq!(
+        first.iter().filter(|moved| **moved).count(),
+        1,
+        "one element bounds while the other overwatches: {first:?}"
+    );
+    let _ = state.apply(&reg, &Order::Commit { side: 1 });
+    state.resolve_round(&reg);
+
+    let second = bound_once(&reg, &mut state, 61);
+    assert_eq!(
+        second.iter().filter(|moved| **moved).count(),
+        1,
+        "and again next round: {second:?}"
+    );
+    assert_ne!(first, second, "with the elements swapped");
+}
+
+#[test]
+fn a_section_out_of_contact_travels() {
+    // No contact, no ceremony: everyone moves, which is exactly the game
+    // before bounding existed.
+    let reg = registry_wireless();
+    let mut state = bounding_stage(&reg, 39, None, 62);
+    assert!(
+        state.fog.side(0).spotted.is_empty(),
+        "the stage needs the danger out of sight"
+    );
+    let section = formation_named(&state, "section");
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: section,
+                mission: Mission::Advance {
+                    to: tactics_core::offset_to_hex(30, 1),
+                },
+            },
+        )
+        .unwrap();
+    let moved = bound_once(&reg, &mut state, 62);
+    assert_eq!(moved, vec![true, true], "traveling, not bounding");
+}
+
+#[test]
+fn an_aggressive_doctrine_travels_in_overwatch() {
+    // Traveling versus bounding is doctrine's call: massed armour trades
+    // security for tempo and keeps everyone moving even in contact — which
+    // is both the textbook and what the harness demanded, since universal
+    // bounding cost the aggressive doctrine half its wins.
+    let reg = registry_wireless();
+    let mut state = bounding_stage(&reg, 16, Some("massed_armor"), 63);
+    assert!(!state.fog.side(0).spotted.is_empty());
+    let section = formation_named(&state, "section");
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: section,
+                mission: Mission::Advance {
+                    to: tactics_core::offset_to_hex(30, 1),
+                },
+            },
+        )
+        .unwrap();
+    let moved = bound_once(&reg, &mut state, 63);
+    assert_eq!(moved, vec![true, true], "tempo over ceremony");
+}

@@ -211,6 +211,76 @@ impl SideCommand {
             .and_then(|u| u.crew.first().copied());
     }
 
+    /// Whether this member stands overwatch this round instead of moving:
+    /// the executor half of bounding overwatch, with WEGO rounds as the
+    /// bounds. A formation under a movement mission and in contact splits
+    /// into two elements by member parity; the elements alternate by round,
+    /// the bounding one advancing on the mission gradient while this one
+    /// goes firm with guns up — hold-fire has been overwatch since the day
+    /// it was named. Out of contact, everyone travels; a stand-fast has
+    /// nothing to bound toward and a withdrawal values speed over ceremony
+    /// (alternate bounds rearward is a real technique, and a refinement for
+    /// later); a formation of one has nobody to cover her.
+    fn overwatch_this_round(
+        &self,
+        state: &BattleState,
+        unit: crate::battle::UnitId,
+        index: usize,
+    ) -> bool {
+        let Some(formation) = state.command.formations().get(index) else {
+            return false;
+        };
+        if !matches!(
+            formation.mission_for(unit),
+            Some(Mission::Advance { .. }) | Some(Mission::Recon { .. })
+        ) {
+            return false;
+        }
+        // Traveling versus bounding is a doctrine's call, and the harness
+        // agreed with the textbooks before this gate existed: universal
+        // bounding cost massed armour half its wins (10 to 5 in 36),
+        // because its identity is trading security for tempo. An
+        // aggressive doctrine travels in overwatch — spread, guns ready,
+        // still moving — and only the cautious ones pay the round for the
+        // covered bound.
+        if self.doctrine_for(index).aggression >= 0.7 {
+            return false;
+        }
+        // Contact worth the ceremony: a spotted enemy near enough to the
+        // formation to matter, not one across the map.
+        let relevant = state
+            .fog
+            .side(formation.side)
+            .spotted
+            .iter()
+            .filter_map(|id| state.unit(*id))
+            .any(|enemy| {
+                formation
+                    .members
+                    .iter()
+                    .filter_map(|id| state.unit(*id))
+                    .any(|member| member.pos.distance_to(enemy.pos) <= 15)
+            });
+        if !relevant {
+            return false;
+        }
+        let living: Vec<crate::battle::UnitId> = formation
+            .members
+            .iter()
+            .copied()
+            .filter(|id| state.unit(*id).is_some())
+            .collect();
+        if living.len() < 2 {
+            return false;
+        }
+        // Element by position among the living (id order), bounding element
+        // by round parity — deterministic, and it swaps every round.
+        let Some(position) = living.iter().position(|id| *id == unit) else {
+            return false;
+        };
+        (position % 2) as u32 != (state.round.wrapping_add(index as u32)) % 2
+    }
+
     /// The doctrine a formation fights under: its own, else the side's.
     fn doctrine_for(&self, index: usize) -> &DoctrineDef {
         self.executors
@@ -422,6 +492,17 @@ impl AiPlanner<BattleState, Order> for SideCommand {
                     return order;
                 }
             }
+            return Order::SetFire {
+                unit,
+                fire: FireIntent::Hold,
+            };
+        }
+        // Bounding overwatch: her element stands firm this round while the
+        // other advances. Before the executor, because standing firm IS her
+        // plan — guns up on her arc, covering the bound.
+        if let Some(index) = formation
+            && self.overwatch_this_round(state, unit, index)
+        {
             return Order::SetFire {
                 unit,
                 fire: FireIntent::Hold,
