@@ -54,7 +54,8 @@
             "gunner"
         ],
         "cost": 10,
-        "safety": 4
+        "safety": 4,
+        "sprite": "mods/base/sprites/light_tank.png"
     },
     {
         "id": "medium_tank",
@@ -116,7 +117,8 @@
             "radio"
         ],
         "cost": 24,
-        "safety": 2
+        "safety": 2,
+        "sprite": "mods/base/sprites/heavy_tank.png"
     },
     {
         "id": "tank_destroyer",
@@ -144,7 +146,8 @@
             "gunner"
         ],
         "cost": 18,
-        "safety": 2
+        "safety": 2,
+        "sprite": "mods/base/sprites/tank_destroyer.png"
     },
     {
         "id": "artillery",
@@ -173,6 +176,7 @@
             "loader"
         ],
         "cost": 18,
-        "safety": 4
+        "safety": 4,
+        "sprite": "mods/base/sprites/artillery.png"
     }
 ]

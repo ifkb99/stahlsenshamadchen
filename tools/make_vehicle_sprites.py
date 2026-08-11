@@ -133,12 +133,54 @@ def inside(pts, x, y):
     return hit
 
 
-def fill_poly(px, pts, color):
+def depth_plane(pts, depths):
+    """Fit `depth = a*sx + b*sy + c` over a projected face.
+
+    The projection is orthographic and therefore affine, so a flat quad's
+    view depth is an exact affine function of its screen position — three
+    corners determine it and the fourth is guaranteed to agree. Returns None
+    for a face that projects to a line, which is a face seen edge-on and has
+    no interior to fill anyway."""
+    (x0, y0), (x1, y1), (x2, y2) = pts[0], pts[1], pts[2]
+    ax, ay = x1 - x0, y1 - y0
+    bx, by = x2 - x0, y2 - y0
+    det = ax * by - ay * bx
+    if abs(det) < 1e-6:
+        return None
+    d0, d1, d2 = depths[0], depths[1], depths[2]
+    u, v = d1 - d0, d2 - d0
+    a = (u * by - v * ay) / det
+    b = (v * ax - u * bx) / det
+    return a, b, d0 - a * x0 - b * y0
+
+
+def fill_poly(px, zbuf, pts, depths, color):
+    """Rasterise one face, keeping whichever surface is nearest per pixel.
+
+    A per-face painter's sort is not enough here and the failure is not
+    subtle: a long sloped plate — the tank destroyer's casemate roof, the
+    hull deck under a turret — has one mean depth but spans a wide range of
+    real ones, so it is drawn either wholly in front of or wholly behind
+    something it actually straddles. The symptom was a turret sunk into its
+    own deck. A depth buffer costs nothing at 56x40 and removes the whole
+    class of artefact."""
+    plane = depth_plane(pts, depths)
+    flat = sum(depths) / 4.0
     xs = [p[0] for p in pts]
     ys = [p[1] for p in pts]
     for y in range(max(0, int(min(ys))), min(FRAME_H, int(max(ys)) + 2)):
         for x in range(max(0, int(min(xs))), min(FRAME_W, int(max(xs)) + 2)):
-            if inside(pts, x + 0.5, y + 0.5):
+            if not inside(pts, x + 0.5, y + 0.5):
+                continue
+            if plane is None:
+                d = flat
+            else:
+                d = plane[0] * (x + 0.5) + plane[1] * (y + 0.5) + plane[2]
+            # Ties go to the face drawn later, which is the sorted order's
+            # answer, so coplanar decals like the academy plate still land on
+            # top of the roof they are painted on.
+            if zbuf[y][x] is None or d >= zbuf[y][x] - 1e-6:
+                zbuf[y][x] = d
                 px[y][x] = color
 
 
@@ -158,6 +200,7 @@ def outline(px, color=OUTLINE):
 
 def render(boxes, yaw):
     px = [[None] * FRAME_W for _ in range(FRAME_H)]
+    zbuf = [[None] * FRAME_W for _ in range(FRAME_H)]
     faces = []
     for box in boxes:
         for name, quad, normal in box.faces():
@@ -169,14 +212,24 @@ def render(boxes, yaw):
                 continue
             base = TEAM if name in box.team_faces else box.color
             color = base if base == TEAM else shade(base, n)
-            depth = sum(p[1] for p in world) / 4.0
-            height = sum(p[2] for p in world) / 4.0
-            faces.append((depth, height, [project(p) for p in world], color))
-    # Painter's algorithm: far (large y) first, and lower before higher, so a
-    # turret lands on top of the hull it sits on.
-    faces.sort(key=lambda f: (-f[0], f[1]))
-    for _, _, quad, color in faces:
-        fill_poly(px, quad, color)
+            depths = [sum(a * b for a, b in zip(p, VIEW)) for p in world]
+            centre = sum(depths) / 4.0
+            faces.append((centre, [project(p) for p in world], depths, color))
+    # Sorted along the line of sight, far first: `VIEW` points from the board
+    # towards the camera, so a larger dot product is nearer. The depth buffer
+    # decides what is actually visible; this order only settles exact ties,
+    # which is what puts a decal on the roof it shares a plane with.
+    #
+    # The sort used to be by y with height as a tiebreak, which is a different
+    # thing and got the south-east frame wrong: the camera looks down as well
+    # as forward, so a hull roof is *behind* the turret standing on it even
+    # though its centre is nearer in y. A turret sank into its own deck and
+    # took the academy plate with it — the south-east frame carried eleven
+    # magenta pixels where east carried seventy-four, and the turretless
+    # casemate carried none at all.
+    faces.sort(key=lambda f: f[0])
+    for _, quad, depths, color in faces:
+        fill_poly(px, zbuf, quad, depths, color)
     outline(px)
     return px
 
@@ -226,6 +279,143 @@ def recon_car():
     return boxes
 
 
+def light_tank():
+    """Wiesel: the medium's cheap little sibling. Short hull, narrow tracks, a
+    small turret carried forward and a stubby gun that barely clears the nose.
+
+    Everything is scaled *down* from `medium_tank` rather than restyled — the
+    two are meant to read as the same factory's work, and the point of the
+    silhouette is that a player can tell at a glance which one is worth
+    shooting first."""
+    return [
+        Box(-12, 11, 5, 9.5, 1, 7, TRACK),
+        Box(-12, 11, -9.5, -5, 1, 7, TRACK),
+        # Hull: two thirds the medium's length and visibly shallower.
+        Box(-12, 13, -7, 7, 4, 10, HULL),
+        # Turret forward of centre, which is the other cue: the medium's sits
+        # back, so even the deck proportions differ.
+        Box(-5, 4, -5.5, 5.5, 10, 13.6, TURRET),
+        Box(-4, 2.5, -4.5, 4.5, 13.6, 14.5, TEAM),
+        Box(-12.9, -12, -5, 5, 5, 9, TEAM),
+        # 37 mm: short enough that it stops well short of the medium's muzzle.
+        Box(4, 6.5, -2.5, 2.5, 10.8, 13, GUN),
+        Box(6.5, 17, -0.8, 0.8, 11.4, 12.6, GUN),
+    ]
+
+
+def heavy_tank():
+    """Löwe: bulk read three ways at once — a taller hull, tracks that stand
+    proud of it, and a turret big enough to look like it costs something.
+
+    The gun is the longest on the roster and reaches nearly to the frame edge,
+    which is deliberate: at this size length is the cheapest legible signal
+    that the thing outranges what it is pointed at."""
+    return [
+        # Wide tracks. They are both thicker in plan and taller than the
+        # medium's, so they show under the hull from every frame.
+        Box(-17, 15, 8, 14, 0.5, 9.5, TRACK),
+        Box(-17, 15, -14, -8, 0.5, 9.5, TRACK),
+        # Hull, deeper than the medium's and squarer in plan.
+        Box(-17, 17, -10.5, 10.5, 3.5, 12, HULL),
+        # Turret: broad, set slightly back, and the tallest box on any vehicle.
+        Box(-9, 6, -9, 9, 12, 17.5, TURRET),
+        # The plate is a marking, not a paint job: it stays the same physical
+        # size across the roster, so on the biggest turret it covers least.
+        Box(-6, 2, -5, 5, 17.5, 18.4, TEAM),
+        Box(-17.9, -17, -7, 7, 5, 11, TEAM),
+        # Mantlet and the 88, thicker in section as well as longer.
+        Box(6, 9.5, -4, 4, 13, 16.5, GUN),
+        Box(9.5, 25, -1.4, 1.4, 13.9, 15.9, GUN),
+    ]
+
+
+def tank_destroyer():
+    """Marder: a casemate, and no turret at all.
+
+    The absence is the characterisation, so nothing above the deck may look
+    like it could traverse — and the first attempt at this failed exactly
+    there: a superstructure smaller than the hull left bare deck fore and aft
+    of it, and bare deck around a raised box is the visual definition of a
+    turret. So the casemate is the vehicle. It runs the full width and very
+    nearly the full length, and only its upper step draws in, which is how a
+    box model spells "sloped"."""
+    return [
+        Box(-15, 13, 6.5, 11, 0.5, 6.5, TRACK),
+        Box(-15, 13, -11, -6.5, 0.5, 6.5, TRACK),
+        # Hull, low and long — everything above it is fighting compartment.
+        Box(-15, 15, -8, 8, 2.5, 7, HULL),
+        # Casemate: the whole footprint, so no deck shows around it. Painted in
+        # the superstructure tone for the same reason the artillery's walls
+        # are — a box standing on the hull with the same normal shades to the
+        # same value, and the two would merge into one slab.
+        Box(-14, 14, -8, 8, 7, 9.5, TURRET),
+        # The upper step is pulled in at the sides and cut off short of the
+        # nose, which reads as a glacis running back to a flat roof.
+        Box(-14, 8, -6.5, 6.5, 9.5, 12, TURRET),
+        Box(-12, -3, -5, 5, 12, 12.9, TEAM),
+        Box(-15.9, -15, -6, 6, 3.5, 6.5, TEAM),
+        # The 88 leaves the front plate, fixed forward, and sits low: the
+        # muzzle is below the height of the light tank's turret roof, which is
+        # the rest of the silhouette argument.
+        Box(6, 9, -3, 3, 9.4, 12, GUN),
+        Box(9, 25, -1, 1, 10.1, 11.5, GUN),
+    ]
+
+
+def artillery():
+    """Hummel: an open-topped fighting compartment at the back, and a stubby
+    howitzer pointing up out of it.
+
+    The compartment is four walls with nothing on top rather than a solid box,
+    because the open top is the whole reason a self-propelled gun looks
+    fragile, and the painter's algorithm draws the far walls before the near
+    one so the box reads as hollow. The barrel is short and steeply elevated —
+    the one gun on the roster that does not lie along the hull."""
+    boxes = [
+        Box(-16, 13, 7, 12, 1, 8, TRACK),
+        Box(-16, 13, -12, -7, 1, 8, TRACK),
+        # Hull, with its deck left clear forward of the compartment: the engine
+        # and driver live up front on this one, which is why the gun is at the
+        # back.
+        Box(-16, 16, -9, 9, 4, 10, HULL),
+        # Compartment floor, so the hollow has a bottom rather than a hole.
+        Box(-15, 4, -7.5, 7.5, 10, 10.6, TRACK),
+        # Four walls. The rear one is tallest; the front one is cut down to a
+        # shield so the interior is not simply boxed in from every angle.
+        #
+        # They are painted in the superstructure tone rather than the hull's.
+        # A wall standing on the hull shares its outward normal and therefore
+        # its lambert term exactly, so in the east frame the two flat faces
+        # were the same value and the whole vehicle read as one dark slab with
+        # a barrel stuck to it. The lighter tone is the same separation a
+        # turret already gets, and it costs nothing.
+        Box(-15, 4, 7.5, 9, 10, 16.5, TURRET),
+        Box(-15, 4, -9, -7.5, 10, 16.5, TURRET),
+        Box(-15.5, -13, -9, 9, 10, 16.5, TURRET),
+        Box(2.5, 4, -9, 9, 10, 14, TURRET),
+        Box(-15.9, -15.5, -6, 6, 11, 15.5, TEAM),
+        # With no roof there is no roof plate, so the academy's marking goes on
+        # the compartment's outer walls instead. Both sides carry it because
+        # the frames show the near wall in one and the far in another, and a
+        # unit that loses its colour when it turns is a unit you shoot by
+        # mistake.
+        Box(-12, 1, 9, 9.4, 11.5, 15, TEAM),
+        Box(-12, 1, -9.4, -9, 11.5, 15, TEAM),
+        # Short howitzer at high elevation. The breech sits inside the
+        # compartment and the muzzle clears the front shield well above it.
+        Box(-6, -3, -3, 3, 11.5, 14.5, GUN),
+    ]
+    # The barrel is the one part no axis-aligned box can express, so it is
+    # built as a short staircase climbing forward — coarse, but at 56x40 a
+    # two-pixel step is exactly what a drawn diagonal would look like anyway.
+    x, z = -3.0, 12.3
+    for _ in range(7):
+        boxes.append(Box(x, x + 2.6, -1.1, 1.1, z, z + 1.6, GUN))
+        x += 2.2
+        z += 0.85
+    return boxes
+
+
 def write_png(path, frames):
     w, h = FRAME_W * FRAMES, FRAME_H
     raw = b""
@@ -251,6 +441,14 @@ def write_png(path, frames):
 
 if __name__ == "__main__":
     root = os.path.join(os.path.dirname(__file__), "..", "assets", "mods", "base", "sprites")
-    for name, model in (("medium_tank", medium_tank()), ("recon_car", recon_car())):
+    roster = (
+        ("medium_tank", medium_tank()),
+        ("recon_car", recon_car()),
+        ("light_tank", light_tank()),
+        ("heavy_tank", heavy_tank()),
+        ("tank_destroyer", tank_destroyer()),
+        ("artillery", artillery()),
+    )
+    for name, model in roster:
         frames = [render(model, yaw) for yaw in YAWS]
         write_png(os.path.join(root, f"{name}.png"), frames)
