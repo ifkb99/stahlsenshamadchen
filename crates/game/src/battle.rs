@@ -180,11 +180,14 @@ impl Battle {
     /// plan — see [`SideCommand::executor_only`], which enforces the same
     /// rule one level down so the two cannot disagree.
     fn delegating(&self, side: u8) -> bool {
-        self.state.unplanned_units(side).any(|u| {
-            self.state
-                .formation_of(u.id)
-                .is_some_and(|f| f.latest_mission().is_some())
-        })
+        // Any unplanned unit at all: the staff decides what "unplanned"
+        // means for each of them — mission executors for the missioned, the
+        // battle drill for the threatened, and a hold-and-watch for the
+        // rest, which is exactly what a bare commit used to imply. Gating
+        // this on missions existing was the second playtest's drill bug: a
+        // player who had issued no missions committed straight past the
+        // staff, and nobody under fire ever drilled.
+        self.state.unplanned_units(side).next().is_some()
     }
 }
 
@@ -1056,6 +1059,42 @@ fn pump_events(
             break;
         }
     }
+    if drained.is_empty() {
+        return;
+    }
+    // Command traffic is a side's own business: the enemy commander's
+    // orders, her formations' contact troubles and her radio queue must not
+    // read out in the player's log — that is her net, and listening to it is
+    // the electronic-warfare future, not a freebie. Fighting events (shots,
+    // spots, wrecks) stay side-blind exactly as before.
+    let view_side = battle.view_side();
+    let own = |formation: &str| {
+        battle
+            .state
+            .formations()
+            .iter()
+            .find(|f| f.id == formation)
+            .is_none_or(|f| f.side == view_side)
+    };
+    let own_unit = |unit: &UnitId| {
+        battle
+            .state
+            .units
+            .get(unit.index())
+            .is_none_or(|u| u.side == view_side)
+    };
+    drained.retain(|event| match event {
+        BattleEvent::MissionAssigned { formation, .. }
+        | BattleEvent::MissionReceived { formation, .. }
+        | BattleEvent::MissionCompleted { formation, .. }
+        | BattleEvent::CommandPassed { formation, .. } => own(formation),
+        BattleEvent::OutOfContact { unit }
+        | BattleEvent::ContactRestored { unit }
+        | BattleEvent::OrdersWaiting { unit }
+        | BattleEvent::OrdersDelivered { unit }
+        | BattleEvent::ContactReported { by: unit, .. } => own_unit(unit),
+        _ => true,
+    });
     if drained.is_empty() {
         return;
     }

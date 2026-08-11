@@ -6347,3 +6347,96 @@ fn a_breaking_formation_wakes_her_between_pulses() {
         "the shock wakes her and the order goes out at once"
     );
 }
+
+// --- detachment: a personal order outranks the standing mission ------------
+
+#[test]
+fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
+    // The second playtest's bug: a tank ordered by hand into a town tile
+    // drifted back to the road at the next planning phase, because the
+    // formation's Advance quietly reasserted itself. A direct order is the
+    // commander taking personal charge — DETACHMENT — and the standing
+    // mission stops applying to her until she is recalled or the formation
+    // is given fresh orders.
+    let reg = registry_wireless();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 91).unwrap();
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let bridge = state.map.objectives()[0].anchor();
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: armor,
+                mission: Mission::Advance { to: bridge },
+            },
+        )
+        .unwrap();
+    let member = state.formations()[armor.index()].members[0];
+    let start = state.unit(member).unwrap().pos;
+    // Two hexes north, off the mission's axis: the commander's own spot.
+    let post = start + tactics_core::Hex::new(0, -2);
+    assert!(state.map.contains(post));
+    state
+        .apply(
+            &reg,
+            &Order::Radio {
+                unit: member,
+                to: Some(post),
+                fire: None,
+            },
+        )
+        .unwrap();
+    assert!(state.unit(member).unwrap().detached, "she is detached");
+
+    // Play the round out, then let her formation's executor fill the next
+    // round's plans. She must not be marched back toward the bridge.
+    commit_all(&reg, &mut state);
+    state.resolve_round(&reg);
+    let held = state.unit(member).unwrap().pos;
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
+        Box::new(tactics_core::ai::SideCommand::executor_only(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: None,
+            },
+            91,
+            &reg,
+        )),
+    );
+    ai.plan_round(&reg, &mut state);
+    let unit = state.unit(member).unwrap();
+    assert_eq!(
+        unit.planned_destination(),
+        held,
+        "no threat, no recall: she stands where she was put"
+    );
+
+    // A fresh formation order collects everyone: detachment does not
+    // survive the commander speaking to the whole formation again. (The
+    // executor closed the side above, so this happens next round.)
+    commit_all(&reg, &mut state);
+    state.resolve_round(&reg);
+    let ford = state
+        .map
+        .objectives()
+        .iter()
+        .find(|o| o.id == "north_ford")
+        .unwrap()
+        .anchor();
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: armor,
+                mission: Mission::Advance { to: ford },
+            },
+        )
+        .unwrap();
+    assert!(
+        !state.unit(member).unwrap().detached,
+        "new orders for the formation reach her too"
+    );
+}

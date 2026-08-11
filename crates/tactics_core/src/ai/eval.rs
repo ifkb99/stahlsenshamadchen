@@ -173,10 +173,18 @@ impl Evaluator {
         // map's missions silently vanished by round two. With no command
         // rules nobody is ever out of contact and `mission_for` is exactly
         // `mission`, bit for bit.
-        let standing = state
-            .command
-            .formation_of(unit)
-            .and_then(|f| f.mission_for(unit).map(|m| (m, f)));
+        // A detached unit — under the commander's personal tasking — is
+        // excused from the standing mission entirely: her ground is where
+        // she was put, and every other term (cover, threat, the drill's
+        // judgment) still applies.
+        let standing = if me.detached {
+            None
+        } else {
+            state
+                .command
+                .formation_of(unit)
+                .and_then(|f| f.mission_for(unit).map(|m| (m, f)))
+        };
         let objective = match standing {
             Some((mission, formation)) => self.mission_value(state, tile, mission, formation),
             None => self.objective_value(state, me.side, tile, hp_fraction),

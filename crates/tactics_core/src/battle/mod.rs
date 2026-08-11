@@ -112,6 +112,19 @@ pub struct Unit {
     /// How much this crew has had to take. Walks them up the morale ladder;
     /// shed a little at the end of every round.
     pub pressure: u32,
+    /// Under the commander's personal tasking, and therefore excused from
+    /// her formation's standing mission until recalled.
+    ///
+    /// Set when a direct radioed order reaches her, cleared by an explicit
+    /// recall (`ClearIntent`) or by a NEW mission being set for her
+    /// formation — a fresh formation order collects everyone. This is what
+    /// makes a hand-placed vehicle stay where her commander put her instead
+    /// of drifting back to the mission's axis at the next planning phase,
+    /// which the first playtest rightly read as the game overriding the
+    /// player. Detached is not idle: the battle drill still applies, and
+    /// she still shoots on her arc.
+    #[serde(default)]
+    pub detached: bool,
     pub alive: bool,
     /// This vehicle drove off the map by an exit objective.
     ///
@@ -445,6 +458,7 @@ impl BattleState {
             cooldowns: vec![0; vehicle.weapons.len()],
             last_hit_by: None,
             pressure: 0,
+            detached: false,
             alive: true,
             exited: false,
         });

@@ -246,6 +246,12 @@ impl SideCommand {
         let Some(formation) = state.command.formations().get(index) else {
             return false;
         };
+        // Personal tasking excuses her from the formation's bounds too: the
+        // commander put her somewhere, and standing overwatch for a bound
+        // she is not part of would move her off it.
+        if state.unit(unit).is_some_and(|u| u.detached) {
+            return false;
+        }
         if !matches!(
             formation.mission_for(unit),
             Some(Mission::Advance { .. }) | Some(Mission::Recon { .. })
@@ -590,10 +596,12 @@ impl AiPlanner<BattleState, Order> for SideCommand {
         // parking lot stays parked. Any explicit order — including the
         // deliberate "hold and watch" — outranks the drill, because it
         // marks her planned before this is ever consulted.
+        let personal = state.unit(unit).is_some_and(|u| u.detached);
         if !self.reviews_missions
-            && !formation
-                .and_then(|index| state.command.formations().get(index))
-                .is_some_and(|f| f.latest_mission().is_some())
+            && (personal
+                || !formation
+                    .and_then(|index| state.command.formations().get(index))
+                    .is_some_and(|f| f.latest_mission().is_some()))
         {
             if threatened(registry, state, unit) {
                 self.pending = self.drill.plan_unit(registry, state, unit).into();

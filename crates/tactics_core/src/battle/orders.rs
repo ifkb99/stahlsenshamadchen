@@ -361,6 +361,8 @@ impl BattleState {
                 let u = self.unit_mut(*unit).ok_or(OrderError::NoSuchUnit)?;
                 u.intent = UnitIntent::default();
                 u.planned = false;
+                // The recall: she rejoins her formation's tasking.
+                u.detached = false;
                 Ok(Vec::new())
             }
             Order::SetMission { formation, mission } => {
@@ -418,6 +420,14 @@ impl BattleState {
             if let Some(fire) = fire {
                 self.set_fire(registry, id, fire)?;
             }
+            // A direct order detaches her from her formation's standing
+            // mission: the commander has taken personal charge of this
+            // vehicle, and the mission must not quietly reassert itself at
+            // the next planning phase and march her off the ground she was
+            // put on.
+            if let Some(unit) = self.unit_mut(id) {
+                unit.detached = true;
+            }
             return Ok(Vec::new());
         }
         self.command.hold_orders(id, to, fire);
@@ -461,6 +471,12 @@ impl BattleState {
                 && self.check_fire(registry, unit, fire).is_ok()
             {
                 let _ = self.set_fire(registry, unit, fire);
+            }
+            // Delivery is when the personal tasking takes hold — until the
+            // order reached her she was soldiering the standing mission,
+            // which is exactly what the queue promised.
+            if let Some(u) = self.unit_mut(unit) {
+                u.detached = true;
             }
             events.push(Event::OrdersDelivered { unit });
         }
@@ -507,6 +523,21 @@ impl BattleState {
                 crate::battle::MissionChange::Replace(mission.clone()),
                 delay,
             );
+        }
+        // A fresh formation order collects everyone: whatever personal
+        // tasking a member was under, the commander has now spoken to the
+        // whole formation, and "detached" was never meant to survive being
+        // given new orders — only to stop the OLD mission from quietly
+        // reasserting itself.
+        let members = self
+            .command
+            .get(formation)
+            .map(|f| f.members.clone())
+            .unwrap_or_default();
+        for member in members {
+            if let Some(unit) = self.unit_mut(member) {
+                unit.detached = false;
+            }
         }
         Ok(vec![Event::MissionAssigned {
             formation: id,
