@@ -587,11 +587,14 @@ read the diff — combat drift beyond what contact changes explain is a bug.
 Campaign contact keeps its current senior-army radio model; 4 km hexes have
 no visual signalling to speak of.
 
-*Future, recorded not built:* radios as damageable components (waits on the
-ballistics/component rework); transmissions as detectable events — an enemy
-with the `signals` skill learning that *somebody* transmitted nearby, then
-decoding with time — is the electronic-warfare layer, and it falls out of
-transmissions being events once somebody wants it.
+*Future, partly claimed:* realistic radio sets — content-typed, directional
+(receive-only vintage kit), terrain-masked — are now designed as chunk 10a
+below. Still recorded, not built: radios as damageable components (waits on
+the ballistics/component rework); transmissions as detectable events — an
+enemy with the `signals` skill learning that *somebody* transmitted nearby,
+then decoding with time — is the electronic-warfare layer, and it falls out
+of transmissions being events once somebody wants it, as does the
+no-acknowledgement fog 10a defers.
 
 ### 9b. Orders wait instead of dying (difficulty 3/5)
 
@@ -648,6 +651,154 @@ plan in order.
   3" and, per member, in contact / out / orders waiting.
 - Campaign mirror: a marker on the senior army, a radio-range ring on
   selection, and the existing out-of-contact tag kept.
+
+## Command as a loop, radios as hardware (chunk 10)
+
+Designed after the second playtest conversation (2026-08-10), grounded in a
+review of how real battles ran their radios and how the best wargames modeled
+it. All of it is MVP, by the designer's call: this is the system that makes
+training visible as *behavior* rather than as percentages, and a campaign
+where a veteran platoon and a green one differ only in hit chances has not
+yet proven the game's core idea.
+
+### What history and the hobby already settled
+
+**Receive-only radios were real, standard, and central.** Guderian — a
+signals officer before he was a panzer general — built German armor doctrine
+on the radio: every tank got at least a receiver, but early-war line tanks
+carried the FuG 2, receive-only, while platoon leaders and up carried the
+FuG 5 transceiver. The line tank heard orders and *conformed*; she answered
+with movement, a flag, a hand out of the cupola. The Americans did the same
+(SCR-538, receive-only, in early Shermans); the British No. 19 set carried a
+troop-net "A set" beside a short-range "B set" for talking to the tank
+alongside. The negative cases prove the point: French 1940 armor fought on
+flags and lost command of battles its tanks were good enough to win, and
+early-war T-34s without radios fought "do as I do", wingtip to wingtip —
+which is exactly this game's visual medium. By the 1960s — the game's period
+— everyone transmits, at ranges (15–30 km) that swallow a 4 km battle map
+whole. So realistic radio does not kill the wire as a system: it *relocates*
+the constraint from "how far" to **who can speak at all** (old kit), **what
+stands in the way** (VHF is line-of-sight-ish; a defile is off the net), and
+— the recorded futures — damage and jamming. A 1943 hull soldiering on in
+1965 with its receive-only set is tone.md's "equipment age is
+characterization", given teeth.
+
+**The wargames converged on the same shapes.** Original Kriegsspiel
+delivered orders by umpire-simulated courier with delays — order latency is
+the oldest mechanic in the hobby. Combat Mission's C2 links (radio or
+visual/voice contact, information shared with delays) are this game's
+two-media net arrived at independently. And the strongest precedent for the
+OODA half is Flashpoint Campaigns: WEGO in which each side's **command pulse
+length** — how often its units can incorporate new orders — is set by
+training, doctrine and EW, so one force literally cycles its loop faster
+than the other. Command Ops does the officer half: orders flow down through
+HQs with delays priced by distance and staff quality.
+
+### 10a. Radios, for real (difficulty 3/5)
+
+Decisions taken with the designer: radio sets are **content**, the net
+becomes **directional**, terrain **masking** lands now, and delivery is
+**shown** (the no-acknowledgement fog waits for EW, below).
+
+- **A `radios` content type**, like weapons: `RadioDef { id, name, send:
+  Option<u32>, description }` — `send` in hexes, `None` for a receive-only
+  set. Every radio receives; a vehicle with no radio at all is on flags
+  alone. Vehicles reference a set id (`VehicleDef.radio` becomes that
+  reference; the 9a numeric field was the seam, this is the socket). Content
+  because everything the future wants — damage naming a component, refit as
+  a requisition decision, an academy's kit telling its story, interception
+  caring what model transmits — hangs off a *nameable thing*.
+- **The net becomes directional.** Orders flow DOWN to anyone who can
+  receive: a unit is in command contact if a transmit-capable link chain
+  (each hop inside the transmitter's `send` range) reaches her from her
+  leader, or a visual chain does. Reports flow UP only from those who can
+  send: a receive-only unit files nothing by radio — her sighting reaches
+  the picture only if a visual hop connects her to somebody with a
+  transmitter. Relaying radio traffic requires a transmitter, on the
+  formation's own net as 9a settled. The voiceless answer by flag or by
+  conforming, exactly as 1941 did. This gives recon its hardware dimension:
+  a scout who can hear but not speak is wasted eyes, however good her
+  observation — which is what makes "which vehicles get real radios" a
+  decision with visible consequences.
+- **Terrain masking replaces flat range as the in-battle limiter.** A radio
+  hop requires a terrain-clear path priced generously for antenna height —
+  hills block, forests do not, and the check must be *more* forgiving than
+  gun line-of-sight (a mast sees over what a gunsight cannot). Modern sets
+  then reach effectively map-wide in the open and go silent in a defile,
+  which is both the physics and the gameplay: hills finally matter to
+  command. The `SightGrid` machinery is the pattern; the masking check gets
+  its own height allowance rather than borrowing vision's.
+- **Delivery is shown.** The sim knows the order arrived and the UI says so.
+  "Sent, unconfirmed" — learning delivery only from her behavior — is
+  recorded as the EW-era future it belongs to, where not-knowing becomes a
+  mechanic with counterplay rather than a second uncertainty stacked into
+  this pass.
+- **Roster proposal** (content tuning, measured by the harness when it
+  lands, and explicitly a first pass): recon_car gets the best transmitter
+  on the field — its set IS its value, and the fodder problem in TODO gets
+  one more reason to keep her alive; medium_tank and artillery carry solid
+  transceivers (leaders and fire missions need voices); light_tank and
+  tank_destroyer carry receive-only vintage sets — the cheap line tank and
+  the austere casemate, hearing everything and answering with their tracks.
+  Campaign radius stays as it is (16 km is honest for vehicular VHF).
+
+The determinism baseline regenerates deliberately (the net changes shape
+where receive-only and masking bite); the diff is read by the same rule as
+every wire change — words may move freely, deeds only where contact
+explains them.
+
+### 10b. The commander's loop (difficulty 4/5)
+
+OODA at the formation-and-side level: Observe is the command picture, Orient
+and Decide are the brain, Act is the mission stream — and what training buys
+is **cadence**. Today the brain reviews missions exactly once per round,
+every round, whatever her skill. After this: the review period is priced by
+the commanding girl's `command` skill and her doctrine's `initiative` (the
+Flashpoint pulse, in this engine's currency), with **interrupts** for events
+that would wake any commander — a formation beaten past its threshold, a
+leader lost, a contact reported in a formation's path. Between reviews the
+standing plan stands, which is what plans are for.
+
+Two consequences worth building toward deliberately:
+
+- **The picture finally gets its consumer.** The brain's enemy awareness —
+  where to send a formation, when to pull one back — reads
+  contacts-as-reported, never the side's live fog: the commander fights the
+  battle she has been told about. Fog-honesty for brains stops being "reads
+  nothing" and becomes "reads the picture", which is the honest version.
+- **The player's orders enter the loop, not a queue-jump.** A human mission
+  lands as an input the commander incorporates at her next Orient — for the
+  player's own side that is immediate (she IS the commander), but AI allies
+  and subordinate leaders fold ordered changes in at their cadence, which is
+  what "rely on the AI, not fight it" costs and pays.
+
+Additivity: zero coefficients mean review-every-round with every interrupt —
+today's brain, bit for bit.
+
+### 10c. The crew's loop (difficulty 5/5 — the burned area)
+
+The same loop at vehicle level, and the half that must be built with the
+reaction-latency post-mortem open on the desk: the first attempt died by
+delaying *execution of plans already given*, and the autopsy's rule stands —
+**only responses to NEW information may cost time.** The `reactions` skill,
+minted in data long ago and never spent, is this chunk's currency. What it
+prices, concretely: how many ticks pass between an ambush springing and the
+crew doing something about it; between a new enemy appearing mid-round and
+the gun traversing to meet it; between orders delivered mid-battle and the
+vehicle acting on them. A crack crew notices at tick four and acts at tick
+six; a green one at tick nine, or not at all — girls.md's oldest sentence,
+finally with an engine under it. Deviation — the hothead firing when told to
+hold, full latitude and its traits — follows on this machinery (girls.md
+slice 5) rather than preceding it.
+
+Additivity: zero coefficients collapse every response to instant — today's
+game — and the pin is the same words-not-deeds comparison every wire chunk
+has used.
+
+Build order within the chunk: 10a first (the net the loops run on), then
+10b (safe ground, high value, gives the picture its consumer), then 10c
+alone and carefully. 10a and 10b are Opus-suitable with tight specs; 10c is
+a careful pass.
 
 ## Open questions
 
