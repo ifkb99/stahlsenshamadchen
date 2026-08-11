@@ -5798,3 +5798,77 @@ fn an_idle_crew_out_of_danger_stays_put() {
     assert!(unit.planned && unit.intent.path.is_empty());
     assert_eq!(unit.pos, parked);
 }
+
+// --- fighting as one (chunk 10d) -------------------------------------------
+
+#[test]
+fn a_formation_keeps_its_interval_and_its_sight_lines() {
+    // The spacing band, measured directly: with every other term zeroed,
+    // the mass term should prefer the supported interval over hugging
+    // (one shell, one vehicle), over straggling (out of support), and over
+    // standing near a friend who cannot see you (near but masked is not
+    // mutual support).
+    let reg = registry_wireless();
+    let row = {
+        let mut r: Vec<char> = std::iter::repeat_n('g', 46).collect();
+        r[4] = 'f';
+        r.into_iter().collect::<String>()
+    };
+    let state = {
+        let mut s = two_side_battle(
+            &reg,
+            &[&row, &row, &row],
+            vec![
+                unit_at([15, 1], 0, "medium_tank", "Scored"),
+                unit_at([6, 1], 0, "medium_tank", "Friend"),
+                unit_at([45, 1], 1, "medium_tank", "Far Foe"),
+            ],
+            9,
+        );
+        assert!(
+            s.fog.side(0).spotted.is_empty(),
+            "the stage needs no enemy in sight"
+        );
+        // The friend is already under orders to stand where she stands, so
+        // the band reads her planned destination.
+        s.unit_mut(UnitId(1)).unwrap().intent.path = vec![tactics_core::offset_to_hex(6, 1)];
+        s
+    };
+    let evaluator = Evaluator::new(tactics_core::data::DoctrineDef {
+        id: "band_probe".into(),
+        name: String::new(),
+        description: String::new(),
+        aggression: 0.0,
+        cover_value: 0.0,
+        elevation_value: 0.0,
+        concentration: 1.0,
+        scouting: 0.0,
+        objective_value: 0.0,
+        indirect_appetite: 1.0,
+        withdraw_threshold: 0.5,
+        initiative: 0.5,
+        delegation: 0.5,
+    });
+    let score = |col: i32| {
+        evaluator
+            .score_tile(&reg, &state, UnitId(0), tactics_core::offset_to_hex(col, 1))
+            .score
+    };
+
+    let hugging = score(7);
+    let interval = score(9);
+    let straggling = score(14);
+    let masked = score(3);
+    assert!(
+        interval > hugging,
+        "the interval beats hugging: {interval} vs {hugging}"
+    );
+    assert!(
+        interval > straggling,
+        "the interval beats straggling: {interval} vs {straggling}"
+    );
+    assert!(
+        interval > masked,
+        "a friend who cannot see you is not support: {interval} vs {masked}"
+    );
+}

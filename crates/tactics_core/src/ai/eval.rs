@@ -104,16 +104,50 @@ impl Evaluator {
             }
         }
 
-        // Mass: stay within supporting distance of the rest of the force.
-        // Friends already under orders count from where they are heading, not
-        // where they stand, so a formation converges instead of chasing.
-        let mass = state
-            .side_units(me.side)
-            .filter(|other| other.id != unit)
-            .map(|other| other.planned_destination().distance_to(tile))
-            .min()
-            .map(|dist| -(dist as f32) * 0.1 * doctrine.concentration)
-            .unwrap_or(0.0);
+        // Mass: a spacing band rather than a pull. The old term was a
+        // monotonic attraction to the nearest friend, which is why massed
+        // armour clumped into artillery bait — the closer, the better, all
+        // the way to adjacency. What drill actually teaches is an interval:
+        // close enough for mutual support, far enough that one shell cannot
+        // kill two vehicles. So inside two hexes there is a crowding penalty
+        // that no doctrine can buy off (that is not a preference, it is
+        // survival), inside the supported interval there is nothing to pay,
+        // and beyond it the out-of-support penalty scales with
+        // `concentration` exactly as the old pull did. Support also demands
+        // a *sight line* from the friend's planned position — near but
+        // masked is not mutual support, and requiring the check is sectors
+        // and interlocking fires in one line. Friends still count from
+        // where they are heading, not where they stand, so a formation
+        // converges instead of chasing.
+        let mass = {
+            /// Farthest a friend can stand and still be supporting.
+            const SUPPORT: f32 = 4.0;
+            let nearest = state
+                .side_units(me.side)
+                .filter(|other| other.id != unit)
+                .map(|other| {
+                    let at = other.planned_destination();
+                    (at.distance_to(tile), at)
+                })
+                .min_by_key(|(dist, at)| (*dist, at.x, at.y));
+            match nearest {
+                None => 0.0,
+                Some((dist, at)) => {
+                    let crowding = match dist {
+                        1 => -0.45,
+                        2 => -0.15,
+                        _ => 0.0,
+                    };
+                    let supported = dist as f32 <= SUPPORT && state.sight.clear(at, tile);
+                    let apart = if supported {
+                        0.0
+                    } else {
+                        -((dist as f32 - SUPPORT).max(1.0)) * 0.12 * doctrine.concentration
+                    };
+                    crowding + apart
+                }
+            }
+        };
 
         // Objectives: the one thing on the map worth something with no enemy
         // attached to it, and the reason this evaluator will leave good cover
