@@ -778,6 +778,48 @@ cover at the next planning phase, not at tick four — the tick-four version
 is 10c's business, on the reactions currency, where training decides how
 long the drill takes to kick in.
 
+### 10d. Fighting as one — coordination (tiers, first two executed 2026-08-10)
+
+Small-unit coordination is not units "being smart together" — it is five
+drilled techniques, and the engine is unusually well-shaped for the most
+important one. **Fire and movement**: one element moves while another stands
+with guns up, then they swap — and WEGO rounds are natural bounds, so what
+Combat Mission and Flashpoint fake inside continuous time falls out of
+plan-then-resolve almost natively. **Spacing**: the interval is the
+load-bearing half of formation geometry — close enough for mutual support,
+far enough that one shell cannot kill two vehicles (TODO's complaint that
+`concentration` clumps massed armour into artillery bait is this, missing).
+**Sectors and interlocking fires**, **base of fire + maneuver**, and
+**control measures** complete the list; the last two belong to the brain.
+
+- **Tier 1 — the spacing band (evaluator).** The monotonic mass pull becomes
+  a band: a crowding penalty inside two hexes (universal — not doctrine, but
+  drill: one shell, one vehicle), no penalty in the supported interval, and
+  the out-of-support penalty beyond it scaled by `concentration` as before.
+  Support requires a *sight line* from the nearest planned friend — near but
+  masked is not mutual support, which is sectors-and-interlock in one cheap
+  check. Changes every planner (deliberate baseline regeneration, measured
+  by `balance --sim` with the doctrine matchup quoted).
+- **Tier 2 — bounding overwatch (executor).** A formation under a movement
+  mission and in contact splits into two elements that alternate by round:
+  the bounding element advances on the mission gradient, the overwatch
+  element goes firm with guns up (its hold-fire is already overwatch — the
+  mechanism existed, named right, waiting). Out of contact, everyone
+  travels, exactly as today. Withdraw missions move everyone (speed over
+  ceremony; alternate bounds rearward is a real technique and a future
+  refinement). Planner-side only: no new orders, no sim change, legible on
+  screen as leapfrogging halves without one new UI element.
+- **Tier 3 — coordination between formations** belongs to the commander's
+  loop (10b): `Mission::Support {{ formation }}` as base-of-fire, recon
+  screening ahead of an axis, and staggered advances through the sequence
+  machinery — the review cadence is the phase-line check. Written there,
+  built there.
+- **The training tie-in**: coordination quality is what drill *is*. The
+  band's weights and the crispness of bounding eventually scale with crew
+  `discipline` and the leader's `command` — a green platoon bunches and
+  bounds raggedly — which lands with 10b/10c rather than needing machinery
+  of its own.
+
 ### 10b. The commander's loop (difficulty 4/5)
 
 OODA at the formation-and-side level: Observe is the command picture, Orient
