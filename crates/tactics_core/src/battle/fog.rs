@@ -38,6 +38,24 @@ pub struct SideFog {
     pub explored: HashSet<Hex>,
     /// Enemy units currently spotted.
     pub spotted: HashSet<UnitId>,
+    /// When each currently spotted enemy was FIRST seen, as an absolute tick
+    /// (`round * ticks_per_round + tick`), kept for as long as the spot holds
+    /// and dropped the moment it lapses.
+    ///
+    /// This is what makes reaction time a response to *new information*
+    /// rather than a tax on watching: the crew's clock for an enemy starts
+    /// when he appears, not when the round does. Before this existed the
+    /// opportunity-fire gate reset every round — a target watched for five
+    /// rounds was paid for five times, and an ambush sprung at tick seven
+    /// was answered instantly because seven beats any delay. Both are
+    /// exactly backwards, and the post-mortem in girls.md is emphatic about
+    /// which way the model goes: she notices at tick four and acts at tick
+    /// six.
+    ///
+    /// A `BTreeMap`, never a hash map: it is iterated nowhere today, but the
+    /// first person to iterate it must not be handed an iteration-order bug.
+    #[serde(default)]
+    pub spotted_since: std::collections::BTreeMap<UnitId, u64>,
     /// Enemy units that gave away their position by firing. Cleared for a
     /// unit when it moves.
     pub revealed: HashSet<UnitId>,
@@ -382,6 +400,13 @@ pub fn recompute(registry: &DataRegistry, state: &mut BattleState) -> Vec<Event>
                 spotted_now.push((unit.id, unit.pos));
             }
         }
+        // The absolute tick "now": what the reaction clocks are stamped
+        // with. During planning the round has not begun moving, so a spot
+        // made then is stamped at the round's first tick — a target visible
+        // while orders were being written is not a surprise when they
+        // execute.
+        let now = state.round as u64 * registry.scale.ticks_per_round as u64
+            + state.resolving_tick().unwrap_or(0) as u64;
         for (unit, at) in spotted_now {
             events.push(Event::UnitSpotted {
                 unit,
@@ -389,7 +414,12 @@ pub fn recompute(registry: &DataRegistry, state: &mut BattleState) -> Vec<Event>
                 at,
             });
         }
-        state.fog.side_mut(side).spotted = spotted;
+        let fog = state.fog.side_mut(side);
+        fog.spotted_since.retain(|id, _| spotted.contains(id));
+        for id in &spotted {
+            fog.spotted_since.entry(*id).or_insert(now);
+        }
+        fog.spotted = spotted;
     }
     events
 }

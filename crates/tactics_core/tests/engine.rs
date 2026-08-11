@@ -6678,3 +6678,122 @@ fn a_plan_may_end_in_support_but_not_continue_past_it() {
         "and nothing follows it"
     );
 }
+
+// --- the crew's clock (chunk 10c, first slice) -----------------------------
+
+/// One watcher on overwatch and one enemy who will walk out from behind a
+/// forest wall mid-round. `gap` is how far from the wall the watcher stands.
+fn ambush_stage(reg: &DataRegistry, seed: u64) -> BattleState {
+    // A tall forest curtain with the enemy tucked behind it: she cannot be
+    // seen until she moves out from behind the trees.
+    let rows = ["gggggggggggg", "ggggggffgggg", "gggggggggggg"];
+    two_side_battle(
+        reg,
+        &rows,
+        vec![
+            unit_at([1, 1], 0, "medium_tank", "Watcher"),
+            unit_at([8, 1], 1, "medium_tank", "Walker"),
+        ],
+        seed,
+    )
+}
+
+#[test]
+fn a_surprise_costs_reaction_time_whenever_it_arrives() {
+    // The old gate waived the tax after tick two of every round: an enemy
+    // appearing at tick seven was answered the same tick. The clock now
+    // starts when SHE APPEARS, so the watcher's first shot comes exactly
+    // reaction-delay ticks after first sight, wherever in the round the
+    // surprise falls.
+    let mut reg = registry();
+    reg.command = None;
+    let mut state = ambush_stage(&reg, 101);
+    let (watcher, walker) = (UnitId(0), UnitId(1));
+    assert!(
+        !state.fog.side(0).spotted.contains(&walker),
+        "the stage needs the walker hidden"
+    );
+    // The walker steps into the open; the watcher holds.
+    let out = state.unit(walker).unwrap().pos + tactics_core::Hex::new(0, -1);
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: walker,
+                to: out,
+            },
+        )
+        .unwrap();
+    commit_all(&reg, &mut state);
+
+    let (mut seen_at, mut fired_at) = (None, None);
+    while state.resolving_tick().is_some() && fired_at.is_none() {
+        let tick = state.resolving_tick().unwrap();
+        for event in state.step_tick(&reg) {
+            match event {
+                BattleEvent::UnitSpotted {
+                    unit, by_side: 0, ..
+                } if unit == walker => {
+                    seen_at.get_or_insert(tick);
+                }
+                BattleEvent::ShotFired {
+                    attacker,
+                    opportunity: true,
+                    ..
+                } if attacker == watcher => {
+                    fired_at.get_or_insert(tick);
+                }
+                _ => {}
+            }
+        }
+    }
+    let seen = seen_at.expect("she steps into view during the round");
+    let fired = fired_at.expect("and is engaged before it ends");
+    let delay = 2; // reactions untrained on an average crew: base_ticks
+    assert_eq!(
+        fired,
+        seen + delay,
+        "noticed at tick {seen}, engaged {delay} ticks later — not instantly"
+    );
+}
+
+#[test]
+fn a_target_watched_across_rounds_is_not_news_twice() {
+    // The other direction: the old gate re-charged the delay at the top of
+    // every round. A crew that has held the same enemy in sight since last
+    // round owes nothing — her gun speaks on the first tick it is ready.
+    let mut reg = registry();
+    reg.command = None;
+    let mut state = duel(&reg, 102);
+    let watcher = UnitId(0);
+    // Round one: they see each other, shots are exchanged, the clock is paid.
+    commit_all(&reg, &mut state);
+    state.resolve_round(&reg);
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "still watching him"
+    );
+    // Round two, both hold: the first opportunity shot must come at tick 0,
+    // the moment the gun is ready — not at tick two again.
+    commit_all(&reg, &mut state);
+    let mut first_shot = None;
+    while state.resolving_tick().is_some() && first_shot.is_none() && !state.is_over() {
+        let tick = state.resolving_tick().unwrap();
+        for event in state.step_tick(&reg) {
+            if let BattleEvent::ShotFired {
+                attacker,
+                opportunity: true,
+                ..
+            } = event
+                && attacker == watcher
+            {
+                first_shot.get_or_insert(tick);
+            }
+        }
+    }
+    assert_eq!(
+        first_shot,
+        Some(0),
+        "an enemy watched across the round boundary is old news"
+    );
+}

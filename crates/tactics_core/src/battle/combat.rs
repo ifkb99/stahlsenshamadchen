@@ -601,16 +601,30 @@ pub fn best_opportunity_shot(
 ) -> Option<(usize, UnitId)> {
     let att = state.unit(unit)?;
     // Opportunity fire is the crew reacting to something nobody told them
-    // about, so it costs them their reaction time. Ordered fire is untouched:
-    // they knew what they were shooting at before the round began, and taxing
-    // that would model rate of fire twice over.
-    let tick = state.resolving_tick().unwrap_or(0);
-    if tick < super::stats::reaction_delay(registry, &state.roster, att, state.terrain_at(att.pos))
-    {
-        return None;
-    }
+    // about, so it costs them their reaction time — per TARGET, from the
+    // moment he was first seen, not per round from tick zero. The old gate
+    // reset every round, which taxed a crew for watching (a target held in
+    // sight across five rounds was paid for five times) and waived the tax
+    // exactly when it was owed (an ambush at tick seven answered instantly,
+    // because seven beat any delay). The clock is the side's
+    // `spotted_since`, and the model is girls.md's oldest sentence: she
+    // notices at tick four and does something about it at tick six. Ordered
+    // fire is untouched: they knew what they were shooting at before the
+    // round began, and taxing that would model rate of fire twice over.
+    let delay =
+        super::stats::reaction_delay(registry, &state.roster, att, state.terrain_at(att.pos))
+            as u64;
+    let now = state.round as u64 * registry.scale.ticks_per_round as u64
+        + state.resolving_tick().unwrap_or(0) as u64;
     let vehicle = registry.vehicle(&att.vehicle)?;
-    let spotted = &state.fog.side(att.side).spotted;
+    let fog = state.fog.side(att.side);
+    let spotted = &fog.spotted;
+    // Seen long enough that this crew has caught up with the fact of him.
+    let reacted_to = |enemy: UnitId| {
+        fog.spotted_since
+            .get(&enemy)
+            .is_none_or(|since| now >= since + delay)
+    };
 
     let mut best: Option<(usize, UnitId, f32)> = None;
     for (index, weapon_id) in vehicle.weapons.iter().enumerate() {
@@ -622,7 +636,9 @@ pub fn best_opportunity_shot(
         }
         // Enemies in id order, so ties resolve the same way in every replay.
         for enemy in state.alive_units().filter(|e| e.side != att.side) {
-            if !spotted.contains(&enemy.id) || !shot_exists(state, weapon, att.pos, enemy.pos, true)
+            if !spotted.contains(&enemy.id)
+                || !reacted_to(enemy.id)
+                || !shot_exists(state, weapon, att.pos, enemy.pos, true)
             {
                 continue;
             }
