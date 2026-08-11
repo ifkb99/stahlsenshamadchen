@@ -742,3 +742,429 @@ fn an_order_waiting_at_the_radio_survives_a_save() {
         .expect("battle survives");
     assert!(older.command.waiting().is_empty());
 }
+
+// --- everything the wire carries, in one save ------------------------------
+
+fn unit_at(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> tactics_core::map::UnitPlacement {
+    tactics_core::map::UnitPlacement {
+        at,
+        side,
+        vehicle: vehicle.into(),
+        crew: Vec::new(),
+        name: Some(name.into()),
+        facing: None,
+        formation: None,
+        leads: false,
+    }
+}
+
+fn in_formation(
+    mut placement: tactics_core::map::UnitPlacement,
+    formation: &str,
+    leads: bool,
+) -> tactics_core::map::UnitPlacement {
+    placement.formation = Some(formation.into());
+    placement.leads = leads;
+    placement
+}
+
+fn scripted_battle(
+    reg: &DataRegistry,
+    file: serde_json::Value,
+    placements: Vec<tactics_core::map::UnitPlacement>,
+) -> BattleState {
+    let file: tactics_core::map::MapFile = serde_json::from_value(file).unwrap();
+    let map = tactics_core::map::HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        tactics_core::battle::SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        tactics_core::battle::SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        44,
+    )
+}
+
+fn commit_all(reg: &DataRegistry, state: &mut BattleState) {
+    for side in state.living_sides() {
+        if !state.has_committed(side) {
+            state.apply(reg, &Order::Commit { side }).expect("commit");
+        }
+    }
+}
+
+/// An eight-hex net with nobody relaying and no flags, and three ticks of
+/// transit on every order: narrow enough that a girl can be driven off the
+/// wire and slow enough that an order can be caught in the air.
+fn strung_out_net() -> DataRegistry {
+    let mut reg = registry();
+    for vehicle in reg.vehicles.values_mut() {
+        vehicle.radio = None;
+    }
+    reg.command = Some(tactics_core::data::CommandRules {
+        radius: 8,
+        radius_per_signals: 0,
+        relay: false,
+        visual_range: 0,
+        overworld_radius: 999,
+        review: tactics_core::data::ReactionRules {
+            skill: "command".into(),
+            base_ticks: 0,
+            levels_per_tick: 0,
+            max_ticks: 0,
+        },
+        latency: tactics_core::data::ReactionRules {
+            skill: "command".into(),
+            base_ticks: 3,
+            levels_per_tick: 0,
+            max_ticks: 5,
+        },
+    });
+    reg
+}
+
+/// One road, two formations, and two enemies parked beyond every gun on the
+/// field but inside a scout car's eyes — so a report can be filed, and then
+/// lost, without a shot being fired at anybody.
+fn tangled_wire(reg: &DataRegistry) -> BattleState {
+    scripted_battle(
+        reg,
+        serde_json::json!({
+            "id": "tangled_wire",
+            "palette": { "g": "grass" },
+            "rows": ["g".repeat(41)],
+            "objectives": [
+                { "id": "crossroads", "name": "The Crossroads", "at": [[25, 0]], "value": 1 },
+            ],
+            "formations": [
+                { "id": "alpha", "name": "Alpha", "side": 0 },
+                { "id": "bravo", "name": "Bravo", "side": 0 },
+            ],
+        }),
+        vec![
+            in_formation(unit_at([19, 0], 0, "recon_car", "Leader"), "alpha", true),
+            in_formation(unit_at([15, 0], 0, "recon_car", "Scout"), "alpha", false),
+            in_formation(unit_at([12, 0], 0, "recon_car", "Stray"), "alpha", false),
+            in_formation(unit_at([17, 0], 0, "medium_tank", "Boss"), "bravo", true),
+            in_formation(unit_at([16, 0], 0, "medium_tank", "Mate"), "bravo", false),
+            unit_at([39, 0], 1, "recon_car", "Far Prowler"),
+            unit_at([37, 0], 1, "recon_car", "Near Prowler"),
+        ],
+    )
+}
+
+#[test]
+fn a_battle_carrying_everything_the_wire_knows_forks_identically() {
+    // The command layer landed in eight chunks, and each one added state that
+    // was round-tripped on its own. Nothing had ever held all of it at once,
+    // which is the arrangement a real save is: a mission still in the air, a
+    // leg queued behind the standing one, an order held at the radio, a crew
+    // under personal tasking, a member cut off and soldiering on a snapshot,
+    // a ghost on the commander's picture, and the spotting clocks that decide
+    // when a gun answers. This builds exactly that and then holds the line
+    // the whole save module holds: not that the fields come back, but that
+    // the FUTURE does.
+    let reg = strung_out_net();
+    let mut state = tangled_wire(&reg);
+    let named = |id: &str| {
+        tactics_core::battle::FormationId(
+            state
+                .formations()
+                .iter()
+                .position(|f| f.id == id)
+                .expect("declared above") as u32,
+        )
+    };
+    let (alpha, bravo) = (named("alpha"), named("bravo"));
+    let axis = tactics_core::offset_to_hex(30, 0);
+    let anchor = tactics_core::offset_to_hex(25, 0);
+    let stray = tactics_core::battle::UnitId(2);
+    let mate = tactics_core::battle::UnitId(4);
+
+    // Day one: both formations get their standing orders, which arrive three
+    // ticks into the round.
+    for formation in [alpha, bravo] {
+        state
+            .apply(
+                &reg,
+                &Order::SetMission {
+                    formation,
+                    mission: tactics_core::battle::Mission::Advance { to: axis },
+                },
+            )
+            .expect("the axis is on the map");
+    }
+    commit_all(&reg, &mut state);
+    state.resolve_round(&reg);
+
+    // Day two: a leg queued behind alpha's advance; the leader eases back a
+    // hex so the far prowler drops off every eye on the field and her report
+    // of him goes stale; and the stray drives out of the net, snapshotting
+    // the orders she is carrying as the wire dies.
+    state
+        .apply(
+            &reg,
+            &Order::QueueMission {
+                formation: alpha,
+                mission: tactics_core::battle::Mission::Hold { at: Some(anchor) },
+            },
+        )
+        .expect("nothing terminal to queue behind");
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: tactics_core::battle::UnitId(0),
+                to: tactics_core::offset_to_hex(18, 0),
+            },
+        )
+        .expect("one hex west");
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: stray,
+                to: tactics_core::offset_to_hex(9, 0),
+            },
+        )
+        .expect("three hexes west, and off the wire");
+    commit_all(&reg, &mut state);
+    state.resolve_round(&reg);
+
+    // Day three, and the fork: an order still in the air, one held at the
+    // radio for a girl who cannot hear it, and one that reached its girl and
+    // took her off her formation's tasking.
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: bravo,
+                mission: tactics_core::battle::Mission::Hold { at: Some(anchor) },
+            },
+        )
+        .expect("a countermand");
+    state
+        .apply(
+            &reg,
+            &Order::Radio {
+                unit: stray,
+                to: Some(anchor),
+                fire: None,
+            },
+        )
+        .expect("accepted, and waiting for a wire");
+    state
+        .apply(
+            &reg,
+            &Order::Radio {
+                unit: mate,
+                to: Some(tactics_core::offset_to_hex(14, 0)),
+                fire: Some(tactics_core::battle::FireIntent::Hold),
+            },
+        )
+        .expect("she can hear it");
+
+    // Stated rather than assumed: if any of these were absent the comparison
+    // below would pass without testing what it claims to.
+    assert!(
+        state.formations()[bravo.index()].incoming.is_some(),
+        "an order in the air"
+    );
+    assert!(
+        !state.formations()[alpha.index()].plan.is_empty(),
+        "a leg queued behind the standing one"
+    );
+    assert!(
+        state.command.waiting_for(stray).is_some(),
+        "an order held at the radio"
+    );
+    assert!(state.units[mate.index()].detached, "a crew under tasking");
+    assert!(
+        state.formations()[alpha.index()]
+            .out_of_contact
+            .iter()
+            .any(|cut| cut.orders.is_some()),
+        "a cut-off crew soldiering on a snapshot"
+    );
+    assert!(
+        state.picture(0).iter().any(|c| !c.fresh),
+        "a ghost on the picture"
+    );
+    assert!(
+        state.picture(0).iter().any(|c| c.fresh),
+        "and a contact still being reported"
+    );
+    assert!(
+        !state.fog.side(0).spotted_since.is_empty(),
+        "and a spotting clock running"
+    );
+
+    let text = SaveGame::new(&reg, None, Some(state.clone()))
+        .to_json()
+        .expect("serialises");
+    let restored = SaveGame::from_json(&reg, &text)
+        .expect("deserialises")
+        .0
+        .battle
+        .expect("battle round-trips");
+    assert_eq!(
+        restored.command, state.command,
+        "everything the chain of command knows comes back in one piece"
+    );
+
+    let play = |state: &mut BattleState| -> Vec<String> {
+        let mut log = Vec::new();
+        let mut ai = AiDriver::new();
+        ai.insert(0, planner(&reg, 900));
+        ai.insert(1, planner(&reg, 901));
+        for _ in 0..5 {
+            if state.is_over() {
+                break;
+            }
+            ai.plan_round_with(&reg, state, |d| {
+                log.push(format!("{} {:?} {:?}", d.side, d.order, d.rejected));
+                log.extend(d.events.iter().map(|e| format!("{e:?}")));
+            });
+            log.extend(
+                state
+                    .resolve_round(&reg)
+                    .iter()
+                    .filter(|e| !matches!(e, Event::TickStarted { .. }))
+                    .map(|e| format!("{e:?}")),
+            );
+        }
+        log
+    };
+    let mut unsaved = state;
+    let mut reloaded = restored;
+    let expected = play(&mut unsaved);
+    assert!(
+        expected.len() > 40,
+        "the fork has to actually play out something: {} steps",
+        expected.len()
+    );
+    assert_eq!(
+        play(&mut reloaded),
+        expected,
+        "five rounds after the reload must be the five rounds that would have happened"
+    );
+}
+
+#[test]
+fn a_reloaded_crew_reacts_on_the_clock_she_was_already_running() {
+    // `spotted_since` is the newest thing on `SideFog` and the only piece of
+    // battle state whose whole purpose is to remember a moment. It is serde'd
+    // with everything else, but `rehydrate` empties two neighbouring caches
+    // on the way past, and a clock that came back empty would not fail
+    // loudly: `best_opportunity_shot` reads a missing entry as "she has known
+    // about him all along" and fires at once. So the assertion is about the
+    // TICK the gun speaks on, not about the field — an ambush saved halfway
+    // through must be answered on the same tick either way.
+    let mut reg = registry();
+    reg.command = None;
+    let mut state = scripted_battle(
+        &reg,
+        serde_json::json!({
+            "id": "ambush",
+            "palette": { "g": "grass", "f": "forest" },
+            "rows": ["gggggggggggg", "ggggggffgggg", "gggggggggggg"],
+        }),
+        vec![
+            unit_at([1, 1], 0, "medium_tank", "Watcher"),
+            unit_at([8, 1], 1, "medium_tank", "Walker"),
+        ],
+    );
+    let (watcher, walker) = (
+        tactics_core::battle::UnitId(0),
+        tactics_core::battle::UnitId(1),
+    );
+    assert!(
+        !state.fog.side(0).spotted.contains(&walker),
+        "the curtain has to hide her first"
+    );
+    let into_the_open = state.unit(walker).unwrap().pos + tactics_core::Hex::new(0, -1);
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: walker,
+                to: into_the_open,
+            },
+        )
+        .expect("one step out from the trees");
+    commit_all(&reg, &mut state);
+
+    // Stop on the tick she is first seen — mid-round, with the clock running
+    // and the watcher's reaction time not yet spent.
+    let mut seen = None;
+    while state.resolving_tick().is_some() && seen.is_none() {
+        let tick = state.resolving_tick().expect("resolving");
+        for event in state.step_tick(&reg) {
+            if let Event::UnitSpotted {
+                unit, by_side: 0, ..
+            } = event
+                && unit == walker
+            {
+                seen = Some(tick);
+            }
+        }
+    }
+    assert!(seen.is_some(), "she steps into view during the round");
+    assert!(
+        !state.fog.side(0).spotted_since.is_empty(),
+        "and the watcher's clock for her has started"
+    );
+
+    let text = SaveGame::new(&reg, None, Some(state.clone()))
+        .to_json()
+        .expect("serialises");
+    let mut reloaded = SaveGame::from_json(&reg, &text)
+        .expect("deserialises")
+        .0
+        .battle
+        .expect("battle round-trips");
+    assert_eq!(
+        reloaded.fog.side(0).spotted_since,
+        state.fog.side(0).spotted_since,
+        "rehydrate empties the vision caches beside this one and must not empty it"
+    );
+
+    let first_shot = |state: &mut BattleState| -> Option<u32> {
+        let mut fired = None;
+        while state.resolving_tick().is_some() && fired.is_none() && !state.is_over() {
+            let tick = state.resolving_tick().expect("resolving");
+            for event in state.step_tick(&reg) {
+                if let Event::ShotFired {
+                    attacker,
+                    opportunity: true,
+                    ..
+                } = event
+                    && attacker == watcher
+                {
+                    fired.get_or_insert(tick);
+                }
+            }
+        }
+        fired
+    };
+    let mut unsaved = state;
+    let expected = first_shot(&mut unsaved);
+    assert!(expected.is_some(), "she is engaged before the round ends");
+    assert_eq!(
+        first_shot(&mut reloaded),
+        expected,
+        "a reloaded crew answers the ambush on the tick she would have answered it"
+    );
+}

@@ -221,6 +221,18 @@ rule they defend (`unspotted_enemies_still_ambush`).
 
 ### Correctness
 
+- **A waiting order delivered from out of reach is announced, dropped, and
+  still detaches her.** `deliver_waiting_orders` (`orders.rs`) re-paths with
+  `set_move` and discards the error, and `path_to` refuses anything beyond one
+  round's driving — which is exactly the position a queued order is in by the
+  time the wire comes back. The result is `OrdersDelivered` in the log, an
+  empty intent, and `detached` set, so on the player's side `executor_only`
+  hands her a bare hold-fire and she stops for the rest of the battle. Pinned
+  by the ignored `a_waiting_order_arrives_as_an_order_however_far_she_has_come`.
+  Three readings are defensible — drive her as far toward it as the round
+  allows and keep the order until she arrives, keep it waiting and say so, or
+  drop it and say *that* — so this wants a decision, not a patch. What is not
+  defensible is the present combination of all three.
 - **Army-contained unit placements are never validated.**
   `map.rs:312` passes `a.at` (the army's own hex) instead of `u.at` when
   checking each unit inside an `ArmyPlacement`, so a unit's own coordinates are

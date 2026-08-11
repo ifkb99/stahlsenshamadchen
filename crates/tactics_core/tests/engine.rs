@@ -6797,3 +6797,943 @@ fn a_target_watched_across_rounds_is_not_news_twice() {
         "an enemy watched across the round boundary is old news"
     );
 }
+
+// --- the chain of command under adversarial load ---------------------------
+//
+// Everything above tests one rule at a time on a stage built to show it. This
+// section does the opposite: it puts the whole machine under load — two
+// commanders against each other, a search planner reading state that did not
+// exist when it was written, formations too small or too deaf to work — and
+// asks only that nothing illegal, silent or wedged comes out. The properties
+// are deliberately cheap to check and expensive to violate.
+
+/// Both sides thinking through their own chain of command, which is the one
+/// pairing nothing exercised: `river_crossing` names `command` for side 1
+/// only, so every test and every measurement so far has had a flat-pool
+/// opponent absorbing whatever the commander did.
+fn commanded(
+    reg: &DataRegistry,
+    seed: u64,
+    doctrine: &str,
+) -> Box<dyn AiPlanner<BattleState, Order>> {
+    make_battle_planner(
+        &AiConfig {
+            planner: "command".into(),
+            difficulty: 4,
+            doctrine: Some(doctrine.into()),
+        },
+        seed,
+        reg,
+    )
+}
+
+#[test]
+fn two_commanders_fight_each_other_without_an_illegal_order_or_a_wedged_round() {
+    // Twelve battles: six seeds, three doctrine pairings, each fought both
+    // over the shipped wire and with no `command` block at all. What is being
+    // defended is not who wins — that is the balance harness's question — but
+    // that a commander on both ends of the field cannot produce an order the
+    // battle refuses, and cannot leave a planning phase open. A refusal
+    // force-commits the side, so a planner quietly emitting illegal orders
+    // looks exactly like an AI that has stopped thinking, which is the sort
+    // of thing that hides for months.
+    let doctrines = ["massed_armor", "elastic_defense", "combined_arms"];
+    let wired = registry();
+    let wireless = registry_wireless();
+
+    for (i, seed) in [11u64, 23, 37, 41, 59, 67].iter().enumerate() {
+        for (name, reg) in [("the wire", &wired), ("no wire", &wireless)] {
+            let (west, east) = (doctrines[i % 3], doctrines[(i + 1) % 3]);
+            let mut state = BattleState::from_map(reg, "river_crossing", *seed).unwrap();
+            let mut ai = AiDriver::new();
+            ai.insert(0, commanded(reg, seed ^ 0x5EED, west));
+            ai.insert(1, commanded(reg, seed ^ 0xC0DE, east));
+
+            let mut rounds = 0;
+            let mut refused = Vec::new();
+            while !state.is_over() && rounds < 60 {
+                ai.plan_round_with(reg, &mut state, |d| {
+                    if let Some(error) = &d.rejected {
+                        refused.push(format!("side {} sent {:?}: {error}", d.side, d.order));
+                    }
+                });
+                assert!(
+                    !state.is_planning(),
+                    "{name}, seed {seed}: both commanders spoke and nobody committed"
+                );
+                state.resolve_round(reg);
+                rounds += 1;
+            }
+            assert!(
+                refused.is_empty(),
+                "{name}, seed {seed}, {west} against {east}: {refused:?}"
+            );
+            assert!(
+                state.is_over(),
+                "{name}, seed {seed}: still fighting after {rounds} rounds"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_long_battle_never_says_anything_about_a_crew_who_has_left() {
+    // The soak. Six seeds of commander against commander, and every event in
+    // both the planning and the resolution stream checked against the few
+    // things that must never be true however the fight goes: nothing happens
+    // to a girl who is dead or driven off the map, no order is refused, no
+    // formation receives a mission nobody sent it, and no delivery is
+    // announced for a crew with nothing waiting. These are cheap to check and
+    // they are exactly the shapes a bug in the wire produces — an event about
+    // a wreck is what a stale id looks like from the outside.
+    let reg = registry();
+    for seed in [3u64, 13, 29, 47, 71, 97] {
+        let mut state = BattleState::from_map(&reg, "river_crossing", seed).unwrap();
+        let mut ai = AiDriver::new();
+        ai.insert(0, commanded(&reg, seed, "massed_armor"));
+        ai.insert(1, commanded(&reg, seed + 1, "elastic_defense"));
+
+        let mut gone: Vec<UnitId> = Vec::new();
+        let mut waiting: Vec<UnitId> = Vec::new();
+        let mut sent: Vec<String> = Vec::new();
+        let mut wrong: Vec<String> = Vec::new();
+        let mut rounds = 0;
+
+        while !state.is_over() && rounds < 60 {
+            let round = state.round;
+            let mut stream = Vec::new();
+            ai.plan_round_with(&reg, &mut state, |d| {
+                if let Some(error) = &d.rejected {
+                    wrong.push(format!("r{round}: {:?} refused: {error}", d.order));
+                }
+                stream.extend(d.events.iter().cloned());
+            });
+            stream.extend(state.resolve_round(&reg));
+
+            for event in &stream {
+                let mut departed = |unit: &UnitId, what: &str| {
+                    if gone.contains(unit) {
+                        wrong.push(format!("r{round}: {what} about departed {unit:?}"));
+                    }
+                };
+                match event {
+                    BattleEvent::UnitMoved { unit, .. } => departed(unit, "UnitMoved"),
+                    BattleEvent::ShotFired { attacker, .. } => departed(attacker, "ShotFired"),
+                    BattleEvent::UnitSpotted { unit, .. } => departed(unit, "UnitSpotted"),
+                    BattleEvent::OutOfContact { unit } => departed(unit, "OutOfContact"),
+                    BattleEvent::ContactRestored { unit } => departed(unit, "ContactRestored"),
+                    BattleEvent::ContactReported { unit, by, .. } => {
+                        departed(unit, "ContactReported");
+                        departed(by, "a report filed by");
+                    }
+                    BattleEvent::CommandPassed { to, .. } => departed(to, "CommandPassed to"),
+                    BattleEvent::OrderRefused { unit, .. } => departed(unit, "OrderRefused"),
+                    BattleEvent::MoraleChanged { unit, .. } => departed(unit, "MoraleChanged"),
+                    BattleEvent::OrdersWaiting { unit } => {
+                        departed(unit, "OrdersWaiting");
+                        waiting.push(*unit);
+                    }
+                    BattleEvent::OrdersDelivered { unit } => {
+                        departed(unit, "OrdersDelivered");
+                        match waiting.iter().position(|u| u == unit) {
+                            Some(i) => {
+                                waiting.remove(i);
+                            }
+                            None => wrong.push(format!(
+                                "r{round}: {unit:?} was handed orders nobody was holding"
+                            )),
+                        }
+                    }
+                    BattleEvent::MissionAssigned { formation, .. } => sent.push(formation.clone()),
+                    BattleEvent::MissionReceived { formation, .. } => {
+                        match sent.iter().position(|f| f == formation) {
+                            Some(i) => {
+                                sent.remove(i);
+                            }
+                            None => wrong.push(format!(
+                                "r{round}: {formation} received a mission nobody sent"
+                            )),
+                        }
+                    }
+                    _ => {}
+                }
+                match event {
+                    BattleEvent::UnitDestroyed { unit, .. }
+                    | BattleEvent::UnitExited { unit, .. } => gone.push(*unit),
+                    _ => {}
+                }
+            }
+            rounds += 1;
+        }
+        assert!(wrong.is_empty(), "seed {seed}: {wrong:#?}");
+        assert!(state.is_over(), "seed {seed}: unfinished after {rounds}");
+    }
+}
+
+#[test]
+fn a_searching_planner_copes_with_missions_a_detachment_and_a_running_clock() {
+    // `mcts_planner_produces_legal_orders` was written before formations
+    // existed and fights a bare battle. MCTS clones the whole state and rolls
+    // it forward, so everything the chain of command added — standing
+    // missions, a crew under personal tasking, the spotting clocks, a
+    // commander thinking on the other side of the field — is now inside the
+    // search whether the search knows about it or not. The property is the
+    // same modest one: legal orders, and a determinization that does not
+    // panic.
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 7).expect("battle");
+    let bridge = state.map.objectives()[0].anchor();
+    for index in 0..state.formations().len() {
+        state
+            .apply(
+                &reg,
+                &Order::SetMission {
+                    formation: FormationId(index as u32),
+                    mission: Mission::Advance { to: bridge },
+                },
+            )
+            .expect("the bridge is on the map");
+    }
+    // The commander takes personal charge of her scout, which is the one
+    // piece of unit state a planner has never had to reason about.
+    let scout = UnitId(1);
+    let aside = state.unit(scout).expect("she is on the field").pos;
+    state
+        .apply(
+            &reg,
+            &Order::Radio {
+                unit: scout,
+                to: Some(aside),
+                fire: None,
+            },
+        )
+        .expect("a hex she is already standing on");
+    assert!(state.units[scout.index()].detached);
+
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
+        make_battle_planner(
+            &AiConfig {
+                planner: "mcts".into(),
+                difficulty: 2,
+                doctrine: Some("massed_armor".into()),
+            },
+            7,
+            &reg,
+        ),
+    );
+    ai.insert(1, commanded(&reg, 8, "elastic_defense"));
+
+    let mut refused = Vec::new();
+    for _ in 0..6 {
+        if state.is_over() {
+            break;
+        }
+        ai.plan_round_with(&reg, &mut state, |d| {
+            if let Some(error) = &d.rejected {
+                refused.push(format!("side {} sent {:?}: {error}", d.side, d.order));
+            }
+        });
+        state.resolve_round(&reg);
+    }
+    assert!(refused.is_empty(), "{refused:?}");
+}
+
+#[test]
+fn a_search_cannot_behead_an_enemy_it_has_never_seen() {
+    // Determinization deletes the enemies this side has not spotted, and it
+    // used to delete them by clearing `alive` alone — which is the engine's
+    // word for a wreck. `check_victory` reads decapitation before anything
+    // else and classifies a loss as `!alive && !exited`, so on a map that
+    // staked the battle on a commanding officer, an MCTS side opened its
+    // search on a world where that officer was already dead and the battle
+    // was already won. Every branch scored the same and the tree was worth
+    // nothing. She is now marked `exited` as well: off the board, not
+    // destroyed, which is the only honest thing a search can say about a
+    // vehicle it has never laid eyes on.
+    let reg = registry_wireless();
+    let mut state = scripted_battle(
+        &reg,
+        serde_json::json!({
+            "id": "stakes",
+            "palette": { "g": "grass", "f": "forest" },
+            "rows": [
+                "gggggggggggggggggggg",
+                "ggggggggffffgggggggg",
+                "gggggggggggggggggggg",
+            ],
+            "formations": [ { "id": "hq", "name": "Headquarters", "side": 1 } ],
+            "loss_conditions": [ { "side": 1, "formation": "hq", "when": "leader_lost" } ],
+        }),
+        vec![
+            unit_at([1, 1], 0, "medium_tank", "Hunter"),
+            in_formation(unit_at([18, 1], 1, "medium_tank", "Boss"), "hq", true),
+            unit_at([4, 1], 1, "medium_tank", "Picket"),
+        ],
+    );
+    let (boss, picket) = (UnitId(1), UnitId(2));
+    assert!(
+        !state.fog.side(0).spotted.contains(&boss),
+        "the forest wall has to hide the commanding officer"
+    );
+    assert!(
+        state.fog.side(0).spotted.contains(&picket),
+        "and the picket has to be in plain view, or there is nothing to search"
+    );
+
+    let known = tactics_core::ai::determinize(&state, 0, 1);
+    assert!(
+        !known.lost_units().any(|u| u.id == boss),
+        "an officer nobody has seen is not a casualty the search may count"
+    );
+    // And the world the search plays in does not end before it starts.
+    for side in known.living_sides() {
+        state
+            .apply(&reg, &Order::Commit { side })
+            .expect("commit the real battle for comparison");
+    }
+    let mut sim = known;
+    commit_all(&reg, &mut sim);
+    sim.resolve_round(&reg);
+    assert!(
+        !matches!(
+            sim.over,
+            Some(tactics_core::battle::BattleResult {
+                reason: EndReason::Decapitated,
+                ..
+            })
+        ),
+        "the search must not win by beheading somebody it invented: {:?}",
+        sim.over
+    );
+}
+
+#[test]
+fn a_zeroed_command_block_is_the_game_without_one_with_a_commander_at_both_ends() {
+    // `a_command_block_with_zero_coefficients_is_the_game_without_one` pins
+    // the same property with a commander on one side and a flat pool on the
+    // other, and it was written before the pulse, the drill, the spacing band
+    // and the base of fire existed. Every one of those reads the command
+    // rules or the picture, and every one of them now runs on BOTH sides of
+    // this battle — so this is the same words-not-deeds comparison over the
+    // machinery the original pin cannot reach, on two further seeds.
+    let wire = |line: &String| {
+        line.starts_with("OutOfContact")
+            || line.starts_with("ContactRestored")
+            || line.starts_with("ContactReported")
+    };
+    let run = |rules: Option<tactics_core::data::CommandRules>, seed: u64| -> Vec<String> {
+        let mut reg = registry();
+        reg.command = rules;
+        // Hardware is content, not a coefficient: an eight-hex set would cap
+        // the everywhere-net the zeroed block declares. Stripped in both runs.
+        strip_radios(&mut reg);
+        let mut state = BattleState::from_map(&reg, "river_crossing", seed).unwrap();
+        let mut ai = AiDriver::new();
+        ai.insert(0, commanded(&reg, seed, "massed_armor"));
+        ai.insert(1, commanded(&reg, seed + 1, "elastic_defense"));
+        let mut log = Vec::new();
+        for _ in 0..6 {
+            if state.is_over() {
+                break;
+            }
+            ai.plan_round_with(&reg, &mut state, |d| {
+                log.extend(d.events.iter().map(|e| format!("{e:?}")));
+            });
+            log.extend(state.resolve_round(&reg).iter().map(|e| format!("{e:?}")));
+        }
+        log
+    };
+    let zeroed = tactics_core::data::CommandRules {
+        radius: 999,
+        radius_per_signals: 0,
+        relay: true,
+        visual_range: 0,
+        overworld_radius: 999,
+        review: tactics_core::data::ReactionRules {
+            skill: "command".into(),
+            base_ticks: 0,
+            levels_per_tick: 0,
+            max_ticks: 0,
+        },
+        latency: tactics_core::data::ReactionRules {
+            skill: "command".into(),
+            base_ticks: 0,
+            levels_per_tick: 0,
+            max_ticks: 0,
+        },
+    };
+    for seed in [31u64, 53] {
+        let without = run(None, seed);
+        assert!(
+            without.iter().any(|line| line.contains("MissionAssigned")),
+            "seed {seed}: both commanders should be issuing missions"
+        );
+        assert!(
+            without.iter().any(|line| line.contains("ShotHit")),
+            "seed {seed}: and fighting"
+        );
+        let (spoken, deeds): (Vec<String>, Vec<String>) =
+            run(Some(zeroed.clone()), seed).into_iter().partition(wire);
+        assert_eq!(
+            deeds, without,
+            "seed {seed}: a zeroed block must change words, never deeds"
+        );
+        assert!(spoken.iter().all(wire));
+    }
+}
+
+/// A quiet field with one commanded formation, two pieces of ground worth
+/// holding, and enough girls in the formation to lose four commanders. The
+/// only enemy is far beyond anyone's eyes, so nothing can interrupt the
+/// commander's clock except what a test does to her on purpose.
+fn succession_stage(reg: &DataRegistry) -> BattleState {
+    let row = "g".repeat(40);
+    let mut placements = vec![in_formation(
+        unit_at([20, 1], 1, "medium_tank", "Lead"),
+        "line",
+        true,
+    )];
+    for i in 1..6 {
+        placements.push(in_formation(
+            unit_at([20 + i, 2], 1, "medium_tank", "Wing"),
+            "line",
+            false,
+        ));
+    }
+    placements.push(unit_at([39, 0], 0, "medium_tank", "Hermit"));
+    scripted_battle(
+        reg,
+        serde_json::json!({
+            "id": "succession_stage",
+            "palette": { "g": "grass" },
+            "rows": [row.clone(), row.clone(), row],
+            "objectives": [
+                { "id": "bridge", "name": "Bridge", "at": [[5, 1]], "value": 3 },
+                { "id": "ford", "name": "Ford", "at": [[35, 1]], "value": 2 },
+            ],
+            "formations": [ { "id": "line", "name": "The Line", "side": 1 } ],
+        }),
+        placements,
+    )
+}
+
+#[test]
+fn a_commander_woken_four_mornings_running_still_goes_back_on_her_own_clock() {
+    // The pulse under repeated shock. A commander lost is an interrupt, and
+    // an interrupt reschedules her next review from the moment she thinks —
+    // so four decapitations in four rounds must make her think in all four,
+    // and then leave her cadence anchored to the last of them rather than
+    // pushed permanently into the future or, worse, brought forward for good.
+    //
+    // "Did she review" is made visible by handing her side whichever piece of
+    // ground her formation is currently marching on: her doctrine's
+    // initiative then always wants the other one, so a review she actually
+    // ran always produces an order and one she skipped never does.
+    let mut reg = registry();
+    let mut rules = command_rules(999, true, 0);
+    rules.review.base_ticks = 3;
+    rules.review.max_ticks = 5;
+    reg.command = Some(rules);
+    strip_radios(&mut reg);
+    let mut state = succession_stage(&reg);
+    assert!(state.fog.side(1).spotted.is_empty(), "a quiet field");
+
+    let mut ai = AiDriver::new();
+    ai.insert(
+        1,
+        make_battle_planner(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: None,
+            },
+            5,
+            &reg,
+        ),
+    );
+
+    let bridge = tactics_core::offset_to_hex(5, 1);
+    let mut reviewed = Vec::new();
+    for round in 1..=12u32 {
+        let marching_on_the_bridge = matches!(
+            state.formations()[0].mission,
+            Some(Mission::Advance { to }) if to == bridge
+        );
+        state.objective_held[0] = marching_on_the_bridge.then_some(1);
+        state.objective_held[1] = (!marching_on_the_bridge).then_some(1);
+        if round <= 4 {
+            let leader = state.formations()[0].leader.expect("somebody leads");
+            strike_down(&mut state, leader);
+        }
+        let mut assigned = 0;
+        ai.plan_round_with(&reg, &mut state, |d| {
+            assigned += d
+                .events
+                .iter()
+                .filter(|e| matches!(e, BattleEvent::MissionAssigned { .. }))
+                .count();
+            assert!(d.rejected.is_none(), "round {round}: {:?}", d.rejected);
+        });
+        commit_all(&reg, &mut state);
+        state.resolve_round(&reg);
+        reviewed.push(assigned > 0);
+    }
+    // Rounds 1-5 all think: the first because she has never thought, the next
+    // four because a commander was lost. The lag of one is real and honest —
+    // succession runs during resolution, so the loss she suffers in round N
+    // is on her desk in round N+1.
+    assert_eq!(
+        &reviewed[..5],
+        &[true, true, true, true, true],
+        "four shocks in a row must wake her every time: {reviewed:?}"
+    );
+    // Then the clock she was left with: three rounds between reviews, counted
+    // from the last one she ran, not from the last one she scheduled.
+    assert_eq!(
+        &reviewed[5..],
+        &[false, false, false, true, false, false, false],
+        "the pulse resumes on schedule rather than drifting: {reviewed:?}"
+    );
+}
+
+/// A leader and one crew standing beside each other, so nothing about
+/// distance can be the reason they cannot talk.
+fn shoulder_to_shoulder(reg: &DataRegistry) -> BattleState {
+    scripted_battle(
+        reg,
+        serde_json::json!({
+            "id": "shoulder",
+            "palette": { "g": "grass" },
+            "rows": ["g".repeat(30)],
+            "formations": [ { "id": "net", "name": "The Net", "side": 0 } ],
+        }),
+        vec![
+            in_formation(unit_at([0, 0], 0, "recon_car", "Leader"), "net", true),
+            in_formation(unit_at([1, 0], 0, "recon_car", "Wing"), "net", false),
+            unit_at([29, 0], 1, "recon_car", "Far Foe"),
+        ],
+    )
+}
+
+#[test]
+fn a_platoon_of_receivers_cannot_hear_a_leader_who_cannot_transmit() {
+    // The degenerate case the directional net implies and nothing stated: a
+    // formation whose every vehicle, the leader's included, carries a
+    // receive-only set. Orders flow down a chain of TRANSMITTERS, and she has
+    // none — so her platoon is off the net standing beside her, which is
+    // exactly the 1941 line company the receive-only radio is modelled on.
+    // The answer is not a radio at all: put the flags back and the same two
+    // vehicles are talking again.
+    let mut reg = registry();
+    reg.command = Some(command_rules(8, true, 0));
+    for vehicle in reg.vehicles.values_mut() {
+        vehicle.radio = Some("receiver".into());
+    }
+    let mut deaf = shoulder_to_shoulder(&reg);
+    commit_all(&reg, &mut deaf);
+    deaf.resolve_round(&reg);
+    assert!(
+        deaf.hears_orders(UnitId(0)),
+        "the leader always hears herself: she is the root of the net"
+    );
+    assert!(
+        !deaf.hears_orders(UnitId(1)),
+        "but nobody hears her, because she has nothing to speak with"
+    );
+
+    let mut with_flags = registry();
+    let mut rules = command_rules(8, true, 0);
+    rules.visual_range = 3;
+    with_flags.command = Some(rules);
+    for vehicle in with_flags.vehicles.values_mut() {
+        vehicle.radio = Some("receiver".into());
+    }
+    let mut seen = shoulder_to_shoulder(&with_flags);
+    commit_all(&with_flags, &mut seen);
+    seen.resolve_round(&with_flags);
+    assert!(
+        seen.hears_orders(UnitId(1)),
+        "a hand out of the cupola carries what the set cannot"
+    );
+}
+
+#[test]
+fn a_formation_of_one_can_be_given_any_mission_in_the_book() {
+    // A formation with a single vehicle in it is the shape every rule about
+    // formations has to survive: nobody to bound with, nobody to succeed her,
+    // and — for a base of fire — somebody else's fight to shoot into. Each of
+    // the six missions is given to her and then executed by her own
+    // commander's executors for four rounds; the property is only that no
+    // order comes back refused and the battle keeps moving.
+    let mut reg = registry();
+    reg.command = Some(command_rules(999, true, 0));
+    strip_radios(&mut reg);
+    let base = scripted_battle(
+        &reg,
+        serde_json::json!({
+            "id": "lone",
+            "palette": { "g": "grass" },
+            "rows": ["g".repeat(30)],
+            "objectives": [
+                { "id": "hill", "name": "The Hill", "at": [[15, 0]], "value": 1 },
+                { "id": "west_road", "name": "The Western Road", "at": [[0, 0]],
+                  "value": 1, "kind": "exit", "side": 0 },
+            ],
+            "formations": [
+                { "id": "solo", "name": "Solo", "side": 0 },
+                { "id": "other", "name": "Other", "side": 0 },
+            ],
+        }),
+        vec![
+            in_formation(unit_at([5, 0], 0, "medium_tank", "Solo"), "solo", true),
+            in_formation(unit_at([7, 0], 0, "medium_tank", "Other"), "other", true),
+            unit_at([29, 0], 1, "medium_tank", "Foe"),
+        ],
+    );
+    let hill = tactics_core::offset_to_hex(15, 0);
+    for mission in [
+        Mission::Advance { to: hill },
+        Mission::Hold { at: Some(hill) },
+        Mission::Hold { at: None },
+        Mission::Recon { toward: hill },
+        Mission::Withdraw {
+            via: "west_road".into(),
+        },
+        Mission::Support {
+            formation: "other".into(),
+        },
+    ] {
+        let mut state = base.clone();
+        state
+            .apply(
+                &reg,
+                &Order::SetMission {
+                    formation: FormationId(0),
+                    mission: mission.clone(),
+                },
+            )
+            .unwrap_or_else(|e| panic!("{mission:?} should be a legal order: {e}"));
+        let mut ai = AiDriver::new();
+        ai.insert(0, commanded(&reg, 5, "combined_arms"));
+        let mut refused = Vec::new();
+        for _ in 0..4 {
+            if state.is_over() {
+                break;
+            }
+            ai.plan_round_with(&reg, &mut state, |d| {
+                if let Some(error) = &d.rejected {
+                    refused.push(format!("{:?}: {error}", d.order));
+                }
+            });
+            commit_all(&reg, &mut state);
+            state.resolve_round(&reg);
+        }
+        assert!(refused.is_empty(), "under {mission:?}: {refused:?}");
+    }
+}
+
+#[test]
+fn a_battery_with_no_ground_and_nobody_to_shoot_for_is_told_nothing() {
+    // The no-objective guard, re-checked now that a base of fire exists. A
+    // fires formation is recognised off its hardware and assigned before the
+    // ground is divided, so it would have been the one order that could
+    // escape a map with nothing to hold — and it must not, because "a map
+    // that names no ground is exactly the fight it was before commanders
+    // existed" is the property the whole command layer is additive against.
+    // Doubly degenerate here: the battery is also the side's only formation,
+    // so there is nobody to support even if she were asked.
+    let mut reg = registry();
+    reg.command = Some(command_rules(999, true, 0));
+    strip_radios(&mut reg);
+    let mut state = scripted_battle(
+        &reg,
+        serde_json::json!({
+            "id": "no_ground",
+            "palette": { "g": "grass" },
+            "rows": ["g".repeat(30)],
+            "formations": [ { "id": "battery", "name": "The Battery", "side": 0 } ],
+        }),
+        vec![
+            in_formation(unit_at([2, 0], 0, "artillery", "Guns"), "battery", true),
+            in_formation(
+                unit_at([3, 0], 0, "artillery", "More Guns"),
+                "battery",
+                false,
+            ),
+            unit_at([20, 0], 1, "medium_tank", "Foe"),
+        ],
+    );
+    let mut ai = AiDriver::new();
+    ai.insert(0, commanded(&reg, 5, "combined_arms"));
+    let mut said = Vec::new();
+    for _ in 0..5 {
+        if state.is_over() {
+            break;
+        }
+        ai.plan_round_with(&reg, &mut state, |d| {
+            said.extend(
+                d.events
+                    .iter()
+                    .filter(|e| matches!(e, BattleEvent::MissionAssigned { .. }))
+                    .map(|e| format!("{e:?}")),
+            );
+            assert!(d.rejected.is_none(), "{:?}: {:?}", d.order, d.rejected);
+        });
+        commit_all(&reg, &mut state);
+        state.resolve_round(&reg);
+    }
+    assert!(
+        said.is_empty(),
+        "a map with no ground gets no missions: {said:?}"
+    );
+}
+
+/// A leader on an open road and one crew ten hexes out, under a two-hex net
+/// with nobody relaying: she is stone deaf until she is driven back.
+fn strung_wire(reg: &DataRegistry) -> BattleState {
+    scripted_battle(
+        reg,
+        serde_json::json!({
+            "id": "strung_wire",
+            "palette": { "g": "grass" },
+            "rows": ["g".repeat(30)],
+            "formations": [ { "id": "net", "name": "The Net", "side": 0 } ],
+        }),
+        vec![
+            in_formation(unit_at([0, 0], 0, "recon_car", "Leader"), "net", true),
+            in_formation(unit_at([10, 0], 0, "recon_car", "Stray"), "net", false),
+            unit_at([29, 0], 1, "recon_car", "Far Foe"),
+        ],
+    )
+}
+
+#[test]
+#[ignore = "known defect: a waiting order delivered from out of reach is announced, silently dropped, and still detaches her"]
+fn a_waiting_order_arrives_as_an_order_however_far_she_has_come() {
+    // The queue deliberately stores the destination rather than the path,
+    // because "she re-paths from wherever she is when it reaches her" is the
+    // whole promise of deliver-on-contact. What actually happens is that
+    // `deliver_waiting_orders` calls `set_move` and throws the error away —
+    // and `path_to` refuses anything more than one round's driving, which is
+    // precisely the case a queued order is in by the time it lands. So the
+    // order is announced as delivered, does nothing at all, and STILL sets
+    // `detached`, which excuses her from her formation's standing mission
+    // until somebody recalls her. On the player's side, where `executor_only`
+    // hands a detached crew a bare hold-fire, that is a vehicle that stops
+    // forever the moment her orders finally get through — the exact class of
+    // silence the chunk was built to remove.
+    //
+    // Three readings are defensible and the choice is a design one, which is
+    // why this is pinned rather than patched: drive her as far toward it as
+    // the round allows and keep the order until she arrives; keep the order
+    // waiting and say so; or drop it and say THAT. What is not defensible is
+    // the present combination of all three.
+    let mut reg = registry();
+    reg.command = Some(command_rules(2, false, 0));
+    strip_radios(&mut reg);
+    let mut state = strung_wire(&reg);
+    let stray = UnitId(1);
+    commit_all(&reg, &mut state);
+    state.resolve_round(&reg);
+    assert!(!state.hears_orders(stray), "ten hexes on a two-hex net");
+
+    let east = tactics_core::offset_to_hex(13, 0);
+    state
+        .apply(
+            &reg,
+            &Order::Radio {
+                unit: stray,
+                to: Some(east),
+                fire: None,
+            },
+        )
+        .expect("accepted and held at the radio");
+
+    // She drives herself back onto the net over three rounds, by which time
+    // the hex she was sent to is far behind one round's driving.
+    let mut delivered = false;
+    for stop in [7, 4, 2] {
+        state
+            .apply(
+                &reg,
+                &Order::SetMove {
+                    unit: stray,
+                    to: tactics_core::offset_to_hex(stop, 0),
+                },
+            )
+            .expect("her own legs");
+        commit_all(&reg, &mut state);
+        delivered |= state
+            .resolve_round(&reg)
+            .iter()
+            .any(|e| matches!(e, BattleEvent::OrdersDelivered { unit } if *unit == stray));
+    }
+    assert!(delivered, "the wire comes back up and the order goes out");
+    assert!(
+        !state.units[stray.index()].intent.path.is_empty(),
+        "an order announced as delivered has to be an order she is carrying out"
+    );
+}
+
+#[test]
+fn a_campaign_run_by_standing_orders_and_planners_plays_itself_out() {
+    // The campaign half under load: standing orders given on day one, both
+    // sides' planners driving everything nobody ordered, sixty days, and
+    // every battle the map throws up fed back through the real
+    // `apply_battle_result` path. What is defended is that the loop runs to a
+    // conclusion without a panic and that the mission machinery behaves as
+    // written along the way — in particular that an order given to an army
+    // out of radio range on day one waits at headquarters and goes out on the
+    // first morning the wire is up, days later and unprompted, which is the
+    // campaign's whole answer to command friction.
+    let reg = registry();
+    let mut state = OverworldState::from_map(&reg, "frontier", 1).unwrap();
+    let senior = state.senior_army(0).unwrap();
+    let junior = state
+        .side_armies(0)
+        .map(|a| a.id)
+        .find(|id| *id != senior)
+        .expect("frontier gives side 0 two companies");
+    assert!(
+        !state.in_contact(junior),
+        "frontier's second company starts off the net, which is the point"
+    );
+    state
+        .apply(
+            &reg,
+            &OverworldOrder::SetMission {
+                army: senior,
+                mission: ArmyMission::Advance {
+                    to: tactics_core::offset_to_hex(12, 1),
+                },
+            },
+        )
+        .expect("advance on the enemy's ground");
+    let queued = state
+        .apply(
+            &reg,
+            &OverworldOrder::SetMission {
+                army: junior,
+                mission: ArmyMission::Withdraw {
+                    to: tactics_core::offset_to_hex(0, 8),
+                },
+            },
+        )
+        .expect("accepted, not refused");
+    assert!(
+        queued
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::ArmyOrdersWaiting { army } if *army == junior)),
+        "an order she cannot be told waits at headquarters: {queued:?}"
+    );
+
+    let mut planners: Vec<_> = (0..2)
+        .map(|side| {
+            make_overworld_planner(
+                &AiConfig {
+                    planner: "simple".into(),
+                    difficulty: 3,
+                    doctrine: None,
+                },
+                42 + side,
+            )
+        })
+        .collect();
+
+    // A battle resolved the cheap way — the defender loses her leading
+    // vehicle — but through the real feedback path, so army destruction,
+    // crew fates and the victor taking the tile all happen as they would.
+    fn resolve(reg: &DataRegistry, state: &mut OverworldState, attacker: ArmyId, defender: ArmyId) {
+        let attacking = state
+            .army(attacker)
+            .map(|a| a.units.clone())
+            .unwrap_or_default();
+        let defending = state
+            .army(defender)
+            .map(|a| a.units.clone())
+            .unwrap_or_default();
+        let losses: Vec<tactics_core::overworld::CrewLoss> = defending
+            .first()
+            .into_iter()
+            .flat_map(|u| {
+                u.crew
+                    .iter()
+                    .map(move |girl| tactics_core::overworld::CrewLoss {
+                        girl: *girl,
+                        vehicle: u.vehicle.clone(),
+                        killed_by: None,
+                    })
+            })
+            .collect();
+        state.apply_battle_result(
+            reg,
+            attacker,
+            defender,
+            &[
+                (attacker, attacking),
+                (defender, defending.into_iter().skip(1).collect()),
+            ],
+            &losses,
+        );
+    }
+
+    let (mut battles, mut transmitted) = (0, false);
+    for _ in 0..60 {
+        let side = state.active_side;
+        // The planner drives everything nobody gave standing orders; an army
+        // under orders is left to carry them out, which is delegation.
+        for _ in 0..12 {
+            let order = planners[side as usize].next_order(&reg, &state, side);
+            if order == OverworldOrder::EndTurn {
+                break;
+            }
+            if let OverworldOrder::MoveArmy { army, .. } = order
+                && state.army(army).is_some_and(|a| a.mission.is_some())
+            {
+                break;
+            }
+            let Ok(events) = state.apply(&reg, &order) else {
+                break;
+            };
+            for event in &events {
+                if let OverworldEvent::BattleTriggered {
+                    attacker, defender, ..
+                } = event
+                {
+                    battles += 1;
+                    resolve(&reg, &mut state, *attacker, *defender);
+                }
+            }
+        }
+        let Ok(events) = state.apply(&reg, &OverworldOrder::EndTurn) else {
+            break;
+        };
+        for event in &events {
+            match event {
+                OverworldEvent::BattleTriggered {
+                    attacker, defender, ..
+                } => {
+                    battles += 1;
+                    resolve(&reg, &mut state, *attacker, *defender);
+                }
+                OverworldEvent::ArmyMissionAssigned { army, mission }
+                    if *army == junior && matches!(mission, ArmyMission::Withdraw { .. }) =>
+                {
+                    transmitted = true;
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        battles > 0,
+        "sixty days of two planners should meet somewhere"
+    );
+    assert!(
+        transmitted,
+        "the order held for the junior company on day one has to go out \
+         eventually, or standing orders die in the drawer"
+    );
+}
