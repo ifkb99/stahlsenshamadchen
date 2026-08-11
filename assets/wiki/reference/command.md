@@ -848,6 +848,49 @@ Two consequences worth building toward deliberately:
 Additivity: zero coefficients mean review-every-round with every interrupt —
 today's brain, bit for bit.
 
+**Slice 2 — the Support mission (10d's tier 3, built here).** ✅ Done.
+`Mission::Support { formation }` is base of fire: stand off at supporting
+distance from the named formation and put fire on what threatens them. Five
+things are worth carrying forward.
+
+- **It names a formation by string id, not by `FormationId`.** The one place
+  in the command layer where a name beats an index: a mission travels through
+  saves, replays and the log, an id is stable across all three and reads as
+  itself in a sentence, and the live formation is resolved at scoring time —
+  which is the honest shape anyway, because who is left in that formation
+  changes minute by minute while the order does not.
+- **It is terminal, like `Hold` and `Withdraw`.** A posture, not a leg.
+  "Advance to the ridge, then support the platoon" is a legal plan that
+  *ends* in support; queueing behind it is refused as `MissionIsTerminal`.
+- **The evaluator arm is a band, not a pull**:
+  `MISSION_WEIGHT * strictness * objective_value * (0.75 - 0.15 * |dist - 3|)`,
+  anchored on the supported formation's leader (else its lowest-id living
+  member; nobody left scores zero and the next review says something else).
+  A slope toward the people supported would have marched the battery into the
+  assault it was meant to be shooting for — the attack term already pays her
+  for a tile with a shot on it, so what the mission has to say is the
+  *distance*.
+- **Fires formations are recognised, not declared.** The brain calls a
+  formation a base of fire if anybody still alive in it lays an indirect
+  weapon, so a mod that adds a mortar section gets this with no new field —
+  and a battery that has lost its last howitzer rejoins the ground rotation
+  at the next review. It supports the side's largest other formation (ties to
+  the first declared), and only under a centralized doctrine: a devolved
+  commander still issues nothing, `a_devolved_commander_issues_no_ground_missions`
+  unmodified. Deliberately below the "no ground to hold, no missions" guard,
+  so a no-objective battle is still exactly the fight it was before
+  commanders existed.
+- **The human cannot issue it yet.** The engine order exists and validates
+  (`CannotSupportThat` refuses the enemy's formations and self-support), the
+  log narrates it — "stand base of fire for the 1st Armored Platoon" — but no
+  key on the battle screen sends one. The keybind and its UI land with the
+  tutorial pass, alongside the rest of the mission vocabulary.
+
+Measured on 36 battles per pairing: massed armour's delegation tax fell from
+7 wins to 5 (12–19–5 under command against 17–19–0 flat, from 10–24–2), and
+the two pairings the change cannot touch — both flat, elastic under command
+— did not move at all.
+
 ### 10c. The crew's loop (difficulty 5/5 — the burned area)
 
 The same loop at vehicle level, and the half that must be built with the

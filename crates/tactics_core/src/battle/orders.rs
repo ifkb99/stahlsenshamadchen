@@ -319,6 +319,8 @@ pub enum OrderError {
     NoSuchExit,
     #[error("nothing follows a stand-fast or a retreat")]
     MissionIsTerminal,
+    #[error("a formation cannot stand base of fire for that")]
+    CannotSupportThat,
 }
 
 impl BattleState {
@@ -509,7 +511,7 @@ impl BattleState {
         if self.has_committed(side) {
             return Err(OrderError::AlreadyCommitted);
         }
-        self.check_mission_target(side, &mission)?;
+        self.check_mission_target(side, &id, &mission)?;
         // An order is sent here; whether it has *arrived* is the signals net's
         // business. A delay of zero — which is every battle whose mod declares
         // no `command` block — puts it straight onto the formation, so the old
@@ -568,7 +570,7 @@ impl BattleState {
         if f.latest_mission().is_some_and(|m| m.terminal()) {
             return Err(OrderError::MissionIsTerminal);
         }
-        self.check_mission_target(side, &mission)?;
+        self.check_mission_target(side, &id, &mission)?;
         let delay = self.mission_delay(registry, formation);
         if delay == 0 {
             self.command.queue_mission(formation, mission.clone());
@@ -585,8 +587,19 @@ impl BattleState {
         }])
     }
 
-    /// Whether a mission's target is somewhere this side could be sent.
-    fn check_mission_target(&self, side: u8, mission: &Mission) -> Result<(), OrderError> {
+    /// Whether a mission's target is somewhere this side could be sent —
+    /// or, for a base of fire, somebody it could be sent to shoot for.
+    ///
+    /// `ordering` is the id of the formation being given the mission, needed
+    /// only by [`Mission::Support`]: a formation standing base of fire for
+    /// itself is a sentence with no meaning, and the only place that can be
+    /// noticed is here, where both ends of the order are in hand.
+    fn check_mission_target(
+        &self,
+        side: u8,
+        ordering: &str,
+        mission: &Mission,
+    ) -> Result<(), OrderError> {
         match mission {
             Mission::Advance { to } | Mission::Recon { toward: to } => {
                 if !self.map.contains(*to) {
@@ -613,6 +626,25 @@ impl BattleState {
                     .any(|o| o.id == *via && o.kind == ObjectiveKind::Exit && o.open_to(side));
                 if !usable {
                     return Err(OrderError::NoSuchExit);
+                }
+            }
+            // A base of fire is aimed at *people*, so the checks are about
+            // people: they have to be in this battle, they have to be ours,
+            // and they have to be somebody else. Refusing loudly matters
+            // more here than for ground — a mission naming a formation that
+            // is not there would score zero forever and look exactly like a
+            // formation that had decided to do nothing.
+            Mission::Support {
+                formation: supported,
+            } => {
+                let target = self
+                    .command
+                    .formations()
+                    .iter()
+                    .find(|f| f.id == *supported)
+                    .ok_or(OrderError::NoSuchFormation)?;
+                if target.side != side || target.id == ordering {
+                    return Err(OrderError::CannotSupportThat);
                 }
             }
         }

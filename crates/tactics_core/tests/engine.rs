@@ -6440,3 +6440,241 @@ fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
         "new orders for the formation reach her too"
     );
 }
+
+// --- base of fire (chunk 10b slice 2) ---------------------------------------
+
+#[test]
+fn a_fires_formation_stands_base_of_fire_for_the_assault() {
+    // Tier 3 of "fighting as one": coordination *between* formations, which
+    // is the commander's business rather than an executor's. Kuhlmann's
+    // reconnaissance section carries the battery, so a centralized brain
+    // takes it out of the ground rotation entirely and points it at the
+    // fight her armour is having — while the armour still gets the ground.
+    let reg = registry_wireless();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 11).unwrap();
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
+        make_battle_planner(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: Some("massed_armor".into()),
+            },
+            11,
+            &reg,
+        ),
+    );
+    ai.plan_round(&reg, &mut state);
+
+    let recon = formation_named(&state, "kuhlmann_recon");
+    let armor = formation_named(&state, "kuhlmann_armor");
+    assert_eq!(
+        state.formations()[recon.index()].mission,
+        Some(Mission::Support {
+            formation: "kuhlmann_armor".into()
+        }),
+        "the section with the howitzer in it shoots for the platoon"
+    );
+    assert!(
+        matches!(
+            state.formations()[armor.index()].mission,
+            Some(Mission::Advance { .. })
+        ),
+        "and the platoon still gets its ground: {:?}",
+        state.formations()[armor.index()].mission
+    );
+}
+
+/// One formation to be shot for and one to do the shooting, on an open road
+/// with the only enemy far outside anybody's eyes — so a tile's score is the
+/// mission and nothing else.
+fn base_of_fire_stage(reg: &DataRegistry, seed: u64) -> BattleState {
+    let row = "g".repeat(46);
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "base_of_fire_stage",
+        "palette": { "g": "grass" },
+        "rows": [row.clone(), row.clone(), row],
+        "formations": [
+            { "id": "assault", "name": "The Assault", "side": 0 },
+            { "id": "guns", "name": "The Guns", "side": 0 },
+        ],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let mut lead = unit_at([6, 1], 0, "medium_tank", "Lead");
+    lead.formation = Some("assault".into());
+    lead.leads = true;
+    let mut battery = unit_at([20, 1], 0, "artillery", "Battery");
+    battery.formation = Some("guns".into());
+    battery.leads = true;
+    let placements = vec![lead, battery, unit_at([45, 1], 1, "medium_tank", "Far Foe")];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    let state = BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    );
+    assert!(
+        state.fog.side(0).spotted.is_empty(),
+        "the stage needs no enemy in sight, or the attack term joins in"
+    );
+    state
+}
+
+#[test]
+fn support_holds_her_at_overwatch_distance() {
+    // A band, not a pull. The attack term already pays her for a tile with a
+    // shot on it, so what the mission has to say is the distance: close
+    // enough that her fire lands where theirs is needed, far enough that she
+    // is not in the assault she is covering. Measured directly against both
+    // failures — hugging the people she supports, and trailing the map
+    // behind them.
+    let reg = registry_wireless();
+    let mut state = base_of_fire_stage(&reg, 4);
+    let guns = formation_named(&state, "guns");
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: guns,
+                mission: Mission::Support {
+                    formation: "assault".into(),
+                },
+            },
+        )
+        .expect("shooting for a friendly formation that is not your own is legal");
+
+    let evaluator = Evaluator::new(tactics_core::data::DoctrineDef {
+        id: "band_probe".into(),
+        name: String::new(),
+        description: String::new(),
+        aggression: 0.0,
+        cover_value: 0.0,
+        elevation_value: 0.0,
+        // Zero, so the out-of-support penalty is the mass term's business
+        // and not this test's: what separates these tiles must be the
+        // mission. The crowding penalty inside two hexes is universal and
+        // survives — it is drill, not doctrine — so hugging is penalised
+        // twice over, which is the right answer arrived at honestly.
+        concentration: 0.0,
+        scouting: 0.0,
+        objective_value: 1.0,
+        indirect_appetite: 1.0,
+        withdraw_threshold: 0.5,
+        initiative: 0.5,
+        delegation: 0.5,
+    });
+    let score = |col: i32| {
+        evaluator
+            .score_tile(&reg, &state, UnitId(1), tactics_core::offset_to_hex(col, 1))
+            .score
+    };
+
+    // The assault's leader stands at column 6, so these are one, three and
+    // fourteen hexes off her.
+    let hugging = score(7);
+    let standoff = score(9);
+    let straggling = score(20);
+    assert!(
+        standoff > hugging,
+        "supporting distance beats riding along with them: {standoff} vs {hugging}"
+    );
+    assert!(
+        standoff > straggling,
+        "and beats trailing the map behind them: {standoff} vs {straggling}"
+    );
+}
+
+#[test]
+fn nobody_supports_the_enemy_or_herself() {
+    // The three sentences that have no meaning, refused where both ends of
+    // the order are in hand. A base of fire for a formation that is not
+    // there would score zero forever and look exactly like a formation that
+    // had decided to do nothing.
+    let reg = registry_wireless();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 3).unwrap();
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let support = |formation: &str| Order::SetMission {
+        formation: armor,
+        mission: Mission::Support {
+            formation: formation.into(),
+        },
+    };
+
+    assert_eq!(
+        state.apply(&reg, &support("valkyrie_line")),
+        Err(tactics_core::battle::OrderError::CannotSupportThat),
+        "you do not stand base of fire for the people shooting at you"
+    );
+    assert_eq!(
+        state.apply(&reg, &support("kuhlmann_armor")),
+        Err(tactics_core::battle::OrderError::CannotSupportThat),
+        "nor for yourself"
+    );
+    assert_eq!(
+        state.apply(&reg, &support("ghost_battalion")),
+        Err(tactics_core::battle::OrderError::NoSuchFormation),
+        "nor for somebody who is not in this battle"
+    );
+    state
+        .apply(&reg, &support("kuhlmann_recon"))
+        .expect("her own side's other formation is the whole point");
+}
+
+#[test]
+fn a_plan_may_end_in_support_but_not_continue_past_it() {
+    // Support is a posture, not a leg: "advance to the ridge, then shoot for
+    // the platoon" is a plan, and it ends there. Nothing follows a posture,
+    // and the refusal is loud rather than a leg left sitting in a queue that
+    // can never begin.
+    let reg = registry_wireless();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 8).unwrap();
+    let recon = formation_named(&state, "kuhlmann_recon");
+    let ridge = state.map.objectives()[0].anchor();
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: recon,
+                mission: Mission::Advance { to: ridge },
+            },
+        )
+        .unwrap();
+    state
+        .apply(
+            &reg,
+            &Order::QueueMission {
+                formation: recon,
+                mission: Mission::Support {
+                    formation: "kuhlmann_armor".into(),
+                },
+            },
+        )
+        .expect("a plan may end in support");
+    assert_eq!(
+        state.apply(
+            &reg,
+            &Order::QueueMission {
+                formation: recon,
+                mission: Mission::Hold { at: None },
+            },
+        ),
+        Err(tactics_core::battle::OrderError::MissionIsTerminal),
+        "and nothing follows it"
+    );
+}

@@ -457,6 +457,30 @@ impl SideCommand {
             if ground.is_empty() {
                 continue;
             }
+            // Base of fire before ground. A formation with indirect guns in
+            // it is not one you send to stand on a bridge: round-robining
+            // the howitzer into a ground slot marched it into the assault it
+            // should have been shooting for. So it is taken out of the
+            // rotation entirely — the ground is divided among the rest, and
+            // the guns are told whose fight to shoot into.
+            //
+            // Deliberately below the `ground.is_empty()` guard: a map with
+            // nothing to hold still gets no missions at all, which is the
+            // property that keeps a no-objective battle exactly the fight it
+            // was before commanders existed. A base of fire on an empty map
+            // would be the first order ever issued there.
+            if let Some(supported) = Self::base_of_fire(registry, state, side, index) {
+                let desired = Mission::Support {
+                    formation: supported,
+                };
+                if ordered != Some(&desired) {
+                    orders.push(Order::SetMission {
+                        formation: FormationId(index as u32),
+                        mission: desired,
+                    });
+                }
+                continue;
+            }
             let mut pick = next % ground.len();
             next += 1;
             if doctrine.initiative >= 0.5
@@ -481,6 +505,68 @@ impl SideCommand {
             }
         }
         orders
+    }
+
+    /// Who this formation should be shooting for, if it is the side's base
+    /// of fire at all.
+    ///
+    /// **Fires formations are recognised, not declared.** A formation is one
+    /// if anybody still alive in it lays an indirect weapon — that is what
+    /// makes her a base of fire, and reading it off the hardware means a mod
+    /// that adds a mortar section gets this behaviour with no new field and
+    /// no engine change. It also means a battery that has lost its last
+    /// howitzer stops being one and rejoins the ground rotation at the next
+    /// review, which is the honest answer.
+    ///
+    /// She supports the side's **largest other formation** — most members
+    /// still on the field, ties to the first declared — because the base of
+    /// fire covers the main effort, and the biggest formation is the closest
+    /// thing this brain has to one until control measures give it a real
+    /// one. `None` when there is nobody else to shoot for: a lone formation
+    /// takes ground like anybody else rather than standing off from nothing.
+    fn base_of_fire(
+        registry: &DataRegistry,
+        state: &BattleState,
+        side: u8,
+        index: usize,
+    ) -> Option<String> {
+        let formation = state.command.formations().get(index)?;
+        if !Self::lays_indirect(registry, state, formation) {
+            return None;
+        }
+        let living = |f: &Formation| {
+            f.members
+                .iter()
+                .filter(|id| state.unit(**id).is_some())
+                .count()
+        };
+        state
+            .command
+            .formations()
+            .iter()
+            .enumerate()
+            .filter(|(other, f)| f.side == side && *other != index)
+            // `Reverse` on the index so an equal-sized tie goes to the
+            // first-declared formation rather than to whichever `max_by_key`
+            // happened to visit last.
+            .max_by_key(|(other, f)| (living(f), Reverse(*other)))
+            .map(|(_, f)| f.id.clone())
+    }
+
+    /// Whether anybody still on the field in this formation carries a weapon
+    /// that shoots over things.
+    fn lays_indirect(registry: &DataRegistry, state: &BattleState, formation: &Formation) -> bool {
+        formation
+            .members
+            .iter()
+            .filter_map(|id| state.unit(*id))
+            .any(|unit| {
+                registry.vehicle(&unit.vehicle).is_some_and(|v| {
+                    v.weapons
+                        .iter()
+                        .any(|w| registry.weapon(w).is_some_and(|w| w.indirect))
+                })
+            })
     }
 
     /// Whether this formation is beaten badly enough that its commander

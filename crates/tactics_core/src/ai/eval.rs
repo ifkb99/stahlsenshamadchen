@@ -424,6 +424,50 @@ impl Evaluator {
                     None => 0.0,
                 }
             }
+            // Base of fire. A band at supporting distance rather than a pull
+            // toward the people supported: the attack term already pays her
+            // for tiles with a shot on them, so what the mission has to say
+            // is the *distance* — close enough that her fire lands where
+            // theirs is needed, far enough that she is not in the assault
+            // she is covering. Hugging them and trailing the map behind them
+            // are both wrong and the shape says so, which is why this is
+            // `|dist - STANDOFF|` and not a slope.
+            //
+            // Anchored on the supported formation's leader, falling back to
+            // the lowest-id member still on the field — the same rule
+            // `Hold`'s anchor uses and for the same reason: she is where the
+            // formation is, and a centroid would drift every time a member
+            // wandered. Nobody left alive to shoot for scores nothing; the
+            // brain will notice at its next review and say something else.
+            Mission::Support {
+                formation: supported,
+            } => {
+                /// Supporting distance, in hexes: overwatch range on this
+                /// scale (300 m), inside every gun on the field and outside
+                /// the fight it is covering.
+                const STANDOFF: f32 = 3.0;
+                let anchor = state
+                    .command
+                    .formations()
+                    .iter()
+                    .find(|f| f.id == *supported)
+                    .and_then(|f| {
+                        f.leader
+                            .and_then(|id| state.unit(id))
+                            .or_else(|| f.members.iter().find_map(|id| state.unit(*id)))
+                    })
+                    .map(|u| u.pos);
+                match anchor {
+                    Some(anchor) => {
+                        let dist = anchor.distance_to(tile) as f32;
+                        MISSION_WEIGHT
+                            * strictness
+                            * doctrine.objective_value
+                            * (0.75 - 0.15 * (dist - STANDOFF).abs())
+                    }
+                    None => 0.0,
+                }
+            }
         }
     }
 

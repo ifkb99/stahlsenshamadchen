@@ -2669,6 +2669,14 @@ fn mission_sentence(state: &BattleState, mission: Option<&Mission>) -> String {
         Some(Mission::Hold { at: Some(at) }) => format!("hold {}", hex_label(*at)),
         Some(Mission::Hold { at: None }) => "hold where you are".into(),
         Some(Mission::Recon { toward }) => format!("reconnoitre toward {}", hex_label(*toward)),
+        // Named the way the order was given — after the people, not the
+        // ground — because that is what a base of fire is about, and the
+        // display name is what the player calls that platoon everywhere else
+        // in this log.
+        Some(Mission::Support { formation }) => format!(
+            "stand base of fire for the {}",
+            formation_name(state, formation)
+        ),
         Some(Mission::Withdraw { via }) => format!(
             "withdraw by {}",
             state

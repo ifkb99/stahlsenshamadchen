@@ -125,6 +125,19 @@ pub enum Mission {
     /// is what a withdrawal ordered from above looks like, as opposed to a
     /// crew deciding for itself that it has had enough.
     Withdraw { via: String },
+    /// Base of fire: stand off at supporting distance from the named
+    /// formation and put fire on what threatens them. The mission of the
+    /// overwatching half of "base of fire and maneuver" — she is not going
+    /// where they are going, she is where she can shoot for them.
+    ///
+    /// The supported formation is named by its **string id** rather than a
+    /// [`FormationId`], which is the one place in this module a name beats an
+    /// index. A mission travels through saves, replays and logs; an id is
+    /// stable across all three and reads as itself in a sentence, and the
+    /// live formation is resolved at scoring time — which is also the honest
+    /// shape, because who is left in that formation changes minute by minute
+    /// while the order does not.
+    Support { formation: String },
 }
 
 impl Mission {
@@ -132,8 +145,17 @@ impl Mission {
     /// no end to reach and a retreat has no afterwards worth planning on
     /// this battlefield, so queueing behind either is refused out loud
     /// rather than left to sit as a leg that can never begin.
+    ///
+    /// A base of fire is terminal for the same reason a stand-fast is: it is
+    /// a posture rather than a leg, held for as long as the people it covers
+    /// need covering. "Advance to the ridge, then support the platoon" is a
+    /// perfectly good plan — it simply *ends* in support, and nothing follows
+    /// it.
     pub fn terminal(&self) -> bool {
-        matches!(self, Self::Hold { .. } | Self::Withdraw { .. })
+        matches!(
+            self,
+            Self::Hold { .. } | Self::Withdraw { .. } | Self::Support { .. }
+        )
     }
 }
 
@@ -751,8 +773,9 @@ impl BattleState {
     ///
     /// Completion is the mission's own meaning: an advance is done when a
     /// member stands on the ground (within one hex), a reconnaissance when a
-    /// member has eyes on the target tile. `Hold` and `Withdraw` never
-    /// complete — validation refuses to queue behind them, so a plan can
+    /// member has eyes on the target tile. The terminal missions — `Hold`,
+    /// `Withdraw` and `Support`, the postures rather than the legs — never
+    /// complete; validation refuses to queue behind them, so a plan can
     /// only ever be waiting behind a leg that can actually end. A completed
     /// mission with nothing queued stands: the reward that pulled the
     /// formation there is the same one that keeps it there, and announcing a
@@ -777,7 +800,9 @@ impl BattleState {
                     .members
                     .iter()
                     .any(|id| super::fog::sees(registry, self, *id, *toward)),
-                Some(Mission::Hold { .. }) | Some(Mission::Withdraw { .. }) => false,
+                Some(Mission::Hold { .. })
+                | Some(Mission::Withdraw { .. })
+                | Some(Mission::Support { .. }) => false,
             };
             if !done {
                 continue;
