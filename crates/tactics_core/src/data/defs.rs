@@ -114,18 +114,16 @@ pub struct VehicleDef {
     /// Crew roles this vehicle needs ("commander", "driver", "gunner", ...).
     #[serde(default)]
     pub crew_slots: Vec<String>,
-    /// Radio transmit range in hexes — hardware, before the crew's `signals`
-    /// skill works it better or worse.
+    /// The radio set this vehicle carries, by [`RadioDef`] id.
     ///
-    /// `None` is a vehicle with no set of its own, which today falls back to
-    /// the command block's `radius` so content written before this field
-    /// keeps its game; once radios are damageable components and infantry
-    /// exist, `None` becomes a real statement (runners and flags only).
-    /// This field is the seam that future hangs off, which is why it lives
-    /// on the vehicle rather than in the rules: a radio is a thing a
-    /// vehicle carries, and things a vehicle carries can be hit.
+    /// `None` falls back to the command block's symmetric `radius`, so
+    /// content written before radios were things keeps its game. A set that
+    /// cannot send ([`RadioDef::send`] absent) is the historical
+    /// receive-only fit: she hears her orders and files nothing. The field
+    /// lives on the vehicle because a radio is a thing a vehicle carries,
+    /// and things a vehicle carries can one day be hit.
     #[serde(default)]
-    pub radio: Option<u32>,
+    pub radio: Option<String>,
     /// How survivable this vehicle is for the girls inside it, 0-5.
     ///
     /// Separate from armour on purpose: armour decides whether the vehicle
@@ -198,6 +196,30 @@ impl WeaponDef {
     pub fn reload(&self, scale: &Scale) -> u32 {
         self.reload_ticks.unwrap_or(scale.ticks_per_round).max(1)
     }
+}
+
+/// A radio set: the hardware a vehicle carries onto the net.
+///
+/// Content rather than a number on the vehicle, because everything the
+/// future wants — damage naming a component, refit as a requisition
+/// decision, interception caring what model transmits — hangs off a
+/// *nameable thing*. The historical pattern this encodes is the receive-only
+/// set: early-war line tanks carried receivers (FuG 2, SCR-538) under
+/// transmitting leaders, heard everything, and answered with their tracks
+/// or a flag. Every set receives; a vehicle that names no set at all falls
+/// back to the command block's symmetric radius, so content written before
+/// radios were things keeps its game.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RadioDef {
+    pub id: String,
+    pub name: String,
+    /// Transmit range in hexes, before the crew's `signals` skill works the
+    /// set better or worse. `None` is a receive-only set: she hears the net
+    /// and cannot speak on it.
+    #[serde(default)]
+    pub send: Option<u32>,
+    #[serde(default)]
+    pub description: String,
 }
 
 /// How a side fights, as opposed to how well it thinks.

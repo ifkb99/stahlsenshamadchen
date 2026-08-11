@@ -694,7 +694,7 @@ training, doctrine and EW, so one force literally cycles its loop faster
 than the other. Command Ops does the officer half: orders flow down through
 HQs with delays priced by distance and staff quality.
 
-### 10a. Radios, for real (difficulty 3/5)
+### 10a. Radios, for real (difficulty 3/5) — ✅ done
 
 Decisions taken with the designer: radio sets are **content**, the net
 becomes **directional**, terrain **masking** lands now, and delivery is

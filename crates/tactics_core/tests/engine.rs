@@ -4529,6 +4529,7 @@ fn a_scout_out_of_contact_reports_nothing() {
     // which is recon wasted, and the whole reason the wires matter.
     let mut reg = registry();
     reg.command = Some(command_rules(8, false, 0));
+    strip_radios(&mut reg);
     let mut state = picture_stage(&reg, 3);
     let (scout, enemy) = (UnitId(1), UnitId(2));
 
@@ -4778,6 +4779,7 @@ fn a_successor_leads_a_formation_back_into_contact() {
     // Five hexes and no relay: the column is too long for one voice, so the
     // three easterners are cut off while the commander is alive.
     reg.command = Some(command_rules(5, false, 0));
+    strip_radios(&mut reg);
     let mut state = strung_out_platoon(&reg);
     let column = formation_named(&state, "column");
     let (commander, heir, neighbour, straggler) = (UnitId(0), UnitId(1), UnitId(2), UnitId(3));
@@ -6037,4 +6039,136 @@ fn an_aggressive_doctrine_travels_in_overwatch() {
         .unwrap();
     let moved = bound_once(&reg, &mut state, 63);
     assert_eq!(moved, vec![true, true], "tempo over ceremony");
+}
+
+// --- radios as hardware (chunk 10a) ----------------------------------------
+
+/// A leader with a transceiver and a wing with a receive-only set, ten hexes
+/// out — far beyond any flag, well inside the set — with an enemy scout
+/// visible only to the wing. `ridge` raises a wall of ground between them;
+/// `forest` plants trees there instead.
+fn hardware_stage(reg: &DataRegistry, ridge: bool, forest: bool, seed: u64) -> BattleState {
+    let mut row: Vec<char> = std::iter::repeat_n('g', 30).collect();
+    if forest {
+        row[5] = 'f';
+    }
+    let row: String = row.into_iter().collect();
+    let elev = if ridge {
+        format!("000003{}", "0".repeat(24))
+    } else {
+        "0".repeat(30)
+    };
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "hardware_stage",
+        "palette": { "g": "grass", "f": "forest" },
+        "rows": [row.clone(), row.clone(), row],
+        "elevation": [elev.clone(), elev.clone(), elev],
+        "formations": [ { "id": "net", "name": "The Net", "side": 0 } ],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let mut lead = unit_at([0, 1], 0, "medium_tank", "Lead");
+    lead.formation = Some("net".into());
+    lead.leads = true;
+    let mut wing = unit_at([10, 1], 0, "light_tank", "Wing");
+    wing.formation = Some("net".into());
+    let enemy = unit_at([21, 1], 1, "recon_car", "Prowler");
+    let placements = vec![lead, wing, enemy];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    )
+}
+
+#[test]
+fn a_receive_only_tank_hears_orders_and_files_no_reports() {
+    // The early-war fit, working as it did in 1941: the line tank's
+    // receiver keeps her on her leader's net — orders reach her — but her
+    // sightings die in her silence until a flag can carry them to somebody
+    // with a set.
+    let reg = registry();
+    let mut state = hardware_stage(&reg, false, false, 71);
+    let (lead, wing, enemy) = (UnitId(0), UnitId(1), UnitId(2));
+
+    commit_all(&reg, &mut state);
+    state.step_tick(&reg);
+
+    let net = formation_named(&state, "net");
+    assert!(
+        state.formations()[net.index()].in_contact(wing),
+        "ten hexes is far beyond any flag, and her receiver hears the set"
+    );
+    assert!(
+        state.fog.side(0).spotted.contains(&enemy),
+        "she sees the prowler her leader cannot"
+    );
+    assert!(
+        !state.picture(0).iter().any(|c| c.unit == enemy),
+        "and the commander learns nothing: a receiver files no reports"
+    );
+
+    // Fall back beside the leader: the flag reaches a transmitter, and the
+    // sighting she is still holding goes through.
+    if let Some(unit) = state.unit_mut(wing) {
+        unit.pos = tactics_core::offset_to_hex(2, 1);
+    }
+    let events = state.step_tick(&reg);
+    let still_seen = state.fog.side(0).spotted.contains(&enemy);
+    assert_eq!(
+        state.picture(0).iter().any(|c| c.unit == enemy),
+        still_seen,
+        "beside the set, whatever she still sees is reported"
+    );
+    if still_seen {
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, BattleEvent::ContactReported { unit, .. } if *unit == enemy)),
+            "and said out loud"
+        );
+    }
+    let _ = lead;
+}
+
+#[test]
+fn a_hill_masks_the_radio_and_a_forest_does_not() {
+    // VHF is line-of-sight-ish: the ground stands in the way, the canopy
+    // does not. The same two vehicles at the same ten hexes are on the net
+    // through a forest and off it behind a ridge.
+    let reg = registry();
+    let wing = UnitId(1);
+
+    let mut behind_trees = hardware_stage(&reg, false, true, 72);
+    commit_all(&reg, &mut behind_trees);
+    behind_trees.step_tick(&reg);
+    let net = formation_named(&behind_trees, "net");
+    assert!(
+        behind_trees.formations()[net.index()].in_contact(wing),
+        "a forest does not mask a radio"
+    );
+
+    let mut behind_ridge = hardware_stage(&reg, true, false, 73);
+    commit_all(&reg, &mut behind_ridge);
+    behind_ridge.step_tick(&reg);
+    let net = formation_named(&behind_ridge, "net");
+    assert!(
+        !behind_ridge.formations()[net.index()].in_contact(wing),
+        "a ridge does: she is in a radio shadow"
+    );
 }

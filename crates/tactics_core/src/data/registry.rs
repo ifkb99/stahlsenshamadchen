@@ -88,6 +88,7 @@ pub struct DataRegistry {
     pub characters: HashMap<String, CharacterDef>,
     pub vehicles: HashMap<String, VehicleDef>,
     pub weapons: HashMap<String, WeaponDef>,
+    pub radios: HashMap<String, RadioDef>,
     pub terrain: HashMap<String, TerrainDef>,
     pub doctrines: HashMap<String, DoctrineDef>,
     pub maps: HashMap<String, MapFile>,
@@ -181,6 +182,10 @@ impl DataRegistry {
         self.vehicles.get(id)
     }
 
+    pub fn radio(&self, id: &str) -> Option<&RadioDef> {
+        self.radios.get(id)
+    }
+
     pub fn weapon(&self, id: &str) -> Option<&WeaponDef> {
         self.weapons.get(id)
     }
@@ -206,6 +211,9 @@ impl DataRegistry {
         })?;
         load_defs(&dir.join("weapons"), report, |d: WeaponDef| {
             self.weapons.insert(d.id.clone(), d);
+        })?;
+        load_defs(&dir.join("radios"), report, |d: RadioDef| {
+            self.radios.insert(d.id.clone(), d);
         })?;
         load_defs(&dir.join("terrain"), report, |d: TerrainDef| {
             self.terrain.insert(d.id.clone(), d);
@@ -239,6 +247,14 @@ impl DataRegistry {
             }
             if v.max_hp <= 0 {
                 report.error(format!("vehicle `{}` has non-positive max_hp", v.id));
+            }
+            if let Some(radio) = &v.radio
+                && !self.radios.contains_key(radio)
+            {
+                report.error(format!(
+                    "vehicle `{}` references missing radio `{}`",
+                    v.id, radio
+                ));
             }
         }
         for w in self.weapons.values() {

@@ -15,7 +15,7 @@
             "rear": 1
         },
         "vision_range": 20,
-        "radio": 8,
+        "radio": "command_set",
         "weapons": [
             "mg"
         ],
@@ -43,7 +43,7 @@
             "rear": 1
         },
         "vision_range": 14,
-        "radio": 8,
+        "radio": "receiver",
         "weapons": [
             "gun_37",
             "mg"
@@ -72,7 +72,7 @@
             "rear": 2
         },
         "vision_range": 12,
-        "radio": 8,
+        "radio": "field_set",
         "weapons": [
             "gun_75",
             "mg"
@@ -103,7 +103,7 @@
             "rear": 3
         },
         "vision_range": 11,
-        "radio": 8,
+        "radio": "field_set",
         "weapons": [
             "gun_88",
             "mg"
@@ -134,7 +134,7 @@
             "rear": 1
         },
         "vision_range": 10,
-        "radio": 8,
+        "radio": "receiver",
         "weapons": [
             "gun_88"
         ],
@@ -162,7 +162,7 @@
             "rear": 1
         },
         "vision_range": 8,
-        "radio": 8,
+        "radio": "field_set",
         "weapons": [
             "howitzer_105"
         ],

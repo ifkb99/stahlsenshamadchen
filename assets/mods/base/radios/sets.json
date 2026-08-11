@@ -1,0 +1,19 @@
+[
+    {
+        "id": "receiver",
+        "name": "Line Receiver",
+        "description": "A wartime receiver and nothing more: she hears the net, and answers with her tracks or a flag. The fit of the cheap line vehicle, twenty years on."
+    },
+    {
+        "id": "field_set",
+        "name": "Field Transceiver",
+        "send": 30,
+        "description": "A wartime transceiver, still soldiering: three kilometres of voice on a good day, and the platoon net runs on it."
+    },
+    {
+        "id": "command_set",
+        "name": "Command Set",
+        "send": 200,
+        "description": "A modern VHF set that reaches across any battlefield this game draws. What limits it is never distance: it is the hills, the mast being shot away, and one day the enemy listening in."
+    }
+]

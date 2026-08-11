@@ -2588,24 +2588,33 @@ fn format_net(
     let rules = registry.command.as_ref()?;
     let leader = formation.leader?;
     let unit = state.unit(leader)?;
-    let reach = state.radio_reach(registry, leader)?;
-    // The hardware, so the difference between it and the reach is exactly
-    // what the crew is worth. Credited to the leader by name because that is
-    // how every other line in this panel names a vehicle; the seat actually
-    // working the set may be her radio operator's, which `crew_skill` already
-    // knows and the player can read off the crew.
-    let hardware = registry
+    // The set by name, because it is a thing the vehicle carries — and a
+    // receive-only set says so instead of showing a range it does not have.
+    let set = registry
         .vehicle(&unit.vehicle)
-        .and_then(|v| v.radio)
-        .unwrap_or(rules.radius);
-    let mut line = format!("Net: radio {reach}");
-    if reach != hardware {
-        line.push_str(&format!(
-            " ({:+}, {}'s signals)",
-            reach as i32 - hardware as i32,
-            unit.name
-        ));
-    }
+        .and_then(|v| v.radio.as_deref())
+        .and_then(|id| registry.radio(id));
+    let mut line = match (set, state.radio_reach(registry, leader)) {
+        (Some(set), Some(reach)) => {
+            let hardware = set.send.unwrap_or(rules.radius);
+            let mut line = format!("Net: {} {reach}", set.name);
+            if reach != hardware {
+                // The difference between hardware and reach is exactly what
+                // the crew is worth, credited to the leader by name; the
+                // seat actually working the set may be her operator's,
+                // which `crew_skill` already knows.
+                line.push_str(&format!(
+                    " ({:+}, {}'s signals)",
+                    reach as i32 - hardware as i32,
+                    unit.name
+                ));
+            }
+            line
+        }
+        (Some(set), None) => format!("Net: {} — receives only", set.name),
+        (None, Some(reach)) => format!("Net: radio {reach}"),
+        (None, None) => return None,
+    };
     if rules.visual_range > 0 {
         line.push_str(&format!(", visual {}", rules.visual_range));
     }

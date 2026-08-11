@@ -370,6 +370,13 @@ pub struct CommandState {
     /// the first recompute so a save from before pictures opens unchanged.
     #[serde(default)]
     pictures: Vec<Vec<Contact>>,
+    /// Per side, the units whose reports cannot currently reach command —
+    /// a receive-only set with no flag route to a transmitter, or a
+    /// transmitter masked by the ground. Sorted by unit id, sized lazily
+    /// like the pictures. Hearing and speaking came apart when radios
+    /// became hardware: `out_of_contact` is the first, this is the second.
+    #[serde(default)]
+    voiceless: Vec<Vec<UnitId>>,
     /// Radioed orders that have not reached the girl they were meant for,
     /// in unit-id order.
     ///
@@ -435,6 +442,7 @@ impl CommandState {
             formations,
             pictures: Vec::new(),
             waiting: Vec::new(),
+            voiceless: Vec::new(),
         }
     }
 
@@ -810,6 +818,15 @@ impl BattleState {
         let rules = registry.command.as_ref()?;
         let unit = self.unit(unit)?;
         let vehicle = registry.vehicle(&unit.vehicle);
+        // What the set can do is hardware; whether it can send at all is the
+        // set's nature. A vehicle naming no set keeps the block's symmetric
+        // radius, so content from before radios were things is unchanged; a
+        // receive-only set answers `None` here, which is also exactly what
+        // the range ring should draw for her — nothing.
+        let hardware = match vehicle.and_then(|v| v.radio.as_deref()) {
+            Some(set) => registry.radio(set).and_then(|r| r.send)?,
+            None => rules.radius,
+        };
         let signals = self.roster.crew_skill(
             registry,
             vehicle,
@@ -817,10 +834,43 @@ impl BattleState {
             SIGNALS,
             self.terrain_at(unit.pos),
         );
-        Some(rules.radio_range(
-            vehicle.and_then(|v| v.radio).unwrap_or(rules.radius),
-            signals,
-        ))
+        Some(rules.radio_range(hardware, signals))
+    }
+
+    /// Whether a radio wave gets from `a` to `b`: VHF is line-of-sight-ish,
+    /// so *terrain* stands in the way — and only terrain. Forests do not
+    /// mask a radio the way they mask an eye, and the check is priced more
+    /// generously than gun sight because a mast clears what a gunsight
+    /// cannot: both ends get an antenna's worth of extra height.
+    ///
+    /// Walked over raw map elevation rather than through the sight grid,
+    /// because the grid's heights bake in `vision_block` — the forest
+    /// canopy — which is exactly the part radio does not care about.
+    fn radio_clear(&self, a: Hex, b: Hex) -> bool {
+        /// Elevation levels of mast, granted to each end.
+        const ANTENNA: f32 = 1.5;
+        let (Some(from), Some(to)) = (self.map.get(a), self.map.get(b)) else {
+            return false;
+        };
+        let h_a = from.elevation as f32 + ANTENNA;
+        let h_b = to.elevation as f32 + ANTENNA;
+        let line = a.line_to(b).collect::<Vec<_>>();
+        let steps = line.len().saturating_sub(1).max(1) as f32;
+        for (i, hex) in line.iter().enumerate() {
+            if *hex == a || *hex == b {
+                continue;
+            }
+            let Some(tile) = self.map.get(*hex) else {
+                // Off-map gaps in the line do not block a wave.
+                continue;
+            };
+            let along = i as f32 / steps;
+            let ray = h_a + (h_b - h_a) * along;
+            if tile.elevation as f32 > ray {
+                return false;
+            }
+        }
+        true
     }
 
     /// Work out who can still hear their leader, and say so when the answer
@@ -852,23 +902,28 @@ impl BattleState {
         let Some(rules) = registry.command.as_ref() else {
             return;
         };
-        // The net is two media, walked side-wide in one breadth-first pass.
+        // The net is two media and, since radios became hardware, two
+        // *directions*, walked side-wide in a pair of breadth-first passes.
         //
-        // **Radio follows the chain of command**: a transmitter reaches only
-        // her own formation, at her vehicle's radio worked by her crew's
-        // signals — dissemination up and down the squad, never sideways to a
-        // neighbour's platoon. **Visual signalling is promiscuous**: a flag,
-        // a hand, a shout carries `visual_range` hexes to ANY friendly with
-        // a clear line to see it, formation be damned — which is exactly why
-        // the walk is per side rather than per formation, and why a platoon
-        // hugging its neighbour stays on the net with every radio out of
-        // reach. Roots are the formation leaders (each implicitly wired to
-        // the side's command) and every unit in no formation at all; roots
-        // always transmit, everyone else extends the net only where `relay`
-        // says a net is run that way.
+        // **Radio follows the chain of command and the nature of the set**:
+        // a transmitter reaches her own formation, at her set's send range
+        // worked by her crew's signals, over a terrain-clear path (VHF is
+        // line-of-sight-ish: hills mask, forests do not, and everyone gets
+        // an antenna's grace) — and a receive-only set transmits nothing,
+        // which is the early-war fit: she hears everything and answers with
+        // her tracks. **Visual signalling is promiscuous and symmetric**: a
+        // flag carries `visual_range` hexes to ANY friendly with a clear
+        // sight line, formation be damned.
         //
-        // Roots, queue and candidate scans are all in unit-id order, so the
-        // reached set and the events below cannot depend on a hash.
+        // Downward, from the roots (formation leaders and everyone in no
+        // formation), the walk answers "who can HEAR her orders" — that is
+        // `out_of_contact`, and standing orders soldier on where it fails.
+        // Upward, along the reversed edges, it answers "whose REPORTS can
+        // reach command" — that is `voiceless`, and the picture learns
+        // nothing from a girl who cannot speak: a receiver-only scout must
+        // flag her sighting to somebody with a set, or it dies with her
+        // silence. Roots, queues and candidate scans are all in unit-id
+        // order, so neither set nor any event can depend on a hash.
         for side in 0..self.sides.len() as u8 {
             let living: Vec<UnitId> = self.side_units(side).map(|u| u.id).collect();
             let mut roots: Vec<UnitId> = living
@@ -881,48 +936,67 @@ impl BattleState {
                 .collect();
             roots.sort_unstable();
 
-            let mut heard: Vec<UnitId> = roots.clone();
-            let mut anchors: VecDeque<UnitId> = roots.into();
-            while let Some(anchor) = anchors.pop_front() {
-                let Some(unit) = self.unit(anchor) else {
-                    continue;
+            // An edge is "speaker informs listener". Radio needs the
+            // speaker's set, their shared formation net, and a path the
+            // wave survives; a flag only needs eyes.
+            let informs = |speaker: UnitId, listener: UnitId| -> bool {
+                let (Some(s), Some(l)) = (self.unit(speaker), self.unit(listener)) else {
+                    return false;
                 };
-                let from = unit.pos;
-                // The same sum [`Self::radio_reach`] shows the player, by
-                // construction rather than by agreement: the ring drawn round
-                // a leader on screen *is* this edge of the graph. `None` is
-                // unreachable here — rules exist and the unit is on the field
-                // — so skipping is a formality rather than a case.
-                let Some(radio) = self.radio_reach(registry, anchor) else {
-                    continue;
-                };
-                let radio = radio as i32;
-                let squad = self.command.formation_of(anchor).map(|f| f.id.clone());
-                for id in &living {
-                    if heard.contains(id) {
-                        continue;
+                let dist = s.pos.distance_to(l.pos);
+                let by_radio = self
+                    .radio_reach(registry, speaker)
+                    .is_some_and(|reach| dist <= reach as i32)
+                    && {
+                        let squad = self.command.formation_of(speaker).map(|f| f.id.as_str());
+                        squad.is_some()
+                            && self.command.formation_of(listener).map(|f| f.id.as_str()) == squad
                     }
-                    let Some(other) = self.unit(*id) else {
-                        continue;
-                    };
-                    let dist = other.pos.distance_to(from);
-                    let by_radio = dist <= radio
-                        && squad.is_some()
-                        && self.command.formation_of(*id).map(|f| f.id.as_str())
-                            == squad.as_deref();
-                    let by_sight = rules.visual_range > 0
-                        && dist <= rules.visual_range as i32
-                        && self.sight.clear(from, other.pos);
-                    if by_radio || by_sight {
-                        heard.push(*id);
-                        if rules.relay {
-                            anchors.push_back(*id);
+                    && self.radio_clear(s.pos, l.pos);
+                let by_sight = rules.visual_range > 0
+                    && dist <= rules.visual_range as i32
+                    && self.sight.clear(s.pos, l.pos);
+                by_radio || by_sight
+            };
+            // One walk, both directions: `down` grows the set orders reach,
+            // `up` the set reports escape from.
+            let walk = |down: bool| -> Vec<UnitId> {
+                let mut reached: Vec<UnitId> = roots.clone();
+                let mut anchors: VecDeque<UnitId> = roots.clone().into();
+                while let Some(anchor) = anchors.pop_front() {
+                    for id in &living {
+                        if reached.contains(id) {
+                            continue;
+                        }
+                        let linked = if down {
+                            informs(anchor, *id)
+                        } else {
+                            informs(*id, anchor)
+                        };
+                        if linked {
+                            reached.push(*id);
+                            if rules.relay {
+                                anchors.push_back(*id);
+                            }
                         }
                     }
                 }
-            }
+                reached
+            };
+            let heard = walk(true);
+            let speaking = walk(false);
 
             self.settle_contact(side, &heard, events);
+            let mut voiceless: Vec<UnitId> = living
+                .iter()
+                .copied()
+                .filter(|id| !speaking.contains(id))
+                .collect();
+            voiceless.sort_unstable();
+            if self.command.voiceless.len() <= side as usize {
+                self.command.voiceless.resize(self.sides.len(), Vec::new());
+            }
+            self.command.voiceless[side as usize] = voiceless;
         }
     }
 
@@ -1035,12 +1109,18 @@ impl BattleState {
                 // The lowest-id unit in contact that can see it files the
                 // report. Units outside any formation answer directly to
                 // their side and always report.
+                // Seeing is not reporting, and — since radios became
+                // hardware — hearing is not speaking either: the report
+                // needs a route to command, which a receive-only set does
+                // not provide on its own.
                 let reporter = self
                     .side_units(side)
                     .filter(|u| {
-                        self.command
-                            .formation_of(u.id)
-                            .is_none_or(|f| f.in_contact(u.id))
+                        !self
+                            .command
+                            .voiceless
+                            .get(side as usize)
+                            .is_some_and(|v| v.contains(&u.id))
                     })
                     .find(|u| super::fog::sees(registry, self, u.id, target.pos))
                     .map(|u| u.id);
