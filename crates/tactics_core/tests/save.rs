@@ -552,6 +552,12 @@ fn a_mission_in_transit_survives_a_save() {
         radius_per_signals: 0,
         relay: true,
         overworld_radius: 999,
+        review: tactics_core::data::ReactionRules {
+            skill: "command".into(),
+            base_ticks: 0,
+            levels_per_tick: 0,
+            max_ticks: 0,
+        },
         latency: tactics_core::data::ReactionRules {
             skill: "command".into(),
             base_ticks: 3,
@@ -657,6 +663,12 @@ fn an_order_waiting_at_the_radio_survives_a_save() {
         radius_per_signals: 0,
         relay: false,
         overworld_radius: 999,
+        review: tactics_core::data::ReactionRules {
+            skill: "command".into(),
+            base_ticks: 0,
+            levels_per_tick: 0,
+            max_ticks: 0,
+        },
         latency: tactics_core::data::ReactionRules {
             skill: "command".into(),
             base_ticks: 0,

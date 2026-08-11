@@ -86,6 +86,20 @@ pub struct CommandRules {
     /// priced on until the comms units and the command girl herself exist.
     /// When they do, this is where their multiplier lands.
     pub overworld_radius: u32,
+    /// How often the commander reviews her plan, in *rounds* between
+    /// reviews, priced on the side commander's skill at the named skill
+    /// (`command` in the base game). Zero at every level — which is what a
+    /// block that does not declare the field gets — is a commander who
+    /// reviews every round: exactly the brain this game had before cadence
+    /// existed, which is the additivity rule doing its usual work.
+    ///
+    /// This is the Flashpoint Campaigns command pulse in this engine's
+    /// currency: what training buys a commander is *tempo*, the ability to
+    /// fold new facts into the plan sooner. Interrupts (a formation beaten,
+    /// command passing, fresh contact on the picture) wake any commander
+    /// regardless — no doctrine sleeps through a formation breaking.
+    #[serde(default = "quick_review")]
+    pub review: ReactionRules,
     /// How long a mission spends in transit, as a function of the *leader's*
     /// skill at [`ReactionRules::skill`] — `command` in the base game, because
     /// getting an order out clearly and quickly is her job and not her
@@ -97,6 +111,16 @@ pub struct CommandRules {
     /// same type with the same knobs. A mod that sets `max_ticks: 0` here has
     /// missions that simply happen.
     pub latency: ReactionRules,
+}
+
+/// The review a block that says nothing gets: every round, at every skill.
+fn quick_review() -> ReactionRules {
+    ReactionRules {
+        skill: "command".into(),
+        base_ticks: 0,
+        levels_per_tick: 0,
+        max_ticks: 0,
+    }
 }
 
 impl Default for CommandRules {
@@ -111,6 +135,7 @@ impl Default for CommandRules {
             // headquarters' reach in one day is one that was sent somewhere on
             // purpose rather than one that wandered.
             overworld_radius: 4,
+            review: quick_review(),
             latency: ReactionRules {
                 skill: "command".into(),
                 base_ticks: 2,
@@ -188,6 +213,7 @@ mod tests {
             relay: true,
             visual_range: 0,
             overworld_radius: 999,
+            review: quick_review(),
             latency: ReactionRules {
                 skill: "command".into(),
                 base_ticks: 0,

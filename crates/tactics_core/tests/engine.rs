@@ -3992,6 +3992,12 @@ fn command_rules(radius: u32, relay: bool, base_ticks: u32) -> tactics_core::dat
         relay,
         // These are battle tests; the campaign's own radius has its own.
         overworld_radius: 999,
+        review: tactics_core::data::ReactionRules {
+            skill: "command".into(),
+            base_ticks: 0,
+            levels_per_tick: 0,
+            max_ticks: 0,
+        },
         latency: tactics_core::data::ReactionRules {
             skill: "command".into(),
             base_ticks,
@@ -4160,6 +4166,12 @@ fn a_command_block_with_zero_coefficients_is_the_game_without_one() {
         relay: true,
         visual_range: 0,
         overworld_radius: 999,
+        review: tactics_core::data::ReactionRules {
+            skill: "command".into(),
+            base_ticks: 0,
+            levels_per_tick: 0,
+            max_ticks: 0,
+        },
         latency: tactics_core::data::ReactionRules {
             skill: "command".into(),
             base_ticks: 0,
@@ -6170,5 +6182,168 @@ fn a_hill_masks_the_radio_and_a_forest_does_not() {
     assert!(
         !behind_ridge.formations()[net.index()].in_contact(wing),
         "a ridge does: she is in a radio shadow"
+    );
+}
+
+// --- the commander's pulse (chunk 10b) -------------------------------------
+
+/// Drive one planning round for a command side and count what it assigned.
+fn pulse_round(reg: &DataRegistry, state: &mut BattleState, ai: &mut AiDriver) -> usize {
+    let mut assigned = 0;
+    ai.plan_round_with(reg, state, |d| {
+        assigned += d
+            .events
+            .iter()
+            .filter(|e| matches!(e, BattleEvent::MissionAssigned { .. }))
+            .count();
+    });
+    let _ = state.apply(reg, &Order::Commit { side: 0 });
+    state.resolve_round(reg);
+    assigned
+}
+
+fn pulsed_rules() -> tactics_core::data::CommandRules {
+    let mut rules = command_rules(999, true, 0);
+    // One round between reviews at every skill: she thinks every other
+    // round, and what happens in between must wake her or wait. The cap
+    // must rise with the base — delay() clamps to it, and a zero cap is
+    // the every-round pulse regardless of base.
+    rules.review.base_ticks = 1;
+    rules.review.max_ticks = 3;
+    rules
+}
+
+/// A quiet battlefield for watching the pulse itself: one commanded
+/// formation, two pieces of ground worth holding, and the only enemy far
+/// beyond anyone's eyes — so no contact can ever interrupt the clock.
+fn pulse_stage(reg: &DataRegistry, seed: u64) -> BattleState {
+    let row = "g".repeat(40);
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "pulse_stage",
+        "palette": { "g": "grass" },
+        "rows": [row.clone(), row.clone(), row],
+        "objectives": [
+            { "id": "bridge", "name": "Bridge", "at": [[5, 1]], "value": 3 },
+            { "id": "ford", "name": "Ford", "at": [[35, 1]], "value": 2 },
+        ],
+        "formations": [ { "id": "line", "name": "The Line", "side": 1 } ],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let mut lead = unit_at([25, 1], 1, "medium_tank", "Lead");
+    lead.formation = Some("line".into());
+    lead.leads = true;
+    let mut wing = unit_at([26, 2], 1, "medium_tank", "Wing");
+    wing.formation = Some("line".into());
+    let hermit = unit_at([39, 2], 0, "medium_tank", "Hermit");
+    let placements = vec![lead, wing, hermit];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    )
+}
+
+#[test]
+fn a_commander_reviews_on_her_own_pulse() {
+    // Between pulses the plan stands. The balanced doctrine retargets off
+    // ground already taken — but only when she is actually reviewing, so
+    // the ford assignment waits for her clock even though the bridge fell
+    // in the first minute.
+    let mut reg = registry();
+    reg.command = Some(pulsed_rules());
+    strip_radios(&mut reg);
+    let mut state = pulse_stage(&reg, 81);
+    assert!(state.fog.side(1).spotted.is_empty(), "a quiet field");
+    let mut ai = AiDriver::new();
+    ai.insert(
+        1,
+        make_battle_planner(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: None,
+            },
+            81,
+            &reg,
+        ),
+    );
+
+    assert!(
+        pulse_round(&reg, &mut state, &mut ai) > 0,
+        "round 1 assigns"
+    );
+    // The bridge falls to her side between pulses.
+    state.objective_held[0] = Some(1);
+    assert_eq!(
+        pulse_round(&reg, &mut state, &mut ai),
+        0,
+        "round 2 is between pulses: the plan stands"
+    );
+    assert!(
+        pulse_round(&reg, &mut state, &mut ai) > 0,
+        "round 3 is her pulse, and she moves her people on"
+    );
+}
+
+#[test]
+fn a_breaking_formation_wakes_her_between_pulses() {
+    // No commander sleeps through a formation breaking: the interrupt runs
+    // the review early and the withdrawal goes out on the round the damage
+    // is known, not on the next scheduled pulse.
+    let mut reg = registry();
+    reg.command = Some(pulsed_rules());
+    strip_radios(&mut reg);
+    let mut state = BattleState::from_map(&reg, "river_crossing", 82).unwrap();
+    let mut ai = AiDriver::new();
+    ai.insert(
+        1,
+        make_battle_planner(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: Some("elastic_defense".into()),
+            },
+            82,
+            &reg,
+        ),
+    );
+
+    let _ = pulse_round(&reg, &mut state, &mut ai);
+    // Between pulses, the line is shot to pieces.
+    let line = formation_named(&state, "valkyrie_line");
+    for id in state.formations()[line.index()].members.clone() {
+        state.units[id.index()].hp = 1;
+    }
+    let mut withdrew = false;
+    ai.plan_round_with(&reg, &mut state, |d| {
+        withdrew |= d.events.iter().any(|e| {
+            matches!(
+                e,
+                BattleEvent::MissionAssigned {
+                    mission: Mission::Withdraw { .. },
+                    ..
+                }
+            )
+        });
+    });
+    assert!(
+        withdrew,
+        "the shock wakes her and the order goes out at once"
     );
 }

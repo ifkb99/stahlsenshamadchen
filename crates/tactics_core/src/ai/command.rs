@@ -118,6 +118,18 @@ pub struct SideCommand {
     /// The round missions were last reviewed, so the brain speaks once per
     /// round rather than once per order.
     reviewed_round: Option<u32>,
+    /// When the next scheduled review falls due — the commander's pulse,
+    /// priced on her `command` by the rules' `review` block. `None` is
+    /// "never reviewed yet", which is always due.
+    next_review: Option<u32>,
+    /// What she knew at her last review, for the interrupts that wake any
+    /// commander early: who led each formation, which formations were
+    /// already beaten, and which contacts the picture already carried.
+    /// Planner-side memory, like `pending` — rebuilt with the planner, never
+    /// saved.
+    known_leaders: Vec<Option<crate::battle::UnitId>>,
+    known_beaten: Vec<bool>,
+    known_contacts: Vec<crate::battle::UnitId>,
     pending: VecDeque<Order>,
 }
 
@@ -138,6 +150,10 @@ impl SideCommand {
             built: false,
             reviews_missions: true,
             reviewed_round: None,
+            next_review: None,
+            known_leaders: Vec::new(),
+            known_beaten: Vec::new(),
+            known_contacts: Vec::new(),
             pending: VecDeque::new(),
         }
     }
@@ -281,6 +297,78 @@ impl SideCommand {
         (position % 2) as u32 != (state.round.wrapping_add(index as u32)) % 2
     }
 
+    /// Rounds between this side's reviews: the commander's pulse, priced on
+    /// the side commander's `command`-family skill by the rules' `review`
+    /// block. Zero — every round — wherever no rules exist or the block
+    /// declares no cadence, which is the brain this game always had.
+    fn review_interval(&self, registry: &DataRegistry, state: &BattleState, side: u8) -> u32 {
+        let Some(rules) = registry.command.as_ref() else {
+            return 0;
+        };
+        let level = state
+            .command
+            .formations()
+            .iter()
+            .find(|f| f.side == side)
+            .and_then(|f| f.leader)
+            .and_then(|id| state.unit(id))
+            .map(|u| {
+                state.roster.crew_skill(
+                    registry,
+                    registry.vehicle(&u.vehicle),
+                    &u.crew,
+                    &rules.review.skill,
+                    state.terrain_at(u.pos),
+                )
+            })
+            .unwrap_or(crate::data::AVERAGE);
+        rules.review.delay(level)
+    }
+
+    /// What no commander sleeps through, however slow her pulse: command
+    /// passing in one of her formations, a formation newly beaten past its
+    /// threshold, or a fresh contact on the picture she has not seen before.
+    /// Checked against what she knew at her last review.
+    fn interrupted(&self, registry: &DataRegistry, state: &BattleState, side: u8) -> bool {
+        for (index, formation) in state.command.formations().iter().enumerate() {
+            if formation.side != side {
+                continue;
+            }
+            if self.known_leaders.get(index).copied().flatten() != formation.leader {
+                return true;
+            }
+            let doctrine = self.doctrine_for(index);
+            let beaten = Self::beaten(registry, state, formation, doctrine);
+            if beaten && !self.known_beaten.get(index).copied().unwrap_or(false) {
+                return true;
+            }
+        }
+        state
+            .picture(side)
+            .iter()
+            .any(|c| c.fresh && !self.known_contacts.contains(&c.unit))
+    }
+
+    /// Note what this review saw, so the next interrupt has something honest
+    /// to compare against.
+    fn remember(&mut self, registry: &DataRegistry, state: &BattleState, side: u8) {
+        let formations = state.command.formations();
+        self.known_leaders = formations.iter().map(|f| f.leader).collect();
+        self.known_beaten = formations
+            .iter()
+            .enumerate()
+            .map(|(index, f)| {
+                f.side == side && Self::beaten(registry, state, f, self.doctrine_for(index))
+            })
+            .collect();
+        self.known_contacts = state
+            .picture(side)
+            .iter()
+            .filter(|c| c.fresh)
+            .map(|c| c.unit)
+            .collect();
+    }
+
     /// The doctrine a formation fights under: its own, else the side's.
     fn doctrine_for(&self, index: usize) -> &DoctrineDef {
         self.executors
@@ -393,19 +481,21 @@ impl SideCommand {
     /// orders it out, and by which lane. `None` while it fights on — which
     /// includes having nowhere to go: a side with no exit of its own holds,
     /// because driving for a lane that does not exist is not a retreat.
-    fn wants_out(
-        &self,
+    /// Whether a formation has lost more than its doctrine will bear.
+    /// Strength is measured over the roster it went in with — the dead and
+    /// the exited still count against the whole — so it is monotonic and a
+    /// retreat cannot un-happen when the weakest vehicle stops dragging the
+    /// average down. `withdraw_threshold` is the fraction of strength *lost*
+    /// before a doctrine looks for the way out, so the stubborn 0.85 fights
+    /// to a remnant and the elastic 0.45 leaves with something to rebuild.
+    fn beaten(
         registry: &DataRegistry,
         state: &BattleState,
         formation: &Formation,
         doctrine: &DoctrineDef,
-    ) -> Option<String> {
+    ) -> bool {
         let (mut hp, mut max) = (0i64, 0i64);
         for id in &formation.members {
-            // `state.units` rather than `state.unit()`, because the dead and
-            // the exited still count against what the formation went in
-            // with: strength is monotonic, so a retreat cannot un-happen
-            // when the weakest vehicle stops dragging the average down.
             let Some(unit) = state.units.get(id.index()) else {
                 continue;
             };
@@ -420,10 +510,17 @@ impl SideCommand {
             );
         }
         let strength = hp as f32 / max.max(1) as f32;
-        // `withdraw_threshold` is the fraction of strength *lost* before a
-        // doctrine looks for the way out, so the stubborn 0.85 fights to a
-        // remnant and the elastic 0.45 leaves with something to rebuild.
-        if strength >= (1.0 - doctrine.withdraw_threshold).clamp(0.0, 1.0) {
+        strength < (1.0 - doctrine.withdraw_threshold).clamp(0.0, 1.0)
+    }
+
+    fn wants_out(
+        &self,
+        registry: &DataRegistry,
+        state: &BattleState,
+        formation: &Formation,
+        doctrine: &DoctrineDef,
+    ) -> Option<String> {
+        if !Self::beaten(registry, state, formation, doctrine) {
             return None;
         }
         let from = formation
@@ -447,9 +544,21 @@ impl AiPlanner<BattleState, Order> for SideCommand {
         // the time they plan the first vehicle. A brainless side skips this
         // entirely — somebody else has already spoken, or nobody has.
         if self.reviews_missions && self.reviewed_round != Some(state.round) {
+            // Once per round the commander considers whether to think at
+            // all: on her pulse she reviews; between pulses only an
+            // interrupt — command passing, a formation breaking, a fresh
+            // contact — wakes her, and the plan otherwise stands, which is
+            // what plans are for. Marking the round either way keeps this
+            // from re-running per order.
             self.reviewed_round = Some(state.round);
-            self.pending
-                .extend(self.mission_review(registry, state, side));
+            let due = self.next_review.is_none_or(|at| state.round >= at);
+            if due || self.interrupted(registry, state, side) {
+                let interval = self.review_interval(registry, state, side);
+                self.next_review = Some(state.round + 1 + interval);
+                self.pending
+                    .extend(self.mission_review(registry, state, side));
+                self.remember(registry, state, side);
+            }
         }
 
         while let Some(order) = self.pending.pop_front() {
