@@ -747,6 +747,37 @@ where receive-only and masking bite); the diff is read by the same rule as
 every wire change — words may move freely, deeds only where contact
 explains them.
 
+### The battle drill — implemented as chunk 10's opening move
+
+Landed ahead of the rest of the chunk, because the first playtest of the
+delegation layer found its sharp edge: an unordered unit under fire sat in
+the open, and the delegation gate's reasoning ("the player did not ask for
+autonomous movement") collided with the oldest rule in soldiering — nobody
+under fire waits for permission to survive. Battle drills are the
+pre-compiled OODA shortcut every army trains precisely because the loop is
+too slow under fire: React to Contact is *return fire, seek cover, report*,
+and Combat Mission's TacAI proved forty years of players read exactly this
+override as realism, never as disobedience.
+
+The shape: a `drill` **doctrine in mod data** — the posture of survival:
+cover valued double, zero appetite for objectives, exits, scouting or
+advancing to contact — consulted by the delegation layer for a unit that is
+unordered, unmissioned, and *threatened* (something spotted could put fire
+on her where she stands, priced by the same `best_weapon_against` every
+planner uses). Threatened, she returns fire and makes for cover, and the
+log says "she is under fire and takes cover on her own"; safe, she stays
+parked exactly as before; any explicit order — including the deliberate
+hold-and-watch — outranks the drill entirely. A mod that removes the
+doctrine gets a built-in equivalent, because a missing id must degrade to
+sensible behaviour rather than to standing in the open. Pinned by
+`a_crew_under_fire_takes_cover_instead_of_waiting_for_orders` and
+`an_idle_crew_out_of_danger_stays_put`.
+
+What the drill deliberately does not do yet: react mid-round. She takes
+cover at the next planning phase, not at tick four — the tick-four version
+is 10c's business, on the reactions currency, where training decides how
+long the drill takes to kick in.
+
 ### 10b. The commander's loop (difficulty 4/5)
 
 OODA at the formation-and-side level: Observe is the command picture, Orient

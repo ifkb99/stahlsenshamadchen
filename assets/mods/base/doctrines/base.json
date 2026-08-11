@@ -43,5 +43,20 @@
         "withdraw_threshold": 0.6,
         "initiative": 0.9,
         "delegation": 0.8
+    },
+    {
+        "id": "drill",
+        "name": "Battle Drill",
+        "description": "Not a way of fighting a battle but a way of surviving a moment: what a crew does under fire when nobody has told her anything. Return fire, seek cover, stay near friends, and want nothing else on the map \u2014 no objectives, no exits, no advancing to contact. The engine consults this posture for unordered units in danger; a mod that removes it gets a built-in equivalent.",
+        "aggression": 0.0,
+        "cover_value": 2.0,
+        "elevation_value": 1.2,
+        "concentration": 0.8,
+        "scouting": 0.0,
+        "objective_value": 0.0,
+        "indirect_appetite": 1.0,
+        "withdraw_threshold": 0.5,
+        "initiative": 0.5,
+        "delegation": 0.5
     }
 ]

@@ -22,7 +22,10 @@
 //! exists to say; making it clever belongs to the willingness work, not to
 //! the plumbing.
 
-use super::{AiConfig, AiPlanner, Evaluator, difficulty_noise, next_unplanned_unit};
+use super::{
+    AiConfig, AiPlanner, Evaluator, best_weapon_against, difficulty_noise, next_unplanned_unit,
+    visible_enemies,
+};
 use crate::battle::{BattleState, FireIntent, Formation, FormationId, Mission, Order};
 use crate::data::{DataRegistry, DoctrineDef};
 use crate::map::{Objective, ObjectiveKind};
@@ -38,6 +41,45 @@ use super::UtilityPlanner;
 /// centralized doctrine writes. Withdrawal is exempt: whether to keep
 /// fighting is never devolved.
 const DEVOLVED: f32 = 0.6;
+
+/// The posture an unordered crew under fire falls back on. Mod data first —
+/// the base game ships a `drill` doctrine and a mod may retune what drilled
+/// self-preservation looks like — with a built-in equivalent if a mod
+/// removes it, because a missing id must degrade to sensible behaviour
+/// rather than to standing in the open.
+fn drill_doctrine(data: &DataRegistry) -> DoctrineDef {
+    data.doctrine("drill")
+        .cloned()
+        .unwrap_or_else(|| DoctrineDef {
+            id: "drill".into(),
+            name: "Battle Drill".into(),
+            description: String::new(),
+            aggression: 0.0,
+            cover_value: 2.0,
+            elevation_value: 1.2,
+            concentration: 0.8,
+            scouting: 0.0,
+            objective_value: 0.0,
+            indirect_appetite: 1.0,
+            withdraw_threshold: 0.5,
+            initiative: 0.5,
+            delegation: 0.5,
+        })
+}
+
+/// Whether anything the side can see could put fire on this unit where she
+/// stands. The drill's trigger: fog-honest (spotted enemies only, through
+/// the same [`best_weapon_against`] every planner prices shots with) and
+/// deterministic, because "was she in danger" must answer the same on every
+/// machine.
+fn threatened(registry: &DataRegistry, state: &BattleState, unit: crate::battle::UnitId) -> bool {
+    let Some(me) = state.unit(unit) else {
+        return false;
+    };
+    visible_enemies(state, me.side)
+        .iter()
+        .any(|enemy| best_weapon_against(registry, state, enemy.id, enemy.pos, me).is_some())
+}
 
 pub struct SideCommand {
     config: AiConfig,
@@ -57,6 +99,12 @@ pub struct SideCommand {
     /// Plans units in no formation, under the side's own doctrine — which is
     /// exactly what the whole side was before formations existed.
     fallback: UtilityPlanner,
+    /// Plans the battle drill: the self-preservation move of an unordered
+    /// unit under fire, when the commander is a human who has said nothing.
+    /// Runs the `drill` posture from mod data — return fire, seek cover,
+    /// want nothing else on the map — so "she moved without orders" is
+    /// always survival and never campaigning.
+    drill: UtilityPlanner,
     /// The side's doctrine, resolved once at build so the brain can consult
     /// it for formations that declare none of their own.
     side_doctrine: Option<DoctrineDef>,
@@ -81,6 +129,11 @@ impl SideCommand {
             commander: None,
             executors: HashMap::new(),
             fallback: UtilityPlanner::from_config(config, seed ^ 0xC0FF_EE00, data),
+            drill: UtilityPlanner::new(
+                Evaluator::new(drill_doctrine(data)),
+                difficulty_noise(config.difficulty),
+                seed ^ 0xD811_0000,
+            ),
             side_doctrine: None,
             built: false,
             reviews_missions: true,
@@ -350,13 +403,25 @@ impl AiPlanner<BattleState, Order> for SideCommand {
             .iter()
             .position(|f| f.contains(unit));
         // Without a brain, an unmissioned unit is one nobody has decided
-        // about, and deciding for her is not this object's job. See
-        // [`Self::executor_only`]: she watches her arc instead.
+        // about, and deciding for her is not this object's job — with one
+        // exception every army since 1918 has drilled: nobody under fire
+        // waits for permission to survive. Threatened, she executes the
+        // battle drill (return fire, seek cover, want nothing else on the
+        // map); safe, she watches her arc exactly as before, so the
+        // parking lot stays parked. Any explicit order — including the
+        // deliberate "hold and watch" — outranks the drill, because it
+        // marks her planned before this is ever consulted.
         if !self.reviews_missions
             && !formation
                 .and_then(|index| state.command.formations().get(index))
                 .is_some_and(|f| f.latest_mission().is_some())
         {
+            if threatened(registry, state, unit) {
+                self.pending = self.drill.plan_unit(registry, state, unit).into();
+                if let Some(order) = self.pending.pop_front() {
+                    return order;
+                }
+            }
             return Order::SetFire {
                 unit,
                 fire: FireIntent::Hold,

@@ -651,7 +651,7 @@ fn setup_battle(
         "Battle started. Both sides plan, then the round plays out at once. \
          LMB select/move, A engage hovered enemy, B blind fire, V hold, C clear orders, \
          Enter commit, Q/E rotate. F picks a formation; G advance, H hold, R recon on the \
-         hovered hex, W withdraw.",
+         hovered hex, W withdraw; Shift queues a mission behind the current one.",
     );
 
     // What was decided on the campaign map is what the formations here try to
@@ -1729,15 +1729,41 @@ fn commit_round(
     // gaps and hands the round in.
     let mut events = Vec::new();
     let mut refused = Vec::new();
+    let mut drilled = Vec::new();
     driver.plan_round_with(registry, state, |decision| {
         events.extend(decision.events.iter().cloned());
         if let Some(error) = &decision.rejected {
             refused.push(error.to_string());
         }
+        if let Order::SetMove { unit, .. } = decision.order {
+            drilled.push(unit);
+        }
     });
     anim.extend(events);
     for error in refused {
         log.push(format!("Your staff fumbled an order: {error}"));
+    }
+    // A move for a unit outside any mission is the battle drill: she is
+    // under fire and nobody told her anything, so she is taking cover on
+    // her own. Said out loud, because a vehicle moving without a visible
+    // order behind it is indistinguishable from a bug — the same bargain
+    // every deviation in this game makes. (Filtered here rather than in the
+    // closure: the driver holds the state mutably while it runs, and an
+    // executor-only side never changes a formation's missions mid-drive, so
+    // reading them afterwards answers the same.)
+    drilled.retain(|unit| {
+        state
+            .command
+            .formation_of(*unit)
+            .is_none_or(|f| f.latest_mission().is_none())
+    });
+    for unit in drilled {
+        let name = state
+            .units
+            .get(unit.index())
+            .map(|u| u.name.clone())
+            .unwrap_or_default();
+        log.push(format!("{name} is under fire and takes cover on her own."));
     }
 }
 

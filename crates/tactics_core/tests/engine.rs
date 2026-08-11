@@ -5706,3 +5706,95 @@ fn the_ring_the_screen_draws_is_the_edge_the_engine_walks() {
     reg.command = None;
     assert_eq!(state.radio_reach(&reg, leader), None);
 }
+
+// --- the battle drill (chunk 10 opening move) ------------------------------
+
+/// Open grass with a forest stand to the west: her, unordered and outside
+/// any formation, and a gun tank well inside range to the east.
+fn drill_stage(reg: &DataRegistry, enemy_at: i32, seed: u64) -> BattleState {
+    let row = format!("gggf{}", "g".repeat(26));
+    two_side_battle(
+        reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([5, 1], 0, "recon_car", "Unordered"),
+            unit_at([enemy_at, 1], 1, "medium_tank", "Gun Tank"),
+        ],
+        seed,
+    )
+}
+
+#[test]
+fn a_crew_under_fire_takes_cover_instead_of_waiting_for_orders() {
+    // The battle drill: nobody under fire waits for permission to survive.
+    // An unordered unit the delegation layer used to park with a bare
+    // hold-fire now returns fire and seeks cover when something that can
+    // hit her is in sight — and only then; explicit orders still outrank
+    // the drill because they mark her planned before it is consulted.
+    let reg = registry_wireless();
+    let mut state = drill_stage(&reg, 9, 51);
+    let (crew, enemy) = (UnitId(0), UnitId(1));
+    assert!(
+        state.fog.side(0).spotted.contains(&enemy),
+        "the stage needs her to see the danger"
+    );
+
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
+        Box::new(tactics_core::ai::SideCommand::executor_only(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: None,
+            },
+            51,
+            &reg,
+        )),
+    );
+    ai.plan_round(&reg, &mut state);
+
+    let unit = state.unit(crew).unwrap();
+    assert!(unit.planned, "the drill plans her");
+    let dest = unit.planned_destination();
+    assert_ne!(dest, unit.pos, "she does not sit in the open");
+    assert_eq!(
+        state.terrain_at(dest),
+        Some("forest"),
+        "she makes for the cover, not merely anywhere"
+    );
+}
+
+#[test]
+fn an_idle_crew_out_of_danger_stays_put() {
+    // The other half of the bargain: the drill is survival, not initiative.
+    // Nothing spotted that can reach her means the parking lot stays parked,
+    // exactly as it did before the drill existed.
+    let reg = registry_wireless();
+    let mut state = drill_stage(&reg, 28, 52);
+    let (crew, enemy) = (UnitId(0), UnitId(1));
+    assert!(
+        !state.fog.side(0).spotted.contains(&enemy),
+        "the stage needs the danger out of sight"
+    );
+    let parked = state.unit(crew).unwrap().pos;
+
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
+        Box::new(tactics_core::ai::SideCommand::executor_only(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: None,
+            },
+            52,
+            &reg,
+        )),
+    );
+    ai.plan_round(&reg, &mut state);
+
+    let unit = state.unit(crew).unwrap();
+    assert!(unit.planned && unit.intent.path.is_empty());
+    assert_eq!(unit.pos, parked);
+}
