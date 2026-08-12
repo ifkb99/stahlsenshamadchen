@@ -7510,26 +7510,16 @@ fn strung_wire(reg: &DataRegistry) -> BattleState {
 }
 
 #[test]
-#[ignore = "known defect: a waiting order delivered from out of reach is announced, silently dropped, and still detaches her"]
 fn a_waiting_order_arrives_as_an_order_however_far_she_has_come() {
-    // The queue deliberately stores the destination rather than the path,
-    // because "she re-paths from wherever she is when it reaches her" is the
-    // whole promise of deliver-on-contact. What actually happens is that
-    // `deliver_waiting_orders` calls `set_move` and throws the error away —
-    // and `path_to` refuses anything more than one round's driving, which is
-    // precisely the case a queued order is in by the time it lands. So the
-    // order is announced as delivered, does nothing at all, and STILL sets
-    // `detached`, which excuses her from her formation's standing mission
-    // until somebody recalls her. On the player's side, where `executor_only`
-    // hands a detached crew a bare hold-fire, that is a vehicle that stops
-    // forever the moment her orders finally get through — the exact class of
-    // silence the chunk was built to remove.
-    //
-    // Three readings are defensible and the choice is a design one, which is
-    // why this is pinned rather than patched: drive her as far toward it as
-    // the round allows and keep the order until she arrives; keep the order
-    // waiting and say so; or drop it and say THAT. What is not defensible is
-    // the present combination of all three.
+    // The queue stores the destination rather than the path, because "she
+    // re-paths from wherever she is when it reaches her" is the whole
+    // promise of deliver-on-contact — and the delivered order is now a
+    // standing personal destination (`Unit.tasking`), marched toward one
+    // round at a time until she arrives. This is what a real crew does with
+    // a movement order to distant ground: it does not expire for being far,
+    // it is executed across as many periods as the ground demands. The
+    // sender-side alternative — somebody driving out to carry the message —
+    // is the courier feature the design doc keeps for later.
     let mut reg = registry();
     reg.command = Some(command_rules(2, false, 0));
     strip_radios(&mut reg);
@@ -7735,5 +7725,67 @@ fn a_campaign_run_by_standing_orders_and_planners_plays_itself_out() {
         transmitted,
         "the order held for the junior company on day one has to go out \
          eventually, or standing orders die in the drawer"
+    );
+}
+
+#[test]
+fn a_personal_march_carries_across_rounds_and_ends_in_a_hold() {
+    // The rest of the promise: the delivered destination is not one round's
+    // lunge but a march. The staff re-issues the leg every round until she
+    // stands on the ordered ground, the tasking then clears, and she holds
+    // there — detached still, because nobody has recalled her.
+    let reg = registry_wireless();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 111).unwrap();
+    let unit = UnitId(0);
+    let start = state.unit(unit).unwrap().pos;
+    // Far up her own side of the river: several rounds' driving, no enemy
+    // contact to muddy the march with drill moves.
+    let far = start + tactics_core::Hex::new(3, -9);
+    assert!(state.map.contains(far));
+    state
+        .apply(
+            &reg,
+            &Order::Radio {
+                unit,
+                to: Some(far),
+                fire: None,
+            },
+        )
+        .expect("a far destination is an order now, not a refusal");
+    assert_eq!(state.unit(unit).unwrap().tasking, Some(far));
+
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
+        Box::new(tactics_core::ai::SideCommand::executor_only(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: None,
+            },
+            111,
+            &reg,
+        )),
+    );
+    let mut arrived_at = None;
+    for round in 0..10 {
+        ai.plan_round(&reg, &mut state);
+        let _ = state.apply(&reg, &Order::Commit { side: 1 });
+        state.resolve_round(&reg);
+        if state.unit(unit).unwrap().pos == far {
+            arrived_at = Some(round);
+            break;
+        }
+    }
+    let arrived = arrived_at.expect("she gets there");
+    assert!(arrived > 0, "and it took more than one round: {arrived}");
+    // The round after arrival opens with the tasking cleared and her holding.
+    ai.plan_round(&reg, &mut state);
+    let unit = state.unit(unit).unwrap();
+    assert_eq!(unit.tasking, None, "arrived is done");
+    assert!(unit.detached, "but she stays on her commander's post");
+    assert!(
+        unit.intent.path.is_empty(),
+        "holding the ground she was sent to"
     );
 }

@@ -365,6 +365,7 @@ impl BattleState {
                 u.planned = false;
                 // The recall: she rejoins her formation's tasking.
                 u.detached = false;
+                u.tasking = None;
                 Ok(Vec::new())
             }
             Order::SetMission { formation, mission } => {
@@ -400,6 +401,24 @@ impl BattleState {
     /// from wherever she is when it arrives, and refusing today on the traffic
     /// of today would be answering a question nobody asked. That is exactly
     /// how a [`Mission`] behaves, and for the same reason.
+    /// One round's march toward a destination that may be many rounds away:
+    /// the closest reachable hex to it this round, or nothing if she can get
+    /// no closer. Deterministic tiebreak, because two equally good hexes must
+    /// pick the same one in every replay.
+    fn march_toward(&mut self, registry: &DataRegistry, id: UnitId, destination: Hex) {
+        let Some(pos) = self.unit(id).map(|u| u.pos) else {
+            return;
+        };
+        let step = movement::reachable(registry, self, id)
+            .into_keys()
+            .min_by_key(|h| (destination.distance_to(*h), h.x, h.y));
+        if let Some(step) = step
+            && step != pos
+        {
+            let _ = self.set_move(registry, id, step);
+        }
+    }
+
     fn radio(
         &mut self,
         registry: &DataRegistry,
@@ -412,12 +431,19 @@ impl BattleState {
             self.check_fire(registry, id, fire)?;
         }
         if self.hears_orders(id) {
-            // Word for word what `SetMove` then `SetFire` would have done.
-            // There is deliberately no second code path for an order that
-            // arrives instantly: being in contact is the ordinary case, and it
-            // has to be the ordinary code.
+            // The movement half is a standing personal destination, not a
+            // one-round route: a commander's order does not expire for
+            // naming ground beyond this round's driving. She marches toward
+            // it now and keeps marching each round until she arrives —
+            // which also means a far destination is no longer a refusal.
             if let Some(to) = to {
-                self.set_move(registry, id, to)?;
+                if !self.map.contains(to) {
+                    return Err(OrderError::NotOnMap);
+                }
+                if let Some(unit) = self.unit_mut(id) {
+                    unit.tasking = Some(to);
+                }
+                self.march_toward(registry, id, to);
             }
             if let Some(fire) = fire {
                 self.set_fire(registry, id, fire)?;
@@ -466,7 +492,14 @@ impl BattleState {
                 continue;
             }
             if let Some(to) = orders.destination {
-                let _ = self.set_move(registry, unit, to);
+                // The promise of the queue, kept: however far she has come
+                // in the meantime, the delivered order is a destination she
+                // now marches for — this round as far as the round allows,
+                // and every round after until she arrives.
+                if let Some(u) = self.unit_mut(unit) {
+                    u.tasking = Some(to);
+                }
+                self.march_toward(registry, unit, to);
             }
             // The target may have burned while the order was in the drawer.
             if let Some(fire) = orders.fire
@@ -539,6 +572,7 @@ impl BattleState {
         for member in members {
             if let Some(unit) = self.unit_mut(member) {
                 unit.detached = false;
+                unit.tasking = None;
             }
         }
         Ok(vec![Event::MissionAssigned {
@@ -1125,6 +1159,14 @@ impl BattleState {
             committed: vec![false; self.sides.len()],
         };
         events.push(Event::RoundStarted { round: self.round });
+        // A personal destination reached is a personal destination done:
+        // she holds the ground she was sent to, still detached, and the
+        // panel stops saying she is on her way.
+        for unit in self.units.iter_mut().filter(|u| u.alive) {
+            if unit.tasking == Some(unit.pos) {
+                unit.tasking = None;
+            }
+        }
         // Plans advance at the top of the round, so a promoted leg steers the
         // planning that is about to happen rather than arriving a round late.
         self.promote_missions(registry, events);

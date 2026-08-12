@@ -125,6 +125,15 @@ pub struct Unit {
     /// she still shoots on her arc.
     #[serde(default)]
     pub detached: bool,
+    /// Where her commander's personal order is taking her, until she gets
+    /// there. A destination, never a path: she re-paths from wherever she
+    /// stands each round, marching across as many rounds as the ground
+    /// demands — a movement order does not expire for being far away, it is
+    /// executed until arrival. Cleared when she reaches it (she then holds
+    /// there, still detached), when she is recalled, or when her formation
+    /// is given fresh orders.
+    #[serde(default)]
+    pub tasking: Option<Hex>,
     pub alive: bool,
     /// This vehicle drove off the map by an exit objective.
     ///
@@ -459,6 +468,7 @@ impl BattleState {
             last_hit_by: None,
             pressure: 0,
             detached: false,
+            tasking: None,
             alive: true,
             exited: false,
         });

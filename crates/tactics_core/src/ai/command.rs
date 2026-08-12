@@ -689,10 +689,28 @@ impl AiPlanner<BattleState, Order> for SideCommand {
                     .and_then(|index| state.command.formations().get(index))
                     .is_some_and(|f| f.latest_mission().is_some()))
         {
+            // Survival first, always: the drill outranks even the
+            // commander's personal march, because nobody drives a parade
+            // route through effective fire to keep an appointment.
             if threatened(registry, state, unit) {
                 self.pending = self.drill.plan_unit(registry, state, unit).into();
                 if let Some(order) = self.pending.pop_front() {
                     return order;
+                }
+            }
+            // A standing personal destination marches on: one round's worth
+            // of ground toward it, the same leg the engine walked on the
+            // round it was given.
+            if let Some((tasking, pos)) = state.unit(unit).and_then(|u| Some((u.tasking?, u.pos)))
+                && tasking != pos
+            {
+                let step = crate::battle::reachable(registry, state, unit)
+                    .into_keys()
+                    .min_by_key(|h| (tasking.distance_to(*h), h.x, h.y));
+                if let Some(step) = step
+                    && step != pos
+                {
+                    return Order::SetMove { unit, to: step };
                 }
             }
             return Order::SetFire {

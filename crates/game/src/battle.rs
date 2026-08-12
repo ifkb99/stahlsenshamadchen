@@ -1341,7 +1341,17 @@ fn pump_events(
                 ));
             }
             BattleEvent::OrdersDelivered { unit } => {
-                log.push(format!("{} has her orders.", name(*unit)));
+                // With the destination in the sentence when the order is a
+                // march: the player learns both that it got through and what
+                // will now happen across the coming rounds.
+                match battle.state.units.get(unit.index()).and_then(|u| u.tasking) {
+                    Some(to) => log.push(format!(
+                        "{} has her orders and is on her way to {}.",
+                        name(*unit),
+                        hex_label(to)
+                    )),
+                    None => log.push(format!("{} has her orders.", name(*unit))),
+                }
             }
             // The upward wire: a report reaching the commander is the log's
             // business even when the spot itself was already shown, because
@@ -2578,12 +2588,18 @@ fn format_formation(
         // says she cannot hear you, the other says you have already spoken and
         // she has not heard it yet. A player who cannot tell them apart cannot
         // tell whether to reissue the order.
-        let mut tags: Vec<&str> = Vec::new();
+        let mut tags: Vec<String> = Vec::new();
         if !formation.in_contact(*id) {
-            tags.push("out of contact");
+            tags.push("out of contact".into());
         }
         if state.command.waiting_for(*id).is_some() {
-            tags.push("orders waiting");
+            tags.push("orders waiting".into());
+        }
+        // Who will go where: a standing personal march is a promise about
+        // future rounds, and a promise the player cannot read is one she
+        // will fight against.
+        if let Some(tasking) = unit.tasking {
+            tags.push(format!("moving to {}", hex_label(tasking)));
         }
         let tag = if tags.is_empty() {
             String::new()
