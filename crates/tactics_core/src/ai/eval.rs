@@ -185,8 +185,39 @@ impl Evaluator {
                 .formation_of(unit)
                 .and_then(|f| f.mission_for(unit).map(|m| (m, f)))
         };
+        // Contact suspends a movement to contact. An `Advance` is exactly
+        // that order — take the ground, fight what you meet on the way — so
+        // while somebody is shooting at her where she stands, the pull toward
+        // the commander's hex is cut to a quarter and her own appetites (the
+        // shot in front of her, cover, the threat she is under) decide the
+        // round. Nothing is latched: when the enemy is dead or lost the
+        // damping evaporates and the march resumes, which is why this is a
+        // scale on the term rather than a state anybody has to clear.
+        //
+        // The playtest that forced it: a delegated advance walked into
+        // effective fire at the bridge and was gone by round three, because
+        // "go there" outbid every local reason not to. The rule the designer
+        // ruled on is that a mission may not override the battle drill, and
+        // the real-world shape agrees — movement to contact halts and fights,
+        // and pressing on through fire is a *different order*, which is
+        // [`Mission::Assault`] and is deliberately absent from this match.
+        // `Recon` damps too: eyes forward is even less of a reason to drive
+        // into a gun than ground is.
+        //
+        // Only asked when there is a mission of that kind to damp, because
+        // `threatened` walks the visible enemies again and this runs per
+        // candidate tile.
+        let contact_scale = match standing {
+            Some((
+                crate::battle::Mission::Advance { .. } | crate::battle::Mission::Recon { .. },
+                _,
+            )) if super::threatened(registry, state, unit) => 0.25,
+            _ => 1.0,
+        };
         let objective = match standing {
-            Some((mission, formation)) => self.mission_value(state, tile, mission, formation),
+            Some((mission, formation)) => {
+                self.mission_value(state, tile, mission, formation) * contact_scale
+            }
             None => self.objective_value(state, me.side, tile, hp_fraction),
         };
 
@@ -354,7 +385,14 @@ impl Evaluator {
             // Take the ground and stand on it: reward for arriving, slope
             // for the road there — the objective shape with the commander
             // choosing the objective.
-            Mission::Advance { to } => {
+            //
+            // An assault is worth exactly what an advance is worth, and one
+            // arm says so rather than two copies of the same numbers: the
+            // two orders differ in what they will *pay*, not in what the
+            // ground is worth or which way it lies. That difference is the
+            // contact damping in `score_tile`, which an assault does not
+            // get.
+            Mission::Advance { to } | Mission::Assault { to } => {
                 let dist = to.distance_to(tile);
                 let reward = if dist <= 1 { 1.5 } else { 0.0 };
                 MISSION_WEIGHT

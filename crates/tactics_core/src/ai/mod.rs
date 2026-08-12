@@ -182,6 +182,27 @@ pub fn next_unplanned_unit(state: &BattleState, side: u8) -> Option<UnitId> {
     state.unplanned_units(side).map(|u| u.id).min()
 }
 
+/// Whether anything the side can see could put fire on this unit where she
+/// stands. Fog-honest (spotted enemies only, through the same
+/// [`best_weapon_against`] every planner prices shots with) and
+/// deterministic, because "was she in danger" must answer the same on every
+/// machine.
+///
+/// Two very different things ask it, and they must ask it the same way or
+/// the game contradicts itself: the battle drill, which is what an unordered
+/// crew does when nobody has told her anything, and the evaluator, where
+/// being under fire is what suspends a movement to contact. Both are the
+/// same sentence — *is somebody shooting at me* — so both read the same
+/// function rather than two formulas that can drift apart.
+pub(crate) fn threatened(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> bool {
+    let Some(me) = state.unit(unit) else {
+        return false;
+    };
+    visible_enemies(state, me.side)
+        .iter()
+        .any(|enemy| best_weapon_against(registry, state, enemy.id, enemy.pos, me).is_some())
+}
+
 /// The best (weapon index, expected damage, would-kill) attack `unit` could
 /// make against `target` if it were standing at `from`.
 pub fn best_weapon_against(

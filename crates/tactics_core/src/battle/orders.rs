@@ -635,7 +635,7 @@ impl BattleState {
         mission: &Mission,
     ) -> Result<(), OrderError> {
         match mission {
-            Mission::Advance { to } | Mission::Recon { toward: to } => {
+            Mission::Advance { to } | Mission::Assault { to } | Mission::Recon { toward: to } => {
                 if !self.map.contains(*to) {
                     return Err(OrderError::NotOnMap);
                 }

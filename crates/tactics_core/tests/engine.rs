@@ -3903,7 +3903,9 @@ fn initiative_moves_a_commander_on_and_obedience_does_not() {
     );
 
     // Massed armour carries initiative 0.3: the plan said the bridge, so
-    // the bridge it is, held or not.
+    // the bridge it is, held or not. (It says so as an *assault* rather than
+    // an advance — that is the aggression split, pinned next door; what this
+    // test is about is the hex it names.)
     let mut state = BattleState::from_map(&reg, "river_crossing", 33).unwrap();
     state.objective_held[0] = Some(0);
     let mut ai = AiDriver::new();
@@ -3924,8 +3926,55 @@ fn initiative_moves_a_commander_on_and_obedience_does_not() {
     let bridge = state.map.objectives()[0].anchor();
     assert_eq!(
         state.formations()[armor.index()].mission,
-        Some(Mission::Advance { to: bridge }),
+        Some(Mission::Assault { to: bridge }),
         "an obedient doctrine follows the letter of the plan"
+    );
+}
+
+#[test]
+fn an_aggressive_commander_orders_assaults_and_a_balanced_one_advances() {
+    // Two orders for ground, and which one a commander gives is her
+    // doctrine's answer to what the ground is worth. Massed armour (0.85)
+    // will spend vehicles for it and says so: an assault presses through
+    // whatever is firing. The balanced default (0.6) — which is what the
+    // player's own delegated formations run under — orders a movement to
+    // contact instead: take the bridge, but fight what you meet on the way.
+    // Both name the same hex; the difference is entirely in what they will
+    // pay for it.
+    let reg = registry_wireless();
+    let mission = |doctrine: Option<&str>| {
+        let mut state = BattleState::from_map(&reg, "river_crossing", 33).unwrap();
+        let mut ai = AiDriver::new();
+        ai.insert(
+            0,
+            make_battle_planner(
+                &AiConfig {
+                    planner: "command".into(),
+                    difficulty: 5,
+                    doctrine: doctrine.map(str::to_string),
+                },
+                33,
+                &reg,
+            ),
+        );
+        ai.plan_round(&reg, &mut state);
+        let armor = formation_named(&state, "kuhlmann_armor");
+        state.formations()[armor.index()].mission.clone()
+    };
+    let bridge = BattleState::from_map(&reg, "river_crossing", 33)
+        .unwrap()
+        .map
+        .objectives()[0]
+        .anchor();
+    assert_eq!(
+        mission(Some("massed_armor")),
+        Some(Mission::Assault { to: bridge }),
+        "a doctrine that trades vehicles for ground orders the deliberate attack"
+    );
+    assert_eq!(
+        mission(None),
+        Some(Mission::Advance { to: bridge }),
+        "and the balanced default moves to contact for the same hex"
     );
 }
 
@@ -6053,6 +6102,167 @@ fn an_aggressive_doctrine_travels_in_overwatch() {
     assert_eq!(moved, vec![true, true], "tempo over ceremony");
 }
 
+// --- movement to contact versus the deliberate attack ----------------------
+
+/// A scout in the woods with a gun on her flank, and open ground between her
+/// and the hex she has been ordered to take.
+///
+/// Everything about the stage exists to isolate the mission term. She is a
+/// `recon_car` and the enemy a `tank_destroyer` seven hexes off her flank:
+/// he outranges her badly, so she is genuinely under fire (his 88 reaches
+/// sixteen hexes and she can see him for twenty) while her own machine gun
+/// reaches nobody from any tile compared — the attack term is zero on both
+/// and cannot decide anything. Seven hexes is also outside the six-hex band
+/// the threat term prices, so that is zero on both too. What is left arguing
+/// against walking is the wood she is sitting in and the crew's own appetite
+/// to keep the contact close, and what argues for it is the mission — which
+/// is exactly the argument the damping settles.
+fn contact_stage(reg: &DataRegistry, seed: u64) -> (BattleState, FormationId) {
+    let open = "g".repeat(40);
+    let mut wood: Vec<char> = open.chars().collect();
+    wood[10] = 'f';
+    let wood: String = wood.into_iter().collect();
+    let mut rows: Vec<String> = std::iter::repeat_n(open, 15).collect();
+    rows[7] = wood;
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "contact_stage",
+        "palette": { "g": "grass", "f": "forest" },
+        "rows": rows,
+        "formations": [ { "id": "section", "name": "The Section", "side": 0 } ],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let mut scout = unit_at([10, 7], 0, "recon_car", "Scout");
+    scout.formation = Some("section".into());
+    scout.leads = true;
+    let placements = vec![scout, unit_at([10, 0], 1, "tank_destroyer", "Gun")];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    let state = BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    );
+    let section = formation_named(&state, "section");
+    (state, section)
+}
+
+/// Where she stands, where she was told to be, and the ground between: the
+/// two tiles every test below compares. `FORWARD` is seven hexes along the
+/// lane — one bound, and far enough that the mission has something to say
+/// about it.
+const COVER: (i32, i32) = (10, 7);
+const FORWARD: (i32, i32) = (17, 7);
+
+/// Score both tiles for a scout under `mission`, in the order (cover,
+/// forward). The balanced doctrine on purpose: it is what the player's own
+/// delegated formations fight under, so this is the case the playtest was
+/// complaining about.
+fn contact_scores(
+    reg: &DataRegistry,
+    state: &mut BattleState,
+    section: FormationId,
+    mission: Mission,
+) -> (f32, f32) {
+    state
+        .apply(
+            reg,
+            &Order::SetMission {
+                formation: section,
+                mission,
+            },
+        )
+        .expect("the lane is on the map");
+    let evaluator = Evaluator::new(tactics_core::data::DoctrineDef::default());
+    let score = |at: (i32, i32)| {
+        evaluator
+            .score_tile(
+                reg,
+                state,
+                UnitId(0),
+                tactics_core::offset_to_hex(at.0, at.1),
+            )
+            .score
+    };
+    (score(COVER), score(FORWARD))
+}
+
+#[test]
+fn a_movement_to_contact_pauses_under_fire_and_resumes_after() {
+    // What `Advance` means, and the playtest that forced it to mean this: a
+    // delegated advance drove through effective fire to the hex it had been
+    // given and was gone by round three. A movement to contact halts and
+    // fights when it is fired on — the mission does not outrank the drill —
+    // so while the gun is on her the tree line she is sitting in outscores
+    // the ground she was told to take.
+    //
+    // Nothing about that is latched, which is the other half of the rule:
+    // the damping is a scale on the mission term, so the moment the gun is
+    // dead or lost the full pull is back with no state for anybody to clear.
+    let reg = registry_wireless();
+    let (mut state, section) = contact_stage(&reg, 71);
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "the stage needs her to know she is being shot at"
+    );
+
+    let lane = Mission::Advance {
+        to: tactics_core::offset_to_hex(38, 7),
+    };
+    let (cover, forward) = contact_scores(&reg, &mut state, section, lane.clone());
+    assert!(
+        cover > forward,
+        "under fire she stops and fights: cover {cover} vs forward {forward}"
+    );
+
+    // The gun is gone. Nobody re-issues anything and nothing is reset.
+    strike_down(&mut state, UnitId(1));
+    let (cover, forward) = contact_scores(&reg, &mut state, section, lane);
+    assert!(
+        forward > cover,
+        "and with nothing shooting at her the march resumes on its own: \
+         cover {cover} vs forward {forward}"
+    );
+}
+
+#[test]
+fn an_assault_presses_through_what_an_advance_pauses_for() {
+    // The same crew, the same gun on her flank, the same hex to take — and
+    // the two orders a commander can give for it. An advance is a movement
+    // to contact and stops; an assault is the deliberate attack and does
+    // not, which is the entire difference between them and is why the two
+    // score identically everywhere except here.
+    let reg = registry_wireless();
+    let to = tactics_core::offset_to_hex(38, 7);
+
+    let (mut state, section) = contact_stage(&reg, 71);
+    let (cover, forward) = contact_scores(&reg, &mut state, section, Mission::Advance { to });
+    assert!(
+        cover > forward,
+        "the advance pauses: cover {cover} vs forward {forward}"
+    );
+
+    let (mut state, section) = contact_stage(&reg, 71);
+    let (cover, forward) = contact_scores(&reg, &mut state, section, Mission::Assault { to });
+    assert!(
+        forward > cover,
+        "the assault presses through the same fire: cover {cover} vs forward {forward}"
+    );
+}
+
 // --- radios as hardware (chunk 10a) ----------------------------------------
 
 /// A leader with a transceiver and a wing with a receive-only set, ten hexes
@@ -6479,9 +6689,9 @@ fn a_fires_formation_stands_base_of_fire_for_the_assault() {
     assert!(
         matches!(
             state.formations()[armor.index()].mission,
-            Some(Mission::Advance { .. })
+            Some(Mission::Assault { .. })
         ),
-        "and the platoon still gets its ground: {:?}",
+        "and the platoon still gets its ground — massed armour presses for it: {:?}",
         state.formations()[armor.index()].mission
     );
 }

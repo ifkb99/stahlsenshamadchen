@@ -110,9 +110,31 @@ impl FormationId {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Mission {
-    /// Drive for ground and take it. The formation moves on `to` and means to
-    /// be standing on it, which is a different thing from passing through.
+    /// Movement to contact: drive for ground and take it, but fight what you
+    /// meet on the way. The formation moves on `to` and means to be standing
+    /// on it, which is a different thing from passing through — and the march
+    /// is suspended for as long as somebody is shooting at her, because
+    /// halting and fighting on contact is what this order *means*. The pull
+    /// resumes on its own when the threat is dead or lost.
+    ///
+    /// This is the order a commander gives when she wants ground and has not
+    /// decided what it is worth. If she has decided, she says
+    /// [`Self::Assault`].
     Advance { to: Hex },
+    /// Press on to the ground whatever is firing: the deliberate attack, as
+    /// opposed to the movement to contact [`Self::Advance`] is. Identical to
+    /// an advance in what it is worth to be there and which way that is —
+    /// and unlike an advance it is *never* suspended by contact, which is
+    /// precisely the cost of it. Crews under this order drive through
+    /// effective fire and some of them do not arrive.
+    ///
+    /// A commander orders it anyway because ground is sometimes worth more
+    /// than the vehicles it costs, and because an attack that halts at every
+    /// contact gives the defender the one thing he needs, which is time. The
+    /// two orders are the same sentence with different prices, so the
+    /// evaluator scores them identically and only the damping tells them
+    /// apart.
+    Assault { to: Hex },
     /// Stand where told. `None` means where the formation already is, which
     /// is the neutral order — it is what you give a reserve, and what a
     /// formation falls back to when nothing better has been said.
@@ -791,7 +813,10 @@ impl BattleState {
                 // orders layer prevents the state, but a save edited by hand
                 // should start marching rather than sit wedged.
                 None => true,
-                Some(Mission::Advance { to }) => formation
+                // An advance and an assault end the same way: somebody is
+                // standing on the ground. What they cost to get there is not
+                // a question about completion.
+                Some(Mission::Advance { to }) | Some(Mission::Assault { to }) => formation
                     .members
                     .iter()
                     .filter_map(|id| self.unit(*id))

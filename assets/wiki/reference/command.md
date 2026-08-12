@@ -131,16 +131,22 @@ The mission vocabulary starts small and is a serde enum, snake_case, so mods
 and external brains read and write it as data:
 
 ```text
-Mission::Advance  { to: Hex }         drive for ground and take it
+Mission::Advance  { to: Hex }         movement to contact: take the ground,
+                                      fight what you meet on the way
+Mission::Assault  { to: Hex }         the deliberate attack: take the ground
+                                      through whatever is firing
 Mission::Hold     { at: Option<Hex> } stand where told (default: where you are)
 Mission::Recon    { toward: Hex }     find them; do not die finding them
 Mission::Withdraw { via: String }     leave by the named exit objective
+Mission::Support  { formation: id }   base of fire for the named formation
 ```
 
-Attack-a-formation, screen, support-by-fire, and the side-level mission types
-TODO wants (eliminate, harass, raid) extend the enum later; the executor
-machinery below is what makes each addition a scoring context rather than a
-new subsystem.
+`Advance` and `Assault` are the same order at two prices, and the split is
+recorded under "movement to contact" below.
+
+Screen and the side-level mission types TODO wants (eliminate, harass, raid)
+extend the enum later; the executor machinery below is what makes each
+addition a scoring context rather than a new subsystem.
 
 ### 2. Formations are map data; command state lives on the battle
 
@@ -425,8 +431,8 @@ out-shouting them.
 
 **3. Willingness moves to the commander.** ✅ Done (`79be5b6`): the brain
 orders beaten formations out (never rescinded, never devolved), doctrine
-colours missions (Advance vs Hold), initiative gates retargeting, delegation
-read twice — as mission strictness in the evaluator and as the **directive
+colours missions (Assault vs Advance vs Hold), initiative gates retargeting,
+delegation read twice — as mission strictness in the evaluator and as the **directive
 command** rule in the brain: delegation ≥ 0.6 assigns no ground at all,
 because pinning elastic defence to anchors measurably cost it 16 of 24 wins.
 The residual elastic tax (~5 in 36) is beaten formations leaving with
@@ -625,7 +631,9 @@ the whole plan since it arrived — which is the Auftragstaktik shape and
 also the cheap one. Promotion happens in the sim at end of round when the
 standing mission *completes*:
 
-- `Advance { to }` completes when a member stands within 1 hex of `to`.
+- `Advance { to }` completes when a member stands within 1 hex of `to`, and
+  `Assault { to }` the same way: what an order cost to execute is not a
+  question about whether it is finished.
 - `Recon { toward }` completes when the formation has eyes on it — the
   target tile visible to a member.
 - `Hold` and `Withdraw` are terminal: nothing follows a stand-fast or a
@@ -635,7 +643,7 @@ standing mission *completes*:
 Completion and promotion are announced (the log hears "1st Platoon reaches
 its objective; moving to the next order"). Executors keep reading only the
 standing mission — sequencing is entirely the formation's bookkeeping. UI:
-holding Shift with G/H/R queues instead of replacing; the panel lists the
+holding Shift with G/X/H/R queues instead of replacing; the panel lists the
 plan in order.
 
 ### 9d. Seeing the net (difficulty 2/5)
@@ -819,6 +827,70 @@ far enough that one shell cannot kill two vehicles (TODO's complaint that
   `discipline` and the leader's `command` — a green platoon bunches and
   bounds raggedly — which lands with 10b/10c rather than needing machinery
   of its own.
+
+### Movement to contact versus the attack — the Advance/Assault split ✅ done
+
+The third playtest of the delegation layer found the drill's edge from the
+other side: a formation that *had* been given an order marched through
+effective fire to reach the hex it named and was gone by round three. The
+designer's ruling is the same rule the drill already stands on, stated for
+missions — **a mission does not override the battle drill**. What it does
+not settle on its own is how a commander then ever takes defended ground,
+and the real-world vocabulary answers that, because armies have always had
+two orders here and not one:
+
+- **Movement to contact** is the advance that *expects* to find the enemy
+  and whose whole purpose is to develop the situation on contact. Halting
+  and fighting is not a failure of the order, it is the order.
+- **The attack (assault)** is the deliberate press: cross the ground under
+  fire, accept losses, take the objective. It is ordered when the ground is
+  worth more than the vehicles.
+
+Combat Mission has shipped exactly this pair for twenty years as Hunt and
+Assault, which is the hobby's evidence that players read the distinction as
+two orders rather than as one order behaving inconsistently.
+
+So `Mission::Advance` **becomes** movement to contact and a new
+`Mission::Assault { to }` is the press. Concretely:
+
+- In the evaluator, when a unit is *personally threatened* where she stands
+  — something spotted could put fire on her, the same fog-honest check the
+  battle drill triggers on, now shared as one function so the two can never
+  drift — the mission term for a standing `Advance` or `Recon` is scaled by
+  **0.25**. Her own appetites (the shot in front of her, cover, the threat)
+  decide the round instead. Nothing is latched: the damping is a scale on a
+  term, so when the gun is dead or lost the full pull resumes by itself.
+- `Assault` is identical to `Advance` in weight, slope, reward and
+  completion — one match arm, not a copy of the numbers — and is **never**
+  damped. That difference is the entire content of the order, and its price
+  is crews that do not arrive.
+- Bounding overwatch covers `Assault` too: being told to press is not being
+  told to do it badly, and fire and movement is *how* an attack crosses
+  covered ground. The doctrines that genuinely trade security for tempo are
+  already excused by the aggression ≥ 0.7 gate that tier 2 established.
+- The brain reads it off `aggression`: ≥ 0.7 orders the assault (massed
+  armour at 0.85, which is what it was already doing and is now honestly
+  named), ≥ 0.5 orders the movement to contact (the balanced default, which
+  is what the player's own delegated formations run under), below that a
+  `Hold` as before. Elastic defence devolves and still orders neither.
+- The player gets `X` on the hovered hex, beside `G` advance — not the
+  mnemonic `T`, which already commits the round.
+
+Measured, 36 battles against a constant flat elastic opponent: the
+delegation-tax table does not move at all (massed under command 12-21-3,
+elastic 19-16-1, both flat 16-20-0 — massed is unchanged because assault
+*is* what it was doing, and elastic devolves and receives no ground
+mission). The case the table does not cover is the one the playtest
+complained about, so it was measured separately: the balanced default under
+command goes 15-20-1 → 14-20-2, battles run 10.6 → 11.4 rounds, and **89 →
+96 of 144 vehicles are still up at the end of round three**. That is the
+change asked for — she stops at the contact instead of dying at the bridge —
+and it costs one win turned into a draw, which is the honest price of
+fighting instead of marching.
+
+The campaign's `ArmyMission::Advance` is untouched: the operational advance
+is not a tactical one, and it still does not map onto a battle mission for
+the reason recorded above.
 
 ### 10b. The commander's loop (difficulty 4/5)
 

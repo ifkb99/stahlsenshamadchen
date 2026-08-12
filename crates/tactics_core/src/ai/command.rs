@@ -22,10 +22,7 @@
 //! exists to say; making it clever belongs to the willingness work, not to
 //! the plumbing.
 
-use super::{
-    AiConfig, AiPlanner, Evaluator, best_weapon_against, difficulty_noise, next_unplanned_unit,
-    visible_enemies,
-};
+use super::{AiConfig, AiPlanner, Evaluator, difficulty_noise, next_unplanned_unit, threatened};
 use crate::battle::{BattleState, FireIntent, Formation, FormationId, Mission, Order};
 use crate::data::{DataRegistry, DoctrineDef};
 use crate::map::{Objective, ObjectiveKind};
@@ -65,20 +62,6 @@ fn drill_doctrine(data: &DataRegistry) -> DoctrineDef {
             initiative: 0.5,
             delegation: 0.5,
         })
-}
-
-/// Whether anything the side can see could put fire on this unit where she
-/// stands. The drill's trigger: fog-honest (spotted enemies only, through
-/// the same [`best_weapon_against`] every planner prices shots with) and
-/// deterministic, because "was she in danger" must answer the same on every
-/// machine.
-fn threatened(registry: &DataRegistry, state: &BattleState, unit: crate::battle::UnitId) -> bool {
-    let Some(me) = state.unit(unit) else {
-        return false;
-    };
-    visible_enemies(state, me.side)
-        .iter()
-        .any(|enemy| best_weapon_against(registry, state, enemy.id, enemy.pos, me).is_some())
 }
 
 pub struct SideCommand {
@@ -252,9 +235,17 @@ impl SideCommand {
         if state.unit(unit).is_some_and(|u| u.detached) {
             return false;
         }
+        // An assault bounds too. Being ordered to press through fire is not
+        // being ordered to do it badly: fire and movement is *how* an attack
+        // crosses ground a defender is covering, and a cautious doctrine
+        // told to assault does it by alternate bounds because that is the
+        // textbook. The doctrines that genuinely trade security for tempo
+        // are already excused a line below, by the aggression gate.
         if !matches!(
             formation.mission_for(unit),
-            Some(Mission::Advance { .. }) | Some(Mission::Recon { .. })
+            Some(Mission::Advance { .. })
+                | Some(Mission::Recon { .. })
+                | Some(Mission::Assault { .. })
         ) {
             return false;
         }
@@ -490,7 +481,19 @@ impl SideCommand {
                 pick = open;
             }
             let anchor = ground[pick].0.anchor();
-            let desired = if doctrine.aggression >= 0.5 {
+            // Three postures, not two, and the middle one is the change the
+            // playtest asked for. A doctrine that will spend vehicles for
+            // ground orders the deliberate attack — massed armour at 0.85
+            // presses through what it meets, which is what it was already
+            // doing and is now honestly named. The ordinary aggressive
+            // doctrine, including the balanced default the player's own
+            // delegation runs under, orders a movement to contact: take the
+            // bridge, but fight what you meet on the way rather than driving
+            // a parade route into a gun line. A cautious one still stands on
+            // the ground instead of marching at it.
+            let desired = if doctrine.aggression >= 0.7 {
+                Mission::Assault { to: anchor }
+            } else if doctrine.aggression >= 0.5 {
                 Mission::Advance { to: anchor }
             } else {
                 Mission::Hold { at: Some(anchor) }

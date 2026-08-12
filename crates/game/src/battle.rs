@@ -653,8 +653,8 @@ fn setup_battle(
     log.push(
         "Battle started. Both sides plan, then the round plays out at once. \
          LMB select/move, A engage hovered enemy, B blind fire, V hold, C clear orders, \
-         Enter commit, Q/E rotate. F picks a formation; G advance, H hold, R recon on the \
-         hovered hex, W withdraw; Shift queues a mission behind the current one.",
+         Enter commit, Q/E rotate. F picks a formation; G advance, X assault, H hold, R recon \
+         on the hovered hex, W withdraw; Shift queues a mission behind the current one.",
     );
 
     // What was decided on the campaign map is what the formations here try to
@@ -1836,6 +1836,16 @@ fn mission_from_keys(
             None => needs_ground("G to advance"),
         });
     }
+    // `X` rather than the mnemonic `T`: T already commits the round beside
+    // Enter, and a key that both closes planning and issues an attack is a
+    // key nobody can press with confidence. X is free, sits beside the other
+    // order keys (C, V, B), and reads as the attack it is.
+    if keys.just_pressed(KeyCode::KeyX) {
+        return Some(match hovered {
+            Some(to) => Ok(Mission::Assault { to }),
+            None => needs_ground("X to assault"),
+        });
+    }
     if keys.just_pressed(KeyCode::KeyH) {
         // The one mission that needs no ground: `Hold { at: None }` is
         // "stand where you are", which is a real order and the reserve's.
@@ -2609,8 +2619,8 @@ fn format_formation(
         lines.push(format!("  {}{}", unit.name, tag));
     }
     lines.push(String::new());
-    lines.push("G advance / H hold / R recon (Shift queues)".into());
-    lines.push("on the hovered hex; W withdraw.".into());
+    lines.push("G advance / X assault / H hold / R recon".into());
+    lines.push("on the hovered hex; W withdraw. (Shift queues)".into());
     lines.push("F next formation, Esc drops it.".into());
     if let Some(hex) = hovered {
         lines.push(String::new());
@@ -2682,6 +2692,10 @@ fn mission_sentence(state: &BattleState, mission: Option<&Mission>) -> String {
     match mission {
         None => "none given".into(),
         Some(Mission::Advance { to }) => format!("advance on {}", hex_label(*to)),
+        // Named apart from the advance, because the difference is the whole
+        // point: this one does not stop when somebody shoots at it, and the
+        // player is entitled to see which of the two her platoon is under.
+        Some(Mission::Assault { to }) => format!("assault {}", hex_label(*to)),
         Some(Mission::Hold { at: Some(at) }) => format!("hold {}", hex_label(*at)),
         Some(Mission::Hold { at: None }) => "hold where you are".into(),
         Some(Mission::Recon { toward }) => format!("reconnoitre toward {}", hex_label(*toward)),
