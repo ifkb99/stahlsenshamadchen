@@ -3,8 +3,8 @@
 use super::defs::*;
 use super::manifest::ModManifest;
 use super::{
-    Balance, CommandRules, CoreDef, CoreIndex, MoraleRules, ReactionRules, RoleDef, Scale,
-    SkillDef, TraitDef,
+    AmmoClass, AmmoDef, Balance, CommandRules, CoreDef, CoreIndex, MoraleRules, ReactionRules,
+    RoleDef, Scale, SkillDef, TraitDef,
 };
 use crate::map::MapFile;
 use serde::Deserialize;
@@ -88,6 +88,10 @@ pub struct DataRegistry {
     pub characters: HashMap<String, CharacterDef>,
     pub vehicles: HashMap<String, VehicleDef>,
     pub weapons: HashMap<String, WeaponDef>,
+    /// Every kind of round any weapon can chamber. No plural because there
+    /// isn't one; the accessor beside it is [`Self::ammo`], the same
+    /// map-plus-lookup pair as [`Self::radios`]/[`Self::radio`].
+    pub ammo: HashMap<String, AmmoDef>,
     pub radios: HashMap<String, RadioDef>,
     pub terrain: HashMap<String, TerrainDef>,
     pub doctrines: HashMap<String, DoctrineDef>,
@@ -190,6 +194,10 @@ impl DataRegistry {
         self.weapons.get(id)
     }
 
+    pub fn ammo(&self, id: &str) -> Option<&AmmoDef> {
+        self.ammo.get(id)
+    }
+
     pub fn character(&self, id: &str) -> Option<&CharacterDef> {
         self.characters.get(id)
     }
@@ -211,6 +219,9 @@ impl DataRegistry {
         })?;
         load_defs(&dir.join("weapons"), report, |d: WeaponDef| {
             self.weapons.insert(d.id.clone(), d);
+        })?;
+        load_defs(&dir.join("ammo"), report, |d: AmmoDef| {
+            self.ammo.insert(d.id.clone(), d);
         })?;
         load_defs(&dir.join("radios"), report, |d: RadioDef| {
             self.radios.insert(d.id.clone(), d);
@@ -256,6 +267,7 @@ impl DataRegistry {
                     v.id, radio
                 ));
             }
+            self.validate_stowage(v, report);
         }
         for w in self.weapons.values() {
             if w.range[0] > w.range[1] {
@@ -278,6 +290,39 @@ impl DataRegistry {
                     ticks,
                     self.scale.format_duration(ticks),
                     self.scale.ticks_per_round
+                )),
+                _ => {}
+            }
+            for ammo in &w.ammo {
+                if !self.ammo.contains_key(ammo) {
+                    report.error(format!(
+                        "weapon `{}` references missing ammo `{}`",
+                        w.id, ammo
+                    ));
+                }
+            }
+        }
+        for a in self.ammo.values() {
+            // Flight time is `distance / velocity`, so a round that declares
+            // no velocity is a division waiting to happen rather than a
+            // slow shell.
+            if a.velocity == 0 {
+                report.error(format!("ammo `{}` has velocity 0", a.id));
+            }
+            match a.class {
+                // A shaped charge forms its jet on impact and does not care
+                // how fast it arrived, so two different numbers here are
+                // almost always a copied kinetic entry rather than a
+                // deliberate curve.
+                AmmoClass::Chemical if a.penetration[0] != a.penetration[1] => report.warn(format!(
+                    "ammo `{}` is chemical but its penetration falls {} -> {} with range; a shaped charge does not lose penetration downrange",
+                    a.id, a.penetration[0], a.penetration[1]
+                )),
+                // The pair is written near-first. A kinetic round that gains
+                // penetration as it flies has had its entries swapped.
+                AmmoClass::Kinetic if a.penetration[0] < a.penetration[1] => report.warn(format!(
+                    "ammo `{}` gains penetration with range ({} -> {}); the pair is [near, far], so these look swapped",
+                    a.id, a.penetration[0], a.penetration[1]
                 )),
                 _ => {}
             }
@@ -316,6 +361,57 @@ impl DataRegistry {
         }
         for m in self.maps.values() {
             m.validate_into(self, report);
+        }
+    }
+
+    /// Check that what a vehicle carries matches what it can fire.
+    ///
+    /// Two of these are errors and one is a warning, and the split is the
+    /// point. A rack of shells no gun aboard can chamber is simply wrong —
+    /// the vehicle would drive to the battle carrying dead weight it can
+    /// never use, and there is no reading of the content under which that was
+    /// meant. Sending a gun to war with nothing to feed it is different: it
+    /// is how you write a vehicle whose coaxial is decorative, or a chassis
+    /// whose loadout a scenario fills in later, and the day the pipeline
+    /// makes an empty rack mean "cannot fire" a modder will want to have been
+    /// told rather than stopped.
+    fn validate_stowage(&self, v: &VehicleDef, report: &mut ValidationReport) {
+        // Gathered once so both checks read the same answer. A `BTreeSet`
+        // because it is walked to produce messages and nothing this project
+        // prints should depend on a hash seed.
+        let chamberable: std::collections::BTreeSet<&str> = v
+            .weapons
+            .iter()
+            .filter_map(|w| self.weapons.get(w))
+            .flat_map(|w| w.ammo.iter().map(String::as_str))
+            .collect();
+
+        for ammo in v.stowage.keys() {
+            if !self.ammo.contains_key(ammo) {
+                report.error(format!("vehicle `{}` stows missing ammo `{}`", v.id, ammo));
+            } else if !chamberable.contains(ammo.as_str()) {
+                report.error(format!(
+                    "vehicle `{}` stows `{}`, which no weapon aboard can chamber",
+                    v.id, ammo
+                ));
+            }
+        }
+
+        for weapon in v.weapons.iter().filter_map(|w| self.weapons.get(w)) {
+            // A declared-but-empty rack counts as no rounds: the entry says a
+            // space exists, not that anything is in it.
+            let fed = weapon
+                .ammo
+                .iter()
+                .any(|a| v.stowage.get(a).is_some_and(|n| *n > 0));
+            if !weapon.ammo.is_empty() && !fed {
+                report.warn(format!(
+                    "vehicle `{}` carries `{}` but stows none of the ammo it fires ({})",
+                    v.id,
+                    weapon.id,
+                    weapon.ammo.join(", ")
+                ));
+            }
         }
     }
 

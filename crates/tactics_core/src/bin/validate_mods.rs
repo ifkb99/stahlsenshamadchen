@@ -33,10 +33,11 @@ fn main() -> ExitCode {
             .join(", ")
     );
     println!(
-        "  {} characters, {} vehicles, {} weapons, {} terrain, {} doctrines, {} maps",
+        "  {} characters, {} vehicles, {} weapons, {} ammo, {} terrain, {} doctrines, {} maps",
         registry.characters.len(),
         registry.vehicles.len(),
         registry.weapons.len(),
+        registry.ammo.len(),
         registry.terrain.len(),
         registry.doctrines.len(),
         registry.maps.len()
@@ -61,6 +62,51 @@ fn main() -> ExitCode {
             report.warnings.len()
         );
         ExitCode::FAILURE
+    }
+}
+
+/// The ammunition roster: every kind of round, what it does, and which guns
+/// can chamber it.
+///
+/// The last column is the one worth printing. A round nothing fires is dead
+/// content that validation cannot object to — it is perfectly well-formed —
+/// and the only way to notice it is to see the blank beside its name. The
+/// same table read the other way says which of a gun's rounds a modder
+/// actually wrote.
+fn report_ammo(registry: &DataRegistry) {
+    let mut ammo: Vec<_> = registry.ammo.values().collect();
+    ammo.sort_by(|a, b| a.id.cmp(&b.id));
+    if ammo.is_empty() {
+        return;
+    }
+    println!("\nammunition");
+    println!(
+        "  {:<16} {:<11} {:>10} {:>6} {:>11}  fired by",
+        "id", "class", "near->far", "blast", "velocity"
+    );
+    for a in ammo {
+        let mut fired_by: Vec<&str> = registry
+            .weapons
+            .values()
+            .filter(|w| w.ammo.iter().any(|id| id == &a.id))
+            .map(|w| w.id.as_str())
+            .collect();
+        // The weapon map is a HashMap, so sort before printing: a table that
+        // reorders itself between runs is a table nobody can diff.
+        fired_by.sort_unstable();
+        println!(
+            "  {:<16} {:<11} {:>10} {:>6} {:>7} m/s  {}",
+            a.id,
+            a.class.as_str(),
+            format!("{} -> {}", a.penetration[0], a.penetration[1]),
+            a.blast,
+            a.velocity,
+            if fired_by.is_empty() {
+                "nothing".to_string()
+            } else {
+                fired_by.join(", ")
+            },
+        );
     }
 }
 
@@ -111,10 +157,35 @@ fn report_scale(registry: &DataRegistry) {
     println!("\nweapons");
     for w in weapons {
         println!(
-            "  {:<16} {:>18}  a shot every {}",
+            "  {:<16} {:>18}  a shot every {:<7} {}",
             w.id,
             s.format_range(w.range),
             s.format_duration(w.reload(s)),
+            w.ammo.join(", "),
+        );
+    }
+
+    report_ammo(registry);
+
+    let mut vehicles: Vec<_> = registry.vehicles.values().collect();
+    vehicles.sort_by(|a, b| a.id.cmp(&b.id));
+    println!("\nstowage");
+    for v in vehicles {
+        // `stowage` is a BTreeMap, so this listing is in key order whatever
+        // the hash seed is — the same reason the field is one.
+        let racks: Vec<String> = v
+            .stowage
+            .iter()
+            .map(|(id, n)| format!("{n} {id}"))
+            .collect();
+        println!(
+            "  {:<16} {}",
+            v.id,
+            if racks.is_empty() {
+                "-".to_string()
+            } else {
+                racks.join(", ")
+            }
         );
     }
 

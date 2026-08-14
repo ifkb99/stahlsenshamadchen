@@ -1,5 +1,6 @@
 //! Moddable game data: JSON definitions and the registry that loads them.
 
+mod ammo;
 mod balance;
 mod command;
 mod cores;
@@ -9,6 +10,7 @@ mod morale;
 mod registry;
 mod scale;
 
+pub use ammo::{AmmoClass, AmmoDef};
 pub use balance::{Balance, ReactionRules};
 pub use command::CommandRules;
 pub use cores::{

@@ -133,6 +133,20 @@ pub struct VehicleDef {
     /// difference shows up. See [`crate::roster::resolve_crew_fate`].
     #[serde(default = "default_safety")]
     pub safety: i32,
+    /// What this vehicle carries in its racks: [`crate::data::AmmoDef`] id to rounds
+    /// aboard.
+    ///
+    /// A `BTreeMap` rather than a `HashMap`, and not as a matter of taste.
+    /// Stowage reaches validation output today and will reach the event
+    /// stream the moment a shot spends a round, and this project has already
+    /// been bitten once by hash iteration order leaking into events — it
+    /// stayed invisible for months because a process always agrees with
+    /// itself. Ordered by key, the answer cannot depend on the hash seed.
+    ///
+    /// Empty by default: a vehicle written before ammunition existed carries
+    /// nothing, fires exactly as it always did, and validates.
+    #[serde(default)]
+    pub stowage: std::collections::BTreeMap<String, u32>,
     /// Requisition cost on the overworld.
     #[serde(default)]
     pub cost: i32,
@@ -188,6 +202,19 @@ pub struct WeaponDef {
     /// Read it through [`Self::reload`].
     #[serde(default)]
     pub reload_ticks: Option<u32>,
+    /// [`crate::data::AmmoDef`] ids this weapon can chamber, in the order a loader would
+    /// reach for them — index 0 is what she loads when nobody has said
+    /// otherwise.
+    ///
+    /// **The fields above are still what combat reads.** `damage`,
+    /// `penetration` and `damage_type` resolve every shot in this engine
+    /// today, exactly as they did before ammunition was content; this list is
+    /// inert until the penetration pipeline lands, and *that* chunk is the one
+    /// that retires them. Until then a weapon naming no ammunition is a
+    /// perfectly ordinary weapon rather than one that cannot fire, which is
+    /// what makes this an additive change to every mod already written.
+    #[serde(default)]
+    pub ammo: Vec<String>,
 }
 
 impl WeaponDef {

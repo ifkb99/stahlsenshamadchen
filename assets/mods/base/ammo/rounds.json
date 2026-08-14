@@ -1,0 +1,69 @@
+[
+    {
+        "id": "ball_mg",
+        "name": "7.92mm Ball",
+        "class": "small_arms",
+        "penetration": [1, 1],
+        "post_pen": 0.4,
+        "blast": 0,
+        "velocity": 850,
+        "description": "Belted rifle ammunition. It will not open a tank and was never meant to; what it opens is everything standing beside one."
+    },
+    {
+        "id": "ap_37",
+        "name": "37mm AP",
+        "class": "kinetic",
+        "penetration": [4, 3],
+        "post_pen": 1.0,
+        "velocity": 760,
+        "description": "A solid shot from the gun that was already too small when the war it was designed for started. Fast, accurate, and forever arriving at armour that has grown since."
+    },
+    {
+        "id": "ap_75",
+        "name": "75mm AP",
+        "class": "kinetic",
+        "penetration": [6, 5],
+        "post_pen": 1.3,
+        "velocity": 750,
+        "description": "The round the medium tank was built around: enough to matter at a kilometre, and small enough that she can carry forty of them and still have room for high explosive."
+    },
+    {
+        "id": "ap_88",
+        "name": "88mm AP",
+        "class": "kinetic",
+        "penetration": [9, 7],
+        "post_pen": 1.6,
+        "velocity": 840,
+        "description": "Sixteen hexes of flat trajectory and a shot that is still dangerous at the end of them. What it costs is rate of fire and the number she can stow."
+    },
+    {
+        "id": "he_75",
+        "name": "75mm HE",
+        "class": "explosive",
+        "penetration": [2, 2],
+        "post_pen": 1.5,
+        "blast": 3,
+        "velocity": 550,
+        "description": "The round that takes ground. It will not get through a tank's front plate, and against everything a tank actually meets — guns, trucks, a hedgerow with people in it — it is the only thing aboard worth loading."
+    },
+    {
+        "id": "he_88",
+        "name": "88mm HE",
+        "class": "explosive",
+        "penetration": [3, 3],
+        "post_pen": 1.8,
+        "blast": 4,
+        "velocity": 700,
+        "description": "A heavier burst from a gun that would rather be shooting armour. Carried because a tank destroyer with nothing but solid shot is helpless against the crew that towed the gun into place."
+    },
+    {
+        "id": "he_105",
+        "name": "105mm HE",
+        "class": "explosive",
+        "penetration": [3, 3],
+        "post_pen": 2.2,
+        "blast": 6,
+        "velocity": 470,
+        "description": "Lobbed rather than aimed, and it does not need to hit. The howitzer fires nothing else, which is the whole argument for keeping her behind the ridge and someone else in front of it."
+    }
+]

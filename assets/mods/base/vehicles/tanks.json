@@ -19,6 +19,9 @@
         "weapons": [
             "mg"
         ],
+        "stowage": {
+            "ball_mg": 2400
+        },
         "crew_slots": [
             "commander",
             "driver"
@@ -48,6 +51,10 @@
             "gun_37",
             "mg"
         ],
+        "stowage": {
+            "ap_37": 120,
+            "ball_mg": 2400
+        },
         "crew_slots": [
             "commander",
             "driver",
@@ -78,6 +85,11 @@
             "gun_75",
             "mg"
         ],
+        "stowage": {
+            "ap_75": 40,
+            "he_75": 30,
+            "ball_mg": 2800
+        },
         "crew_slots": [
             "commander",
             "driver",
@@ -109,6 +121,11 @@
             "gun_88",
             "mg"
         ],
+        "stowage": {
+            "ap_88": 36,
+            "he_88": 28,
+            "ball_mg": 2400
+        },
         "crew_slots": [
             "commander",
             "driver",
@@ -140,6 +157,10 @@
         "weapons": [
             "gun_88"
         ],
+        "stowage": {
+            "ap_88": 28,
+            "he_88": 12
+        },
         "crew_slots": [
             "commander",
             "driver",
@@ -169,6 +190,9 @@
         "weapons": [
             "howitzer_105"
         ],
+        "stowage": {
+            "he_105": 40
+        },
         "crew_slots": [
             "commander",
             "driver",

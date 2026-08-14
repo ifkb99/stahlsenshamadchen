@@ -330,6 +330,14 @@ pub enum OrderError {
     MissionIsTerminal,
     #[error("a formation cannot stand base of fire for that")]
     CannotSupportThat,
+    #[error("the racks are only open during deployment")]
+    LoadoutClosed,
+    #[error("no such ammunition")]
+    NoSuchAmmo,
+    #[error("no weapon on this vehicle chambers that ammunition")]
+    UnchamberedAmmo,
+    #[error("the vehicle has no room for that many rounds")]
+    StowageFull,
 }
 
 impl BattleState {

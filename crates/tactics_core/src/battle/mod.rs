@@ -106,6 +106,23 @@ pub struct Unit {
     /// weapon list. Carries across rounds, so a slow gun caught mid-reload
     /// stays mid-reload.
     pub cooldowns: Vec<u32>,
+    /// What is in her racks: [`crate::data::AmmoDef`] id to rounds remaining.
+    ///
+    /// Stamped from the vehicle's `stowage` at spawn and adjustable during
+    /// deployment through [`BattleState::set_loadout`]. **Nothing spends it
+    /// yet** — combat still resolves a shot from the weapon's own numbers, so
+    /// a battle fought to its end leaves every count exactly where it
+    /// started. The penetration pipeline is what makes this a resource.
+    ///
+    /// A `BTreeMap` for the same reason the vehicle's `stowage` is one: the
+    /// moment a shot deducts a round, these keys are walked to produce
+    /// events, and hash order in an event stream is a determinism bug this
+    /// project has already shipped once.
+    ///
+    /// `#[serde(default)]` so a save written before ammunition existed opens
+    /// as what it was: crews who never counted their shells.
+    #[serde(default)]
+    pub ammo: std::collections::BTreeMap<String, u32>,
     /// Damage type of the last hit this unit took, if any. Read by the
     /// campaign when working out what became of the crew.
     pub last_hit_by: Option<crate::data::DamageType>,
@@ -465,6 +482,11 @@ impl BattleState {
             planned: false,
             move_credit: 0,
             cooldowns: vec![0; vehicle.weapons.len()],
+            // She drives out with what her chassis is written to carry. A
+            // vehicle that declares no stowage spawns with an empty map,
+            // which is every vehicle in every mod written before this
+            // existed and is why nothing had to change to keep working.
+            ammo: vehicle.stowage.clone(),
             last_hit_by: None,
             pressure: 0,
             detached: false,
@@ -473,6 +495,83 @@ impl BattleState {
             exited: false,
         });
         id
+    }
+
+    /// Change what one vehicle is carrying, before the battle starts.
+    ///
+    /// Loading out is a decision made in the assembly area, not under fire:
+    /// legal only during the planning phase of round one, which is this
+    /// engine's deployment. After that the racks are whatever the crew drove
+    /// out with, and the only thing that changes them is firing.
+    ///
+    /// Three refusals, and each is a different mistake. A round no mod
+    /// declares is [`OrderError::NoSuchAmmo`]. A round that exists but which
+    /// nothing aboard this vehicle can chamber is
+    /// [`OrderError::UnchamberedAmmo`] — a Panther cannot take 88 mm shells
+    /// however much room she has. And a loadout heavier than the chassis is
+    /// [`OrderError::StowageFull`].
+    ///
+    /// Capacity is the sum of the counts the vehicle's `stowage` declares,
+    /// which is deliberately crude: it prices a machine-gun belt and an 88 mm
+    /// shell as one unit of space each, so the medium tank's 2870 "rounds" of
+    /// capacity would in principle let her fill the hull with armour-piercing.
+    /// A real prep phase wants volume per round, and this is the surface it
+    /// will refine rather than the model it will keep. It exists now so that
+    /// UI has something to call, and it is called by nothing.
+    ///
+    /// A `count` of zero takes that round off the vehicle entirely rather
+    /// than leaving an empty rack behind, so the map states what is aboard
+    /// and never what used to be.
+    pub fn set_loadout(
+        &mut self,
+        registry: &DataRegistry,
+        unit: UnitId,
+        ammo: &str,
+        count: u32,
+    ) -> Result<(), OrderError> {
+        if self.is_over() {
+            return Err(OrderError::BattleOver);
+        }
+        // Round one specifically, not merely "we are planning": every later
+        // planning phase happens with the enemy in the next field.
+        if self.round != 1 || !self.is_planning() {
+            return Err(OrderError::LoadoutClosed);
+        }
+        let u = self.unit(unit).ok_or(OrderError::NoSuchUnit)?;
+        let vehicle = registry
+            .vehicle(&u.vehicle)
+            .ok_or(OrderError::NoSuchUnit)?
+            .clone();
+        if registry.ammo(ammo).is_none() {
+            return Err(OrderError::NoSuchAmmo);
+        }
+        let chambers = vehicle
+            .weapons
+            .iter()
+            .filter_map(|w| registry.weapon(w))
+            .any(|w| w.ammo.iter().any(|a| a == ammo));
+        if !chambers {
+            return Err(OrderError::UnchamberedAmmo);
+        }
+
+        let capacity: u32 = vehicle.stowage.values().sum();
+        let others: u32 = u
+            .ammo
+            .iter()
+            .filter(|(id, _)| id.as_str() != ammo)
+            .map(|(_, n)| *n)
+            .sum();
+        if others.saturating_add(count) > capacity {
+            return Err(OrderError::StowageFull);
+        }
+
+        let u = self.unit_mut(unit).ok_or(OrderError::NoSuchUnit)?;
+        if count == 0 {
+            u.ammo.remove(ammo);
+        } else {
+            u.ammo.insert(ammo.to_string(), count);
+        }
+        Ok(())
     }
 
     pub fn unit(&self, id: UnitId) -> Option<&Unit> {
