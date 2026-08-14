@@ -300,8 +300,17 @@ impl DataRegistry {
             if v.movement.points == 0 {
                 report.warn(format!("vehicle `{}` has 0 movement points", v.id));
             }
-            if v.max_hp <= 0 {
-                report.error(format!("vehicle `{}` has non-positive max_hp", v.id));
+            // `max_hp` was deprecated by the ballistics rewrite and is read by
+            // nothing: what a vehicle can lose is now her crew and her
+            // modules. The check used to demand a positive number, which was
+            // right while the pool existed and became a trap the moment the
+            // field went optional — the first chassis written without one
+            // failed validation for omitting a number no code consults.
+            // Absent (zero) is now simply "not stated"; a *negative* pool is
+            // still a typo worth naming, since nobody omits a field by
+            // writing `-1` in it.
+            if v.max_hp < 0 {
+                report.error(format!("vehicle `{}` has negative max_hp", v.id));
             }
             if let Some(radio) = &v.radio
                 && !self.radios.contains_key(radio)
@@ -309,6 +318,32 @@ impl DataRegistry {
                 report.error(format!(
                     "vehicle `{}` references missing radio `{}`",
                     v.id, radio
+                ));
+            }
+            // Concealment scales a spotter's range against her. A hundred
+            // percent would be a unit nobody can ever see at any range, which
+            // is not a stealth setting but a broken battle, and anything past
+            // about ninety is close enough to that to be worth saying out
+            // loud. A warning rather than an error because where exactly the
+            // line sits is a balance opinion and a mod is allowed to disagree
+            // with ours.
+            if v.concealment > 90 {
+                report.warn(format!(
+                    "vehicle `{}` has concealment {}%, and nothing on this battlefield is invisible",
+                    v.id, v.concealment
+                ));
+            }
+            // Lift is for vehicles. A platoon that could carry another platoon
+            // would need a whole second reading of what "aboard" means — who
+            // is walking, who is being carried, and what happens to either
+            // when the ground disagrees — and that is not a game this project
+            // is playing. Warned rather than refused because a mod about
+            // porters or pack animals is a perfectly reasonable thing for
+            // somebody else to want, and the engine will simply not honour it.
+            if v.capacity > 0 && v.movement.class == MovementClass::Foot {
+                report.warn(format!(
+                    "vehicle `{}` walks and lifts {} unit(s); infantry carrying infantry is not this game yet",
+                    v.id, v.capacity
                 ));
             }
             self.validate_stowage(v, report);
@@ -536,6 +571,28 @@ impl DataRegistry {
                 if m.effect == ModuleEffect::Radio {
                     report.warn(format!(
                         "vehicle `{}` carries module `{}` but mounts no radio, so there is no set aboard to lose",
+                        v.id, m.id
+                    ));
+                }
+            }
+        }
+
+        // Troops are the one module kind that needs somebody named. A platoon
+        // is one piece on one hex precisely because its leadership is two or
+        // three girls in the ordinary crew seats and the rest is abstracted
+        // into the module — so a chassis carrying troops and declaring no
+        // crew slots is a body of soldiers with nobody to lead them, which
+        // the interior roll, the casualty machinery and the chain of command
+        // all have opinions about and none of them good ones. A warning
+        // rather than an error because it is well-formed content the engine
+        // will happily spawn: she is simply a unit whose only occupants are
+        // riflemen, and the day a mod wants exactly that it should be told
+        // once and then left alone.
+        if v.crew_slots.is_empty() {
+            for m in self.modules_for(v) {
+                if m.effect == ModuleEffect::Troops {
+                    report.warn(format!(
+                        "vehicle `{}` carries troops module `{}` but declares no crew slots, so nobody is named to lead them",
                         v.id, m.id
                     ));
                 }

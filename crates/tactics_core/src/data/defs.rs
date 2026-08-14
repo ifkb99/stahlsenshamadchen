@@ -173,6 +173,36 @@ pub struct VehicleDef {
     /// inside to hit, which is precisely today's game.
     #[serde(default)]
     pub modules: Vec<String>,
+    /// How hard this unit is to see, as a percentage.
+    ///
+    /// Not a vision range and not cover: it scales every *spotter's*
+    /// effective range against this unit, so a platoon lying in a ditch is
+    /// hard to see from anywhere rather than hard to see from one direction.
+    /// Standing in real cover counts it a second time, which is what makes
+    /// infantry in timber nearly invisible until they move or shoot — and
+    /// firing still reveals, because `reveal_to_all` is untouched. An ambush
+    /// is spent by springing it.
+    ///
+    /// Zero by default and zero on every vehicle written so far, which is
+    /// exactly today's game: a scaling factor of 1 changes no spotting
+    /// decision. Nothing reads this yet — the spotting pass is the next
+    /// infantry chunk's business.
+    #[serde(default)]
+    pub concealment: u32,
+    /// How many units she lifts, in whole units.
+    ///
+    /// Deliberately counted in units rather than in seats. A rifle platoon is
+    /// already one piece on one hex rather than thirty soldiers, and her lift
+    /// is abstracted to match: an armoured personnel carrier that says `1`
+    /// carries a platoon, whatever the platoon is written to contain. Zero —
+    /// the default, and every vehicle that exists today — means she is not a
+    /// transport at all.
+    ///
+    /// Nothing reads this yet. The passenger state, the mount and dismount
+    /// orders and the shared fate of a penetrated carrier are the ride
+    /// chunk's, and this is only the number the content writes down.
+    #[serde(default)]
+    pub capacity: u32,
     /// Requisition cost on the overworld.
     #[serde(default)]
     pub cost: i32,

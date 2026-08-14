@@ -67,6 +67,32 @@ pub enum ModuleEffect {
     /// chain-of-command layer starts caring about ballistics for free here,
     /// which was flagged as a future when radio hardware landed.
     Radio,
+    /// The soldiers themselves — the abstracted mass of a platoon that is not
+    /// one of the named girls. The one effect on this list that is not a
+    /// piece of hardware, and it is a module for exactly the reason the
+    /// others are: it is a nameable thing inside the unit that a shot can
+    /// find and that content decides the size of.
+    ///
+    /// Three meanings, all of them the infantry chunks' to implement and none
+    /// of them read yet:
+    ///
+    /// - **Interior weight.** Casualty rolls draw from the crew stations and
+    ///   the modules together, so a big `size` here is what makes a burst
+    ///   find riflemen far more often than it finds the platoon commander.
+    ///   "Leaders last" then falls out of arithmetic rather than a rule, and
+    ///   a lucky burst can still find her early, which is where the drama is.
+    /// - **Firepower.** Every weapon the unit fires scales its damage by the
+    ///   troops fraction — hits remaining over [`ModuleDef::toughness`] — so a
+    ///   platoon at half strength shoots half as hard and the girls alone are
+    ///   nearly harmless. This is why `toughness` on a troops module is
+    ///   counted in sections-worth of casualties rather than in the usual one
+    ///   or two: it is a strength bar, read as a fraction.
+    /// - **Remnant at zero.** At no hits remaining the platoon is not deleted;
+    ///   she is a remnant, the girls still aboard the battle, pulled hard
+    ///   towards withdrawal by the condition score she has already wrecked.
+    ///   Like a mission-killed tank, a shattered platoon is a story rather
+    ///   than a removal from the board.
+    Troops,
 }
 
 impl ModuleEffect {
@@ -80,6 +106,7 @@ impl ModuleEffect {
             Self::Mobility => "mobility",
             Self::Ammo => "ammo",
             Self::Radio => "radio",
+            Self::Troops => "troops",
         }
     }
 }

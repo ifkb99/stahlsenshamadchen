@@ -230,6 +230,24 @@
             "skills": [
                 "signals"
             ]
+        },
+        {
+            "id": "platoon_leader",
+            "name": "Platoon Leader",
+            "skills": [
+                "command",
+                "fieldcraft",
+                "small_arms"
+            ]
+        },
+        {
+            "id": "section_leader",
+            "name": "Section Leader",
+            "skills": [
+                "fieldcraft",
+                "small_arms",
+                "observation"
+            ]
         }
     ],
     "traits": [

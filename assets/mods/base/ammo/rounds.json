@@ -14,6 +14,61 @@
         "volatility": 0.3
     },
     {
+        "id": "rifle_ball",
+        "name": "Rifle Ball",
+        "class": "small_arms",
+        "penetration": [
+            1,
+            1
+        ],
+        "post_pen": 1.0,
+        "blast": 0,
+        "velocity": 800,
+        "description": "What a platoon carries by the thousand. It settles every argument between people standing in the open and loses every argument with armour plate, which is the whole reason infantry carry something else as well.",
+        "volatility": 0.3
+    },
+    {
+        "id": "rpg_heat",
+        "name": "HEAT Rocket",
+        "class": "chemical",
+        "penetration": [
+            6,
+            6
+        ],
+        "post_pen": 1.4,
+        "blast": 2,
+        "velocity": 300,
+        "description": "A shaped charge on a rocket motor, and the reason a tank does not drive into a wood alone. The jet forms on impact and does not care how far it flew, so the flat pair is the physics rather than a rounding: what limits it is that the girl firing has to let the tank get to three hexes and then hit it.",
+        "volatility": 1.2
+    },
+    {
+        "id": "ac_20_ap",
+        "name": "20mm AP",
+        "class": "kinetic",
+        "penetration": [
+            3,
+            2
+        ],
+        "post_pen": 1.0,
+        "velocity": 1000,
+        "description": "A very fast, very small solid shot. It opens carriers, scout cars and anything else built to stop rifle fire, and it bounces off the front of a tank all day — which is exactly the argument about what an infantry fighting vehicle is for.",
+        "volatility": 0.8
+    },
+    {
+        "id": "ac_20_he",
+        "name": "20mm HE",
+        "class": "explosive",
+        "penetration": [
+            1,
+            1
+        ],
+        "post_pen": 1.2,
+        "blast": 1,
+        "velocity": 950,
+        "description": "A shell small enough that the burst is barely a burst, fired fast enough that it does not need to be. The belt the gunner reaches for when the target is a hedgerow with people behind it.",
+        "volatility": 1.2
+    },
+    {
         "id": "ap_37",
         "name": "37mm AP",
         "class": "kinetic",

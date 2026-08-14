@@ -58,7 +58,7 @@
         "name": "Mountains",
         "glyph": "M",
         "color": "#7d7d85",
-        "move_cost": { "air": 1 },
+        "move_cost": { "foot": 3, "air": 1 },
         "vision_block": 4
     },
     {

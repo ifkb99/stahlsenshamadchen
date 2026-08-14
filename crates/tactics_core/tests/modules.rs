@@ -265,6 +265,7 @@ fn every_module_effect_prints_the_name_a_mod_writes() {
         ModuleEffect::Mobility,
         ModuleEffect::Ammo,
         ModuleEffect::Radio,
+        ModuleEffect::Troops,
     ] {
         let json = serde_json::to_string(&effect).expect("serialises");
         assert_eq!(json, format!("\"{}\"", effect.as_str()));

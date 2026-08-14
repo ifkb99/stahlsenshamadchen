@@ -190,12 +190,30 @@ fn report_scale(registry: &DataRegistry) {
     let mut vehicles: Vec<_> = registry.vehicles.values().collect();
     vehicles.sort_by(|a, b| a.id.cmp(&b.id));
     println!("\nvehicles");
+    println!(
+        "  {:<16} {:>8} {:>9} {:>8} {:>5}",
+        "id", "speed", "sees", "conceal", "lift"
+    );
     for v in vehicles {
+        // Both new columns print a dash at zero rather than the number,
+        // because zero is what every vehicle written before infantry existed
+        // says and a column of noughts would bury the handful of rows where
+        // these fields mean something.
         println!(
-            "  {:<16} {:>8}  sees {:>7}",
+            "  {:<16} {:>8} {:>9} {:>8} {:>5}",
             v.id,
             s.format_speed(v.movement.points),
             s.format_distance(v.vision_range as i32),
+            if v.concealment == 0 {
+                "-".to_string()
+            } else {
+                format!("{}%", v.concealment)
+            },
+            if v.capacity == 0 {
+                "-".to_string()
+            } else {
+                v.capacity.to_string()
+            },
         );
     }
 
