@@ -525,7 +525,7 @@ fn shell_lands(
             blast /= 2;
         }
         if blast > 0 {
-            overpressure(registry, state, id, blast, events);
+            overpressure(registry, state, id, blast, shell.at, events);
         }
     }
 }
@@ -956,7 +956,7 @@ fn resolve_impact(
         if let Some(ammo) = round.ammo
             && ammo.blast > 0
         {
-            overpressure(registry, state, target, ammo.blast, events);
+            overpressure(registry, state, target, ammo.blast, from, events);
         }
         return;
     }
@@ -1043,9 +1043,13 @@ fn behind_armor_effects(
 ) {
     let per_effect = registry.balance.points_per_effect.max(1);
     let rolls = (profile.damage.max(1) + per_effect - 1) / per_effect;
-    // Double the price of a roll arriving in one round is the overmatch
-    // that skips "wounded": there is no light version of an 88 in the lap.
-    let savage = profile.damage >= per_effect * 2;
+    // Triple the price of a roll arriving in one round is the overmatch
+    // that skips "wounded": an 88 or a 105 in the lap has no light
+    // version, a 75 does. The threshold was double, which put every gun on
+    // the field over it — B5's crew-cost table read 0.1 wounded to 3.0 out
+    // per battle, meaning the dramatic middle state effectively never
+    // happened and a girl's first hit was almost always her last.
+    let savage = profile.damage >= per_effect * 3;
 
     for _ in 0..rolls {
         let Some(unit) = state.unit(target) else {
@@ -1252,11 +1256,23 @@ fn module_hit(
 /// gear, antennas — at a chance shaped by blast against armor, and blast
 /// overmatch wrecking thin-skinned vehicles outright. A recon car under a
 /// 105 is not a bounce.
+///
+/// The plate consulted is the one the burst actually faces, from `from` —
+/// the same quantisation every shot uses. The first draft asked the hull's
+/// THINNEST plate ("blast does not aim"), and the B5 instrument showed what
+/// that means in numbers: a 105's blast of six overmatched even the heavy
+/// tank's rear three, so a shell bouncing off her glacis wrecked her
+/// through a plate the burst never touched — artillery needed 1.8 shells
+/// per heavy tank while its penetration table read zero. Blast does not
+/// aim, but it also does not wrap a sixty-ton hull; the bearing rule keeps
+/// a frontal burst a frontal problem and makes ground that lets a shell
+/// arrive BEHIND a tank worth paying for.
 fn overpressure(
     registry: &DataRegistry,
     state: &mut BattleState,
     target: UnitId,
     blast: i32,
+    from: Hex,
     events: &mut Vec<Event>,
 ) {
     let (plate, exterior) = {
@@ -1266,13 +1282,9 @@ fn overpressure(
         let Some(vehicle) = registry.vehicle(&unit.vehicle) else {
             return;
         };
-        // The thinnest plate is what overpressure asks about: hulls are
-        // sealed by their weakest face, and blast does not aim.
-        let plate = [ArmorFacing::Front, ArmorFacing::Side, ArmorFacing::Rear]
-            .into_iter()
-            .map(|f| vehicle.armor.value(f))
-            .min()
-            .unwrap_or(0)
+        let plate = vehicle
+            .armor
+            .value(struck_facing(unit.pos, unit.facing, from))
             .max(0);
         // What blast can actually reach from outside, weighted like the
         // inside is.

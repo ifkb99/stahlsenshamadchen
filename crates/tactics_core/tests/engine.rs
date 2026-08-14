@@ -2881,15 +2881,18 @@ fn two_crews_can_kill_each_other_in_the_same_tick() {
     for seed in 0..40 {
         let mut state = duel(&reg, seed);
         let (west, east) = (UnitId(0), UnitId(1));
-        // One girl still fighting and nothing else aboard but the gun: a
-        // single penetration that finds her finishes the vehicle, and both
-        // crews are in that state when both rounds arrive in the same tick.
+        // One girl still fighting — already wounded, so any hit that finds
+        // her is her last — and nothing else aboard but the gun: a single
+        // penetration finishes the vehicle, and both crews are in that
+        // state when both rounds arrive in the same tick. (Wounded rather
+        // than fine because a 75 is deliberately below the savage
+        // threshold now: it wounds before it kills.)
         for unit in [west, east] {
             let u = state.unit_mut(unit).unwrap();
             let seats = u.crew.len();
             u.crew_state = vec![tactics_core::battle::CrewCondition::Out; seats];
             if seats > 0 {
-                u.crew_state[0] = tactics_core::battle::CrewCondition::Fine;
+                u.crew_state[0] = tactics_core::battle::CrewCondition::Wounded;
             }
             for (id, hits) in u.modules.iter_mut() {
                 if id != "main_gun" {
@@ -7968,12 +7971,19 @@ fn a_one_rung_ladder_never_abandons_anything() {
 }
 
 #[test]
-fn a_heavy_shell_wrecks_a_soft_skin_without_asking_the_gate() {
-    // The designer's overpressure ruling, at its sharpest: a 105 that
-    // BOUNCES off a medium's glacis still wrecks her, because six points of
-    // blast against a hull whose thinnest plate is two does not need the
-    // penetration gate's permission. The kill arrives as a bounce followed
-    // by destruction, never as a ShotHit.
+fn a_bounced_shell_wrecks_no_plate_it_never_touched() {
+    // The B5 instrument's first finding, cured and pinned. Overpressure
+    // used to consult the hull's THINNEST plate, so a 105 bouncing off a
+    // heavy tank's glacis (blast 6 against a rear plate of 3, doubled)
+    // wrecked her through armor the burst never faced — artillery needed
+    // 1.8 shells per heavy while its penetration table read zero. The
+    // plate consulted now is the one the burst arrives on: a frontal
+    // bounce is a frontal problem, external module rattles at worst, and
+    // the heavy tank drives away from a plunging barrage that never finds
+    // anything but her glacis. (With the base mod's numbers the direct-hit
+    // overmatch path only fires through adjacent splash onto genuinely
+    // soft skins — `neighbors_of_a_shellburst_feel_half_the_blast` pins
+    // that half.)
     let mut reg = registry_wireless();
     reg.balance.pen_scatter = 0;
     let row = "g".repeat(8);
@@ -7982,44 +7992,44 @@ fn a_heavy_shell_wrecks_a_soft_skin_without_asking_the_gate() {
         &[&row, &row, &row],
         vec![
             unit_at([0, 1], 0, "artillery", "Battery"),
-            unit_at([4, 1], 1, "medium_tank", "Target"),
+            unit_at([4, 1], 1, "heavy_tank", "Wall"),
         ],
         406,
     );
-    let (battery, target) = (UnitId(0), UnitId(1));
+    let (battery, wall) = (UnitId(0), UnitId(1));
     state
         .apply(
             &reg,
             &Order::SetFire {
                 unit: battery,
-                fire: FireIntent::Target { target, weapon: 0 },
+                fire: FireIntent::Target {
+                    target: wall,
+                    weapon: 0,
+                },
             },
         )
         .unwrap();
     commit_all(&reg, &mut state);
 
-    let (mut pens, mut wrecked) = (0, false);
-    for _ in 0..6 {
+    let (mut bounces, mut pens) = (0, 0);
+    for _ in 0..4 {
         if state.is_over() {
             break;
         }
         for event in state.resolve_round(&reg) {
             match event {
-                BattleEvent::ShotHit { target: t, .. } if t == target => pens += 1,
-                BattleEvent::UnitDestroyed { unit, .. } if unit == target => wrecked = true,
+                BattleEvent::ShotBounced { target, .. } if target == wall => bounces += 1,
+                BattleEvent::ShotHit { target, .. } if target == wall => pens += 1,
                 _ => {}
             }
         }
         commit_all(&reg, &mut state);
     }
-    assert_eq!(
-        pens, 0,
-        "a 105 cannot beat the glacis and never pretends to"
-    );
-    assert!(wrecked, "and the blast wrecks her anyway");
+    assert!(bounces > 0, "the shells arrive and the glacis holds");
+    assert_eq!(pens, 0, "a 105 cannot beat a heavy tank's front");
     assert!(
-        state.units[target.index()].wrecked,
-        "recorded as a crushing, not a fire — the fate rolls care"
+        state.unit(wall).is_some_and(|u| u.alive && !u.wrecked),
+        "and she is not wrecked through a plate the bursts never touched"
     );
 }
 
