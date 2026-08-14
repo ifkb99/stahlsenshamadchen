@@ -260,13 +260,67 @@ swing is deliberately not chased here: B4 re-baselines after B3 gives HE
 its external blast (until then artillery is soft-target-only, a known
 interim). Round resolution 1.11 ms.
 
-**B2. Outcomes: the end of hit points (5/5 — Fable, the heart).** Crew
-stations and named-girl wounds, modules from data, brew-up on ammo
-fraction, bail-out through morale, knocked-out as a derived state, every
-hp consumer rebuilt on condition, events that carry who/what/why for each
-outcome, save format, HUD status readout. The longest chunk and the one
-that cannot be split from itself; everything before exists to make its
-diff reviewable.
+**B2. Outcomes: the end of hit points (5/5 — Fable, the heart).** Split
+into B2a, the module data layer (✅ done, `ea451b6`, Opus, inert by the
+same byte-identical-baseline proof B0 gave), and B2b, the outcome engine.
+The B2b model, decided before the first line of it is written:
+
+- **The effect budget.** A penetration converts its ledger damage — the
+  weapon's weight times the round's `post_pen`, the number B1 already
+  computes — into effect rolls: one roll per four points, rounded up, so
+  a machine-gun burst that gets into a soft car rolls once and an 88
+  through a glacis rolls three or four times. Each roll picks from what
+  is physically inside, weighted by size: every girl aboard is a station
+  of crew-weight (a `balance` knob), every module its declared `size`.
+- **Crew hits strike named girls.** A girl rolled is *wounded* if fine
+  and *out* — dead or unconscious, the distinction resolved after the
+  battle by the roster's existing fate machinery, worse odds from a
+  vehicle that burned — if wounded again; a heavily overmatching round
+  can put her out in one. A wounded girl works her station at a penalty;
+  an out girl's station is covered by the best remaining crew member
+  through the substitution rule that already exists (short-handed crews
+  are this game's normal case, and the machinery was built for it).
+  Every crew hit is an event that names her.
+- **Module hits spend toughness** and announce damaged/destroyed. Gun
+  destroyed silences the primary weapon (index 0 — a future data field
+  can map modules to mounts when a vehicle needs it); mobility damaged
+  halves movement, destroyed stops her where she stands; the radio
+  destroyed drops her off the net through the contact machinery that
+  already knows what silence means; the ammo rack is the special one —
+  every rack hit rolls brew-up at a data-scaled chance times the
+  fraction of ammunition still aboard, and a rack destroyed without a
+  fire leaves the remaining rounds unusable, announced as the gun
+  running dry.
+- **Brew-up is the catastrophe:** the vehicle is destroyed at once and
+  the girls' fate rolls carry the fire.
+- **Bail-out is morale, not arithmetic.** Every penetration slams the
+  crew with a data-priced pressure spike on top of the hit pressure that
+  exists today, and then rolls the same `holds_together` discipline
+  check the refusal system uses. A crew that fails abandons: the vehicle
+  is a wreck for scoring, the girls walk home by the existing fate
+  machinery. This is what keeps time-to-kill honest — real tanks are
+  mostly lost because the crew leaves or dies, not because every box is
+  ticked — and it makes discipline training visibly be the thing that
+  keeps a damaged tank in the fight.
+- **Overpressure (the designer's ruling).** A non-penetrating hit whose
+  round carries `blast` rolls against the *exterior* — mobility and
+  radio modules — at a chance shaped by blast against plate, and blast
+  overmatch (blast comfortably above the plate) wrecks the vehicle
+  without consulting the gate at all: a recon car under a 105 is not a
+  bounce. Small arms still rattle nobody.
+- **Knocked out is derived, never stored:** brewed, abandoned, or no
+  girl aboard able to fight. Hit points are deleted; a mission-killed
+  vehicle (gun and tracks gone, crew grimly aboard) is *alive*, which is
+  what makes recovering her a future campaign story instead of a
+  contradiction. Every hp consumer — evaluator threat and withdraw
+  thresholds, formation "beaten", MCTS scoring, the HUD bar (becomes the
+  status readout: gun, tracks, radio, faces), save, the balance
+  instrument's lethality math — is rebuilt on a condition score derived
+  from crew and modules.
+
+Everything before B2b exists to make its diff reviewable; it is still
+the longest chunk and it lands as one commit, because half a hit-point
+system is not a reviewable state.
 
 **B3. Flight time and the artillery rework (3/5 — Opus, tight spec).**
 Shells in flight as state, impact against the hex, blast over the tile
