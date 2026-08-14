@@ -1092,6 +1092,7 @@ fn pump_events(
         | BattleEvent::ContactRestored { unit }
         | BattleEvent::OrdersWaiting { unit }
         | BattleEvent::OrdersDelivered { unit }
+        | BattleEvent::TookCover { unit, .. }
         | BattleEvent::ContactReported { by: unit, .. } => own_unit(unit),
         _ => true,
     });
@@ -1250,6 +1251,15 @@ fn pump_events(
                     .map(|u| u.name.clone())
                     .unwrap_or_else(|| "A crew".into());
                 log.push(format!("{who} refuses to advance - {rung}."));
+            }
+            // The mid-round drill. Same sentence shape as the planning-table
+            // drill's line, so the player learns one idiom for "she decided
+            // this herself" wherever in the round it happens.
+            BattleEvent::TookCover { unit, .. } => {
+                log.push(format!(
+                    "{} is under fire and breaks for cover.",
+                    name(*unit)
+                ));
             }
             // Withdrawing is not dying, and the screen has to say so plainly:
             // the sprite vanishes either way, and a player who reads a

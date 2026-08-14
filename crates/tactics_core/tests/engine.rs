@@ -7179,6 +7179,222 @@ fn a_target_watched_across_rounds_is_not_news_twice() {
     );
 }
 
+// --- the crew's loop (chunk 10c, second slice: the mid-round drill) --------
+
+/// The ambush staged with somewhere to go: a forest stand west of the
+/// watcher, the same curtain in the middle, and the walker tucked behind it.
+/// The watcher sits idle on open grass — exactly the crew the mid-round
+/// drill exists for.
+fn open_ground_stage(reg: &DataRegistry, watcher_at: [i32; 2], seed: u64) -> BattleState {
+    let rows = ["ffgggggggggg", "ffggggffgggg", "ffgggggggggg"];
+    two_side_battle(
+        reg,
+        &rows,
+        vec![
+            unit_at(watcher_at, 0, "medium_tank", "Watcher"),
+            unit_at([8, 1], 1, "medium_tank", "Walker"),
+        ],
+        seed,
+    )
+}
+
+/// Play out the ambush and record when side 0 first saw the walker and when
+/// (and where) the watcher broke for cover, then finish the round.
+fn spring_the_ambush(
+    reg: &DataRegistry,
+    state: &mut BattleState,
+) -> (Option<u32>, Option<u32>, Option<tactics_core::Hex>) {
+    let (watcher, walker) = (UnitId(0), UnitId(1));
+    assert!(
+        !state.fog.side(0).spotted.contains(&walker),
+        "the stage needs the walker hidden"
+    );
+    let out = state.unit(walker).unwrap().pos + tactics_core::Hex::new(0, -1);
+    state
+        .apply(
+            reg,
+            &Order::SetMove {
+                unit: walker,
+                to: out,
+            },
+        )
+        .unwrap();
+    commit_all(reg, state);
+
+    let (mut seen_at, mut broke_at, mut broke_to) = (None, None, None);
+    while state.resolving_tick().is_some() && !state.is_over() {
+        let tick = state.resolving_tick().unwrap();
+        for event in state.step_tick(reg) {
+            match event {
+                BattleEvent::UnitSpotted {
+                    unit, by_side: 0, ..
+                } if unit == walker => {
+                    seen_at.get_or_insert(tick);
+                }
+                BattleEvent::TookCover { unit, at } if unit == watcher => {
+                    broke_at.get_or_insert(tick);
+                    broke_to.get_or_insert(at);
+                }
+                _ => {}
+            }
+        }
+    }
+    (seen_at, broke_at, broke_to)
+}
+
+#[test]
+fn a_crew_caught_in_the_open_breaks_for_cover_before_the_round_ends() {
+    // The planning-table drill covers a crew who is threatened when the
+    // round is planned; this is the one who is ambushed at tick four. She
+    // owes her reaction time — the same per-enemy clock her gunner pays for
+    // opportunity fire — and then she owes nobody a planning phase: the
+    // tracks move mid-round, toward the best cover in reach, and the event
+    // stream says so out loud.
+    let reg = registry_wireless();
+    let mut state = open_ground_stage(&reg, [3, 1], 201);
+    let parked = state.unit(UnitId(0)).unwrap().pos;
+
+    let (seen_at, broke_at, broke_to) = spring_the_ambush(&reg, &mut state);
+    let seen = seen_at.expect("she steps into view during the round");
+    let broke = broke_at.expect("and the watcher does not wait for the round to end");
+    let delay = 2; // reactions untrained on an average crew: base_ticks
+    assert_eq!(
+        broke,
+        seen + delay,
+        "noticed at tick {seen}, moving {delay} ticks later — not instantly"
+    );
+    assert_eq!(
+        state.terrain_at(broke_to.expect("a destination came with the event")),
+        Some("forest"),
+        "she makes for the cover, not merely anywhere"
+    );
+    assert_ne!(
+        state.unit(UnitId(0)).unwrap().pos,
+        parked,
+        "and the tracks actually turned before the round was over"
+    );
+}
+
+#[test]
+fn a_crew_with_a_route_in_hand_drives_it_rather_than_flinching() {
+    // The reaction-latency post-mortem's rule, applied to the drill: only
+    // responses to NEW information may cost time, and by the same token only
+    // a crew with nothing left to execute may improvise. A route already in
+    // hand keeps being driven — interrupting ordered movement is the
+    // evaluator's business at the next planning table (that is what makes an
+    // Advance a movement to contact), never the engine's mid-round.
+    let reg = registry_wireless();
+    let mut state = open_ground_stage(&reg, [3, 1], 202);
+    let (watcher, dest) = (UnitId(0), state.unit(UnitId(0)).unwrap().pos);
+    // Send her west into the trees under her own orders: the route both
+    // outlasts the ambush and ends in cover, so the drill would have nothing
+    // to add even if it wrongly fired after arrival.
+    let ordered = dest + tactics_core::Hex::new(-3, 0);
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: watcher,
+                to: ordered,
+            },
+        )
+        .unwrap();
+
+    let (seen_at, broke_at, _) = spring_the_ambush(&reg, &mut state);
+    assert!(seen_at.is_some(), "the ambush still happens");
+    assert_eq!(
+        broke_at, None,
+        "a crew executing her orders is not hijacked by the drill"
+    );
+    assert_eq!(
+        state.unit(watcher).unwrap().pos,
+        ordered,
+        "she drives the route she was given"
+    );
+}
+
+#[test]
+fn an_overwatching_crew_trusts_her_gun_over_her_tracks() {
+    // A fire order is the deliberate hold-and-watch, and it outranks the
+    // drill exactly as it does at the planning table: she was put there to
+    // shoot, and a gun line that scatters for the trees the moment it is
+    // shot back at is not a gun line.
+    let reg = registry_wireless();
+    let mut state = open_ground_stage(&reg, [3, 1], 203);
+    let watcher = UnitId(0);
+    let parked = state.unit(watcher).unwrap().pos;
+    // Area fire on the mouth of the curtain: legal without a spot, and it
+    // marks her intent as overwatch for the whole round.
+    let mouth = state.unit(UnitId(1)).unwrap().pos + tactics_core::Hex::new(0, -1);
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: watcher,
+                fire: FireIntent::Area {
+                    at: mouth,
+                    weapon: 0,
+                },
+            },
+        )
+        .unwrap();
+
+    let (seen_at, broke_at, _) = spring_the_ambush(&reg, &mut state);
+    assert!(seen_at.is_some(), "the ambush still happens");
+    assert_eq!(broke_at, None, "overwatch stands");
+    assert_eq!(state.unit(watcher).unwrap().pos, parked);
+}
+
+#[test]
+fn a_crew_with_no_better_ground_in_reach_stands_where_she_is() {
+    // The comparison is strict: the drill moves a crew to strictly better
+    // cover or not at all. On a bare field two tanks stare at each other all
+    // round — threatened, idle, clocks long expired — and neither shuffles a
+    // single hex, which is also what keeps a crew who has already reached
+    // the trees from dancing between two equally good tiles forever.
+    let reg = registry_wireless();
+    let mut state = duel(&reg, 204);
+    let posts: Vec<_> = state.units.iter().map(|u| u.pos).collect();
+    commit_all(&reg, &mut state);
+    let mut broke = Vec::new();
+    while state.resolving_tick().is_some() && !state.is_over() {
+        for event in state.step_tick(&reg) {
+            if let BattleEvent::TookCover { unit, .. } = event {
+                broke.push(unit);
+            }
+        }
+    }
+    assert_eq!(
+        broke,
+        Vec::<UnitId>::new(),
+        "nobody bolts across a billiard table"
+    );
+    for (unit, post) in state.units.iter().zip(posts) {
+        assert_eq!(unit.pos, post, "{} stood her ground", unit.name);
+    }
+}
+
+#[test]
+fn a_mod_that_prices_no_reactions_gets_the_drill_at_the_next_tick() {
+    // Difficulty is a mod: zeroing the reaction rules collapses the delay to
+    // nothing and the whole pricing system disappears without an `if`. One
+    // tick remains and is structural, not a price — the sighting happens
+    // after this tick's movement has already resolved, so the very next
+    // slice of simultaneous time is the soonest any tracks can answer it.
+    let mut reg = registry_wireless();
+    reg.reaction.base_ticks = 0;
+    reg.reaction.max_ticks = 0;
+    let mut state = open_ground_stage(&reg, [3, 1], 205);
+
+    let (seen_at, broke_at, _) = spring_the_ambush(&reg, &mut state);
+    let seen = seen_at.expect("she steps into view during the round");
+    assert_eq!(
+        broke_at,
+        Some(seen + 1),
+        "with reactions unpriced the drill is as instant as a tick model allows"
+    );
+}
+
 // --- the chain of command under adversarial load ---------------------------
 //
 // Everything above tests one rule at a time on a stage built to show it. This

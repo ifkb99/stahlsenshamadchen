@@ -799,10 +799,10 @@ sensible behaviour rather than to standing in the open. Pinned by
 `a_crew_under_fire_takes_cover_instead_of_waiting_for_orders` and
 `an_idle_crew_out_of_danger_stays_put`.
 
-What the drill deliberately does not do yet: react mid-round. She takes
-cover at the next planning phase, not at tick four — the tick-four version
-is 10c's business, on the reactions currency, where training decides how
-long the drill takes to kick in.
+What the drill deliberately did not do at first: react mid-round. She took
+cover at the next planning phase, not at tick four. That debt is paid —
+the tick-four version is 10c's second slice, below, on the reactions
+currency, where training decides how long the drill takes to kick in.
 
 ### 10d. Fighting as one — coordination (tiers, first two executed 2026-08-10)
 
@@ -981,7 +981,7 @@ Measured on 36 battles per pairing: massed armour's delegation tax fell from
 the two pairings the change cannot touch — both flat, elastic under command
 — did not move at all.
 
-### 10c. The crew's loop (difficulty 5/5 — the burned area)
+### 10c. The crew's loop (difficulty 5/5 — the burned area; first two slices ✅ done)
 
 The same loop at vehicle level, and the half that must be built with the
 reaction-latency post-mortem open on the desk: the first attempt died by
@@ -1005,6 +1005,55 @@ Build order within the chunk: 10a first (the net the loops run on), then
 10b (safe ground, high value, gives the picture its consumer), then 10c
 alone and carefully. 10a and 10b are Opus-suitable with tight specs; 10c is
 a careful pass.
+
+**Slice 1 — the crew's clock.** ✅ Done (`0ce8603`). `SideFog.spotted_since`
+stamps each spotted enemy with the absolute tick he was *first* seen (held
+while the spot holds, dropped when it lapses), and opportunity fire gates
+per target on it: the gun answers reaction-delay ticks after first sight,
+wherever in the round the surprise falls, and a target watched across a
+round boundary is not news twice. The old gate reset per round, which taxed
+watching and waived ambushes — the exact inversion of what the skill means.
+
+**Slice 2 — the mid-round drill.** ✅ Done. The planning-table drill covers
+a crew already threatened when the round is planned; this is the one
+ambushed at tick four. `step_tick` now runs the drill every tick on the
+same clock: an idle crew — no route left to drive, no fire order, morale
+still obeying — with a spotted threat she has caught up with breaks for
+the strictly best cover in reach, announced as `TookCover` and narrated as
+"she is under fire and breaks for cover". The three refusals are the
+content of the rule. A route in hand keeps being driven — only responses
+to *new* information may cost time, and interrupting ordered movement is
+the evaluator's business at the next planning table, which is what makes
+an Advance a movement to contact. A fire order is the deliberate
+hold-and-watch and outranks the reflex, exactly as explicit orders outrank
+the drill at the planning table. And the cover comparison is strict, so a
+crew on the best ground in reach stands there rather than dancing between
+equal tiles — which is also what lets a dash cut short by the round
+boundary heal itself: her intent clears, she is still idle and still
+threatened, and the drill re-issues at tick zero until she is in the
+trees. It lives in the engine beside opportunity fire rather than in any
+planner, deliberately: it is the movement half of the same reflex, so
+every side — and every MCTS rollout — fights crews that flinch.
+
+Additivity, stated honestly for this slice: zeroing the reaction rules
+collapses the delay, but one tick remains and is structural — the sighting
+happens after this tick's movement has already resolved, so the next slice
+of simultaneous time is the soonest tracks can answer it. And like its
+round-start half (and opportunity fire before it), the drill itself is
+behavior, not difficulty: it has no off switch beyond a map with no better
+cover to run to. Pinned by five tests, from
+`a_crew_caught_in_the_open_breaks_for_cover_before_the_round_ends` to
+`a_mod_that_prices_no_reactions_gets_the_drill_at_the_next_tick`.
+Measured at 36 games: the flat matchup's wins did not move (16–20–0) but
+its mean length went 7.8 → 9.5 rounds — crews that used to die where they
+idled now break contact and live to make the battle longer — and massed
+armour under command went 12–21–3 → 14–20–2. Round resolution held at
+1.10 ms.
+
+What remains of 10c: the crew paying reaction time on orders *delivered*
+mid-battle (today a delivered order is acted on the tick it lands), and
+deviation — the hothead firing when told to hold — which is girls.md
+slice 5 on top of this machinery.
 
 ## Open questions
 

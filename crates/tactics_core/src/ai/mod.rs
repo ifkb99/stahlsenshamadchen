@@ -188,19 +188,33 @@ pub fn next_unplanned_unit(state: &BattleState, side: u8) -> Option<UnitId> {
 /// deterministic, because "was she in danger" must answer the same on every
 /// machine.
 ///
-/// Two very different things ask it, and they must ask it the same way or
-/// the game contradicts itself: the battle drill, which is what an unordered
-/// crew does when nobody has told her anything, and the evaluator, where
-/// being under fire is what suspends a movement to contact. Both are the
-/// same sentence — *is somebody shooting at me* — so both read the same
-/// function rather than two formulas that can drift apart.
+/// Three very different things ask it, and they must ask it the same way or
+/// the game contradicts itself: the battle drill at the planning table, which
+/// is what an unordered crew does when nobody has told her anything; the
+/// evaluator, where being under fire is what suspends a movement to contact;
+/// and the engine's mid-round drill, where the same danger noticed at tick
+/// four is what sends an idle crew scrambling for the trees. All three are
+/// the same sentence — *is somebody shooting at me* — so all three read the
+/// same predicate rather than formulas that can drift apart. The engine's
+/// consumer needs to know *who* so it can ask the crew's clock whether she
+/// has caught up with each of them yet, hence [`threats`] underneath.
 pub(crate) fn threatened(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> bool {
+    !threats(registry, state, unit).is_empty()
+}
+
+/// The spotted enemies that could put fire on this unit where she stands, in
+/// id order. The list form of [`threatened`], for the one caller — the
+/// mid-round drill — that must weigh each threat against when she first laid
+/// eyes on it.
+pub(crate) fn threats(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> Vec<UnitId> {
     let Some(me) = state.unit(unit) else {
-        return false;
+        return Vec::new();
     };
     visible_enemies(state, me.side)
         .iter()
-        .any(|enemy| best_weapon_against(registry, state, enemy.id, enemy.pos, me).is_some())
+        .filter(|enemy| best_weapon_against(registry, state, enemy.id, enemy.pos, me).is_some())
+        .map(|enemy| enemy.id)
+        .collect()
 }
 
 /// The best (weapon index, expected damage, would-kill) attack `unit` could

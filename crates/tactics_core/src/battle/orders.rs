@@ -126,6 +126,15 @@ pub enum Event {
         unit: UnitId,
         at: Hex,
     },
+    /// An idle crew under a threat she has had time to take in broke for the
+    /// best cover she can reach — the mid-round half of the battle drill.
+    /// Announced because a vehicle moving with no order behind it reads as a
+    /// bug or a betrayal; this line is the difference between "she bolted"
+    /// and "she is doing exactly what a trained crew does".
+    TookCover {
+        unit: UnitId,
+        at: Hex,
+    },
     ShotFired {
         attacker: UnitId,
         from: Hex,
@@ -818,6 +827,12 @@ impl BattleState {
         // acts on as this tick's movement resolves, not a round later.
         self.deliver_missions(&mut events);
 
+        // The drill runs after delivery on purpose: an order that lands this
+        // tick is the commander speaking *now*, and a fresh explicit order
+        // outranks the reflex. It runs before movement so the tick she
+        // reacts on is the tick she starts driving.
+        self.run_crew_drill(registry, &mut events);
+
         self.resolve_movement(registry, &mut events);
         events.extend(fog::recompute(registry, self));
         // Succession runs first and runs always: who commands a formation is
@@ -882,6 +897,86 @@ impl BattleState {
             events.extend(self.step_tick(registry));
         }
         events
+    }
+
+    /// The mid-round half of the battle drill: nobody under fire waits for
+    /// the next planning phase to survive.
+    ///
+    /// The planning-table drill (the delegation layer's `executor_only`)
+    /// covers a crew who is already threatened when the round is planned.
+    /// This covers the one who is ambushed at tick four: an idle crew — no
+    /// route left to drive, no target she was told to watch — who has had
+    /// time to take in a threat breaks for the best cover she can reach.
+    /// Return fire needs no twin here because opportunity fire already is
+    /// one; this is its movement half, and it prices time with the same
+    /// clock. `spotted_since` says when her side first laid eyes on each
+    /// enemy, her `reactions` delay says how long she needs to catch up, so
+    /// a tank she has watched crawl toward her for three rounds is answered
+    /// the instant it comes into range while a gun that appears out of a
+    /// treeline costs her the same stunned ticks it costs her gunner.
+    ///
+    /// What it will never touch: a crew with a route in hand keeps driving
+    /// it (delaying plans already given is the sin the reaction-latency
+    /// post-mortem forbids), a crew with a fire order is on deliberate
+    /// overwatch and trusts her gun, and a crew whose morale rung no longer
+    /// obeys is exactly as frozen as the rung says she is. A crew already on
+    /// the best cover she can reach stands her ground — the comparison is
+    /// strict, so equal cover never causes a pointless shuffle and each dash
+    /// is to strictly better ground, which is what makes the drill settle
+    /// instead of oscillate.
+    fn run_crew_drill(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
+        let now = self.round as u64 * registry.scale.ticks_per_round as u64
+            + self.resolving_tick().unwrap_or(0) as u64;
+        let ids: Vec<UnitId> = self
+            .units
+            .iter()
+            .filter(|u| u.alive && u.intent.is_empty())
+            .map(|u| u.id)
+            .collect();
+        for id in ids {
+            let Some(unit) = self.unit(id) else { continue };
+            let pos = unit.pos;
+            if !self.obeys(registry, unit) {
+                continue;
+            }
+            let delay =
+                super::stats::reaction_delay(registry, &self.roster, unit, self.terrain_at(pos))
+                    as u64;
+            let fog = self.fog.side(unit.side);
+            // A threat she has caught up with, on the same per-enemy clock
+            // opportunity fire pays.
+            let noticed = crate::ai::threats(registry, self, id)
+                .into_iter()
+                .any(|enemy| {
+                    fog.spotted_since
+                        .get(&enemy)
+                        .is_none_or(|since| now >= since + delay)
+                });
+            if !noticed {
+                continue;
+            }
+            let cover_at = |hex: Hex| {
+                self.terrain_at(hex)
+                    .and_then(|t| registry.terrain(t))
+                    .map_or(0, |t| t.cover)
+            };
+            let here = cover_at(pos);
+            // Best cover wins; among equals the cheapest drive, then
+            // coordinates, so replays agree on where she bolted to.
+            let dest = movement::reachable(registry, self, id)
+                .into_iter()
+                .filter(|&(hex, _)| hex != pos && cover_at(hex) > here)
+                .min_by_key(|&(hex, cost)| (std::cmp::Reverse(cover_at(hex)), cost, hex.x, hex.y))
+                .map(|(hex, _)| hex);
+            let Some(dest) = dest else { continue };
+            let Some((path, _)) = movement::path_to(registry, self, id, dest) else {
+                continue;
+            };
+            if let Some(unit) = self.unit_mut(id) {
+                unit.intent.path = path.into_iter().skip(1).collect();
+            }
+            events.push(Event::TookCover { unit: id, at: dest });
+        }
     }
 
     /// Everyone advances along their ordered route as far as this tick's
