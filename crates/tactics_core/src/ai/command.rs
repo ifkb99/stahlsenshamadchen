@@ -589,22 +589,22 @@ impl SideCommand {
         formation: &Formation,
         doctrine: &DoctrineDef,
     ) -> bool {
-        let (mut hp, mut max) = (0i64, 0i64);
+        // Substance — girls and module hits still aboard, over the full
+        // complement — replaces the hit-point fraction. A dead vehicle
+        // still counts her full complement in the denominator, so losses
+        // pull the formation toward beaten exactly as they always did.
+        let (mut have, mut max) = (0i64, 0i64);
         for id in &formation.members {
             let Some(unit) = state.units.get(id.index()) else {
                 continue;
             };
+            let (h, t) = state.substance(registry, unit);
             if unit.alive {
-                hp += i64::from(unit.hp.max(0));
+                have += i64::from(h);
             }
-            max += i64::from(
-                registry
-                    .vehicle(&unit.vehicle)
-                    .map(|v| v.max_hp)
-                    .unwrap_or(0),
-            );
+            max += i64::from(t);
         }
-        let strength = hp as f32 / max.max(1) as f32;
+        let strength = have as f32 / max.max(1) as f32;
         strength < (1.0 - doctrine.withdraw_threshold).clamp(0.0, 1.0)
     }
 

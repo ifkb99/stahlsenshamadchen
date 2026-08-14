@@ -80,8 +80,8 @@ fn round_trips_and_keeps_the_future_identical() {
     assert_eq!(restored.units.len(), original.units.len());
     for (a, b) in restored.units.iter().zip(&original.units) {
         assert_eq!(
-            (a.id, a.pos, a.hp, a.alive, a.facing),
-            (b.id, b.pos, b.hp, b.alive, b.facing)
+            (a.id, a.pos, &a.crew_state, a.alive, a.facing),
+            (b.id, b.pos, &b.crew_state, b.alive, b.facing)
         );
     }
 

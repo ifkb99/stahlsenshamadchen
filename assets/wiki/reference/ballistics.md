@@ -322,6 +322,39 @@ Everything before B2b exists to make its diff reviewable; it is still
 the longest chunk and it lands as one commit, because half a hit-point
 system is not a reviewable state.
 
+**B2b ✅ done.** The model above shipped as written, plus three rules the
+build discovered it needed:
+
+- **Decisions before triggers.** With outcomes landing mid-tick, the crew
+  processed first could shoot the gun out of the second's hands and cancel
+  a reply that was already coming — loop order became a rule of the game,
+  which is the exact sin the reap-at-end-of-tick bargain exists to
+  prevent. `resolve_fire` now runs two phases: every crew decides against
+  the tick's opening state, then everything resolves.
+- **Bail-out rides the rung, not raw dice.** Rolling discipline on every
+  penetration made average crews flee half the time from the first hit.
+  The shipped rule mirrors disobedience exactly: the *prospective* rung —
+  where this penetration's pressure will land her — decides whether nerve
+  is in question, and only a rung that disobeys rolls `holds_together`.
+  Base ladder: first pen leaves a steady crew wavering, the second puts
+  her at breaking and the dice speak. A one-rung ladder never bails —
+  pinned.
+- **An empty crew list is an abstracted crew, not a dead one** — and
+  placements that name no girls now spawn anonymous ones, one per seat,
+  trained to average at exactly what the seat demands. Without hit
+  points, dying happens to people, and whether a vehicle is mortal must
+  not depend on whether a scenario author wrote a roster.
+
+Measured at 36 games against B1's table: flat massed-vs-elastic 4-29-3 →
+9-23-4 (the outcome model softened the tank destroyer's reign: 87 → 76
+kills), mean 9.2 rounds, and the four-seed baseline carries 17 named crew
+hits, 65 module hits, 14 brew-ups and an abandonment whose story — racks
+wrecked, both guns dry, radio dead, crew walks — is the design doc read
+back by the engine. The rack is the dominant killer, which is
+period-true; whether 60% at full racks is the right base is B4's
+question. Round resolution 1.00 ms. `VehicleDef::max_hp` is deprecated,
+unread, and optional.
+
 **B3. Flight time and the artillery rework (3/5 — Opus, tight spec).**
 Shells in flight as state, impact against the hex, blast over the tile
 and neighbors scaled by cover, the narration for it. Self-contained

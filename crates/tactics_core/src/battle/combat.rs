@@ -254,6 +254,11 @@ impl Round<'_> {
         }
     }
 
+    /// The round's behind-armor potency, 1.0 on the legacy path.
+    fn post_pen_scale(&self) -> f32 {
+        self.ammo.map(|a| a.post_pen).unwrap_or(1.0)
+    }
+
     /// What the campaign's crew-fate roll should believe came aboard.
     fn damage_type(&self) -> Option<DamageType> {
         self.ammo.map(|a| match a.class {
@@ -463,8 +468,10 @@ pub struct AttackPreview {
     pub target_vehicle: String,
     /// Display name of the side the target belongs to.
     pub target_side: String,
-    pub target_hp: i32,
-    pub target_max_hp: i32,
+    /// The target's condition — girls and modules remaining over her full
+    /// complement — as a percent. The health bar's successor: there are no
+    /// hit points behind it, only the state of what is aboard.
+    pub target_condition: i32,
     pub distance: i32,
     /// `false` when the target sits outside the weapon's range band, in
     /// which case the numbers below are hypothetical.
@@ -502,12 +509,24 @@ pub struct CounterPreview {
     pub damage: i32,
 }
 
-/// Whether `unit`'s weapon at `index` has finished reloading.
-pub fn weapon_ready(state: &BattleState, unit: UnitId, index: usize) -> bool {
-    state
-        .unit(unit)
-        .and_then(|u| u.cooldowns.get(index).copied())
-        .is_some_and(|cd| cd == 0)
+/// Whether `unit`'s weapon at `index` has finished reloading — and, for
+/// the primary mount (index 0), whether the gun module is still a gun. A
+/// future data field can map modules to mounts when a vehicle needs finer
+/// wiring; today the machine gun keeps chattering after the main gun dies,
+/// which is the right picture for every vehicle in the base mod.
+pub fn weapon_ready(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    index: usize,
+) -> bool {
+    let Some(u) = state.unit(unit) else {
+        return false;
+    };
+    if index == 0 && !u.module_ok(registry, crate::data::ModuleEffect::Gun) {
+        return false;
+    }
+    u.cooldowns.get(index).copied().is_some_and(|cd| cd == 0)
 }
 
 /// Work out what an attack would do, without touching the simulation.
@@ -571,7 +590,7 @@ pub fn preview_attack(
                 .find(|(i, w)| {
                     !w.indirect
                         && (w.range[0] as i32..=w.range[1] as i32).contains(&distance)
-                        && weapon_ready(state, target, *i)
+                        && weapon_ready(registry, state, target, *i)
                 })
                 .map(|(_, w)| {
                     let damage = chambered(registry, state, target, w)
@@ -600,12 +619,11 @@ pub fn preview_attack(
             .get(tgt.side as usize)
             .map(|s| s.name.clone())
             .unwrap_or_default(),
-        target_hp: tgt.hp.max(0),
-        target_max_hp: tgt_vehicle.max_hp,
+        target_condition: (state.condition(registry, tgt) * 100.0).round() as i32,
         distance,
         in_range,
         expected_damage: hit.total as f32 / 100.0 * pen * damage as f32,
-        lethal: damage >= tgt.hp && pen > 0.0,
+        lethal: damage as u32 >= state.substance(registry, tgt).0 && pen > 0.0,
         hit,
         ammo,
         pen_chance,
@@ -677,25 +695,374 @@ fn resolve_shot(
             facing: profile.facing,
             rattled: !round.small_arms,
         });
+        // The designer's overpressure ruling: a bursting charge that fails
+        // the gate still delivers its blast to what lives OUTSIDE the
+        // plate. Small arms carry no blast, so nothing special-cases them.
+        if let Some(ammo) = round.ammo
+            && ammo.blast > 0
+        {
+            overpressure(registry, state, target, ammo.blast, events);
+        }
         return;
     }
 
     let damage_type = round.damage_type().unwrap_or(weapon.damage_type);
-    let tgt = state.unit_mut(target).expect("target checked above");
-    tgt.hp -= profile.damage;
-    // Remembered so that, if this is the hit that kills it, the campaign can
-    // ask what actually went through the crew compartment. A kinetic
-    // penetration and a machine gun finishing off a burning wreck are very
-    // different days for the girls inside.
-    tgt.last_hit_by = Some(damage_type);
-    let remaining = tgt.hp;
+    if let Some(tgt) = state.unit_mut(target) {
+        // Remembered so that, if this is the hit that kills it, the campaign
+        // can ask what actually went through the crew compartment. A kinetic
+        // penetration and a machine gun finishing off a burning wreck are
+        // very different days for the girls inside.
+        tgt.last_hit_by = Some(damage_type);
+    }
     events.push(Event::ShotHit {
         attacker,
         target,
         damage: profile.damage,
         facing: profile.facing,
-        remaining_hp: remaining.max(0),
     });
+    behind_armor_effects(registry, state, round, &profile, target, events);
+}
+
+/// What one girl or one module weighs when a penetration rolls what it
+/// found inside. Seats before modules, in seat order, then module id
+/// (BTreeMap) order — the walk is fixed so replays agree on who was hit.
+fn interior(registry: &DataRegistry, unit: &super::Unit) -> Vec<(InteriorChoice, u32)> {
+    let mut targets = Vec::new();
+    let crew_weight = registry.balance.crew_weight.max(0) as u32;
+    for (seat, _) in unit.crew.iter().enumerate() {
+        let condition = unit
+            .crew_state
+            .get(seat)
+            .copied()
+            .unwrap_or(super::CrewCondition::Fine);
+        if condition != super::CrewCondition::Out && crew_weight > 0 {
+            targets.push((InteriorChoice::Seat(seat), crew_weight));
+        }
+    }
+    for (id, hits) in &unit.modules {
+        if *hits > 0
+            && let Some(module) = registry.module(id)
+            && module.size > 0
+        {
+            targets.push((InteriorChoice::Module(id.clone()), module.size));
+        }
+    }
+    targets
+}
+
+/// One thing a behind-armor effect roll can land on: a seat (an index
+/// into the unit's crew list) or a module by id. Owned, so the picked
+/// list outlives the borrow of the unit it was read from.
+enum InteriorChoice {
+    Seat(usize),
+    Module(String),
+}
+
+/// Spend a penetration's behind-armor budget on what it found inside, then
+/// ask the crew whether they are staying.
+///
+/// The budget is the ledger damage the gate already computed — the weapon's
+/// weight times the round's potency — cashed as one effect roll per
+/// `points_per_effect`, rounded up. Each roll picks a girl or a module,
+/// weighted by size; a heavily overmatching round (double the budget the
+/// knob asks for, per roll) puts a girl straight out rather than wounding
+/// her first. The ammunition rack is the special module: every hit on it
+/// rolls brew-up at `brewup_percent` scaled by how full the racks still
+/// are, and a rack destroyed without a fire leaves the remaining rounds
+/// unusable.
+///
+/// Then the human question. Every penetration rolls the crew's discipline
+/// through the same `holds_together` check that governs refusing orders;
+/// a crew that fails abandons the vehicle. That single rule is what keeps
+/// time-to-kill honest without hit points — tanks are mostly lost because
+/// the crew leaves or dies, not because every box inside is ticked — and
+/// it is what makes discipline training visibly be the thing that keeps a
+/// damaged tank in the fight.
+fn behind_armor_effects(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    round: &Round<'_>,
+    profile: &ShotProfile,
+    target: UnitId,
+    events: &mut Vec<Event>,
+) {
+    let per_effect = registry.balance.points_per_effect.max(1);
+    let rolls = (profile.damage.max(1) + per_effect - 1) / per_effect;
+    // Double the price of a roll arriving in one round is the overmatch
+    // that skips "wounded": there is no light version of an 88 in the lap.
+    let savage = profile.damage >= per_effect * 2;
+
+    for _ in 0..rolls {
+        let Some(unit) = state.unit(target) else {
+            return;
+        };
+        if unit.brewed {
+            break;
+        }
+        let targets = interior(registry, unit);
+        let total: u32 = targets.iter().map(|(_, w)| w).sum();
+        if total == 0 {
+            break;
+        }
+        let mut pick = state.rng.random_range(0..total);
+        let mut chosen = None;
+        for (candidate, weight) in targets {
+            if pick < weight {
+                chosen = Some(candidate);
+                break;
+            }
+            pick -= weight;
+        }
+        match chosen.expect("total > 0 guarantees a pick") {
+            InteriorChoice::Seat(seat) => crew_hit(state, target, seat, savage, events),
+            InteriorChoice::Module(id) => {
+                module_hit(registry, state, target, &id, round.post_pen_scale(), events);
+            }
+        }
+    }
+
+    // The bail-out check, gated exactly the way disobedience is: the rung
+    // decides whether nerve is even in question, and only then do the dice
+    // ask whether discipline holds. The rung consulted is *prospective* —
+    // where this penetration's pressure will put her once the tick's news
+    // is priced — because the pressure system pays after fire resolves and
+    // a crew does not wait for the ledger to feel the shell that just came
+    // through. In base-mod terms: the first penetration leaves a steady
+    // crew wavering and nobody jumps; the second puts her at breaking, and
+    // whether she stays is the same three-dice discipline check that
+    // decides whether a breaking crew still obeys an order. Training is
+    // therefore visibly the thing that keeps a twice-holed tank fighting,
+    // and a mod with a one-rung ladder has crews that never bail — the
+    // gentle game, with no `if` in Rust to switch.
+    let Some(unit) = state.unit(target) else {
+        return;
+    };
+    if unit.brewed || unit.abandoned || state.fighting_crew(unit) == 0 {
+        return;
+    }
+    let rules = &registry.morale;
+    let prospective = unit
+        .pressure
+        .saturating_add(rules.hit)
+        .saturating_add(rules.penetrated);
+    if rules.rung(prospective).obeys {
+        return;
+    }
+    let level = state.roster.crew_skill(
+        registry,
+        registry.vehicle(&unit.vehicle),
+        &unit.crew,
+        &rules.skill,
+        state.terrain_at(unit.pos),
+    );
+    if !crate::data::holds_together(&mut state.rng, level)
+        && let Some(unit) = state.unit_mut(target)
+    {
+        unit.abandoned = true;
+        events.push(Event::Abandoned { unit: target });
+    }
+}
+
+/// One effect roll found a girl.
+fn crew_hit(
+    state: &mut BattleState,
+    target: UnitId,
+    seat: usize,
+    savage: bool,
+    events: &mut Vec<Event>,
+) {
+    let Some(unit) = state.unit_mut(target) else {
+        return;
+    };
+    if unit.crew_state.len() < unit.crew.len() {
+        unit.crew_state
+            .resize(unit.crew.len(), super::CrewCondition::Fine);
+    }
+    let Some(girl) = unit.crew.get(seat).copied() else {
+        return;
+    };
+    let Some(condition) = unit.crew_state.get_mut(seat) else {
+        return;
+    };
+    let out = savage || *condition == super::CrewCondition::Wounded;
+    *condition = if out {
+        super::CrewCondition::Out
+    } else {
+        super::CrewCondition::Wounded
+    };
+    events.push(Event::CrewHit {
+        unit: target,
+        girl,
+        out,
+    });
+}
+
+/// One effect roll found a module — or blast found one from outside.
+fn module_hit(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    target: UnitId,
+    module_id: &str,
+    potency: f32,
+    events: &mut Vec<Event>,
+) {
+    let Some(module) = registry.module(module_id).cloned() else {
+        return;
+    };
+    let destroyed = {
+        let Some(unit) = state.unit_mut(target) else {
+            return;
+        };
+        let Some(hits) = unit.modules.get_mut(module_id) else {
+            return;
+        };
+        *hits = hits.saturating_sub(1);
+        *hits == 0
+    };
+    events.push(Event::ModuleHit {
+        unit: target,
+        module: module_id.to_string(),
+        destroyed,
+    });
+
+    if module.effect == crate::data::ModuleEffect::Ammo {
+        // Every rack hit rolls the fire, at the declared chance scaled by
+        // how full the racks still are — an emptied tank is measurably
+        // harder to torch, which quietly makes shooting your ammunition
+        // off a survival strategy as well as an economy.
+        let (aboard, capacity) = {
+            let Some(unit) = state.unit(target) else {
+                return;
+            };
+            let aboard: u32 = unit.ammo.values().sum();
+            let capacity: u32 = registry
+                .vehicle(&unit.vehicle)
+                .map(|v| v.stowage.values().sum())
+                .unwrap_or(0);
+            (aboard, capacity)
+        };
+        if capacity > 0 && aboard > 0 {
+            let chance = (registry.balance.brewup_percent.max(0) as f32 * potency) as u32 * aboard
+                / capacity;
+            let roll = state.rng.random_range(0..100u32);
+            if roll < chance {
+                if let Some(unit) = state.unit_mut(target) {
+                    unit.brewed = true;
+                }
+                events.push(Event::BrewedUp { unit: target });
+                return;
+            }
+        }
+        if destroyed {
+            // The racks are wrecked but did not light: what is left in them
+            // is jammed, scattered, unusable. The guns that fed from them
+            // go quiet, and each says so exactly once.
+            let dry_weapons: Vec<String> = {
+                let Some(unit) = state.unit(target) else {
+                    return;
+                };
+                registry
+                    .vehicle(&unit.vehicle)
+                    .map(|v| {
+                        v.weapons
+                            .iter()
+                            .filter_map(|w| registry.weapon(w))
+                            .filter(|w| {
+                                !w.ammo.is_empty()
+                                    && w.ammo
+                                        .iter()
+                                        .any(|id| unit.ammo.get(id).copied().unwrap_or(0) > 0)
+                            })
+                            .map(|w| w.id.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            if let Some(unit) = state.unit_mut(target) {
+                for count in unit.ammo.values_mut() {
+                    *count = 0;
+                }
+            }
+            for weapon in dry_weapons {
+                events.push(Event::WeaponDry {
+                    unit: target,
+                    weapon,
+                });
+            }
+        }
+    }
+}
+
+/// Blast against a plate it could not get through: the exterior — running
+/// gear, antennas — at a chance shaped by blast against armor, and blast
+/// overmatch wrecking thin-skinned vehicles outright. A recon car under a
+/// 105 is not a bounce.
+fn overpressure(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    target: UnitId,
+    blast: i32,
+    events: &mut Vec<Event>,
+) {
+    let (plate, exterior) = {
+        let Some(unit) = state.unit(target) else {
+            return;
+        };
+        let Some(vehicle) = registry.vehicle(&unit.vehicle) else {
+            return;
+        };
+        // The thinnest plate is what overpressure asks about: hulls are
+        // sealed by their weakest face, and blast does not aim.
+        let plate = [ArmorFacing::Front, ArmorFacing::Side, ArmorFacing::Rear]
+            .into_iter()
+            .map(|f| vehicle.armor.value(f))
+            .min()
+            .unwrap_or(0)
+            .max(0);
+        // What blast can actually reach from outside, weighted like the
+        // inside is.
+        let exterior: Vec<(String, u32)> = unit
+            .modules
+            .iter()
+            .filter(|(_, hits)| **hits > 0)
+            .filter_map(|(id, _)| {
+                registry.module(id).and_then(|m| {
+                    matches!(
+                        m.effect,
+                        crate::data::ModuleEffect::Mobility | crate::data::ModuleEffect::Radio
+                    )
+                    .then(|| (id.clone(), m.size))
+                })
+            })
+            .collect();
+        (plate, exterior)
+    };
+    if blast >= plate * 2 && blast > 0 {
+        // Overmatch: the shell does not need the gate's permission. Reap
+        // folds the flag into `alive` at the end of the tick and announces
+        // the destruction, the same simultaneity bargain every other death
+        // keeps.
+        if let Some(unit) = state.unit_mut(target) {
+            unit.wrecked = true;
+        }
+        return;
+    }
+    let total: u32 = exterior.iter().map(|(_, w)| w).sum();
+    if total == 0 {
+        return;
+    }
+    let chance = blast * 100 / (blast + plate).max(1);
+    if state.rng.random_range(0..100) >= chance {
+        return;
+    }
+    let mut pick = state.rng.random_range(0..total);
+    for (id, weight) in &exterior {
+        if pick < *weight {
+            module_hit(registry, state, target, id, 1.0, events);
+            return;
+        }
+        pick -= weight;
+    }
 }
 
 /// Take the wrecks off the board at the end of a tick.
@@ -704,13 +1071,38 @@ fn resolve_shot(
 /// crews that fired at each other in the same instant both get their shot off
 /// — and both lose. Deciding it by whoever happened to be processed first
 /// would be an artefact of the loop order, not a rule of the game.
+///
+/// What ends a vehicle, now that there are no hit points: her ammunition
+/// went up, blast overmatch crushed her, her crew walked away, or nobody
+/// aboard can fight any more. All four leave the board as
+/// [`Event::UnitDestroyed`] — the scoring consumers want one word for
+/// "she is a loss" — with the *why* already told by the events that set
+/// the flags. A vehicle that is merely mission-killed, gun and tracks
+/// gone with the crew grimly aboard, stays alive: recovering her is a
+/// campaign story, not a contradiction.
 pub fn reap(state: &mut BattleState, events: &mut Vec<Event>) {
-    for unit in state.units.iter_mut().filter(|u| u.alive && u.hp <= 0) {
-        unit.alive = false;
-        events.push(Event::UnitDestroyed {
-            unit: unit.id,
-            at: unit.pos,
-        });
+    let done: Vec<(UnitId, Hex)> = state
+        .units
+        .iter()
+        .filter(|u| {
+            // The crew clause only applies to a vehicle that HAS a crew
+            // list: an empty one means the girls are abstracted away (test
+            // scaffolding, a mod without a roster), and "everyone aboard
+            // nobody is out" must read as today's game, not as a ghost
+            // ship.
+            u.alive
+                && (u.brewed
+                    || u.wrecked
+                    || u.abandoned
+                    || (!u.crew.is_empty() && state.fighting_crew(u) == 0))
+        })
+        .map(|u| (u.id, u.pos))
+        .collect();
+    for (id, at) in done {
+        if let Some(unit) = state.units.get_mut(id.index()) {
+            unit.alive = false;
+        }
+        events.push(Event::UnitDestroyed { unit: id, at });
     }
 }
 
@@ -915,7 +1307,7 @@ pub fn best_opportunity_shot(
         let Some(weapon) = registry.weapon(weapon_id) else {
             continue;
         };
-        if weapon.indirect || !weapon_ready(state, unit, index) {
+        if weapon.indirect || !weapon_ready(registry, state, unit, index) {
             continue;
         }
         // Enemies in id order, so ties resolve the same way in every replay.
@@ -940,26 +1332,49 @@ pub fn best_opportunity_shot(
     best.map(|(w, t, _)| (w, t))
 }
 
-/// Take this unit's shot for the current tick, if it has one.
+/// One crew's shooting decision for a tick, made before anybody's trigger
+/// is pulled.
+pub enum FireAction {
+    AtUnit {
+        weapon: usize,
+        target: UnitId,
+        opportunity: bool,
+    },
+    AtTile {
+        weapon: usize,
+        at: Hex,
+    },
+}
+
+/// What this unit would shoot this tick, judged against the tick's opening
+/// state.
 ///
 /// The ordered target comes first. When there is no order, or the order
 /// cannot be carried out right now (target destroyed, lost in the fog, out of
 /// range, or the gun is still reloading), the crew falls back to opportunity
 /// fire. That fallback is what makes return fire happen without a special
 /// case for it.
-pub fn fire_if_able(
+///
+/// Deciding is split from firing for the same reason death is reaped at the
+/// end of a tick rather than eagerly: a tick is one slice of simultaneous
+/// time. When outcomes landed mid-loop, the crew processed first could shoot
+/// the gun out of the hands of the crew processed second and cancel a reply
+/// that was, in the fiction, already leaving the barrel — mutual destruction
+/// became impossible and loop order became a rule of the game. So every
+/// decision is taken against the tick's opening state, and only then does
+/// anything resolve.
+pub fn fire_decision(
     registry: &DataRegistry,
-    state: &mut BattleState,
+    state: &BattleState,
     unit: UnitId,
-    events: &mut Vec<Event>,
-) {
-    let Some(att) = state.unit(unit) else { return };
+) -> Option<FireAction> {
+    let att = state.unit(unit)?;
     let (intent, att_pos, side) = (att.intent.fire, att.pos, att.side);
 
     match intent {
         FireIntent::Target { target, weapon } => {
             let spotted = state.fog.side(side).spotted.contains(&target);
-            let ordered_shot = weapon_ready(state, unit, weapon)
+            let ordered_shot = weapon_ready(registry, state, unit, weapon)
                 && spotted
                 && state
                     .unit(target)
@@ -970,23 +1385,53 @@ pub fn fire_if_able(
                     })
                     .unwrap_or(false);
             if ordered_shot {
-                fire_at_unit(registry, state, unit, weapon, target, false, events);
-                return;
+                return Some(FireAction::AtUnit {
+                    weapon,
+                    target,
+                    opportunity: false,
+                });
             }
         }
         FireIntent::Area { at, weapon } => {
-            let can_shell = weapon_ready(state, unit, weapon)
+            let can_shell = weapon_ready(registry, state, unit, weapon)
                 && weapon_at(registry, state, unit, weapon)
                     .is_some_and(|w| shot_exists(state, w, att_pos, at, true));
             if can_shell {
-                fire_at_tile(registry, state, unit, weapon, at, events);
-                return;
+                return Some(FireAction::AtTile { weapon, at });
             }
         }
         FireIntent::Hold => {}
     }
 
-    if let Some((weapon, target)) = best_opportunity_shot(registry, state, unit) {
-        fire_at_unit(registry, state, unit, weapon, target, true, events);
+    best_opportunity_shot(registry, state, unit).map(|(weapon, target)| FireAction::AtUnit {
+        weapon,
+        target,
+        opportunity: true,
+    })
+}
+
+/// Carry out a decision [`fire_decision`] made. The racks are consulted at
+/// execution — a rack destroyed earlier in the same tick leaves this shot
+/// silently unfired, which is as far as the simultaneity bargain stretches:
+/// a decision survives the loop, a shell does not survive its magazine.
+pub fn execute_fire(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    unit: UnitId,
+    action: FireAction,
+    events: &mut Vec<Event>,
+) {
+    if state.unit(unit).is_none_or(|u| !u.alive) {
+        return;
+    }
+    match action {
+        FireAction::AtUnit {
+            weapon,
+            target,
+            opportunity,
+        } => fire_at_unit(registry, state, unit, weapon, target, opportunity, events),
+        FireAction::AtTile { weapon, at } => {
+            fire_at_tile(registry, state, unit, weapon, at, events)
+        }
     }
 }

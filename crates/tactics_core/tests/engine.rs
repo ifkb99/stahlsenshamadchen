@@ -816,7 +816,7 @@ fn attack_preview_describes_the_target() {
     let vehicle = reg.vehicle(&target.vehicle).unwrap();
     assert_eq!(preview.target_vehicle, vehicle.name);
     assert_eq!(preview.target_side, state.sides[target.side as usize].name);
-    assert_eq!(preview.target_max_hp, vehicle.max_hp);
+    assert_eq!(preview.target_condition, 100, "she is untouched");
     assert_eq!(preview.distance, attacker.pos.distance_to(target.pos));
     // The old assertion here — "a hit always does something" — was the
     // damage floor's own slogan, and the floor is dead. What the preview
@@ -827,9 +827,8 @@ fn attack_preview_describes_the_target() {
         (0..=100).contains(&preview.pen_chance),
         "penetration is a percentage"
     );
-    assert_eq!(
-        preview.lethal,
-        preview.damage >= preview.target_hp && preview.pen_chance > 0,
+    assert!(
+        !preview.lethal || preview.pen_chance > 0,
         "lethal means a penetration that would finish her, not a wish"
     );
     let expected = preview.hit.total as f32 / 100.0 * preview.pen_chance as f32 / 100.0
@@ -1976,7 +1975,6 @@ fn an_intact_crew_will_not_run_for_the_exit_but_a_broken_one_will() {
     let exit = tactics_core::offset_to_hex(0, 0);
     let away = tactics_core::offset_to_hex(4, 0);
 
-    let healthy = state.units[0].hp;
     assert!(
         eval.score_tile(&reg, &state, UnitId(0), exit).score
             <= eval.score_tile(&reg, &state, UnitId(0), away).score,
@@ -1984,8 +1982,8 @@ fn an_intact_crew_will_not_run_for_the_exit_but_a_broken_one_will() {
     );
 
     let mut hurt = state;
-    hurt.units[0].hp = 1;
-    assert!(hurt.units[0].hp < healthy);
+    maul(&reg, &mut hurt, UnitId(0));
+    assert!(hurt.condition(&reg, hurt.unit(UnitId(0)).unwrap()) < 0.5);
     assert!(
         eval.score_tile(&reg, &hurt, UnitId(0), exit).score
             > eval.score_tile(&reg, &hurt, UnitId(0), away).score,
@@ -2820,7 +2818,7 @@ fn reload_time_sets_the_rate_of_fire() {
     // An MG chatters through a round; an 88 gets a couple of shots off. The
     // targets are artillery, which never answers: indirect guns do not
     // snap-fire, so the cadence is measured undisturbed.
-    let reg = registry();
+    let mut reg = registry();
     let mut state = two_side_battle(
         &reg,
         &["gggggggg"],
@@ -2834,10 +2832,20 @@ fn reload_time_sets_the_rate_of_fire() {
     );
     let (mg_carrier, sniper) = (UnitId(0), UnitId(2));
     let (near, far) = (UnitId(1), UnitId(3));
-    // Cadence, not lethality: an 88 kills a self-propelled gun in two hits,
-    // which would end the battle mid-round and cut the count short.
+    // Cadence, not lethality: with real penetration an 88 that gets in can
+    // end the battle mid-round and cut the count short, so the targets are
+    // given absurd plate. Ordered fire has no value gate — the guns keep
+    // shooting, the rounds keep bouncing, and only the metronome is
+    // measured.
     for target in [near, far] {
-        state.unit_mut(target).unwrap().hp = 500;
+        let vid = state.unit(target).unwrap().vehicle.clone();
+        if let Some(v) = reg.vehicles.get_mut(&vid) {
+            v.armor = tactics_core::data::ArmorSpec {
+                front: 99,
+                side: 99,
+                rear: 99,
+            };
+        }
     }
     for (unit, target) in [(mg_carrier, near), (sniper, far)] {
         state
@@ -2873,8 +2881,21 @@ fn two_crews_can_kill_each_other_in_the_same_tick() {
     for seed in 0..40 {
         let mut state = duel(&reg, seed);
         let (west, east) = (UnitId(0), UnitId(1));
+        // One girl still fighting and nothing else aboard but the gun: a
+        // single penetration that finds her finishes the vehicle, and both
+        // crews are in that state when both rounds arrive in the same tick.
         for unit in [west, east] {
-            state.unit_mut(unit).unwrap().hp = 1;
+            let u = state.unit_mut(unit).unwrap();
+            let seats = u.crew.len();
+            u.crew_state = vec![tactics_core::battle::CrewCondition::Out; seats];
+            if seats > 0 {
+                u.crew_state[0] = tactics_core::battle::CrewCondition::Fine;
+            }
+            for (id, hits) in u.modules.iter_mut() {
+                if id != "main_gun" {
+                    *hits = 0;
+                }
+            }
         }
         for (unit, target) in [(west, east), (east, west)] {
             state
@@ -2915,8 +2936,11 @@ fn two_crews_can_kill_each_other_in_the_same_tick() {
 fn a_unit_that_spent_the_round_driving_still_shoots_back() {
     // What used to be a hard-coded counterattack is now ordinary opportunity
     // fire, and it costs nothing to have been busy: the crew answers whoever
-    // shoots at them, even mid-move.
-    let reg = registry();
+    // shoots at them, even mid-move. Softened so the scene stays about
+    // movement: an unsoftened 75 can destroy the main gun with the opening
+    // hit, and a disarmed crew proves nothing either way.
+    let mut reg = registry();
+    soften(&mut reg);
     let mut state = duel(&reg, 21);
     let (west, east) = (UnitId(0), UnitId(1));
     state
@@ -3582,14 +3606,12 @@ fn a_breaking_crew_refuses_to_advance_and_says_so() {
 #[test]
 fn crews_report_moving_up_the_ladder() {
     let mut reg = registry();
-    // The scene needs an attritional fight: with the damage floor gone a 75
-    // through a medium's plate is lethal in two, and the crews died faster
-    // than their nerves could be seen fraying. Softening the gun keeps the
-    // duel going long enough for pressure to cross a rung, which is the
-    // thing under test — the ladder's reporting, not the gun's lethality.
-    if let Some(w) = reg.weapons.get_mut("gun_75") {
-        w.damage = 2;
-    }
+    // The scene needs an attritional fight: unsoftened, the first
+    // penetration can find the ammunition rack and end the battle as a
+    // brew-up before anyone's nerves are observable. Softened, pens wound
+    // and frighten without destroying, which is the thing under test —
+    // the ladder's reporting, not the gun's lethality.
+    soften(&mut reg);
     let mut state = duel(&reg, 22);
     for side in state.living_sides() {
         state.apply(&reg, &Order::Commit { side }).unwrap();
@@ -3822,9 +3844,8 @@ fn an_ordered_withdrawal_needs_no_wounds() {
     let members = state.formations()[formation.index()].members.clone();
     for id in members {
         let unit = state.unit(id).expect("planning harms nobody");
-        assert_eq!(
-            unit.hp,
-            reg.vehicle(&unit.vehicle).unwrap().max_hp,
+        assert!(
+            (state.condition(&reg, unit) - 1.0).abs() < f32::EPSILON,
             "intact"
         );
         assert!(
@@ -3906,7 +3927,7 @@ fn a_beaten_formation_is_ordered_out_by_its_commander() {
     let mut state = BattleState::from_map(&reg, "river_crossing", 31).unwrap();
     let formation = formation_named(&state, "valkyrie_line");
     for id in state.formations()[formation.index()].members.clone() {
-        state.units[id.index()].hp = 1;
+        maul(&reg, &mut state, id);
     }
 
     let mut ai = AiDriver::new();
@@ -4914,12 +4935,32 @@ fn in_formation(mut placement: UnitPlacement, formation: &str, leads: bool) -> U
     placement
 }
 
+/// Beat a vehicle down to the state the old tests wrote as `hp = 1`:
+/// every girl wounded, everything but the running gear destroyed. Her
+/// condition falls below any doctrine's breaking point while she stays
+/// alive, mobile, and reapable by nothing — exactly what a withdraw test
+/// needs its casualties to be.
+fn maul(reg: &DataRegistry, state: &mut BattleState, unit: UnitId) {
+    let mobility: Vec<String> = reg
+        .modules
+        .iter()
+        .filter(|(_, m)| m.effect == tactics_core::data::ModuleEffect::Mobility)
+        .map(|(id, _)| id.clone())
+        .collect();
+    let u = state.unit_mut(unit).expect("she is on the field");
+    u.crew_state = vec![tactics_core::battle::CrewCondition::Wounded; u.crew.len()];
+    for (id, hits) in u.modules.iter_mut() {
+        if !mobility.contains(id) {
+            *hits = 0;
+        }
+    }
+}
+
 /// Take a unit off the board the way a shell would, but silently: no
 /// `UnitDestroyed` event, so nothing this produces can be confused with the
 /// pressure of watching a friend burn.
 fn strike_down(state: &mut BattleState, unit: UnitId) {
     let victim = state.unit_mut(unit).expect("she was alive");
-    victim.hp = 0;
     victim.alive = false;
 }
 
@@ -6730,7 +6771,7 @@ fn a_breaking_formation_wakes_her_between_pulses() {
     // Between pulses, the line is shot to pieces.
     let line = formation_named(&state, "valkyrie_line");
     for id in state.formations()[line.index()].members.clone() {
-        state.units[id.index()].hp = 1;
+        maul(&reg, &mut state, id);
     }
     let mut withdrew = false;
     ai.plan_round_with(&reg, &mut state, |d| {
@@ -7215,6 +7256,24 @@ fn a_target_watched_across_rounds_is_not_news_twice() {
 
 // --- the crew's loop (chunk 10c, second slice: the mid-round drill) --------
 
+/// Pull the 75's teeth without pulling its threat: one point of effect
+/// budget still prices the shot above zero — she is being shot at by
+/// something that CAN hurt her, which is what `threatened` and the drill
+/// read — but a penetration wounds one girl or dings one module instead of
+/// savaging the vehicle. The clock and drill tests need their subjects
+/// alive, mobile and unbroken long enough to watch them decide.
+fn soften(reg: &mut DataRegistry) {
+    if let Some(w) = reg.weapons.get_mut("gun_75") {
+        w.damage = 1;
+    }
+    // Size-zero modules are never rolled, so penetrations wound girls and
+    // break nothing: the gun keeps firing and the tracks keep driving,
+    // which is what a test about timing or movement needs its subject to do.
+    for module in reg.modules.values_mut() {
+        module.size = 0;
+    }
+}
+
 /// The ambush staged with somewhere to go: a forest stand west of the
 /// watcher, the same curtain in the middle, and the walker tucked behind it.
 /// The watcher sits idle on open grass — exactly the crew the mid-round
@@ -7284,7 +7343,8 @@ fn a_crew_caught_in_the_open_breaks_for_cover_before_the_round_ends() {
     // opportunity fire — and then she owes nobody a planning phase: the
     // tracks move mid-round, toward the best cover in reach, and the event
     // stream says so out loud.
-    let reg = registry_wireless();
+    let mut reg = registry_wireless();
+    soften(&mut reg);
     let mut state = open_ground_stage(&reg, [3, 1], 201);
     let parked = state.unit(UnitId(0)).unwrap().pos;
 
@@ -7317,7 +7377,8 @@ fn a_crew_with_a_route_in_hand_drives_it_rather_than_flinching() {
     // hand keeps being driven — interrupting ordered movement is the
     // evaluator's business at the next planning table (that is what makes an
     // Advance a movement to contact), never the engine's mid-round.
-    let reg = registry_wireless();
+    let mut reg = registry_wireless();
+    soften(&mut reg);
     let mut state = open_ground_stage(&reg, [3, 1], 202);
     let (watcher, dest) = (UnitId(0), state.unit(UnitId(0)).unwrap().pos);
     // Send her west into the trees under her own orders: the route both
@@ -7353,7 +7414,8 @@ fn an_overwatching_crew_trusts_her_gun_over_her_tracks() {
     // drill exactly as it does at the planning table: she was put there to
     // shoot, and a gun line that scatters for the trees the moment it is
     // shot back at is not a gun line.
-    let reg = registry_wireless();
+    let mut reg = registry_wireless();
+    soften(&mut reg);
     let mut state = open_ground_stage(&reg, [3, 1], 203);
     let watcher = UnitId(0);
     let parked = state.unit(watcher).unwrap().pos;
@@ -7419,6 +7481,7 @@ fn a_mod_that_prices_no_reactions_gets_the_drill_at_the_next_tick() {
     // after this tick's movement has already resolved, so the very next
     // slice of simultaneous time is the soonest any tracks can answer it.
     let mut reg = registry_wireless();
+    soften(&mut reg);
     reg.reaction.base_ticks = 0;
     reg.reaction.max_ticks = 0;
     let mut state = open_ground_stage(&reg, [3, 1], 205);
@@ -7459,7 +7522,7 @@ fn an_ordered_shot_that_cannot_penetrate_bounces_and_does_nothing() {
     let reg = registry_wireless();
     let mut state = plink_stage(&reg, 301);
     let (plinker, wall) = (UnitId(0), UnitId(1));
-    let wall_hp = state.unit(wall).unwrap().hp;
+    let wall_before = state.substance(&reg, state.unit(wall).unwrap());
     state
         .apply(
             &reg,
@@ -7496,7 +7559,11 @@ fn an_ordered_shot_that_cannot_penetrate_bounces_and_does_nothing() {
     );
     assert_eq!(hit, 0, "and not one of them counted as a hit");
     let wall = state.unit(wall).unwrap();
-    assert_eq!(wall.hp, wall_hp, "armor that holds costs nothing");
+    assert_eq!(
+        state.substance(&reg, wall),
+        wall_before,
+        "armor that holds costs nothing"
+    );
     assert_eq!(
         wall.pressure, 0,
         "and plinking does not fray anyone's nerves"
@@ -7701,6 +7768,312 @@ fn a_mod_without_ammunition_still_fights_with_its_guns_own_numbers() {
             "uncounted rounds are infinite ones: nothing was spent"
         );
     }
+}
+
+// --- the outcome engine (ballistics B2): no hit points -----------------------
+
+#[test]
+fn a_penetration_names_the_girl_it_hurt() {
+    // Permadeath without a name is just a number going down. Every crew hit
+    // carries the girl it found, she is really aboard the vehicle it names,
+    // and the seat she sits in is marked — the state and the story must be
+    // the same fact.
+    let mut reg = registry_wireless();
+    soften(&mut reg); // interiors are girls only: every pen finds one
+    let mut state = duel(&reg, 401);
+    let (west, east) = (UnitId(0), UnitId(1));
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: west,
+                fire: FireIntent::Target {
+                    target: east,
+                    weapon: 0,
+                },
+            },
+        )
+        .unwrap();
+    commit_all(&reg, &mut state);
+
+    let mut named = Vec::new();
+    while state.resolving_tick().is_some() && !state.is_over() {
+        for event in state.step_tick(&reg) {
+            if let BattleEvent::CrewHit { unit, girl, .. } = event
+                && unit == east
+            {
+                named.push(girl);
+            }
+        }
+    }
+    assert!(!named.is_empty(), "a softened 75 wounds rather than breaks");
+    let hull = state.unit(east).unwrap();
+    for girl in named {
+        let seat = hull
+            .crew
+            .iter()
+            .position(|g| *g == girl)
+            .expect("the girl the event names is aboard the vehicle it names");
+        assert_ne!(
+            hull.crew_state.get(seat).copied().unwrap_or_default(),
+            tactics_core::battle::CrewCondition::Fine,
+            "and her seat is marked"
+        );
+    }
+}
+
+#[test]
+fn a_destroyed_gun_module_silences_the_primary_weapon_only() {
+    // The module maps to the mount: main gun dead means the 75 never speaks
+    // again, while the coaxial stays mechanically ready — it merely has
+    // nothing worth shooting at in this scene, which is the gate's own
+    // discipline, not the module's.
+    let reg = registry_wireless();
+    let mut state = duel(&reg, 402);
+    let (west, east) = (UnitId(0), UnitId(1));
+    state.units[west.index()]
+        .modules
+        .insert("main_gun".into(), 0);
+    assert!(
+        !tactics_core::battle::weapon_ready(&reg, &state, west, 0),
+        "a destroyed gun module is not a gun"
+    );
+    assert!(
+        tactics_core::battle::weapon_ready(&reg, &state, west, 1),
+        "the machine gun is its own mount and still answers ready"
+    );
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: west,
+                fire: FireIntent::Target {
+                    target: east,
+                    weapon: 0,
+                },
+            },
+        )
+        .unwrap();
+    commit_all(&reg, &mut state);
+    let mut west_fired_gun = false;
+    while state.resolving_tick().is_some() && !state.is_over() {
+        for event in state.step_tick(&reg) {
+            if let BattleEvent::ShotFired {
+                attacker, weapon, ..
+            } = &event
+                && *attacker == west
+                && weapon == "gun_75"
+            {
+                west_fired_gun = true;
+            }
+        }
+    }
+    assert!(!west_fired_gun, "a destroyed gun does not obey the order");
+}
+
+#[test]
+fn a_mobility_kill_stops_her_where_she_stands() {
+    // Tracks are the module with a middle state: damaged running gear
+    // halves her speed, destroyed stops her on the spot, and talented
+    // driving buys back neither.
+    let reg = registry_wireless();
+    let mut state = duel(&reg, 403);
+    let west = UnitId(0);
+    let whole = {
+        let u = state.unit(west).unwrap();
+        tactics_core::battle::move_points(&reg, &state.roster, u, state.terrain_at(u.pos))
+    };
+    assert!(whole > 0);
+
+    state.units[west.index()].modules.insert("tracks".into(), 1);
+    let limping = {
+        let u = state.unit(west).unwrap();
+        tactics_core::battle::move_points(&reg, &state.roster, u, state.terrain_at(u.pos))
+    };
+    assert_eq!(limping, whole / 2, "one thrown track halves her");
+
+    state.units[west.index()].modules.insert("tracks".into(), 0);
+    let stopped = {
+        let u = state.unit(west).unwrap();
+        tactics_core::battle::move_points(&reg, &state.roster, u, state.terrain_at(u.pos))
+    };
+    assert_eq!(stopped, 0, "both gone stops her where she stands");
+    assert_eq!(
+        reachable(&reg, &state, west).len(),
+        1,
+        "the move overlay is her own tile and nothing else"
+    );
+}
+
+#[test]
+fn a_dead_radio_drops_her_off_the_net() {
+    // The radio module dying is the chain-of-command layer's stake in
+    // ballistics: six hexes from her leader — inside the set's reach, past
+    // flag range — she is on the net right up until the set is wreckage,
+    // and then she is a girl driving on standing orders.
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 8).unwrap();
+    let formation = state.formations()[0].clone();
+    let leader = formation.leader.expect("the formation has a leader");
+    let stray = *formation
+        .members
+        .iter()
+        .find(|m| **m != leader)
+        .expect("a formation of one tests nothing");
+    let post = state.unit(leader).expect("leader").pos + tactics_core::Hex::new(6, 0);
+    state.units[stray.index()].pos = post;
+    settle(&reg, &mut state);
+    assert!(
+        state.formations()[0].in_contact(stray),
+        "six hexes out, the set carries her leader's voice"
+    );
+
+    state.units[stray.index()]
+        .modules
+        .insert("radio_set".into(), 0);
+    settle(&reg, &mut state);
+    assert!(
+        !state.formations()[0].in_contact(stray),
+        "the same six hexes with a wrecked set is silence"
+    );
+}
+
+#[test]
+fn a_one_rung_ladder_never_abandons_anything() {
+    // Difficulty is a mod, read against the bail-out: abandoning rides the
+    // rung the pressure ladder puts a crew on, so a ladder with one steady
+    // rung produces crews that stay with the tank whatever comes through
+    // the armor — the gentle game, with no `if` in Rust to switch.
+    let mut reg = registry_wireless();
+    reg.morale.rungs = vec![tactics_core::data::MoraleRung {
+        id: "steady".into(),
+        name: "Steady".into(),
+        at_pressure: 0,
+        obeys: true,
+    }];
+    let mut state = duel(&reg, 405);
+    commit_all(&reg, &mut state);
+    for _ in 0..6 {
+        if state.is_over() {
+            break;
+        }
+        for event in state.resolve_round(&reg) {
+            assert!(
+                !matches!(event, BattleEvent::Abandoned { .. }),
+                "nobody jumps off a one-rung ladder"
+            );
+        }
+        commit_all(&reg, &mut state);
+    }
+}
+
+#[test]
+fn a_heavy_shell_wrecks_a_soft_skin_without_asking_the_gate() {
+    // The designer's overpressure ruling, at its sharpest: a 105 that
+    // BOUNCES off a medium's glacis still wrecks her, because six points of
+    // blast against a hull whose thinnest plate is two does not need the
+    // penetration gate's permission. The kill arrives as a bounce followed
+    // by destruction, never as a ShotHit.
+    let mut reg = registry_wireless();
+    reg.balance.pen_scatter = 0;
+    let row = "g".repeat(8);
+    let mut state = two_side_battle(
+        &reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([0, 1], 0, "artillery", "Battery"),
+            unit_at([4, 1], 1, "medium_tank", "Target"),
+        ],
+        406,
+    );
+    let (battery, target) = (UnitId(0), UnitId(1));
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: battery,
+                fire: FireIntent::Target { target, weapon: 0 },
+            },
+        )
+        .unwrap();
+    commit_all(&reg, &mut state);
+
+    let (mut pens, mut wrecked) = (0, false);
+    for _ in 0..6 {
+        if state.is_over() {
+            break;
+        }
+        for event in state.resolve_round(&reg) {
+            match event {
+                BattleEvent::ShotHit { target: t, .. } if t == target => pens += 1,
+                BattleEvent::UnitDestroyed { unit, .. } if unit == target => wrecked = true,
+                _ => {}
+            }
+        }
+        commit_all(&reg, &mut state);
+    }
+    assert_eq!(
+        pens, 0,
+        "a 105 cannot beat the glacis and never pretends to"
+    );
+    assert!(wrecked, "and the blast wrecks her anyway");
+    assert!(
+        state.units[target.index()].wrecked,
+        "recorded as a crushing, not a fire — the fate rolls care"
+    );
+}
+
+#[test]
+fn an_emptied_rack_is_harder_to_torch() {
+    // Brew-up chance rides the fraction of ammunition still aboard, so
+    // shooting your racks empty is quietly a survival strategy. Staged so
+    // every effect roll finds the rack: full racks at certainty burn on the
+    // first penetration; the same tank with empty racks takes the same hit
+    // and does not.
+    let mut reg = registry_wireless();
+    reg.balance.pen_scatter = 0;
+    reg.balance.crew_weight = 0;
+    reg.balance.brewup_percent = 100;
+    for (id, module) in reg.modules.iter_mut() {
+        if id != "ammo_rack" {
+            module.size = 0;
+        }
+    }
+
+    let torch = |reg: &DataRegistry, empty: bool, seed: u64| -> bool {
+        let mut state = duel(reg, seed);
+        let (west, east) = (UnitId(0), UnitId(1));
+        if empty {
+            for count in state.units[east.index()].ammo.values_mut() {
+                *count = 0;
+            }
+        }
+        state
+            .apply(
+                reg,
+                &Order::SetFire {
+                    unit: west,
+                    fire: FireIntent::Target {
+                        target: east,
+                        weapon: 0,
+                    },
+                },
+            )
+            .unwrap();
+        commit_all(reg, &mut state);
+        let mut brewed = false;
+        while state.resolving_tick().is_some() && !state.is_over() {
+            for event in state.step_tick(reg) {
+                if matches!(event, BattleEvent::BrewedUp { unit } if unit == east) {
+                    brewed = true;
+                }
+            }
+        }
+        brewed
+    };
+
+    assert!(torch(&reg, false, 407), "full racks at certainty burn");
+    assert!(!torch(&reg, true, 408), "empty racks cannot");
 }
 
 // --- the chain of command under adversarial load ---------------------------

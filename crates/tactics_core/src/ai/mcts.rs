@@ -260,7 +260,7 @@ impl MctsPlanner {
             // Backpropagation. Every node is scored from the searching side's
             // view, because the opponent is a fixed policy rather than a
             // player in the tree.
-            let score = self.evaluator.position_value(&sim, side);
+            let score = self.evaluator.position_value(registry, &sim, side);
             let mut at = Some(current);
             while let Some(i) = at {
                 nodes[i].visits += 1.0;

@@ -148,8 +148,8 @@ fn record(registry: &DataRegistry, seed: u64) -> String {
     // events but a different board still fails.
     for unit in &state.units {
         out.push_str(&format!(
-            "final {} {:?} hp {} alive {}\n",
-            unit.name, unit.pos, unit.hp, unit.alive
+            "final {} {:?} crew {:?} modules {:?} alive {}\n",
+            unit.name, unit.pos, unit.crew_state, unit.modules, unit.alive
         ));
     }
     out

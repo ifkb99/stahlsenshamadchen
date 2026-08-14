@@ -1095,8 +1095,12 @@ fn pump_events(
         | BattleEvent::TookCover { unit, .. }
         | BattleEvent::ContactReported { by: unit, .. } => own_unit(unit),
         // How much ammunition the enemy has left is her quartermaster's
-        // secret, not something the sound of her gun gives away.
-        BattleEvent::WeaponDry { unit, .. } => own_unit(unit),
+        // secret, not something the sound of her gun gives away — and what
+        // is broken or bleeding inside her hull even more so. A brew-up or
+        // a bail-out, by contrast, is visible across the battlefield.
+        BattleEvent::WeaponDry { unit, .. }
+        | BattleEvent::CrewHit { unit, .. }
+        | BattleEvent::ModuleHit { unit, .. } => own_unit(unit),
         _ => true,
     });
     if drained.is_empty() {
@@ -1189,12 +1193,11 @@ fn pump_events(
             BattleEvent::ShotHit {
                 attacker,
                 target,
-                damage,
                 facing,
-                remaining_hp,
+                ..
             } => {
                 log.push(format!(
-                    "{} hits {} in the {:?} for {damage} ({remaining_hp} hp left)",
+                    "{} penetrates {} through the {:?}.",
                     name(*attacker),
                     name(*target),
                     facing
@@ -1263,6 +1266,44 @@ fn pump_events(
                     "{} is under fire and breaks for cover.",
                     name(*unit)
                 ));
+            }
+            BattleEvent::CrewHit { unit, girl, out } => {
+                let who = battle
+                    .state
+                    .roster
+                    .get(*girl)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_else(|| "somebody".into());
+                log.push(if *out {
+                    format!(
+                        "{who} is hit aboard {} and slumps at her station.",
+                        name(*unit)
+                    )
+                } else {
+                    format!("{who} is wounded aboard {}.", name(*unit))
+                });
+            }
+            BattleEvent::ModuleHit {
+                unit,
+                module,
+                destroyed,
+            } => {
+                let what = mods
+                    .0
+                    .module(module)
+                    .map(|m| m.name.clone())
+                    .unwrap_or_else(|| module.clone());
+                log.push(format!(
+                    "{}'s {what} is {}.",
+                    name(*unit),
+                    if *destroyed { "destroyed" } else { "damaged" }
+                ));
+            }
+            BattleEvent::BrewedUp { unit } => {
+                log.push(format!("{} brews up!", name(*unit)));
+            }
+            BattleEvent::Abandoned { unit } => {
+                log.push(format!("The crew abandons {}.", name(*unit)));
             }
             // The armor holding is news the player must hear, or the shot
             // reads as the game eating a hit.
@@ -2169,13 +2210,10 @@ fn sync_units(
 
     for (bar, mut sprite, mut transform) in &mut widgets.bars {
         if let Some(unit) = state.unit(bar.0) {
-            let max = mods
-                .0
-                .vehicle(&unit.vehicle)
-                .map(|v| v.max_hp)
-                .unwrap_or(10)
-                .max(1);
-            let frac = (unit.hp.max(0) as f32 / max as f32).clamp(0.0, 1.0);
+            // Condition — girls and modules over the full complement — is
+            // what the bar shows now that hit points are gone. Same bar,
+            // honest quantity.
+            let frac = state.condition(&mods.0, unit).clamp(0.0, 1.0);
             sprite.custom_size = Some(Vec2::new((28.0 * frac).round(), 3.0));
             transform.translation.x = (-14.0 * (1.0 - frac)).round();
             sprite.color = if frac > 0.5 {
@@ -2807,9 +2845,8 @@ fn format_attack(
         format!("Attack: {}", preview.target_name),
         format!("{} - {}", preview.target_vehicle, preview.target_side),
         format!(
-            "HP {}/{}  at {} ({} hexes)",
-            preview.target_hp,
-            preview.target_max_hp,
+            "Condition {}%  at {} ({} hexes)",
+            preview.target_condition,
             scale.format_distance(preview.distance),
             preview.distance
         ),
@@ -2841,13 +2878,19 @@ fn format_attack(
         ));
     }
     lines.push(String::new());
+    match &preview.ammo {
+        Some(round) => lines.push(format!(
+            "{round}: {}% through {:?} armor {}",
+            preview.pen_chance, preview.facing, preview.effective_armor
+        )),
+        None => lines.push("NO AMMUNITION".into()),
+    }
     lines.push(format!(
-        "Damage {} (vs {:?} armor {})",
-        preview.damage, preview.facing, preview.effective_armor
+        "Effect {}  expected {:.1}",
+        preview.damage, preview.expected_damage
     ));
-    lines.push(format!("Expected {:.1}", preview.expected_damage));
     if preview.lethal {
-        lines.push("A hit destroys it.".into());
+        lines.push("A penetration could finish her.".into());
     }
     match &preview.counter {
         Some(counter) => lines.push(format!(
@@ -2876,9 +2919,8 @@ fn format_unit(
             .map(|v| v.name.clone())
             .unwrap_or_else(|| "?".into()),
         format!(
-            "HP {}/{}",
-            unit.hp.max(0),
-            vehicle.map(|v| v.max_hp).unwrap_or(10)
+            "Condition {}%",
+            (state.condition(registry, unit) * 100.0).round() as i32
         ),
         format!("Side: {}", state.sides[unit.side as usize].name),
     ];

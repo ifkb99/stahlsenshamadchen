@@ -442,16 +442,34 @@ fn every_shot_fired_costs_exactly_one_round_from_the_racks() {
     );
 
     for unit in &state.units {
+        // A destroyed ammunition rack zeroes what it held — rounds lost to
+        // the hit, not fired — so the shot-for-shot accounting only binds
+        // units whose racks came through the battle. For the others the
+        // racks may only be *emptier* than the gun camera explains, never
+        // fuller.
         let spent: u32 = before[unit.id.index()]
             .values()
             .sum::<u32>()
             .saturating_sub(unit.ammo.values().sum::<u32>());
-        assert_eq!(
-            spent,
-            shots_by.get(&unit.id).copied().unwrap_or(0),
-            "{}'s racks and her gun camera disagree",
-            unit.name
-        );
+        let fired = shots_by.get(&unit.id).copied().unwrap_or(0);
+        let rack_intact = unit.modules.iter().all(|(id, hits)| {
+            reg.module(id)
+                .map(|m| m.effect != tactics_core::data::ModuleEffect::Ammo || *hits > 0)
+                .unwrap_or(true)
+        });
+        if rack_intact && !unit.brewed {
+            assert_eq!(
+                spent, fired,
+                "{}'s racks and her gun camera disagree",
+                unit.name
+            );
+        } else {
+            assert!(
+                spent >= fired,
+                "{} lost rounds to a rack hit; she cannot have conjured any",
+                unit.name
+            );
+        }
     }
 }
 

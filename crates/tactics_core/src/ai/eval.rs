@@ -87,13 +87,13 @@ impl Evaluator {
                 }
             }
         }
-        let hp_fraction = registry
-            .vehicle(&me.vehicle)
-            .map(|v| me.hp as f32 / v.max_hp.max(1) as f32)
-            .unwrap_or(1.0)
-            .clamp(0.0, 1.0);
+        // Condition replaces the hit-point fraction: girls and modules
+        // remaining over the full complement. A crew that has taken wounds
+        // and lost gear grows cautious by exactly the machinery that used
+        // to read a shrinking pool.
+        let condition = state.condition(registry, me).clamp(0.0, 1.0);
         let caution =
-            (1.5 - doctrine.aggression) * (1.0 + doctrine.withdraw_threshold * (1.0 - hp_fraction));
+            (1.5 - doctrine.aggression) * (1.0 + doctrine.withdraw_threshold * (1.0 - condition));
 
         // Terrain: cover and high ground, worth as much as doctrine says.
         let mut terrain_value = 0.0;
@@ -218,7 +218,7 @@ impl Evaluator {
             Some((mission, formation)) => {
                 self.mission_value(state, tile, mission, formation) * contact_scale
             }
-            None => self.objective_value(state, me.side, tile, hp_fraction),
+            None => self.objective_value(state, me.side, tile, condition),
         };
 
         // A crew ordered out stops valuing the fight. Without this, a shot
@@ -295,18 +295,20 @@ impl Evaluator {
     /// will run for it. That is the whole of withdrawal for now; who is
     /// *permitted* to leave belongs to the chain of command, not to the
     /// evaluator.
-    fn objective_value(&self, state: &BattleState, side: u8, tile: Hex, hp_fraction: f32) -> f32 {
+    fn objective_value(&self, state: &BattleState, side: u8, tile: Hex, condition: f32) -> f32 {
         // How badly this crew wants out.
         //
         // `withdraw_threshold` is a fraction of strength *lost* before a
         // doctrine looks for a way out — so a high one is stubborn, which is
         // why massed armour sits at 0.85 and elastic defence at 0.45. The
-        // crossing point is therefore `1 - threshold` of remaining hp, and
+        // crossing point is therefore `1 - threshold` of remaining condition
+        // (girls and modules over the full complement, now that there are no
+        // hit points), and
         // wanting out rises from nothing there to everything at destruction.
         // Getting this the wrong way round makes the stubborn doctrine the
         // first to run, which is what it did on the first attempt.
         let breaking = (1.0 - self.doctrine.withdraw_threshold).clamp(0.01, 1.0);
-        let flight = ((breaking - hp_fraction) / breaking).clamp(0.0, 1.0);
+        let flight = ((breaking - condition) / breaking).clamp(0.0, 1.0);
 
         let mut best: Option<f32> = None;
         for (objective, held) in state.objectives() {
@@ -512,7 +514,7 @@ impl Evaluator {
     /// How the battle stands for `side`, in [-1, 1]. Aggressive doctrines
     /// count damage dealt for more than damage avoided, so search under those
     /// weights accepts trades a cautious one would refuse.
-    pub fn position_value(&self, state: &BattleState, side: u8) -> f32 {
+    pub fn position_value(&self, registry: &DataRegistry, state: &BattleState, side: u8) -> f32 {
         if let Some(result) = state.over {
             return match result.winner {
                 Some(w) if w == side => 1.0,
@@ -523,10 +525,15 @@ impl Evaluator {
         let mut ours = 0.0;
         let mut theirs = 0.0;
         for unit in state.alive_units() {
+            // Substance points — girls and module hits still aboard — are
+            // the material currency now that hit points are gone. The
+            // absolute scale differs from the old pool; only the ratio
+            // below ever mattered.
+            let weight = state.substance(registry, unit).0 as f32;
             if unit.side == side {
-                ours += unit.hp as f32;
+                ours += weight;
             } else {
-                theirs += unit.hp as f32;
+                theirs += weight;
             }
         }
         let total = ours + theirs;

@@ -873,6 +873,13 @@ impl BattleState {
         // radius, so content from before radios were things is unchanged; a
         // receive-only set answers `None` here, which is also exactly what
         // the range ring should draw for her — nothing.
+        // A destroyed radio module is a set that no longer exists, whatever
+        // its paper range was. Content without a radio module keeps working
+        // untouched — `module_ok` answers true when nothing of the effect
+        // was ever declared.
+        if !unit.module_ok(registry, crate::data::ModuleEffect::Radio) {
+            return None;
+        }
         let hardware = match vehicle.and_then(|v| v.radio.as_deref()) {
             Some(set) => registry.radio(set).and_then(|r| r.send)?,
             None => rules.radius,
@@ -997,6 +1004,11 @@ impl BattleState {
                 let by_radio = self
                     .radio_reach(registry, speaker)
                     .is_some_and(|reach| dist <= reach as i32)
+                    // Hearing needs a working set too: a listener whose
+                    // radio was shot out is off the net however loudly her
+                    // leader transmits. Visual signalling below is what she
+                    // has left, which is exactly the early-war fallback.
+                    && l.module_ok(registry, crate::data::ModuleEffect::Radio)
                     && {
                         let squad = self.command.formation_of(speaker).map(|f| f.id.as_str());
                         squad.is_some()

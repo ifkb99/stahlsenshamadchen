@@ -53,6 +53,21 @@ pub struct Balance {
     /// A penalty rather than nothing, because a commander can lay a gun; she
     /// is just not the gunner.
     pub substitution_penalty: i32,
+    /// How big a target one girl is when a penetration rolls what it found
+    /// inside, on the same scale as a module's `size`. At the default 2
+    /// with the standard module set (sizes 3+4+2+1), a four-girl crew is a
+    /// little under half of what there is to hit — which is the CM-shaped
+    /// truth of it: most of the inside of a tank is people.
+    pub crew_weight: i32,
+    /// Ledger points of behind-armor damage per effect roll, rounding up.
+    /// At 4, a machine-gun burst into a soft car rolls once and an 88
+    /// through a glacis rolls three or four times.
+    pub points_per_effect: i32,
+    /// Chance an ammunition-rack hit sets the racks off, as a percent,
+    /// scaled down by how empty they are: the full figure with full racks,
+    /// none with none. Zero is the gentle game where nothing ever burns —
+    /// difficulty is a mod.
+    pub brewup_percent: i32,
     /// Round-to-round penetration variance, as a percent.
     ///
     /// No two shells leave the same barrel identically, and armor plate is
@@ -75,6 +90,9 @@ impl Default for Balance {
             speed_per_driving: 5,
             accuracy_per_gunnery: 3,
             substitution_penalty: 2,
+            crew_weight: 2,
+            points_per_effect: 4,
+            brewup_percent: 60,
             pen_scatter: 15,
         }
     }

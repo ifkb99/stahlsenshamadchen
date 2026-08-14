@@ -252,7 +252,10 @@ pub fn best_weapon_against(
         if dmg <= 0.0 {
             continue;
         }
-        let kill = dmg >= target.hp as f32 * 0.9;
+        // "Could this plausibly finish her": the expected outcome against
+        // what is actually left aboard. Same shape as the old hit-point
+        // comparison, with substance as the pool.
+        let kill = dmg >= state.substance(registry, target).0 as f32 * 0.9;
         if best.is_none_or(|(_, d, _)| dmg > d) {
             best = Some((i, dmg, kill));
         }

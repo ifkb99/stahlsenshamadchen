@@ -324,17 +324,15 @@ fn module_state_survives_a_save_and_a_reload() {
 }
 
 #[test]
-fn modules_are_inert_and_a_fought_battle_breaks_none_of_them() {
-    // **Expected to be deleted by the outcome chunk**, exactly as ammunition's
-    // `ammunition_is_inert_and_a_fought_round_spends_none` was deleted by the
-    // pipeline chunk that made rounds a resource. Until then this is the
-    // assertion that this chunk kept its promise: modules are content the
-    // resolver has never heard of, so a battle fought until crews die leaves
-    // every one of them exactly as it spawned.
+fn a_fought_battle_leaves_broken_modules_behind() {
+    // The successor to `modules_are_inert_and_a_fought_battle_breaks_none_of_
+    // them`, which the data chunk flagged for deletion by exactly this
+    // engine: penetrations now roll against what is aboard, so a battle
+    // fought with real guns must announce module damage and leave the
+    // wreckage recorded in unit state — hits remaining below toughness
+    // exactly where a ModuleHit event said so.
     let reg = registry();
     let mut state = BattleState::from_map(&reg, "river_crossing", 11).expect("battle");
-    let before: Vec<BTreeMap<String, u32>> =
-        state.units.iter().map(|u| u.modules.clone()).collect();
 
     let planner = |seed: u64| -> Box<dyn AiPlanner<BattleState, Order>> {
         make_battle_planner(
@@ -351,29 +349,33 @@ fn modules_are_inert_and_a_fought_battle_breaks_none_of_them() {
     ai.insert(0, planner(7));
     ai.insert(1, planner(8));
 
-    let mut shots = 0u32;
+    let mut reported: Vec<(tactics_core::battle::UnitId, String)> = Vec::new();
     for _ in 0..6 {
         if state.is_over() {
             break;
         }
         ai.plan_round(&reg, &mut state);
         for event in state.resolve_round(&reg) {
-            if matches!(event, tactics_core::battle::Event::ShotFired { .. }) {
-                shots += 1;
+            if let tactics_core::battle::Event::ModuleHit { unit, module, .. } = event {
+                reported.push((unit, module));
             }
         }
     }
     assert!(
-        shots > 0,
-        "the battle has to actually be fought for this to mean anything"
+        !reported.is_empty(),
+        "six rounds of real guns should break something aboard somebody"
     );
-
-    for unit in &state.units {
-        assert_eq!(
-            unit.modules,
-            before[unit.id.index()],
-            "{} came out of the battle with different hardware",
-            unit.name
+    for (unit, module) in &reported {
+        let u = state
+            .units
+            .get(unit.index())
+            .expect("units are never removed");
+        let hits = u.modules.get(module).copied().unwrap_or(u32::MAX);
+        let toughness = reg.module(module).map(|m| m.toughness).unwrap_or(1);
+        assert!(
+            hits < toughness,
+            "{}'s {module} was reported hit and the state must agree",
+            u.name
         );
     }
 }

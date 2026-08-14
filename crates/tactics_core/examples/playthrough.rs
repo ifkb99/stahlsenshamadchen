@@ -117,12 +117,32 @@ fn main() {
                     target,
                     damage,
                     facing,
-                    remaining_hp,
                     ..
                 } => println!(
-                    "   HIT {} on the {facing:?} for {damage}, {remaining_hp} hp left",
+                    "   PENETRATES {} on the {facing:?} ({damage} pts of effect)",
                     name(&state, *target)
                 ),
+                Event::CrewHit { unit, girl, out } => println!(
+                    "   ** crew hit aboard {}: girl #{} is {} **",
+                    name(&state, *unit),
+                    girl.0,
+                    if *out { "OUT" } else { "wounded" }
+                ),
+                Event::ModuleHit {
+                    unit,
+                    module,
+                    destroyed,
+                } => println!(
+                    "   {}'s {module} is {}",
+                    name(&state, *unit),
+                    if *destroyed { "destroyed" } else { "damaged" }
+                ),
+                Event::BrewedUp { unit } => {
+                    println!("   ** {} BREWS UP **", name(&state, *unit))
+                }
+                Event::Abandoned { unit } => {
+                    println!("   >> the crew abandons {}", name(&state, *unit))
+                }
                 Event::ShotMissed { .. } => println!("   miss"),
                 Event::ShotBounced { target, facing, .. } => {
                     println!("   BOUNCES off {} ({facing:?})", name(&state, *target))
@@ -225,10 +245,10 @@ fn main() {
     }
     for u in &state.units {
         println!(
-            "{} {} - {} hp{}",
+            "{} {} - {}% condition{}",
             state.sides[u.side as usize].name,
             u.name,
-            u.hp.max(0),
+            (state.condition(&registry, u) * 100.0).round(),
             if u.alive { "" } else { " (destroyed)" }
         );
     }

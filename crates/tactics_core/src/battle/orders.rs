@@ -145,12 +145,16 @@ pub enum Event {
         /// target: overwatch, or an answer to being shot at.
         opportunity: bool,
     },
+    /// The round penetrated. There is no hit-point arithmetic behind this
+    /// any more: `damage` is the behind-armor budget the outcome engine
+    /// spent on the crew and modules, and the events that follow this one
+    /// in the same tick — crew hits, module hits, a brew-up, an
+    /// abandonment — are what it actually did.
     ShotHit {
         attacker: UnitId,
         target: UnitId,
         damage: i32,
         facing: ArmorFacing,
-        remaining_hp: i32,
     },
     /// The round struck and the armor held. Nothing structural happened —
     /// there is no damage floor any more — but the event is said out loud
@@ -174,6 +178,36 @@ pub enum Event {
     WeaponDry {
         unit: UnitId,
         weapon: String,
+    },
+    /// A girl aboard was hit. Named — the who/what/why rule at its most
+    /// important, since permadeath without a name is just a number going
+    /// down. `out` false is wounded and still at her station; `out` true is
+    /// the battle's whole verdict, with dead-or-unconscious resolved by the
+    /// roster when the shooting stops.
+    CrewHit {
+        unit: UnitId,
+        girl: crate::roster::GirlId,
+        out: bool,
+    },
+    /// Something inside (or, for blast against the hull, outside) broke.
+    /// `destroyed` false is damaged-but-working-worse; the module id names
+    /// what, so the log can say "the tracks" rather than "a subsystem".
+    ModuleHit {
+        unit: UnitId,
+        module: String,
+        destroyed: bool,
+    },
+    /// The ammunition went up. The vehicle is destroyed on the spot, and
+    /// the crew's fate rolls carry the fire.
+    BrewedUp {
+        unit: UnitId,
+    },
+    /// The crew has had enough and left the vehicle. A wreck for scoring —
+    /// the side has lost a tank — but the girls are walking home, which is
+    /// a different day entirely from burning in it, and the log must never
+    /// let the two read alike.
+    Abandoned {
+        unit: UnitId,
     },
     ShotMissed {
         attacker: UnitId,
@@ -1144,14 +1178,23 @@ impl BattleState {
     /// Everyone who has a shot takes it. Wrecks are cleared only once every
     /// gun has spoken, so a tick's shots are genuinely simultaneous.
     fn resolve_fire(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
-        let ids: Vec<UnitId> = self
+        // Two phases on purpose: every crew decides against the tick's
+        // opening state, then everything resolves. One phase reintroduced
+        // loop order as a rule of the game the moment outcomes started
+        // landing mid-tick — the first crew processed could shoot the gun
+        // out of the second's hands and cancel a reply that was already
+        // coming. See `fire_decision` for the full argument.
+        let decisions: Vec<(UnitId, combat::FireAction)> = self
             .units
             .iter()
             .filter(|u| u.alive)
             .map(|u| u.id)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter_map(|id| combat::fire_decision(registry, self, id).map(|a| (id, a)))
             .collect();
-        for id in ids {
-            combat::fire_if_able(registry, self, id, events);
+        for (id, action) in decisions {
+            combat::execute_fire(registry, self, id, action, events);
         }
         combat::reap(self, events);
     }
@@ -1228,7 +1271,11 @@ impl BattleState {
             .collect();
 
         for id in hits {
-            add(self, id, rules.hit);
+            // Every hit in the stream is a penetration now — the bounces
+            // file separately below — so the shell that came through costs
+            // both the old price of being hit and the new price of knowing
+            // the armor did not hold.
+            add(self, id, rules.hit + rules.penetrated);
         }
         for id in clangs {
             add(self, id, rules.bounced);

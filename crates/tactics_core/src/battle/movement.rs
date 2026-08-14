@@ -25,9 +25,13 @@ pub fn move_points(
         .vehicle(&unit.vehicle)
         .map(|v| v.movement.points)
         .unwrap_or(0);
-    registry
+    let skilled = registry
         .balance
-        .speed(base, super::stats::driving(registry, roster, unit, terrain))
+        .speed(base, super::stats::driving(registry, roster, unit, terrain));
+    // Thrown tracks outrank talented driving: half speed on damaged
+    // running gear, none on destroyed. Integer halves so resolution stays
+    // bit-for-bit reproducible.
+    skilled * unit.mobility_halves(registry) / 2
 }
 
 /// Cost of stepping from `from` onto `to`, or `None` if that step is

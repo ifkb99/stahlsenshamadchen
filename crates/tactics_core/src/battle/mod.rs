@@ -38,7 +38,7 @@ pub use movement::{
 pub use orders::{Event, FireIntent, Order, OrderError, UnitIntent};
 
 use crate::ai::AiConfig;
-use crate::data::{DataError, DataRegistry, ValidationReport};
+use crate::data::{DataError, DataRegistry, ModuleEffect, ValidationReport};
 use crate::map::{HexMap, MapKind, UnitPlacement};
 use crate::roster::{GirlId, Roster};
 use hexx::{EdgeDirection, Hex};
@@ -77,6 +77,26 @@ pub enum Phase {
     Resolving { tick: u32 },
 }
 
+/// How one girl aboard a vehicle is doing, mid-battle.
+///
+/// Deliberately three states and not a hit-point bar: *wounded* is the
+/// dramatic middle where she is still at her station and worse at it, and
+/// *out* is deliberately ambiguous — dead or unconscious is a question the
+/// battle cannot answer and the roster's fate machinery resolves when the
+/// shooting stops, with worse odds from a vehicle that burned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CrewCondition {
+    #[default]
+    Fine,
+    /// Hurt but working her station, at the substitution penalty's worth of
+    /// worse — being wounded is like doing somebody else's job.
+    Wounded,
+    /// No longer part of the fight. Whether she comes home is the roster's
+    /// question, not the battle's.
+    Out,
+}
+
 /// A crewed vehicle on the battlefield.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Unit {
@@ -92,7 +112,6 @@ pub struct Unit {
     pub name: String,
     pub pos: Hex,
     pub facing: EdgeDirection,
-    pub hp: i32,
     /// What this unit was told to do this round.
     pub intent: UnitIntent,
     /// Whether anyone has given this unit orders this round. Distinct from
@@ -108,11 +127,10 @@ pub struct Unit {
     pub cooldowns: Vec<u32>,
     /// What is in her racks: [`crate::data::AmmoDef`] id to rounds remaining.
     ///
-    /// Stamped from the vehicle's `stowage` at spawn and adjustable during
-    /// deployment through [`BattleState::set_loadout`]. **Nothing spends it
-    /// yet** — combat still resolves a shot from the weapon's own numbers, so
-    /// a battle fought to its end leaves every count exactly where it
-    /// started. The penetration pipeline is what makes this a resource.
+    /// Stamped from the vehicle's `stowage` at spawn, adjustable during
+    /// deployment through [`BattleState::set_loadout`], and spent by firing —
+    /// one round per shot, including blind shells into empty ground. The gun
+    /// that empties its last listed round announces it and goes silent.
     ///
     /// A `BTreeMap` for the same reason the vehicle's `stowage` is one: the
     /// moment a shot deducts a round, these keys are walked to produce
@@ -134,9 +152,9 @@ pub struct Unit {
     /// never had one behave the same today and will not behave the same
     /// under a repair or resupply rule.
     ///
-    /// **Nothing reads this yet.** A battle fought to its end leaves every
-    /// count exactly where it started; the outcome chunk is what makes a
-    /// module something a penetration can find.
+    /// The outcome engine counts these down; the gates that make them
+    /// matter are [`Unit::module_ok`] (the gun and the radio) and
+    /// [`Unit::mobility_halves`] (the tracks).
     ///
     /// A `BTreeMap` for the same reason [`Self::ammo`] is one: the moment a
     /// hit breaks something these keys are walked to produce events, and
@@ -147,6 +165,33 @@ pub struct Unit {
     /// what it was — a vehicle with nothing inside to lose but her crew.
     #[serde(default)]
     pub modules: std::collections::BTreeMap<String, u32>,
+    /// How each girl aboard is doing, index-aligned with [`Self::crew`] —
+    /// a parallel `Vec` rather than a map because save files are JSON and
+    /// the alignment is the invariant anyway: seat *k* of the crew list is
+    /// entry *k* here, always.
+    ///
+    /// Empty means everyone is fine, which is both the spawn state and what
+    /// a save written before wounds existed opens as. The outcome engine
+    /// grows it to crew length the first time anyone is hurt.
+    #[serde(default)]
+    pub crew_state: Vec<CrewCondition>,
+    /// The crew left her: a bail-out under fire, rolled through the same
+    /// discipline check that governs refusing orders. The vehicle is a
+    /// wreck as far as the battle is concerned — reaped like a kill,
+    /// scored like a loss — but the girls are walking home, which the
+    /// campaign's fate machinery treats very differently from burning.
+    #[serde(default)]
+    pub abandoned: bool,
+    /// The ammunition went up. Instantly destroyed, and the fate rolls for
+    /// everyone aboard carry the fire.
+    #[serde(default)]
+    pub brewed: bool,
+    /// Destroyed as a vehicle by catastrophic damage that was not a fire —
+    /// blast overmatch flattening a soft skin, for now. Kept separate from
+    /// [`Self::brewed`] because the campaign's fate rolls care about the
+    /// difference between a crushed hull and a burning one.
+    #[serde(default)]
+    pub wrecked: bool,
     /// Damage type of the last hit this unit took, if any. Read by the
     /// campaign when working out what became of the crew.
     pub last_hit_by: Option<crate::data::DamageType>,
@@ -188,6 +233,48 @@ pub struct Unit {
 }
 
 impl Unit {
+    /// Whether the module carrying this effect still works. A vehicle with
+    /// no module of the effect at all answers `true`: content that never
+    /// declared a gun module cannot have it shot out, which is the
+    /// additivity rule — a mod without modules is today's game.
+    pub fn module_ok(&self, registry: &DataRegistry, effect: ModuleEffect) -> bool {
+        let mut declared = false;
+        for (id, hits) in &self.modules {
+            if registry.module(id).is_some_and(|m| m.effect == effect) {
+                declared = true;
+                if *hits > 0 {
+                    return true;
+                }
+            }
+        }
+        !declared
+    }
+
+    /// How much of this vehicle's movement her running gear still delivers,
+    /// in halves so the arithmetic stays integer: 2 intact, 1 damaged, 0
+    /// destroyed. Reads the worst mobility module aboard, because one
+    /// thrown track stops the tank however healthy the other is.
+    pub fn mobility_halves(&self, registry: &DataRegistry) -> u32 {
+        let mut halves = 2u32;
+        for (id, hits) in &self.modules {
+            let Some(module) = registry.module(id) else {
+                continue;
+            };
+            if module.effect != ModuleEffect::Mobility {
+                continue;
+            }
+            let own = if *hits == 0 {
+                0
+            } else if *hits < module.toughness {
+                1
+            } else {
+                2
+            };
+            halves = halves.min(own);
+        }
+        halves
+    }
+
     /// Where this unit's orders will leave it, or where it stands if it has
     /// nowhere to go.
     pub fn planned_destination(&self) -> Hex {
@@ -478,6 +565,50 @@ impl BattleState {
         let vehicle = registry
             .vehicle(&placement.vehicle)
             .expect("placement validated against registry");
+        // A placement that names no girls gets an anonymous, average crew —
+        // one per seat the chassis declares. Without hit points, dying is
+        // something that happens to the people aboard, and whether a
+        // vehicle is mortal must never depend on whether a scenario author
+        // wrote a roster. Anonymous girls have no stated cores or skills,
+        // which the character model already reads as "average at
+        // everything": the same fighting strength crewless units always
+        // had, plus the ability to be lost.
+        let crew = if crew.is_empty() && !vehicle.crew_slots.is_empty() {
+            let anonymous: Vec<GirlId> = vehicle
+                .crew_slots
+                .iter()
+                .map(|role| {
+                    // Trained to average at exactly what her seat demands,
+                    // not merely average-at-heart: an untrained skill reads
+                    // through cores at a penalty, and a penalty here would
+                    // make writing a roster change how fast every tank in a
+                    // mod drives. The anonymous crew must be the crew the
+                    // crewless vehicle always effectively had.
+                    let skills = registry
+                        .role(role)
+                        .map(|r| {
+                            r.skills
+                                .iter()
+                                .map(|s| (s.clone(), crate::data::AVERAGE))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let def = crate::data::CharacterDef {
+                        id: format!("anonymous_{role}"),
+                        name: registry
+                            .role(role)
+                            .map(|r| r.name.clone())
+                            .unwrap_or_else(|| role.clone()),
+                        skills,
+                        ..Default::default()
+                    };
+                    Arc::make_mut(&mut self.roster).enlist(placement.side, &def, registry)
+                })
+                .collect();
+            anonymous
+        } else {
+            crew
+        };
         let name = placement
             .name
             .clone()
@@ -501,7 +632,6 @@ impl BattleState {
                 .facing
                 .map(EdgeDirection::from)
                 .unwrap_or(EdgeDirection::POINTY_EAST),
-            hp: vehicle.max_hp,
             intent: UnitIntent::default(),
             planned: false,
             move_credit: 0,
@@ -523,6 +653,10 @@ impl BattleState {
                 .into_iter()
                 .map(|m| (m.id.clone(), m.toughness))
                 .collect(),
+            crew_state: Vec::new(),
+            abandoned: false,
+            brewed: false,
+            wrecked: false,
             last_hit_by: None,
             pressure: 0,
             detached: false,
@@ -644,6 +778,70 @@ impl BattleState {
     }
 
     /// Whether this crew will still do as it is told.
+    /// Girls aboard `unit` still part of the fight — everyone whose
+    /// condition is not [`CrewCondition::Out`]. An empty `crew_state` means
+    /// nobody has been hurt, so the whole crew counts.
+    pub fn fighting_crew(&self, unit: &Unit) -> usize {
+        unit.crew
+            .iter()
+            .enumerate()
+            .filter(|(seat, _)| {
+                unit.crew_state
+                    .get(*seat)
+                    .copied()
+                    .unwrap_or(CrewCondition::Fine)
+                    != CrewCondition::Out
+            })
+            .count()
+    }
+
+    /// The fraction of this vehicle's fighting substance still aboard: her
+    /// girls (two points each — fine is two, wounded one, out zero) and her
+    /// modules (hits remaining over toughness), as one 0..=1 number.
+    ///
+    /// This is the condition score that replaces the hit-point fraction
+    /// everywhere the AI used to read one: withdraw thresholds, the
+    /// formation "beaten" metric, search scoring. It is deliberately a
+    /// *substance* measure rather than a "can she fight" measure — a
+    /// mission-killed vehicle with a live crew scores low and wants out,
+    /// which is exactly the behavior those thresholds exist to produce.
+    pub fn condition(&self, registry: &DataRegistry, unit: &Unit) -> f32 {
+        let (have, total) = self.substance(registry, unit);
+        if total == 0 {
+            return 1.0;
+        }
+        have as f32 / total as f32
+    }
+
+    /// The raw pair behind [`Self::condition`]: substance points remaining
+    /// and the vehicle's full complement. Exposed because "could one round
+    /// plausibly finish her" is a question about the numerator, not the
+    /// fraction — the AI's kill flag and the preview's `lethal` both
+    /// compare a round's effect budget against what is actually left.
+    pub fn substance(&self, registry: &DataRegistry, unit: &Unit) -> (u32, u32) {
+        let mut have = 0u32;
+        let mut total = 0u32;
+        for (seat, _) in unit.crew.iter().enumerate() {
+            total += 2;
+            have += match unit
+                .crew_state
+                .get(seat)
+                .copied()
+                .unwrap_or(CrewCondition::Fine)
+            {
+                CrewCondition::Fine => 2,
+                CrewCondition::Wounded => 1,
+                CrewCondition::Out => 0,
+            };
+        }
+        for (id, hits) in &unit.modules {
+            let toughness = registry.module(id).map(|m| m.toughness).unwrap_or(1);
+            total += toughness;
+            have += (*hits).min(toughness);
+        }
+        (have, total)
+    }
+
     pub fn obeys(&self, registry: &DataRegistry, unit: &Unit) -> bool {
         self.morale(registry, unit).obeys
     }

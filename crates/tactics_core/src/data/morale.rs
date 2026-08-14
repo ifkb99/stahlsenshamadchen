@@ -69,6 +69,18 @@ pub struct MoraleRules {
     /// says nothing feels nothing.
     #[serde(default)]
     pub bounced: u32,
+    /// Pressure from a round coming *through* the armor, on top of
+    /// [`Self::hit`]. This is the spike the bail-out check rides on: every
+    /// penetration also rolls the crew's discipline (`holds_together`),
+    /// and a crew that fails abandons the vehicle. Together they are what
+    /// keeps time-to-kill honest without hit points — tanks are mostly
+    /// lost because the crew leaves or dies, not because every box inside
+    /// is ticked — and what makes discipline training visibly be the
+    /// thing that keeps a damaged tank in the fight. `#[serde(default)]`:
+    /// a mod that says nothing spikes nothing, and its crews stay however
+    /// long the dice inside let them.
+    #[serde(default)]
+    pub penetrated: u32,
     /// Pressure from watching a friend die within sight.
     pub ally_destroyed: u32,
     /// Pressure on every surviving member of a formation whose leader is
@@ -117,6 +129,7 @@ impl Default for MoraleRules {
             ],
             hit: 3,
             bounced: 1,
+            penetrated: 5,
             ally_destroyed: 4,
             // Mirrors the shipped `mod.json`: watching your commander go is
             // at least as bad as watching anybody else go. Note this is the

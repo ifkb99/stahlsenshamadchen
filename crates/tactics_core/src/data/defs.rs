@@ -25,7 +25,9 @@ pub enum MovementClass {
 /// Characters are people; vehicles are hardware, and a unit on the battlefield
 /// is always a crew inside one. What she can *do* is not written here — see
 /// [`crate::data::SkillDef`] — only who she is and what she has been taught.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// `Default` is a nameless girl who is average at everything, which is what
+/// the battle spawns into seats a scenario left empty.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CharacterDef {
     pub id: String,
     pub name: String,
@@ -103,7 +105,12 @@ pub struct VehicleDef {
     /// Freeform classification tag ("light_tank", "artillery", ...).
     #[serde(default)]
     pub class: String,
-    /// Hit points, Advance Wars style (typically 10).
+    /// **Deprecated and unread.** The hit-point pool this used to size was
+    /// removed by the ballistics rewrite: what a vehicle can lose now is
+    /// her crew and her modules. Optional so new content can omit it;
+    /// tolerated so old content keeps validating. Delete it from data at
+    /// leisure.
+    #[serde(default)]
     pub max_hp: i32,
     pub movement: MovementSpec,
     pub armor: ArmorSpec,
