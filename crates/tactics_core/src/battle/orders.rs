@@ -915,27 +915,27 @@ impl BattleState {
         // reacts on is the tick she starts driving.
         self.run_crew_drill(registry, &mut events);
 
-        // The shells fired one or more ticks ago come down here, at the top
-        // of the tick and before anybody drives: a shell lands on whoever was
-        // standing on the hex when the tick opened.
-        //
-        // Know what that placement costs before moving it, in either
-        // direction. Shooting resolves at the *end* of a tick, after
-        // movement, so a shell aimed in tick T and brought down at the top of
-        // tick T + n has given its target n - 1 opportunities to drive off
-        // the hex. At the shipped 470 m/s that means no lead at all inside
-        // 2.4 km — the flight rounds to one tick and the shell arrives on
-        // ground she has not had a chance to leave — which, with the to-hit
-        // roll gone from the shell path, makes artillery *better* at the
-        // ranges river_crossing is fought at rather than worse. Measured at
-        // 36 games: 53 kills before this chunk, 63 with impact here, 23 with
-        // the same call moved below `resolve_movement`. The design doc's
-        // claim that flight time turns artillery from a sniper into an area
-        // weapon is a claim about the second placement. Which one the game
-        // wants is a balance question for B4, and it is one line.
-        combat::resolve_shells(registry, self, &mut events);
-
         self.resolve_movement(registry, &mut events);
+
+        // The shells fired one or more ticks ago come down here, AFTER
+        // movement: a shell lands on whoever is standing on the hex once
+        // this tick's driving is done, so even the shortest flight gives a
+        // moving target one real chance to be somewhere else.
+        //
+        // This placement was measured against the alternative, not assumed.
+        // Shooting is aimed at the end of a tick, so a shell brought down at
+        // the top of tick T + n before movement gives its target only n - 1
+        // chances to leave — and at 470 m/s the flight rounds to ONE tick
+        // inside 2.4 km, meaning zero chances: with the to-hit roll gone
+        // from the shell path, top-of-tick impact made artillery *better*
+        // than the hitscan sniper it was (36 games: 53 kills before flight
+        // time, 63 with impact before movement, 23 with this line here).
+        // The design doc's claim — flight time turns artillery into an area
+        // weapon that punishes standing still — is a claim about THIS
+        // placement, and 23 kills against 13 losses is an area weapon,
+        // still the best gun on the field but no longer a rifle. B4 tunes
+        // from here.
+        combat::resolve_shells(registry, self, &mut events);
         events.extend(fog::recompute(registry, self));
         // Succession runs first and runs always: who commands a formation is
         // a fact about the formation, not about anybody's radio, so this is
