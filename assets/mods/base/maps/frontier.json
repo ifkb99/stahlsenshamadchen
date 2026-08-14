@@ -45,7 +45,9 @@
             "units": [
                 { "at": [2, 3], "side": 0, "vehicle": "medium_tank", "crew": ["anka", "rosa"] },
                 { "at": [1, 2], "side": 0, "vehicle": "recon_car", "crew": ["elsa"] },
-                { "at": [2, 5], "side": 0, "vehicle": "light_tank", "crew": ["juno", "mina"] }
+                { "at": [2, 5], "side": 0, "vehicle": "light_tank", "crew": ["juno", "mina"] },
+                { "at": [1, 1], "side": 0, "vehicle": "apc", "crew": ["mina"] },
+                { "at": [1, 1], "side": 0, "vehicle": "rifle_platoon", "crew": ["juno", "petra"] }
             ]
         },
         {
@@ -55,7 +57,9 @@
             "movement": 3,
             "units": [
                 { "at": [1, 4], "side": 0, "vehicle": "artillery", "crew": ["petra"] },
-                { "at": [2, 4], "side": 0, "vehicle": "light_tank", "crew": ["rosa"] }
+                { "at": [2, 4], "side": 0, "vehicle": "light_tank", "crew": ["rosa"] },
+                { "at": [1, 7], "side": 0, "vehicle": "halftrack", "crew": ["anka"] },
+                { "at": [1, 7], "side": 0, "vehicle": "rifle_platoon", "crew": ["elsa", "rosa"] }
             ]
         },
         {
@@ -66,7 +70,9 @@
             "units": [
                 { "at": [11, 3], "side": 1, "vehicle": "medium_tank", "crew": ["irma"] },
                 { "at": [12, 4], "side": 1, "vehicle": "light_tank", "crew": ["sofia"] },
-                { "at": [11, 5], "side": 1, "vehicle": "recon_car", "crew": ["greta"] }
+                { "at": [11, 5], "side": 1, "vehicle": "recon_car", "crew": ["greta"] },
+                { "at": [12, 1], "side": 1, "vehicle": "apc", "crew": ["greta"] },
+                { "at": [12, 1], "side": 1, "vehicle": "rifle_platoon", "crew": ["sofia", "nadja"] }
             ]
         },
         {
@@ -76,7 +82,9 @@
             "movement": 3,
             "units": [
                 { "at": [12, 4], "side": 1, "vehicle": "tank_destroyer", "crew": ["nadja"] },
-                { "at": [11, 4], "side": 1, "vehicle": "heavy_tank", "crew": ["irma"] }
+                { "at": [11, 4], "side": 1, "vehicle": "heavy_tank", "crew": ["irma"] },
+                { "at": [12, 7], "side": 1, "vehicle": "halftrack", "crew": ["irma"] },
+                { "at": [12, 7], "side": 1, "vehicle": "rifle_platoon", "crew": ["greta", "sofia"] }
             ]
         }
     ]

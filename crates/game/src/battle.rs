@@ -653,6 +653,7 @@ fn setup_battle(
     log.push(
         "Battle started. Both sides plan, then the round plays out at once. \
          LMB select/move, A engage hovered enemy, B blind fire, V hold, C clear orders, \
+         M mount the hovered ride, U unload, \
          Enter commit, Q/E rotate. F picks a formation; G advance, X assault, H hold, R recon \
          on the hovered hex, W withdraw; Shift queues a mission behind the current one.",
     );
@@ -1294,13 +1295,26 @@ fn pump_events(
                     .get(*girl)
                     .map(|g| g.name.clone())
                     .unwrap_or_else(|| "somebody".into());
-                log.push(if *out {
-                    format!(
+                // A platoon's leaders have no station to slump at: they are on
+                // their feet with their sections, and the log should not tell
+                // an infantry casualty as a story about a vehicle interior.
+                // `units.get` rather than `unit()`, which filters on `alive`:
+                // the log is drained after the round has resolved, so a
+                // platoon killed by this very burst would otherwise be
+                // described as a tank crew on the way out.
+                let afoot = battle
+                    .state
+                    .units
+                    .get(unit.index())
+                    .is_some_and(|u| u.troops(&mods.0).is_some());
+                log.push(match (*out, afoot) {
+                    (true, true) => format!("{who} goes down leading {}.", name(*unit)),
+                    (false, true) => format!("{who} is hit leading {}.", name(*unit)),
+                    (true, false) => format!(
                         "{who} is hit aboard {} and slumps at her station.",
                         name(*unit)
-                    )
-                } else {
-                    format!("{who} is wounded aboard {}.", name(*unit))
+                    ),
+                    (false, false) => format!("{who} is wounded aboard {}.", name(*unit)),
                 });
             }
             BattleEvent::ModuleHit {
@@ -1308,16 +1322,27 @@ fn pump_events(
                 module,
                 destroyed,
             } => {
-                let what = mods
-                    .0
-                    .module(module)
-                    .map(|m| m.name.clone())
-                    .unwrap_or_else(|| module.clone());
-                log.push(format!(
-                    "{}'s {what} is {}.",
-                    name(*unit),
-                    if *destroyed { "destroyed" } else { "damaged" }
-                ));
+                // Troops are the one module that is people rather than
+                // hardware, and "her Rifle Sections is damaged" reads like a
+                // broken gearbox for the thing on the field that bleeds.
+                let module_def = mods.0.module(module);
+                if module_def.is_some_and(|m| m.effect == tactics_core::data::ModuleEffect::Troops)
+                {
+                    log.push(if *destroyed {
+                        format!("{} has no sections left to lead.", name(*unit))
+                    } else {
+                        format!("{} takes casualties.", name(*unit))
+                    });
+                } else {
+                    let what = module_def
+                        .map(|m| m.name.clone())
+                        .unwrap_or_else(|| module.clone());
+                    log.push(format!(
+                        "{}'s {what} is {}.",
+                        name(*unit),
+                        if *destroyed { "destroyed" } else { "damaged" }
+                    ));
+                }
             }
             BattleEvent::BrewedUp { unit } => {
                 log.push(format!("{} brews up!", name(*unit)));
@@ -1722,6 +1747,69 @@ fn handle_input(
         return;
     }
 
+    // M = mount: the selected foot unit boards the friendly transport under
+    // the cursor. Deliberately the same grammar as `A` — pick your girl,
+    // point at the thing you mean, press the key — because "board that
+    // halftrack" and "shoot that tank" are the same kind of sentence and the
+    // player should not have to learn a second idiom for it. `Order::Mount`
+    // is a standing march, so she walks there over as many rounds as it takes
+    // and climbs in the tick she arrives alongside; every reason she might
+    // not be able to (not on foot, wrong side, no room, no lift) is the
+    // engine's refusal and reaches the log by the ordinary road.
+    if keys.just_pressed(KeyCode::KeyM) {
+        if let Some(unit) = battle.selected {
+            // Resolved to a pair before anything mutable happens, so the
+            // borrow of the carrier ends here rather than spanning the order.
+            let ride = hovered
+                .and_then(|hex| battle.state.unit_at(hex).filter(|u| u.side == side))
+                .map(|c| (c.id, c.name.clone()));
+            match ride {
+                Some((into, carrier)) => {
+                    let who = unit_name(&battle.state, unit);
+                    set_intent_saying(
+                        registry,
+                        &mut battle,
+                        &Order::Mount { unit, into },
+                        &mut log,
+                        format!("{who} makes for {carrier} and mounts up on arrival."),
+                    );
+                }
+                None => log.push("Hover one of your own vehicles, then press M to mount."),
+            }
+        }
+        return;
+    }
+
+    // U = unload, read two ways that can never be confused for each other: a
+    // passenger gets off, and a loaded carrier puts everybody off. It is one
+    // `Dismount` per passenger rather than an order aimed at the vehicle,
+    // because the order is about a girl deciding to be on the ground — a
+    // carrier is not a thing that can be told to empty itself.
+    if keys.just_pressed(KeyCode::KeyU) {
+        if let Some(unit) = battle.selected {
+            let riders: Vec<UnitId> = if battle.state.unit(unit).is_some_and(|u| u.aboard.is_some())
+            {
+                vec![unit]
+            } else {
+                battle.state.passengers(unit)
+            };
+            if riders.is_empty() {
+                log.push("She is not riding anything and nobody is riding her.");
+            }
+            for rider in riders {
+                let who = unit_name(&battle.state, rider);
+                set_intent_saying(
+                    registry,
+                    &mut battle,
+                    &Order::Dismount { unit: rider },
+                    &mut log,
+                    format!("{who} gets off at the next opportunity."),
+                );
+            }
+        }
+        return;
+    }
+
     if !buttons.just_pressed(MouseButton::Left) {
         return;
     }
@@ -1820,6 +1908,45 @@ fn set_intent(
         }
         Err(e) => log.push(format!("Order refused: {e}")),
     }
+}
+
+/// [`set_intent`], plus a line of acknowledgement when the engine takes the
+/// order.
+///
+/// Most orders announce themselves: a radio order comes back as an
+/// acknowledgement, a mission as an assignment, a route as a drawn path.
+/// Mount and dismount produce no event until the tick they actually happen
+/// on, and they change nothing on the map in the meantime — a passenger who
+/// will step off next tick looks exactly like a passenger who will not. To a
+/// player that is indistinguishable from a key that does not work, which is
+/// the same bargain every silent deviation in this game has to make. Only on
+/// success: a refusal has already printed its own reason.
+fn set_intent_saying(
+    registry: &tactics_core::data::DataRegistry,
+    battle: &mut Battle,
+    order: &Order,
+    log: &mut BattleLog,
+    said: String,
+) {
+    match battle.state.apply(registry, order) {
+        Ok(events) => {
+            battle.anim.extend(events);
+            battle.range_dirty = true;
+            log.push(said);
+        }
+        Err(e) => log.push(format!("Order refused: {e}")),
+    }
+}
+
+/// What to call a unit in a log line, by id. The panel and the event pump
+/// each have their own closure for this; the input handler needed one too and
+/// this is it rather than a third copy inside a key branch.
+fn unit_name(state: &BattleState, unit: UnitId) -> String {
+    state
+        .units
+        .get(unit.index())
+        .map(|u| u.name.clone())
+        .unwrap_or_else(|| "???".into())
 }
 
 /// Close the player's planning — through her staff, if she left them
@@ -2613,7 +2740,7 @@ fn update_panel(
         text.0 = format_tile(registry, state, hex);
         return;
     }
-    text.0 = "Hover a tile for terrain\n\nLMB: select / set route\nA: engage hovered enemy\nB: blind fire a tile\nV: hold and watch\nC: clear orders\nEnter: commit the round\nF: pick a formation\nQ/E: rotate view".into();
+    text.0 = "Hover a tile for terrain\n\nLMB: select / set route\nA: engage hovered enemy\nB: blind fire a tile\nV: hold and watch\nM: mount the hovered ride\nU: unload (her, or all aboard)\nC: clear orders\nEnter: commit the round\nF: pick a formation\nQ/E: rotate view".into();
 }
 
 /// The formation panel: who these girls are, what they were told to do, what
@@ -2701,6 +2828,11 @@ fn format_formation(
         // will fight against.
         if let Some(tasking) = unit.tasking {
             tags.push(format!("moving to {}", hex_label(tasking)));
+        }
+        // A passenger is in the formation and not on the map, which reads as
+        // a missing girl unless the roll call says where she went.
+        if let Some(carrier) = unit.aboard.and_then(|c| state.units.get(c.index())) {
+            tags.push(format!("riding in {}", carrier.name));
         }
         let tag = if tags.is_empty() {
             String::new()
@@ -2950,6 +3082,23 @@ fn format_unit(
         ),
         format!("Side: {}", state.sides[unit.side as usize].name),
     ];
+    // Where she is, when "where" is not a tile. A passenger's position
+    // mirrors her carrier's, so without this line the panel shows two units
+    // apparently standing on one hex and no reason for it. The other half of
+    // the same sentence goes on the carrier, because "is my taxi loaded" is a
+    // question the map itself stops being able to answer once the ramp is up.
+    if let Some(carrier) = unit.aboard.and_then(|c| state.unit(c)) {
+        lines.push(format!("Aboard: {}", carrier.name));
+    }
+    let passengers: Vec<String> = state
+        .passengers(unit.id)
+        .iter()
+        .filter_map(|id| state.unit(*id))
+        .map(|u| u.name.clone())
+        .collect();
+    if !passengers.is_empty() {
+        lines.push(format!("Carrying: {}", passengers.join(", ")));
+    }
     let scale = &registry.scale;
     if let Some(v) = vehicle {
         lines.push(format!(

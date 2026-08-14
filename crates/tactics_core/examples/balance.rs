@@ -863,6 +863,18 @@ struct Tally {
     shells: u32,
     shells_on_target: u32,
     shells_bounced: u32,
+    /// Infantry, which the kills/losses table already reports per chassis —
+    /// the rows appear on their own the moment a map fields them. What that
+    /// table cannot say is the thing that makes a platoon different from a
+    /// tank: she is worn down rather than killed, so a run in which no foot
+    /// unit dies can still be one in which every platoon was shot to pieces.
+    /// These four numbers are that story: how many took the field, what
+    /// fraction of their rifles the survivors still had at the bell, and how
+    /// much of the riding actually happened.
+    foot_fielded: usize,
+    troops_left: Vec<f32>,
+    mounts: usize,
+    dismounts: usize,
 }
 
 /// Every battle map the loaded mods ship, sorted by id.
@@ -918,6 +930,9 @@ fn simulate(reg: &DataRegistry, games: usize) {
             for (id, count) in &unit.ammo {
                 *t.ammo_aboard.entry(id.clone()).or_default() += count;
             }
+            if unit.troops(reg).is_some() {
+                t.foot_fielded += 1;
+            }
         }
         while !state.is_over() && rounds < 60 {
             ai.plan_round(reg, &mut state);
@@ -966,6 +981,8 @@ fn simulate(reg: &DataRegistry, games: usize) {
                         let entry = girls.entry(girl).or_insert(false);
                         *entry |= out;
                     }
+                    Event::Mounted { .. } => t.mounts += 1,
+                    Event::Dismounted { .. } => t.dismounts += 1,
                     Event::ModuleHit {
                         module, destroyed, ..
                     } => {
@@ -1017,6 +1034,17 @@ fn simulate(reg: &DataRegistry, games: usize) {
         for unit in &state.units {
             for (id, count) in &unit.ammo {
                 *t.ammo_left.entry(id.clone()).or_default() += count;
+            }
+        }
+        // Survivors only, and `surviving_units` rather than `alive`: a
+        // platoon that drove off by an exit came home with whatever strength
+        // she had left, and counting her as a loss would be exactly the lie
+        // the engine is careful not to tell.
+        for unit in state.surviving_units() {
+            if let Some((have, total)) = unit.troops(reg)
+                && total > 0
+            {
+                t.troops_left.push(have as f32 / total as f32);
             }
         }
         match state.over.map(|r| (r.winner, r.reason)) {
@@ -1088,6 +1116,20 @@ fn simulate(reg: &DataRegistry, games: usize) {
                 t.deaths.get(vehicle).copied().unwrap_or(0)
             );
         }
+    }
+
+    if t.foot_fielded > 0 {
+        let mean = t.troops_left.iter().sum::<f32>() / t.troops_left.len().max(1) as f32;
+        println!(
+            "  infantry: {} foot units fielded across the run, {} of them still on \
+             the field\n    at the bell with {:.0}% of their rifles left on average; \
+             {} mounted and {} dismounted",
+            t.foot_fielded,
+            t.troops_left.len(),
+            100.0 * mean,
+            t.mounts,
+            t.dismounts,
+        );
     }
 
     // What actually killed them. The single most useful line in this report

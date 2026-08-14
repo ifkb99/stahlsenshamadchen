@@ -7,10 +7,17 @@
 //! Usage:
 //!   cargo run -p tactics_core --example playthrough            # seed 42
 //!   cargo run -p tactics_core --example playthrough 1234       # custom seed
+//!   cargo run -p tactics_core --example playthrough 1234 battle_forest
+//!
+//! The map is an argument because the narrator is the only instrument that
+//! shows a battle as a story rather than as a total, and `river_crossing` —
+//! its default, and the ground the determinism baseline is recorded on —
+//! deliberately fields no infantry. Watching a platoon ride, dismount and be
+//! shot at needs one of the maps that do.
 
 use tactics_core::ai::{AiConfig, AiDriver, make_battle_planner};
 use tactics_core::battle::{BattleState, Event};
-use tactics_core::data::DataRegistry;
+use tactics_core::data::{DataRegistry, ModuleEffect};
 
 fn main() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
@@ -20,7 +27,11 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(42);
 
-    let mut state = BattleState::from_map(&registry, "river_crossing", seed).expect("battle");
+    let map = std::env::args()
+        .nth(2)
+        .unwrap_or_else(|| "river_crossing".to_string());
+
+    let mut state = BattleState::from_map(&registry, &map, seed).expect("battle");
     let mut ai = AiDriver::new();
     ai.insert(
         0,
@@ -130,21 +141,66 @@ fn main() {
                     "   PENETRATES {} on the {facing:?} ({damage} pts of effect)",
                     name(&state, *target)
                 ),
-                Event::CrewHit { unit, girl, out } => println!(
-                    "   ** crew hit aboard {}: girl #{} is {} **",
-                    name(&state, *unit),
-                    girl.0,
-                    if *out { "OUT" } else { "wounded" }
-                ),
+                // "Aboard" is a preposition about a hull, and a platoon has
+                // none: her leaders are walking with their sections. Same
+                // event, same weight, a sentence that is not about a vehicle.
+                Event::CrewHit { unit, girl, out } => {
+                    // `units.get` rather than `unit()`: the narrator reads the
+                    // state after the whole round has resolved, so the girl
+                    // whose death this event is describing is already not
+                    // `alive` and the accessor that filters on it would answer
+                    // "not infantry" for exactly the platoon being wiped out.
+                    let afoot = state
+                        .units
+                        .get(unit.index())
+                        .is_some_and(|u| u.troops(&registry).is_some());
+                    if afoot {
+                        println!(
+                            "   ** girl #{} is {} leading {} **",
+                            girl.0,
+                            if *out { "OUT" } else { "hit" },
+                            name(&state, *unit)
+                        )
+                    } else {
+                        println!(
+                            "   ** crew hit aboard {}: girl #{} is {} **",
+                            name(&state, *unit),
+                            girl.0,
+                            if *out { "OUT" } else { "wounded" }
+                        )
+                    }
+                }
                 Event::ModuleHit {
                     unit,
                     module,
                     destroyed,
-                } => println!(
-                    "   {}'s {module} is {}",
-                    name(&state, *unit),
-                    if *destroyed { "destroyed" } else { "damaged" }
-                ),
+                } => {
+                    // A troops module is not a component, it is people. "Her
+                    // rifle sections are damaged" reads like a broken gearbox
+                    // for the one thing on the field that bleeds, and three
+                    // of those lines in a row is a burst into a platoon told
+                    // as a maintenance report.
+                    let troops = registry
+                        .module(module)
+                        .is_some_and(|m| m.effect == ModuleEffect::Troops);
+                    if troops {
+                        println!(
+                            "   ** {} {} **",
+                            name(&state, *unit),
+                            if *destroyed {
+                                "has no sections left to lead"
+                            } else {
+                                "takes casualties"
+                            }
+                        )
+                    } else {
+                        println!(
+                            "   {}'s {module} is {}",
+                            name(&state, *unit),
+                            if *destroyed { "destroyed" } else { "damaged" }
+                        )
+                    }
+                }
                 Event::BrewedUp { unit } => {
                     println!("   ** {} BREWS UP **", name(&state, *unit))
                 }

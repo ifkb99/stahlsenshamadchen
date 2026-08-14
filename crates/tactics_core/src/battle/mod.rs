@@ -509,6 +509,7 @@ impl BattleState {
             state.spawn_unit(registry, placement, crew.clone());
         }
         state.face_units_at_enemies(&file.units);
+        state.board_mounted_starts(registry, &file.units);
         state.fog = FogMap::new(state.sides.len());
         fog::recompute(registry, &mut state);
         Ok(state)
@@ -561,18 +562,33 @@ impl BattleState {
             );
         }
         state.face_units_at_enemies(placements);
-        // Mounted starts: a placement naming `aboard_at` boards the
-        // transport standing at those coordinates, after every unit exists.
-        // A dangling reference degrades to spawning on foot — the map
-        // should fight even when its author moved the halftrack and forgot
-        // the riders — and validation is where the author hears about it.
+        state.board_mounted_starts(registry, placements);
+        state.fog = FogMap::new(state.sides.len());
+        fog::recompute(registry, &mut state);
+        state
+    }
+
+    /// Board everyone a scenario says starts aboard, after every unit exists.
+    ///
+    /// A placement naming `aboard_at` rides the transport standing on those
+    /// coordinates. A dangling reference degrades to spawning on foot — the
+    /// map should fight even when its author moved the halftrack and forgot
+    /// the riders — and validation is where the author hears about it.
+    ///
+    /// This is a method rather than a passage inside one constructor because
+    /// there are two ways into a battle and both of them are real: the
+    /// scenario path ([`Self::from_map`]) is what every shipped battlefield
+    /// uses, and the campaign's field battles come through
+    /// [`Self::from_placements`]. Living in only one of them meant a mounted
+    /// column written into a map file quietly walked instead.
+    fn board_mounted_starts(&mut self, registry: &DataRegistry, placements: &[UnitPlacement]) {
         for (i, placement) in placements.iter().enumerate() {
             let Some(coords) = placement.aboard_at else {
                 continue;
             };
             let carrier_pos = crate::offset_to_hex(coords[0], coords[1]);
             let rider = UnitId(i as u32);
-            let Some(carrier) = state
+            let Some(carrier) = self
                 .units
                 .iter()
                 .find(|u| u.pos == carrier_pos && u.id != rider && u.aboard.is_none())
@@ -580,25 +596,22 @@ impl BattleState {
             else {
                 continue;
             };
-            let fits = state
+            let fits = self
                 .unit(carrier)
                 .and_then(|c| registry.vehicle(&c.vehicle))
-                .is_some_and(|v| v.capacity as usize > state.passengers(carrier).len());
-            let on_foot = state
+                .is_some_and(|v| v.capacity as usize > self.passengers(carrier).len());
+            let on_foot = self
                 .unit(rider)
                 .and_then(|u| registry.vehicle(&u.vehicle))
                 .is_some_and(|v| v.movement.class == crate::data::MovementClass::Foot);
             if fits && on_foot {
-                let pos = state.unit(carrier).map(|c| c.pos).unwrap_or(carrier_pos);
-                if let Some(u) = state.units.get_mut(rider.index()) {
+                let pos = self.unit(carrier).map(|c| c.pos).unwrap_or(carrier_pos);
+                if let Some(u) = self.units.get_mut(rider.index()) {
                     u.aboard = Some(carrier);
                     u.pos = pos;
                 }
             }
         }
-        state.fog = FogMap::new(state.sides.len());
-        fog::recompute(registry, &mut state);
-        state
     }
 
     /// Turn every unit that was not given an explicit facing towards the enemy.

@@ -109,10 +109,16 @@ fn the_new_maps_field_two_formations_a_side_with_a_leader_each() {
                     "map `{id}`: formation `{formation}` needs exactly one girl in charge"
                 );
             }
+            // Six armoured vehicles, the taxi, her platoon and a scout
+            // section: nine placements, of which eight stand on the ground
+            // at the bell because the platoon starts in the back of the
+            // taxi. `the_new_maps_field_infantry_and_their_rides` checks
+            // that second number, which is the one an opponent sees.
             assert_eq!(
                 file.units.iter().filter(|u| u.side == side).count(),
-                6,
-                "map `{id}` side {side} is meant to field six vehicles"
+                9,
+                "map `{id}` side {side} is meant to field nine units: six vehicles, \
+                 a platoon, her ride and a scout section"
             );
         }
     }
@@ -283,36 +289,86 @@ fn a_platoon_spawns_with_her_troops_and_her_leaders() {
 }
 
 #[test]
-fn no_map_in_the_base_mod_fields_infantry_yet() {
-    // This is the inertness assertion for this chunk, in the B0/B2a tradition
-    // — and unlike theirs it is a statement about content rather than about
-    // the engine, because the byte-identical event-stream snapshot is already
-    // the proof that nothing *mechanical* changed. Nothing can shift while no
-    // battle contains a foot unit, which is what makes the new foot movement
-    // costs and the new chassis safe to land before the mechanics exist.
+fn the_new_maps_field_infantry_and_their_rides() {
+    // The replacement for `no_map_in_the_base_mod_fields_infantry_yet`, which
+    // was the inertness assertion the data chunk shipped and which N3 exists
+    // to delete. What it guarded is now the opposite claim: the two newer
+    // battlefields put both foot chassis on the ground, and the rifle platoon
+    // arrives *aboard* her taxi rather than walking — which is the whole
+    // point of a motorised element and the only thing on any shipped map that
+    // exercises `aboard_at`.
     //
-    // **N3 is the chunk that deletes this test**, when infantry and their
-    // transports take their places in all three orders of battle and the
-    // campaign's armies learn the new vehicles exist. Until then a placement
-    // naming one of these ids would be a unit whose concealment, troops and
-    // lift all silently do nothing.
+    // `river_crossing` is deliberately not in `NEW_MAPS` and deliberately
+    // untouched: it is the ground the determinism baseline is recorded on, so
+    // fielding infantry there would mean regenerating the snapshot and losing
+    // the one check that says this chunk changed no rules.
     let reg = registry();
-    let mut ids: Vec<&str> = reg.maps.values().map(|m| m.id.as_str()).collect();
-    ids.sort_unstable();
-    for id in ids {
-        let map = reg.map(id).expect("map");
-        let placed = map
+    for id in NEW_MAPS {
+        let state = BattleState::from_map(&reg, id, 3).expect("battle map loads");
+        for chassis in ["rifle_platoon", "scout_section"] {
+            for side in 0..2u8 {
+                assert!(
+                    state
+                        .units
+                        .iter()
+                        .any(|u| u.side == side && u.vehicle == chassis),
+                    "map `{id}` side {side} is meant to field `{chassis}`"
+                );
+            }
+        }
+        // Aboard, not beside: a passenger's position mirrors her carrier's,
+        // so the check is `aboard` rather than a coordinate — and the carrier
+        // it names has to be something with lift, or the placement quietly
+        // degraded to on-foot and nobody would have noticed.
+        let riders: Vec<_> = state
             .units
             .iter()
-            .chain(map.armies.iter().flat_map(|a| a.units.iter()));
-        for placement in placed {
-            assert!(
-                !INFANTRY_CHASSIS.contains(&placement.vehicle.as_str()),
-                "map `{id}` fields `{}`, but the engine does not read concealment, \
-                 troops or capacity yet; N3 is where infantry arrive",
-                placement.vehicle
+            .filter(|u| u.vehicle == "rifle_platoon")
+            .collect();
+        assert_eq!(riders.len(), 2, "map `{id}`: one platoon a side");
+        for side in 0..2u8 {
+            assert_eq!(
+                state
+                    .units
+                    .iter()
+                    .filter(|u| u.side == side && u.aboard.is_none())
+                    .count(),
+                8,
+                "map `{id}` side {side} puts eight units on the ground at the bell; \
+                 the ninth is in the back of the taxi"
             );
         }
+        for rider in riders {
+            let carrier = rider
+                .aboard
+                .and_then(|c| state.unit(c))
+                .unwrap_or_else(|| panic!("map `{id}`: {} spawned on foot", rider.name));
+            assert_eq!(carrier.side, rider.side, "map `{id}`: she rides her own");
+            assert!(
+                reg.vehicle(&carrier.vehicle)
+                    .is_some_and(|v| v.capacity > 0),
+                "map `{id}`: {} is aboard `{}`, which lifts nobody",
+                rider.name,
+                carrier.vehicle
+            );
+        }
+    }
+
+    // The campaign's armies field the new kit too, so a field battle fought
+    // out of the overworld is not an all-armour affair the battle maps alone
+    // would suggest.
+    let frontier = reg.map("frontier").expect("frontier");
+    for side in 0..2u8 {
+        let motorised = frontier
+            .armies
+            .iter()
+            .filter(|a| a.side == side)
+            .filter(|a| a.units.iter().any(|u| u.vehicle == "rifle_platoon"))
+            .count();
+        assert!(
+            motorised > 0,
+            "the campaign's side {side} has no infantry to put in a field battle"
+        );
     }
 }
 

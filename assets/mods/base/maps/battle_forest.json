@@ -195,6 +195,40 @@
         },
         {
             "at": [
+                7,
+                21
+            ],
+            "side": 0,
+            "vehicle": "halftrack",
+            "crew": [],
+            "formation": "kuhlmann_line"
+        },
+        {
+            "at": [
+                8,
+                21
+            ],
+            "aboard_at": [
+                7,
+                21
+            ],
+            "side": 0,
+            "vehicle": "rifle_platoon",
+            "crew": [],
+            "formation": "kuhlmann_line"
+        },
+        {
+            "at": [
+                4,
+                18
+            ],
+            "side": 0,
+            "vehicle": "scout_section",
+            "crew": [],
+            "formation": "kuhlmann_scouts"
+        },
+        {
+            "at": [
                 36,
                 20
             ],
@@ -252,6 +286,40 @@
             ],
             "side": 1,
             "vehicle": "artillery",
+            "crew": [],
+            "formation": "valkyrie_scouts"
+        },
+        {
+            "at": [
+                32,
+                21
+            ],
+            "side": 1,
+            "vehicle": "halftrack",
+            "crew": [],
+            "formation": "valkyrie_line"
+        },
+        {
+            "at": [
+                31,
+                21
+            ],
+            "aboard_at": [
+                32,
+                21
+            ],
+            "side": 1,
+            "vehicle": "rifle_platoon",
+            "crew": [],
+            "formation": "valkyrie_line"
+        },
+        {
+            "at": [
+                36,
+                18
+            ],
+            "side": 1,
+            "vehicle": "scout_section",
             "crew": [],
             "formation": "valkyrie_scouts"
         }

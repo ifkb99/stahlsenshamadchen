@@ -194,6 +194,40 @@
         },
         {
             "at": [
+                3,
+                20
+            ],
+            "side": 0,
+            "vehicle": "apc",
+            "crew": [],
+            "formation": "kuhlmann_line"
+        },
+        {
+            "at": [
+                2,
+                20
+            ],
+            "aboard_at": [
+                3,
+                20
+            ],
+            "side": 0,
+            "vehicle": "rifle_platoon",
+            "crew": [],
+            "formation": "kuhlmann_line"
+        },
+        {
+            "at": [
+                7,
+                17
+            ],
+            "side": 0,
+            "vehicle": "scout_section",
+            "crew": [],
+            "formation": "kuhlmann_guns"
+        },
+        {
+            "at": [
                 36,
                 20
             ],
@@ -251,6 +285,40 @@
             ],
             "side": 1,
             "vehicle": "recon_car",
+            "crew": [],
+            "formation": "valkyrie_guns"
+        },
+        {
+            "at": [
+                37,
+                20
+            ],
+            "side": 1,
+            "vehicle": "apc",
+            "crew": [],
+            "formation": "valkyrie_line"
+        },
+        {
+            "at": [
+                38,
+                20
+            ],
+            "aboard_at": [
+                37,
+                20
+            ],
+            "side": 1,
+            "vehicle": "rifle_platoon",
+            "crew": [],
+            "formation": "valkyrie_line"
+        },
+        {
+            "at": [
+                32,
+                17
+            ],
+            "side": 1,
+            "vehicle": "scout_section",
             "crew": [],
             "formation": "valkyrie_guns"
         }
