@@ -156,6 +156,39 @@ three battle maps' orders of battle, the campaign's `frontier` armies
 learning the new vehicles exist, playthrough/HUD narration polish, and
 the full instrument re-quote that becomes the infantry-era baseline.
 
+## The arc as built (all four chunks ✅, 2026-08-14)
+
+- **N0** (`ed59c5d`): the five chassis and their kit, inert, with the
+  autocannon-vs-taxi and RPG-vs-everything-but-the-heavy pairings
+  printing straight from the analytic tables.
+- **N1** (`ad1b358`): concealment (the recon car that reads twenty hexes
+  spots a treeline platoon at four), the troops fraction, the plate-zero
+  splash carve-out. Byte-identical baseline — everything additive.
+- **Ambush discipline** (`deae95c`, mid-arc, designer-ratified for every
+  unit): an unseen crew holds opportunity fire below a quarter of the
+  target's remaining substance. Let them close. Rules-of-engagement as
+  leader-assignable postures recorded in TODO as the designed future.
+- **N2** (`6c0bf0b`): the ride — standing mount marches, dismounts onto
+  the ground beside, passengers sharing a penetrated carrier's fate and
+  a brew's fire, exits taking everyone home, and the dismount reflex.
+- **N3** (`4b5480c`): fielded. Both new maps carry a mounted platoon and
+  a foot scout section per side (APCs on the plains, halftracks in the
+  forest), frontier's armies motorise, the player gets M/U and passenger
+  panels, and the instruments speak infantry. N3 also fixed an N2 gap:
+  `from_map` never honoured `aboard_at` — mounted starts worked only on
+  the campaign path until `board_mounted_starts` was shared by both.
+
+**What the first 36-game infantry-era baseline said** (reported, not yet
+tuned): infantry are all-or-nothing — 27 of 48 platoons die outright,
+mostly aboard their taxis (22/24 APCs and 21/24 halftracks are lost),
+while surviving foot units end battles with 98% of their rifles and
+almost no ammunition spent. The dismount reflex fired 47 of 48 times it
+was owed. The two named tuning numbers for the next balance pass:
+**transports as coffins** (the AI drives taxis like tanks) and
+**infantry that never shoots** (rifles too short-ranged and platoons too
+hidden to ever engage). Both are AI-employment questions more than data
+questions, and they wait on the pool-era doctrine re-read.
+
 ## Open questions, carried deliberately
 
 - **Squad splitting** — deferred per the designer ("unless it is easy":
