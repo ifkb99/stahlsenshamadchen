@@ -1802,7 +1802,30 @@ pub fn best_opportunity_shot(
             // empty — expects zero, and a crew that used to plink now
             // holds fire and keeps her position quiet instead.
             let value = expected_damage(registry, state, unit, att.pos, weapon, enemy.id, false);
-            if value > 0.0 && best.is_none_or(|(_, _, v)| value > v) {
+            if value <= 0.0 {
+                continue;
+            }
+            // Ambush discipline: a crew the enemy has not seen does not
+            // spend that advantage on a mediocre shot. While unseen, only
+            // a shot worth a real fraction of what the target has left is
+            // taken — the column is let close until the shot is decisive,
+            // which is when a veteran springs an ambush. Read fog-honestly
+            // from the ENEMY side's picture of us; ordered fire is exempt
+            // (the commander said shoot), and the moment she is spotted
+            // the threshold vanishes — a seen crew fights with whatever
+            // she has. No prediction is involved: this is patience, not
+            // anticipation, and the target-track memory that would enable
+            // true wait-for-the-flank reasoning is deliberately future
+            // work.
+            const AMBUSH_PATIENCE: f32 = 0.25;
+            let unseen = !state.fog.side(enemy.side).spotted.contains(&unit);
+            if unseen {
+                let decisive = state.substance(registry, enemy).0 as f32 * AMBUSH_PATIENCE;
+                if value < decisive {
+                    continue;
+                }
+            }
+            if best.is_none_or(|(_, _, v)| value > v) {
                 best = Some((index, enemy.id, value));
             }
         }

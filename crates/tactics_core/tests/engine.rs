@@ -8309,6 +8309,51 @@ fn a_remnant_platoon_is_a_story_not_a_gun() {
     );
 }
 
+#[test]
+fn an_unseen_crew_holds_her_rockets_for_the_killing_shot() {
+    // Ambush discipline: the enemy has not seen her, and that advantage
+    // is not spent on a mediocre shot. A tank destroyer at the rocket's
+    // full reach is a coin flip through the front plate — the unseen
+    // platoon lets him pass. A taxi she has let close to two hexes is the
+    // decisive shot the rockets were carried for, and the same platoon
+    // fires without being told. (The ranges differ because the stage must
+    // keep her unseen: the destroyer's better glass would find her at
+    // two.) Ordered fire never consults any of this: the commander's word
+    // outranks the ambusher's patience.
+    let reg = registry_wireless();
+    let rows = ["ggggg", "gfggg", "ggggg"];
+    let watch = |target_vehicle: &str, dist: i32, seed: u64| -> bool {
+        let mut state = two_side_battle(
+            &reg,
+            &rows,
+            vec![
+                unit_at([1, 1], 0, "rifle_platoon", "Ambush"),
+                unit_at([1 + dist, 1], 1, target_vehicle, "Passerby"),
+            ],
+            seed,
+        );
+        let platoon = UnitId(0);
+        assert!(
+            !state.fog.side(1).spotted.contains(&platoon),
+            "the stage needs her unseen"
+        );
+        commit_all(&reg, &mut state);
+        state
+            .resolve_round(&reg)
+            .iter()
+            .any(|e| matches!(e, BattleEvent::ShotFired { attacker, .. } if *attacker == platoon))
+    };
+
+    assert!(
+        !watch("tank_destroyer", 3, 601),
+        "a coin-flip shot is not worth the ambush"
+    );
+    assert!(
+        watch("apc", 2, 602),
+        "a taxi allowed to close is the shot the rockets were carried for"
+    );
+}
+
 // --- the chain of command under adversarial load ---------------------------
 //
 // Everything above tests one rule at a time on a stage built to show it. This
