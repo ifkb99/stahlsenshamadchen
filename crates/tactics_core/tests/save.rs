@@ -1168,3 +1168,99 @@ fn a_reloaded_crew_reacts_on_the_clock_she_was_already_running() {
         "a reloaded crew answers the ambush on the tick she would have answered it"
     );
 }
+
+/// A shell is state that belongs to nobody on the board: it is not a unit, it
+/// has no position that anything can see, and the crew that fired it may be
+/// dead before it lands. That makes it exactly the kind of thing a save
+/// forgets — and the round-trip test above cannot catch it, because in the
+/// shipped scenario a 105 crosses its ground in a tick or two and no shell
+/// happens to be airborne when a round ends. So the fork is taken *mid-round*,
+/// with a deliberately slow round still in the air, and both copies are
+/// required to bring it down on the same hex at the same tick with the same
+/// consequences.
+#[test]
+fn a_shell_in_flight_survives_a_save() {
+    let mut reg = registry();
+    // Ten metres a second: an absurd shell, and the cheapest way to hold one
+    // in the air across a save on a map small enough to read.
+    if let Some(ammo) = reg.ammo.get_mut("he_105") {
+        ammo.velocity = 10;
+    }
+    let row = "g".repeat(16);
+    let mut original = scripted_battle(
+        &reg,
+        serde_json::json!({
+            "id": "shellfall",
+            "palette": { "g": "grass" },
+            "rows": [&row, &row, &row],
+        }),
+        vec![
+            unit_at([0, 1], 0, "artillery", "Battery"),
+            unit_at([7, 1], 1, "recon_car", "Quarry"),
+        ],
+    );
+    original
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: tactics_core::battle::UnitId(0),
+                fire: tactics_core::battle::FireIntent::Target {
+                    target: tactics_core::battle::UnitId(1),
+                    weapon: 0,
+                },
+            },
+        )
+        .expect("the battery is given a target");
+    commit_all(&reg, &mut original);
+    // Far enough into the round that the gun has fired and nothing has come
+    // down yet.
+    original.step_tick(&reg);
+    original.step_tick(&reg);
+    assert_eq!(
+        original.shells.len(),
+        1,
+        "the fork has to happen with a shell genuinely in the air"
+    );
+
+    let text = SaveGame::new(&reg, None, Some(original.clone()))
+        .to_json()
+        .expect("serialises");
+    let mut restored = SaveGame::from_json(&reg, &text)
+        .expect("deserialises")
+        .0
+        .battle
+        .expect("battle round-trips");
+    assert_eq!(
+        restored.shells, original.shells,
+        "the shell itself comes back: who fired it, from where, at what, and when it lands"
+    );
+
+    // The property that matters is not the field, it is the future.
+    let finish = |reg: &DataRegistry, state: &mut BattleState| -> Vec<String> {
+        let mut log = Vec::new();
+        for _ in 0..4 {
+            if state.is_over() {
+                break;
+            }
+            if state.is_planning() {
+                commit_all(reg, state);
+            }
+            for event in state.resolve_round(reg) {
+                if !matches!(event, Event::TickStarted { .. }) {
+                    log.push(format!("{event:?}"));
+                }
+            }
+        }
+        log
+    };
+    let expected = finish(&reg, &mut original);
+    let actual = finish(&reg, &mut restored);
+    assert!(
+        expected.iter().any(|line| line.starts_with("ShellLanded")),
+        "the shell has to actually come down in the stretch being compared"
+    );
+    assert_eq!(
+        actual, expected,
+        "a reloaded battle must bring the shell down exactly as the unsaved one would"
+    );
+}

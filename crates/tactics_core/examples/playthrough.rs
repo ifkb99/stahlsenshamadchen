@@ -113,6 +113,14 @@ fn main() {
                     if *blind { " (blind)" } else { "" },
                     if *opportunity { " (opportunity)" } else { "" },
                 ),
+                // The gap between this and the `fires` line above is the
+                // artillery rework made watchable: the shell was aimed at
+                // ground ticks ago, and the narration has to show the ticks
+                // passing or a target that walked out of the beaten zone
+                // reads as the gun having missed.
+                Event::ShellLanded { at, ammo, .. } => {
+                    println!("   ** {ammo} lands at {at:?} **")
+                }
                 Event::ShotHit {
                     target,
                     damage,

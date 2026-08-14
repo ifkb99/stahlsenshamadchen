@@ -145,6 +145,23 @@ pub enum Event {
         /// target: overwatch, or an answer to being shot at.
         opportunity: bool,
     },
+    /// A shell fired one or more ticks ago has arrived on the ground it was
+    /// aimed at.
+    ///
+    /// Side-blind on purpose: a shellburst is a column of earth and smoke
+    /// that everybody on the field can see, whoever fired it and whoever it
+    /// was meant for. What follows in the same tick is the ordinary
+    /// vocabulary — a penetration or a bounce for whoever was standing
+    /// there, module hits for the neighbours — so nothing downstream has to
+    /// learn a second way to read damage. There is no `ShotMissed` twin:
+    /// artillery cannot miss a hex, it can only be aimed at the wrong one.
+    ShellLanded {
+        attacker: UnitId,
+        at: Hex,
+        /// The round, by [`crate::data::AmmoDef`] id, so the log can name
+        /// what came down.
+        ammo: String,
+    },
     /// The round penetrated. There is no hit-point arithmetic behind this
     /// any more: `damage` is the behind-armor budget the outcome engine
     /// spent on the crew and modules, and the events that follow this one
@@ -897,6 +914,26 @@ impl BattleState {
         // outranks the reflex. It runs before movement so the tick she
         // reacts on is the tick she starts driving.
         self.run_crew_drill(registry, &mut events);
+
+        // The shells fired one or more ticks ago come down here, at the top
+        // of the tick and before anybody drives: a shell lands on whoever was
+        // standing on the hex when the tick opened.
+        //
+        // Know what that placement costs before moving it, in either
+        // direction. Shooting resolves at the *end* of a tick, after
+        // movement, so a shell aimed in tick T and brought down at the top of
+        // tick T + n has given its target n - 1 opportunities to drive off
+        // the hex. At the shipped 470 m/s that means no lead at all inside
+        // 2.4 km — the flight rounds to one tick and the shell arrives on
+        // ground she has not had a chance to leave — which, with the to-hit
+        // roll gone from the shell path, makes artillery *better* at the
+        // ranges river_crossing is fought at rather than worse. Measured at
+        // 36 games: 53 kills before this chunk, 63 with impact here, 23 with
+        // the same call moved below `resolve_movement`. The design doc's
+        // claim that flight time turns artillery from a sniper into an area
+        // weapon is a claim about the second placement. Which one the game
+        // wants is a balance question for B4, and it is one line.
+        combat::resolve_shells(registry, self, &mut events);
 
         self.resolve_movement(registry, &mut events);
         events.extend(fog::recompute(registry, self));

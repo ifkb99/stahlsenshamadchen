@@ -9086,3 +9086,320 @@ fn a_personal_march_carries_across_rounds_and_ends_in_a_hold() {
         "holding the ground she was sent to"
     );
 }
+
+// --- shells in flight (ballistics B3) ---------------------------------------
+
+/// A battery west, a target east, and nothing but grass between them.
+///
+/// Grass everywhere is deliberate: the mid-round drill only moves an idle
+/// crew to *strictly better* cover, so on a uniform field nobody bolts and a
+/// test about where a shell lands is not also a test about who flinched.
+/// The target sits seven hexes out, which is inside the howitzer's reach and
+/// inside the battery's own eyes (800 m) but outside a scout car's machine
+/// gun (600 m) — so the only gun that speaks in these tests is the one being
+/// tested.
+fn battery_stage(reg: &DataRegistry, target: &str, seed: u64) -> BattleState {
+    let row = "g".repeat(16);
+    let state = two_side_battle(
+        reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([0, 1], 0, "artillery", "Battery"),
+            unit_at([7, 1], 1, target, "Quarry"),
+        ],
+        seed,
+    );
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "the battery has to be able to see what it is laying on"
+    );
+    state
+}
+
+/// Play one round tick by tick, pairing every event with the absolute tick it
+/// happened on — which is the clock `ShellInFlight::lands` is written in and
+/// therefore the only honest way to assert that a shell took time.
+fn ticked_round(reg: &DataRegistry, state: &mut BattleState) -> Vec<(u64, BattleEvent)> {
+    commit_all(reg, state);
+    let mut log = Vec::new();
+    while state.resolving_tick().is_some() && !state.is_over() {
+        let now = state.absolute_tick(reg);
+        log.extend(state.step_tick(reg).into_iter().map(|e| (now, e)));
+    }
+    log
+}
+
+#[test]
+fn a_shell_takes_time_to_arrive_and_lands_on_the_hex_not_the_unit() {
+    // The artillery rework in one scene. The battery is ordered onto a unit,
+    // and what it actually fires at is the *ground she is standing on* at the
+    // moment the lanyard is pulled. The shell is then in the air for real
+    // ticks, and when it comes down she has driven out of the beaten zone: no
+    // hit, no bounce, no scratch — a hole in the field where she used to be.
+    //
+    // The round is slowed to 10 m/s so the flight is fourteen ticks rather
+    // than one, and the shell outlives the round that fired it. That is not a
+    // fudge of the model, it is the model at a scale a three-row test map can
+    // show: `flight_ticks` is the same function the engine used to time this
+    // shell, and at the shipped 470 m/s the same sentence needs kilometres of
+    // ground to be true on — which is exactly the range artillery is fired at
+    // and exactly why the balance table for it moved.
+    let mut reg = registry_wireless();
+    if let Some(ammo) = reg.ammo.get_mut("he_105") {
+        ammo.velocity = 10;
+    }
+    let mut state = battery_stage(&reg, "recon_car", 501);
+    let (battery, quarry) = (UnitId(0), UnitId(1));
+    let aim = state.unit(quarry).unwrap().pos;
+    let before = state.substance(&reg, state.unit(quarry).unwrap());
+
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: battery,
+                fire: FireIntent::Target {
+                    target: quarry,
+                    weapon: 0,
+                },
+            },
+        )
+        .unwrap();
+
+    // East, away from the battery, for as long as it takes the shell to come
+    // down. A round's intent is cleared when the round is, so she is told
+    // again each time — three hexes is what a scout car's wheels buy her on
+    // grass, and the point is only that she does not stay put.
+    let mut log = Vec::new();
+    for _ in 0..3 {
+        let [col, row] = tactics_core::hex_to_offset(state.unit(quarry).unwrap().pos);
+        state
+            .apply(
+                &reg,
+                &Order::SetMove {
+                    unit: quarry,
+                    to: tactics_core::offset_to_hex(col + 3, row),
+                },
+            )
+            .unwrap();
+        log.extend(ticked_round(&reg, &mut state));
+        if log
+            .iter()
+            .any(|(_, e)| matches!(e, BattleEvent::ShellLanded { .. }))
+        {
+            break;
+        }
+    }
+
+    let fired = log
+        .iter()
+        .find_map(|(tick, e)| match e {
+            BattleEvent::ShotFired { attacker, at, .. } if *attacker == battery => {
+                Some((*tick, *at))
+            }
+            _ => None,
+        })
+        .expect("the battery fires");
+    assert_eq!(
+        fired.1, aim,
+        "she lays the gun on the ground under the unit"
+    );
+
+    let landed = log
+        .iter()
+        .find_map(|(tick, e)| match e {
+            BattleEvent::ShellLanded { at, .. } => Some((*tick, *at)),
+            _ => None,
+        })
+        .expect("and the shell eventually arrives");
+    let flight = tactics_core::battle::flight_ticks(&reg.scale, 10, 7);
+    assert!(
+        flight > 1,
+        "the test needs a shell that is genuinely in the air"
+    );
+    assert_eq!(
+        landed.0,
+        fired.0 + flight,
+        "it arrives exactly the flight time later, not in the tick that fired it"
+    );
+    assert_eq!(landed.1, aim, "on the hex it was aimed at");
+
+    // And nobody was home.
+    assert!(
+        state.unit_at(aim).is_none(),
+        "she drove out of the beaten zone"
+    );
+    for (_, event) in &log {
+        match event {
+            BattleEvent::ShotHit { target, .. } | BattleEvent::ShotBounced { target, .. } => {
+                assert_ne!(*target, quarry, "a shell cannot strike a unit that left")
+            }
+            BattleEvent::UnitDestroyed { unit, .. } => {
+                assert_ne!(*unit, quarry, "nor kill her from a hex away")
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(
+        state.substance(&reg, state.unit(quarry).unwrap()),
+        before,
+        "she comes through it untouched"
+    );
+}
+
+#[test]
+fn a_shell_that_catches_her_standing_still_hits_without_a_die_roll() {
+    // The other half of the bargain. Artillery has no to-hit roll any more:
+    // the scatter that used to be a die is now the flight time, and a crew
+    // who spends it parked is simply hit. So the shell lands and the ordinary
+    // pipeline runs in the same tick — the gate, and whatever it finds — with
+    // no `ShotMissed` anywhere in the stream.
+    let reg = registry_wireless();
+    let mut state = battery_stage(&reg, "recon_car", 502);
+    let (battery, quarry) = (UnitId(0), UnitId(1));
+    let aim = state.unit(quarry).unwrap().pos;
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: battery,
+                fire: FireIntent::Target {
+                    target: quarry,
+                    weapon: 0,
+                },
+            },
+        )
+        .unwrap();
+
+    let log = ticked_round(&reg, &mut state);
+    let landed = log
+        .iter()
+        .find_map(|(tick, e)| match e {
+            BattleEvent::ShellLanded { at, .. } if *at == aim => Some(*tick),
+            _ => None,
+        })
+        .expect("the shell comes down on her");
+    let struck = log.iter().any(|(tick, e)| {
+        *tick == landed
+            && matches!(
+                e,
+                BattleEvent::ShotHit { target, .. } | BattleEvent::ShotBounced { target, .. }
+                    if *target == quarry
+            )
+    });
+    assert!(
+        struck,
+        "a shell that arrives on an occupied hex resolves against her there and then"
+    );
+    assert!(
+        !log.iter().any(
+            |(_, e)| matches!(e, BattleEvent::ShotMissed { attacker, .. } if *attacker == battery)
+        ),
+        "and no die is thrown for it: artillery misses by being aimed at the wrong hex, not by missing"
+    );
+}
+
+#[test]
+fn neighbors_of_a_shellburst_feel_half_the_blast() {
+    // A hundred metres is not far enough away from a 105. The battery shells
+    // empty ground next door to a scout car and never touches her hex, but
+    // half of a blast of six against her one-inch plate is still overmatch,
+    // and overmatch does not consult the penetration gate. No round ever
+    // struck her, and she is a wreck.
+    let mut reg = registry_wireless();
+    reg.balance.pen_scatter = 0;
+    let mut state = battery_stage(&reg, "recon_car", 503);
+    let (battery, quarry) = (UnitId(0), UnitId(1));
+    let next_door = tactics_core::offset_to_hex(6, 1);
+    assert_eq!(
+        state.unit(quarry).unwrap().pos.distance_to(next_door),
+        1,
+        "the burst has to be one hex off her, not on her"
+    );
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: battery,
+                fire: FireIntent::Area {
+                    at: next_door,
+                    weapon: 0,
+                },
+            },
+        )
+        .unwrap();
+
+    let log = ticked_round(&reg, &mut state);
+    assert!(
+        log.iter()
+            .any(|(_, e)| matches!(e, BattleEvent::ShellLanded { at, .. } if *at == next_door)),
+        "the shell lands where it was sent"
+    );
+    assert!(
+        !log.iter().any(|(_, e)| matches!(
+            e,
+            BattleEvent::ShotHit { .. } | BattleEvent::ShotBounced { .. }
+        )),
+        "nothing was ever struck: this is blast, not gunnery"
+    );
+    assert!(
+        log.iter()
+            .any(|(_, e)| matches!(e, BattleEvent::UnitDestroyed { unit, .. } if *unit == quarry)),
+        "and the car beside it is finished"
+    );
+}
+
+#[test]
+fn a_mod_without_ammunition_keeps_instant_artillery() {
+    // Additivity, read as strictly as the gate reads it. Flight time is a
+    // rule, but it is a rule about *rounds*, and a mod that declines to
+    // describe its ammunition has no rounds — only guns with numbers on them.
+    // That mod must get the game it shipped with, in which a howitzer
+    // resolves in the tick it fires, so nothing here ever goes up in the air.
+    let mut reg = registry_wireless();
+    for weapon in reg.weapons.values_mut() {
+        weapon.ammo.clear();
+    }
+    let mut state = battery_stage(&reg, "recon_car", 504);
+    let (battery, quarry) = (UnitId(0), UnitId(1));
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: battery,
+                fire: FireIntent::Target {
+                    target: quarry,
+                    weapon: 0,
+                },
+            },
+        )
+        .unwrap();
+
+    let log = ticked_round(&reg, &mut state);
+    assert!(
+        !log.iter()
+            .any(|(_, e)| matches!(e, BattleEvent::ShellLanded { .. })),
+        "a legacy howitzer puts nothing in the air"
+    );
+    assert!(
+        state.shells.is_empty(),
+        "and leaves nothing behind it either"
+    );
+    let fired = log
+        .iter()
+        .find_map(|(tick, e)| match e {
+            BattleEvent::ShotFired { attacker, .. } if *attacker == battery => Some(*tick),
+            _ => None,
+        })
+        .expect("she still fires");
+    assert!(
+        log.iter().any(|(tick, e)| *tick == fired
+            && matches!(
+                e,
+                BattleEvent::ShotHit { .. }
+                    | BattleEvent::ShotBounced { .. }
+                    | BattleEvent::ShotMissed { .. }
+            )),
+        "and the shot is over in the tick that fired it, exactly as it always was"
+    );
+}

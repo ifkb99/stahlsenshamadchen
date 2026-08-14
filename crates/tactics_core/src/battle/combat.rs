@@ -1,5 +1,5 @@
 //! Combat resolution: accuracy, armor facings, terrain cover, elevation
-//! advantage, blind fire, and opportunity fire.
+//! advantage, blind fire, opportunity fire, and shells in the air.
 
 use super::{BattleState, Event, FireIntent, UnitId, fog, stats};
 use crate::data::{
@@ -7,6 +7,7 @@ use crate::data::{
 };
 use hexx::Hex;
 use rand::RngExt;
+use serde::{Deserialize, Serialize};
 
 /// Which armor arc a shot from `attacker_pos` strikes on a target at
 /// `target_pos` facing `facing`.
@@ -243,7 +244,22 @@ pub struct Round<'r> {
     pub small_arms: bool,
 }
 
-impl Round<'_> {
+impl<'r> Round<'r> {
+    /// The round a `weapon` puts downrange when `ammo` is what is chambered.
+    ///
+    /// Shared by [`chambered`], which reads the racks, and by the shell that
+    /// has been in the air since somebody read them a tick or two ago: a
+    /// round already fired must arrive as exactly the round that left, and
+    /// two constructors would be two chances for it not to.
+    fn loaded(ammo: &'r AmmoDef, weapon: &WeaponDef) -> Self {
+        Self {
+            ammo: Some(ammo),
+            legacy_pen: 0.0,
+            damage: (weapon.damage as f32 * ammo.post_pen).round().max(0.0) as i32,
+            small_arms: matches!(ammo.class, AmmoClass::SmallArms),
+        }
+    }
+
     /// Penetration of this round at `dist` hexes, over the firing weapon's
     /// range band. Kinetic ammunition falls off downrange, chemical is
     /// flat, and both of those facts live in the data, not here.
@@ -300,12 +316,218 @@ pub fn chambered<'r>(
         .iter()
         .filter(|id| u.ammo.get(*id).copied().unwrap_or(0) > 0)
         .find_map(|id| registry.ammo(id))?;
-    Some(Round {
-        ammo: Some(ammo),
-        legacy_pen: 0.0,
-        damage: (weapon.damage as f32 * ammo.post_pen).round().max(0.0) as i32,
-        small_arms: matches!(ammo.class, AmmoClass::SmallArms),
+    Some(Round::loaded(ammo, weapon))
+}
+
+/// A round that has left the muzzle and has not arrived yet.
+///
+/// Only indirect fire is ever in this list. At this scale a direct-fire shot
+/// is over before the tick that fired it ends — an 88 crosses its whole 1.6
+/// km reach in two seconds against a five-second tick — so the machinery
+/// below would be an elaborate way of doing nothing to it. A howitzer shell
+/// at 470 m/s crossing 3 km is genuinely in the air for eight seconds, and
+/// what it is aimed at is *ground*: the gunner laid the piece on a map
+/// reference, and whoever is standing there when it comes down is who it
+/// lands on. That is the whole artillery rework in one sentence, and it is
+/// why the target is a [`Hex`] rather than a [`UnitId`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShellInFlight {
+    /// Who fired it. Still named after it lands, so the log can say whose
+    /// battery that was even when the gun itself has since been knocked out.
+    pub attacker: UnitId,
+    /// [`AmmoDef`] id, resolved again at impact. The round is data, and the
+    /// shell carries its name rather than a copy of its numbers so that the
+    /// thing that lands is the thing the mod describes.
+    pub ammo: String,
+    /// [`WeaponDef`] id, for the weapon weight that prices the behind-armor
+    /// budget.
+    pub weapon: String,
+    /// Where it was fired from.
+    ///
+    /// Kept because armor cares about bearing: the plate a shell strikes and
+    /// the obliquity it strikes at are read from the line between the gun and
+    /// the ground it was laid on, which is this game's model of the shell's
+    /// arrival. The battery may be dead by the time it matters, so the
+    /// position travels with the shell rather than being looked up.
+    pub from: Hex,
+    /// The ground it was aimed at.
+    pub at: Hex,
+    /// Absolute tick it comes down on: `round * ticks_per_round + tick`, the
+    /// same clock [`super::SideFog::spotted_since`] runs on.
+    pub lands: u64,
+}
+
+/// How many ticks a shell of this `velocity` spends crossing `hexes`.
+///
+/// Never zero: a shell that arrives in the tick that fired it is a
+/// direct-fire shot, and the one thing indirect fire must cost is the chance
+/// for the target to be somewhere else. A 105 at 470 m/s over 3 km comes out
+/// at two ticks, which is the number the design doc names.
+pub fn flight_ticks(scale: &Scale, velocity: u32, hexes: i32) -> u64 {
+    // A round nobody gave a velocity is not a round that hangs in the air
+    // forever; treat it as the minimum flight and let validation complain
+    // about the data.
+    if velocity == 0 {
+        return 1;
+    }
+    let seconds = scale.meters(hexes.max(0)) / velocity as f32;
+    let tick = scale.tick_seconds();
+    if tick <= 0.0 {
+        return 1;
+    }
+    ((seconds / tick).ceil() as i64).max(1) as u64
+}
+
+/// The shell this shot puts in the air, or `None` when it resolves in-tick.
+///
+/// Two conditions, and the second one is the additivity contract rather than
+/// an optimisation. Flight time is for indirect fire only. And it is for
+/// indirect fire **with ammunition data**: a mod whose howitzer declares no
+/// `ammo` list has no velocity to fly at, and — more importantly — a mod that
+/// declares nothing must get today's game, which resolves artillery
+/// instantly. So the legacy path keeps its hitscan howitzer forever, and only
+/// rounds that a mod actually wrote down go up in the air.
+fn shell_in_flight(
+    registry: &DataRegistry,
+    state: &BattleState,
+    attacker: UnitId,
+    weapon: &WeaponDef,
+    round: &Round<'_>,
+    at: Hex,
+) -> Option<ShellInFlight> {
+    if !weapon.indirect {
+        return None;
+    }
+    let ammo = round.ammo?;
+    let from = state.unit(attacker)?.pos;
+    let lands = state.absolute_tick(registry)
+        + flight_ticks(&registry.scale, ammo.velocity, from.distance_to(at));
+    Some(ShellInFlight {
+        attacker,
+        ammo: ammo.id.clone(),
+        weapon: weapon.id.clone(),
+        from,
+        at,
+        lands,
     })
+}
+
+/// Bring down every shell whose time has come, in the order they were fired.
+///
+/// Called at the top of a tick, before anybody drives, so a shell lands on
+/// whoever was standing there when the tick opened rather than on whoever
+/// happens to arrive during it. The Vec's order is the firing order and the
+/// iteration is over it directly — no map, no set — because these rolls reach
+/// the event stream.
+///
+/// Nothing is reaped here. A crew the shell just killed still moves and
+/// shoots this tick, which is the same simultaneity bargain every other
+/// source of damage keeps: death is reaped at the end of the tick, never
+/// eagerly.
+pub(super) fn resolve_shells(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    events: &mut Vec<Event>,
+) {
+    if state.shells.is_empty() {
+        return;
+    }
+    let now = state.absolute_tick(registry);
+    let mut landing = Vec::new();
+    let mut airborne = Vec::new();
+    for shell in std::mem::take(&mut state.shells) {
+        if shell.lands <= now {
+            landing.push(shell);
+        } else {
+            airborne.push(shell);
+        }
+    }
+    state.shells = airborne;
+    for shell in landing {
+        shell_lands(registry, state, &shell, events);
+    }
+}
+
+/// One shell arriving on one hex.
+///
+/// There is no hit roll. A shell that comes down on an occupied hex hits what
+/// is on it, because the inaccuracy of artillery is already modelled by the
+/// thing that makes it artillery: it was aimed at ground, ticks ago, and the
+/// target had every one of those ticks to be elsewhere. Rolling a blind-fire
+/// accuracy penalty on top would charge the same scatter twice and make a
+/// shell that caught a stationary crew flat-footed miss anyway.
+/// [`hit_chance`] is untouched — direct fire still rolls to hit exactly as
+/// before.
+///
+/// What lands is then ordinary: the occupant takes the full pipeline (the
+/// penetration gate, behind-armor effects, or a bounce and its overpressure),
+/// and the neighbouring tiles take blast only, at half — a shell that misses
+/// your tile by a hundred metres is a different event from one that arrives
+/// on it.
+fn shell_lands(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    shell: &ShellInFlight,
+    events: &mut Vec<Event>,
+) {
+    events.push(Event::ShellLanded {
+        attacker: shell.attacker,
+        at: shell.at,
+        ammo: shell.ammo.clone(),
+    });
+    // Content can go away underneath a shell — a mod reloaded, a save opened
+    // against a different roster. The burst is still announced; it simply has
+    // no numbers to resolve with.
+    let (Some(ammo), Some(weapon)) = (registry.ammo(&shell.ammo), registry.weapon(&shell.weapon))
+    else {
+        return;
+    };
+    let round = Round::loaded(ammo, weapon);
+
+    let direct = state.unit_at(shell.at).map(|u| u.id);
+    if let Some(target) = direct {
+        resolve_impact(
+            registry,
+            state,
+            shell.attacker,
+            weapon,
+            &round,
+            shell.from,
+            target,
+            events,
+        );
+    }
+
+    // Everyone next door, in unit-id order so the rolls land in the same
+    // sequence in every replay — `all_neighbors` is fixed, but which of them
+    // are occupied is not something the event stream should learn from.
+    let mut splashed: Vec<UnitId> = shell
+        .at
+        .all_neighbors()
+        .into_iter()
+        .filter_map(|hex| state.unit_at(hex).map(|u| u.id))
+        .filter(|id| Some(*id) != direct)
+        .collect();
+    splashed.sort_unstable();
+    for id in splashed {
+        let Some(pos) = state.unit(id).map(|u| u.pos) else {
+            continue;
+        };
+        // Half a hex away is half the blast, and being dug in among something
+        // halves it again. Reading terrain `cover` for that is crude — it is
+        // the same number that hides a tank from a gunner's sights, doing
+        // duty as "there is stuff between her and the burst" — but it is data
+        // rather than a constant, and it is the first time terrain has
+        // mattered against artillery at all. B4/B5 may refine it into a
+        // number of its own.
+        let mut blast = ammo.blast / 2;
+        if terrain_at(registry, state, pos).is_some_and(|t| t.cover >= 30) {
+            blast /= 2;
+        }
+        if blast > 0 {
+            overpressure(registry, state, id, blast, events);
+        }
+    }
 }
 
 /// Axial hex coordinates on the flat plane, for angle arithmetic. Any
@@ -679,10 +901,43 @@ fn resolve_shot(
         return;
     }
 
-    let Some(profile) = shot_profile(registry, state, weapon, round, att_pos, target) else {
+    resolve_impact(
+        registry, state, attacker, weapon, round, att_pos, target, events,
+    );
+}
+
+/// Everything a round does once it is known to have arrived: the plate, the
+/// gate, and what it finds behind it.
+///
+/// Split out of [`resolve_shot`] because a shell has no hit roll to precede
+/// it and no attacker whose *current* position means anything — she may have
+/// driven off or died in the ticks the shell was in the air. `from` is
+/// therefore passed rather than looked up: for direct fire it is where the
+/// shooter stands, and for a shell it is where the gun stood when it fired,
+/// which is the bearing the round arrives on in this game's geometry.
+// Eight parameters, and the dependency list is genuinely eight things: the
+// content, the world, the shooter, the gun, the round, the bearing, the
+// victim, the log. CLAUDE.md's note about a future `Shot` struct is the
+// right cleanup if penetration grows more inputs; inventing one for this
+// alone would only move the list.
+#[allow(clippy::too_many_arguments)]
+fn resolve_impact(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    attacker: UnitId,
+    weapon: &WeaponDef,
+    round: &Round<'_>,
+    from: Hex,
+    target: UnitId,
+    events: &mut Vec<Event>,
+) {
+    let Some(tgt_pos) = state.unit(target).map(|t| t.pos) else {
         return;
     };
-    let pen = round.pen_at(att_pos.distance_to(tgt_pos), weapon.range);
+    let Some(profile) = shot_profile(registry, state, weapon, round, from, target) else {
+        return;
+    };
+    let pen = round.pen_at(from.distance_to(tgt_pos), weapon.range);
     if !penetration_roll(
         state,
         pen,
@@ -1203,17 +1458,34 @@ fn fire_at_unit(
             *cd = weapon.reload(&registry.scale);
         }
     }
-    resolve_shot(
-        registry,
-        state,
-        attacker,
-        &weapon,
-        &round,
-        target,
-        false,
-        opportunity,
-        events,
-    );
+    // An indirect gun ordered onto a *unit* still fires at the ground she is
+    // standing on right now, because that is all a gunner behind a ridge can
+    // do with a map reference. Whether she is still there when it comes down
+    // is the target's problem and the whole point of the rework.
+    match shell_in_flight(registry, state, attacker, &weapon, &round, tgt_pos) {
+        Some(shell) => {
+            events.push(Event::ShotFired {
+                attacker,
+                from: shell.from,
+                at: shell.at,
+                weapon: weapon.id.clone(),
+                blind: false,
+                opportunity,
+            });
+            state.shells.push(shell);
+        }
+        None => resolve_shot(
+            registry,
+            state,
+            attacker,
+            &weapon,
+            &round,
+            target,
+            false,
+            opportunity,
+            events,
+        ),
+    }
     fog::reveal_to_all(state, attacker);
     events.extend(fog::recompute(registry, state));
 }
@@ -1247,20 +1519,35 @@ fn fire_at_tile(
             *cd = weapon.reload(&registry.scale);
         }
     }
-    match state.unit_at(at).filter(|t| t.side != side).map(|t| t.id) {
-        Some(target) => resolve_shot(
-            registry, state, attacker, &weapon, &round, target, true, false, events,
-        ),
-        None => {
-            events.push(Event::ShotFired {
-                attacker,
-                from: att_pos,
-                at,
-                weapon: weapon.id.clone(),
-                blind: true,
-                opportunity: false,
-            });
-            events.push(Event::ShotMissed { attacker, at });
+    // Shelling ground is what an indirect gun does natively, so this is the
+    // path where flight time is least surprising: the shell goes up, and who
+    // is under it is settled when it comes down rather than now.
+    if let Some(shell) = shell_in_flight(registry, state, attacker, &weapon, &round, at) {
+        events.push(Event::ShotFired {
+            attacker,
+            from: shell.from,
+            at: shell.at,
+            weapon: weapon.id.clone(),
+            blind: true,
+            opportunity: false,
+        });
+        state.shells.push(shell);
+    } else {
+        match state.unit_at(at).filter(|t| t.side != side).map(|t| t.id) {
+            Some(target) => resolve_shot(
+                registry, state, attacker, &weapon, &round, target, true, false, events,
+            ),
+            None => {
+                events.push(Event::ShotFired {
+                    attacker,
+                    from: att_pos,
+                    at,
+                    weapon: weapon.id.clone(),
+                    blind: true,
+                    opportunity: false,
+                });
+                events.push(Event::ShotMissed { attacker, at });
+            }
         }
     }
     fog::reveal_to_all(state, attacker);

@@ -25,7 +25,8 @@ mod orders;
 
 pub use combat::{
     AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, MAX_HIT, MIN_HIT,
-    expected_damage, hit_breakdown, hit_chance, preview_attack, struck_facing, weapon_ready,
+    ShellInFlight, expected_damage, flight_ticks, hit_breakdown, hit_chance, preview_attack,
+    struck_facing, weapon_ready,
 };
 pub use command::{
     CommandState, Contact, CutOff, Formation, FormationId, Mission, MissionChange, WaitingOrders,
@@ -368,6 +369,17 @@ pub struct BattleState {
     /// Objective points each side has collected, indexed by side.
     #[serde(default)]
     pub score: Vec<u32>,
+    /// Rounds that have been fired and have not arrived yet, in the order
+    /// they were fired.
+    ///
+    /// Only indirect fire ever appears here — see [`ShellInFlight`] for why —
+    /// and it is a `Vec` rather than anything keyed because the firing order
+    /// *is* the resolution order, and these rolls reach the event stream.
+    ///
+    /// `#[serde(default)]` so a save written before shells flew opens as what
+    /// it was: a battle whose artillery arrived the instant it was fired.
+    #[serde(default)]
+    pub shells: Vec<ShellInFlight>,
     /// Who answers to whom: the map's formations resolved against the units
     /// that actually spawned.
     ///
@@ -445,6 +457,7 @@ impl BattleState {
             last_contact_round: 1,
             objective_held: vec![None; objective_count],
             score: vec![0; side_count],
+            shells: Vec::new(),
             command,
         };
         for (placement, crew) in file.units.iter().zip(&crews) {
@@ -492,6 +505,7 @@ impl BattleState {
             last_contact_round: 1,
             objective_held: vec![None; objective_count],
             score: vec![0; side_count],
+            shells: Vec::new(),
             command,
         };
         for (i, placement) in placements.iter().enumerate() {
@@ -933,6 +947,18 @@ impl BattleState {
     /// Whether sides are still writing orders.
     pub fn is_planning(&self) -> bool {
         matches!(self.phase, Phase::Planning { .. })
+    }
+
+    /// The battle's clock as one number: `round * ticks_per_round + tick`.
+    ///
+    /// The convention [`SideFog::spotted_since`] already runs on, and now
+    /// what [`ShellInFlight::lands`] is written in. Named here because three
+    /// separate places were spelling the same multiplication out, and a
+    /// clock that two systems compute slightly differently is a clock that
+    /// will eventually disagree with itself.
+    pub fn absolute_tick(&self, registry: &DataRegistry) -> u64 {
+        self.round as u64 * registry.scale.ticks_per_round as u64
+            + self.resolving_tick().unwrap_or(0) as u64
     }
 
     /// The tick being resolved, or `None` while planning.

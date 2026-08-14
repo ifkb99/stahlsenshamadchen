@@ -1190,6 +1190,25 @@ fn pump_events(
                     Color::srgb(1.0, 0.9, 0.4),
                 );
             }
+            // A shellburst is the one piece of news nobody can keep quiet: it
+            // is a column of earth either army can see, so this is filtered
+            // by nothing above and named without a shooter. What it did to
+            // whoever was underneath arrives as the ordinary hit and module
+            // lines that follow it in the same tick.
+            BattleEvent::ShellLanded { at, ammo, .. } => {
+                let round = registry
+                    .ammo(ammo)
+                    .map(|a| a.name.clone())
+                    .unwrap_or_else(|| ammo.clone());
+                log.push(format!("A {round} shell lands at {}.", hex_label(*at)));
+                spawn_puff(
+                    &mut commands,
+                    *at,
+                    view.rotation(),
+                    view.center(),
+                    Color::srgb(1.0, 0.55, 0.15),
+                );
+            }
             BattleEvent::ShotHit {
                 attacker,
                 target,
