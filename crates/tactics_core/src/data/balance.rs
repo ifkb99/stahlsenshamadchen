@@ -68,6 +68,13 @@ pub struct Balance {
     /// none with none. Zero is the gentle game where nothing ever burns —
     /// difficulty is a mod.
     pub brewup_percent: i32,
+    /// Percentage points of brew-up chance shaved per point of the
+    /// vehicle's `safety` stat — wet stowage, in one number. Safety was
+    /// already the stat for "what a knocked-out vehicle costs the girls
+    /// inside" at the campaign's fate rolls; this makes it matter while
+    /// the shooting is still happening, so a vehicle designed around her
+    /// crew is measurably harder to torch, not merely gentler afterwards.
+    pub brew_safety_percent: i32,
     /// Round-to-round penetration variance, as a percent.
     ///
     /// No two shells leave the same barrel identically, and armor plate is
@@ -93,6 +100,7 @@ impl Default for Balance {
             crew_weight: 2,
             points_per_effect: 4,
             brewup_percent: 60,
+            brew_safety_percent: 12,
             pen_scatter: 15,
         }
     }

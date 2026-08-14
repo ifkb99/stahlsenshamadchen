@@ -320,6 +320,7 @@ fn penetration_falls_off_with_range_for_shot_and_holds_for_a_shaped_charge() {
         class: AmmoClass::Chemical,
         penetration: [7, 7],
         post_pen: 1.0,
+        volatility: 1.0,
         blast: 2,
         velocity: 450,
     };
@@ -341,6 +342,7 @@ fn a_chemical_round_that_loses_penetration_downrange_is_a_warning() {
             // Almost always a kinetic entry copied by mistake.
             penetration: [7, 5],
             post_pen: 1.0,
+            volatility: 1.0,
             blast: 2,
             velocity: 450,
         },

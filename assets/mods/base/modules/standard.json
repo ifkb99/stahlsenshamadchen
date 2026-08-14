@@ -30,5 +30,21 @@
         "size": 1,
         "toughness": 1,
         "description": "The set and its aerial. The smallest target on this list and the least immediately dangerous to lose, which is exactly what makes it insidious: nobody notices she has gone off the net until the orders stop being followed."
+    },
+    {
+        "id": "ammo_rack_bulk",
+        "name": "Bulk Ammunition Stowage",
+        "effect": "ammo",
+        "size": 3,
+        "toughness": 1,
+        "description": "Shells racked wherever they fit — sponsons, hull floor, behind the driver. The price of a long magazine is that a round coming through has more of it to find, and the mediums and the gun carriers pay it."
+    },
+    {
+        "id": "ammo_rack_sparse",
+        "name": "Low Ammunition Stowage",
+        "effect": "ammo",
+        "size": 1,
+        "toughness": 1,
+        "description": "A short ration of rounds kept low in the hull, under the fighting compartment. Hard for a penetration to find — the tank destroyer's casemate and the scout car's belts carry little and carry it well."
     }
 ]

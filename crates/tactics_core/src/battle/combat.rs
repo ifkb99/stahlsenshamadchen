@@ -1185,24 +1185,46 @@ fn module_hit(
     });
 
     if module.effect == crate::data::ModuleEffect::Ammo {
-        // Every rack hit rolls the fire, at the declared chance scaled by
-        // how full the racks still are — an emptied tank is measurably
-        // harder to torch, which quietly makes shooting your ammunition
-        // off a survival strategy as well as an economy.
-        let (aboard, capacity) = {
+        // Every rack hit rolls the fire. Three data axes shape the chance,
+        // none of them a property of the roll itself:
+        //
+        // - WHAT is aboard, volatility-weighted: a rack of high explosive
+        //   is a bomb waiting for a reason, solid shot is metal ahead of a
+        //   charge. The fraction compares what is left against what the
+        //   chassis stows, both weighted, so an emptied tank is measurably
+        //   harder to torch and an HE-heavy loadout was a choice with a
+        //   price.
+        // - The round's own behind-armor potency.
+        // - The VEHICLE's `safety` — wet stowage in one number, shaving
+        //   `brew_safety_percent` points per level, which is what finally
+        //   makes "designed around her crew" mean something while the
+        //   shooting is still happening rather than only at the fate rolls.
+        let (fraction_num, fraction_den, safety) = {
             let Some(unit) = state.unit(target) else {
                 return;
             };
-            let aboard: u32 = unit.ammo.values().sum();
-            let capacity: u32 = registry
-                .vehicle(&unit.vehicle)
-                .map(|v| v.stowage.values().sum())
-                .unwrap_or(0);
-            (aboard, capacity)
+            let volatile = |id: &str, count: u32| -> f32 {
+                count as f32
+                    * registry
+                        .ammo(id)
+                        .map(|a| a.volatility.max(0.0))
+                        .unwrap_or(1.0)
+            };
+            let aboard: f32 = unit.ammo.iter().map(|(id, n)| volatile(id, *n)).sum();
+            let vehicle = registry.vehicle(&unit.vehicle);
+            let capacity: f32 = vehicle
+                .map(|v| v.stowage.iter().map(|(id, n)| volatile(id, *n)).sum())
+                .unwrap_or(0.0);
+            (aboard, capacity, vehicle.map(|v| v.safety).unwrap_or(0))
         };
-        if capacity > 0 && aboard > 0 {
-            let chance = (registry.balance.brewup_percent.max(0) as f32 * potency) as u32 * aboard
-                / capacity;
+        if fraction_den > 0.0 && fraction_num > 0.0 {
+            let stowage = (100 - safety.max(0) * registry.balance.brew_safety_percent.max(0))
+                .clamp(0, 100) as f32
+                / 100.0;
+            let chance = (registry.balance.brewup_percent.max(0) as f32
+                * potency
+                * stowage
+                * (fraction_num / fraction_den)) as u32;
             let roll = state.rng.random_range(0..100u32);
             if roll < chance {
                 if let Some(unit) = state.unit_mut(target) {

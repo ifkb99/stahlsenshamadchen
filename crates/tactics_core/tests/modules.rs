@@ -68,7 +68,10 @@ fn a_unit_spawns_with_her_vehicles_modules_all_intact() {
         panther.modules["tracks"], 2,
         "running gear takes a damaging hit before a killing one"
     );
-    assert_eq!(panther.modules["ammo_rack"], 1);
+    assert_eq!(
+        panther.modules["ammo_rack_bulk"], 1,
+        "a medium's long magazine is the bulk rack, a bigger target inside"
+    );
     assert_eq!(panther.modules["radio_set"], 1);
 }
 

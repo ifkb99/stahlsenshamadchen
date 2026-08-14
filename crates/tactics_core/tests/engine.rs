@@ -8044,8 +8044,8 @@ fn an_emptied_rack_is_harder_to_torch() {
     reg.balance.pen_scatter = 0;
     reg.balance.crew_weight = 0;
     reg.balance.brewup_percent = 100;
-    for (id, module) in reg.modules.iter_mut() {
-        if id != "ammo_rack" {
+    for module in reg.modules.values_mut() {
+        if module.effect != tactics_core::data::ModuleEffect::Ammo {
             module.size = 0;
         }
     }

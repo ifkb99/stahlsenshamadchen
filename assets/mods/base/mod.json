@@ -17,7 +17,9 @@
         "accuracy_per_gunnery": 3,
         "substitution_penalty": 2,
         "vision_per_observation": 5,
-        "pen_scatter": 15
+        "pen_scatter": 15,
+        "brewup_percent": 60,
+        "brew_safety_percent": 12
     },
     "cores": [
         {

@@ -113,6 +113,16 @@ pub struct AmmoDef {
     /// Spent by the pipeline chunk; nothing reads it yet.
     #[serde(default)]
     pub blast: i32,
+    /// How eagerly this round's stowage burns when the rack is struck, as a
+    /// multiplier on the brew-up roll. Solid shot is inert metal ahead of a
+    /// propellant charge; a high-explosive shell is a bomb waiting for a
+    /// reason; belted small-arms ammunition mostly cooks off without killing
+    /// anyone. Defaulted to 1.0 so a round that says nothing changes
+    /// nothing, and weighted by what is actually aboard — which turns the
+    /// loadout screen into a survival decision: the tank that stuffed her
+    /// racks with high explosive is the tank that burns.
+    #[serde(default = "default_volatility")]
+    pub volatility: f32,
     /// Muzzle velocity in metres per second.
     ///
     /// Data for flight time, which at this scale is invisible for direct fire
@@ -127,6 +137,11 @@ pub struct AmmoDef {
 /// A round that says nothing about behind-armour effect is ordinary: getting
 /// through is the achievement, and the multiplier changes nothing.
 fn default_post_pen() -> f32 {
+    1.0
+}
+
+/// A round that says nothing burns like an ordinary one.
+fn default_volatility() -> f32 {
     1.0
 }
 

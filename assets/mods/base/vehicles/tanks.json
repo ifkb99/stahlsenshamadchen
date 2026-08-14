@@ -25,7 +25,7 @@
         "modules": [
             "main_gun",
             "tracks",
-            "ammo_rack",
+            "ammo_rack_sparse",
             "radio_set"
         ],
         "crew_slots": [
@@ -105,7 +105,7 @@
         "modules": [
             "main_gun",
             "tracks",
-            "ammo_rack",
+            "ammo_rack_bulk",
             "radio_set"
         ],
         "crew_slots": [
@@ -120,7 +120,7 @@
     },
     {
         "id": "heavy_tank",
-        "name": "L\u00f6we Heavy Tank",
+        "name": "Löwe Heavy Tank",
         "class": "heavy_tank",
         "max_hp": 12,
         "movement": {
@@ -147,7 +147,7 @@
         "modules": [
             "main_gun",
             "tracks",
-            "ammo_rack",
+            "ammo_rack_bulk",
             "radio_set"
         ],
         "crew_slots": [
@@ -188,7 +188,7 @@
         "modules": [
             "main_gun",
             "tracks",
-            "ammo_rack",
+            "ammo_rack_sparse",
             "radio_set"
         ],
         "crew_slots": [
@@ -226,7 +226,7 @@
         "modules": [
             "main_gun",
             "tracks",
-            "ammo_rack",
+            "ammo_rack_bulk",
             "radio_set"
         ],
         "crew_slots": [

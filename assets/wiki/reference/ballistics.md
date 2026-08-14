@@ -432,6 +432,13 @@ economy before the instruments can see it is guessing.
   the base mod waits for the balance pass to want them.
 - **Smoke:** the round type is trivial in this schema, the fog interaction
   is not; after MVP.
+- **The brew-up escape window** — a discipline roll to scramble clear
+  of an ammunition fire before the flames, moving some deaths into the
+  dramatic "she got out" middle. Deferred deliberately (2026-08-14): the
+  roster's fate machinery already prices a brewed hull against the girls
+  aboard, and an in-battle roll would double-count the fire until that
+  machinery is reworked to receive it. When the girls' life layer gets
+  its pass, this is the first thing to build into it.
 - **Field repair and recovery** (mobility kills, abandoned vehicles as
   salvage): ties into the engineer/logistics units already in TODO; the
   wreck state lands in B2 either way.
