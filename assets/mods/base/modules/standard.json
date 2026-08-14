@@ -1,0 +1,34 @@
+[
+    {
+        "id": "main_gun",
+        "name": "Main Armament",
+        "effect": "gun",
+        "size": 3,
+        "toughness": 1,
+        "description": "The gun and everything that lays it: breech, mount, sights, traverse. It does not take much to stop a gun working, and a tank that cannot shoot is a very expensive place for four girls to sit."
+    },
+    {
+        "id": "tracks",
+        "name": "Running Gear",
+        "effect": "mobility",
+        "size": 4,
+        "toughness": 2,
+        "description": "Tracks, road wheels, final drives — or on a wheeled car, the axles and steering. The biggest thing on the outside and the easiest to hit, which is why it takes two: the first hit throws a link or wrecks a wheel and she limps, the second leaves her where she stands and the rest of the battle happens around her."
+    },
+    {
+        "id": "ammo_rack",
+        "name": "Ammunition Stowage",
+        "effect": "ammo",
+        "size": 2,
+        "toughness": 1,
+        "description": "Where the shells live. Small, well tucked away, and the one thing aboard whose destruction is usually the end of the vehicle and the crew — the roll is scaled by what is still in it, so a tank that has spent her day shooting is a harder tank to kill than one that has not."
+    },
+    {
+        "id": "radio_set",
+        "name": "Wireless Set",
+        "effect": "radio",
+        "size": 1,
+        "toughness": 1,
+        "description": "The set and its aerial. The smallest target on this list and the least immediately dangerous to lose, which is exactly what makes it insidious: nobody notices she has gone off the net until the orders stop being followed."
+    }
+]

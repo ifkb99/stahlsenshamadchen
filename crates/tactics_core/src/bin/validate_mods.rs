@@ -33,11 +33,12 @@ fn main() -> ExitCode {
             .join(", ")
     );
     println!(
-        "  {} characters, {} vehicles, {} weapons, {} ammo, {} terrain, {} doctrines, {} maps",
+        "  {} characters, {} vehicles, {} weapons, {} ammo, {} modules, {} terrain, {} doctrines, {} maps",
         registry.characters.len(),
         registry.vehicles.len(),
         registry.weapons.len(),
         registry.ammo.len(),
+        registry.modules.len(),
         registry.terrain.len(),
         registry.doctrines.len(),
         registry.maps.len()
@@ -105,6 +106,52 @@ fn report_ammo(registry: &DataRegistry) {
                 "nothing".to_string()
             } else {
                 fired_by.join(", ")
+            },
+        );
+    }
+}
+
+/// The module roster: every piece of breakable hardware, how big a target it
+/// is, how much it takes, and who carries it.
+///
+/// The last column carries the same weight as the ammunition table's "fired
+/// by". A module nothing carries is well-formed content no validator can
+/// object to, and the blank beside its name is the only way to see it. Read
+/// the other way the column is the answer to "which of my vehicles will lose
+/// their tracks", including the ones that inherit the standard set by naming
+/// nothing — this asks `modules_for`, so what it prints is what will spawn
+/// rather than what was typed.
+fn report_modules(registry: &DataRegistry) {
+    let mut modules: Vec<_> = registry.modules.values().collect();
+    modules.sort_by(|a, b| a.id.cmp(&b.id));
+    if modules.is_empty() {
+        return;
+    }
+    println!("\nmodules");
+    println!(
+        "  {:<16} {:<10} {:>5} {:>10}  carried by",
+        "id", "effect", "size", "toughness"
+    );
+    for m in modules {
+        let mut carried_by: Vec<&str> = registry
+            .vehicles
+            .values()
+            .filter(|v| registry.modules_for(v).iter().any(|c| c.id == m.id))
+            .map(|v| v.id.as_str())
+            .collect();
+        // The vehicle map is a HashMap, so sort before printing: a table that
+        // reorders itself between runs is a table nobody can diff.
+        carried_by.sort_unstable();
+        println!(
+            "  {:<16} {:<10} {:>5} {:>10}  {}",
+            m.id,
+            m.effect.as_str(),
+            m.size,
+            m.toughness,
+            if carried_by.is_empty() {
+                "nothing".to_string()
+            } else {
+                carried_by.join(", ")
             },
         );
     }
@@ -188,6 +235,8 @@ fn report_scale(registry: &DataRegistry) {
             }
         );
     }
+
+    report_modules(registry);
 
     let mut maps: Vec<_> = registry.maps.values().collect();
     maps.sort_by(|a, b| a.id.cmp(&b.id));

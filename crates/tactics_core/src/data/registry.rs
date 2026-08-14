@@ -3,8 +3,8 @@
 use super::defs::*;
 use super::manifest::ModManifest;
 use super::{
-    AmmoClass, AmmoDef, Balance, CommandRules, CoreDef, CoreIndex, MoraleRules, ReactionRules,
-    RoleDef, Scale, SkillDef, TraitDef,
+    AmmoClass, AmmoDef, Balance, CommandRules, CoreDef, CoreIndex, ModuleDef, ModuleEffect,
+    MoraleRules, ReactionRules, RoleDef, STANDARD_MODULES, Scale, SkillDef, TraitDef,
 };
 use crate::map::MapFile;
 use serde::Deserialize;
@@ -92,6 +92,10 @@ pub struct DataRegistry {
     /// isn't one; the accessor beside it is [`Self::ammo`], the same
     /// map-plus-lookup pair as [`Self::radios`]/[`Self::radio`].
     pub ammo: HashMap<String, AmmoDef>,
+    /// Every piece of breakable hardware a vehicle can carry. Accessor
+    /// [`Self::module`]; what a given vehicle actually has aboard is
+    /// [`Self::modules_for`], which is where the empty-list default lives.
+    pub modules: HashMap<String, ModuleDef>,
     pub radios: HashMap<String, RadioDef>,
     pub terrain: HashMap<String, TerrainDef>,
     pub doctrines: HashMap<String, DoctrineDef>,
@@ -198,6 +202,43 @@ impl DataRegistry {
         self.ammo.get(id)
     }
 
+    pub fn module(&self, id: &str) -> Option<&ModuleDef> {
+        self.modules.get(id)
+    }
+
+    /// What is actually aboard `vehicle`, resolved against loaded content.
+    ///
+    /// The single place the empty-list rule is applied, so that spawning,
+    /// validation and the roster table cannot disagree about what a vehicle
+    /// carries. Two cases and no third:
+    ///
+    /// - the vehicle names modules, and this is those of them that exist;
+    /// - the vehicle names none, and this is whichever of
+    ///   [`STANDARD_MODULES`] the loaded content declares.
+    ///
+    /// Unknown ids are skipped rather than reported here — a lookup that
+    /// returned errors would have to be called from places that have nowhere
+    /// to put them. [`Self::validate_into`] is what refuses them, and it
+    /// refuses them for the whole registry in one pass.
+    ///
+    /// Order follows the declaration (or [`STANDARD_MODULES`]) so that any
+    /// listing built from this is stable; the per-unit state keyed off it is
+    /// a `BTreeMap` regardless, because that is what reaches events.
+    pub fn modules_for<'a>(&'a self, vehicle: &'a VehicleDef) -> Vec<&'a ModuleDef> {
+        if vehicle.modules.is_empty() {
+            STANDARD_MODULES
+                .iter()
+                .filter_map(|id| self.modules.get(*id))
+                .collect()
+        } else {
+            vehicle
+                .modules
+                .iter()
+                .filter_map(|id| self.modules.get(id))
+                .collect()
+        }
+    }
+
     pub fn character(&self, id: &str) -> Option<&CharacterDef> {
         self.characters.get(id)
     }
@@ -222,6 +263,9 @@ impl DataRegistry {
         })?;
         load_defs(&dir.join("ammo"), report, |d: AmmoDef| {
             self.ammo.insert(d.id.clone(), d);
+        })?;
+        load_defs(&dir.join("modules"), report, |d: ModuleDef| {
+            self.modules.insert(d.id.clone(), d);
         })?;
         load_defs(&dir.join("radios"), report, |d: RadioDef| {
             self.radios.insert(d.id.clone(), d);
@@ -268,6 +312,28 @@ impl DataRegistry {
                 ));
             }
             self.validate_stowage(v, report);
+            self.validate_modules(v, report);
+        }
+        for m in self.modules.values() {
+            // Zero hits remaining is the state the outcome engine will read as
+            // "destroyed", so a module written with `toughness: 0` drives out
+            // already broken. That is never what anyone meant.
+            if m.toughness == 0 {
+                report.error(format!(
+                    "module `{}` has toughness 0, so it would spawn already destroyed; the minimum is 1",
+                    m.id
+                ));
+            }
+            // Size is a share of the draw a penetration makes. A zero share is
+            // well-formed and unreachable: the module is aboard, cannot be
+            // hit, and will never do anything. Almost always an unfilled
+            // field rather than deliberate armour plating.
+            if m.size == 0 {
+                report.warn(format!(
+                    "module `{}` has size 0, so nothing can ever hit it",
+                    m.id
+                ));
+            }
         }
         for w in self.weapons.values() {
             if w.range[0] > w.range[1] {
@@ -411,6 +477,68 @@ impl DataRegistry {
                     weapon.id,
                     weapon.ammo.join(", ")
                 ));
+            }
+        }
+    }
+
+    /// Check that what a vehicle says is aboard her exists, and that the
+    /// hardware she claims matches the hardware she has.
+    ///
+    /// One error and two warnings, and as with stowage the split follows
+    /// intent. A module id no mod declares is an error: the vehicle would
+    /// drive out with a hole in her equipment list and the shot that went
+    /// looking for it would find nothing, silently. The same id written
+    /// twice is a warning rather than an error because the meaning is
+    /// obvious and harmless — per-module state is keyed by id, so the second
+    /// entry collapses into the first — but it is worth saying out loud,
+    /// since a modder writing it almost certainly wanted two *different*
+    /// modules sharing an effect and needs to know that is spelt with two
+    /// ids.
+    ///
+    /// Two modules with the same effect is explicitly fine and goes
+    /// unremarked: a hull machine gun beside a coaxial is two guns, and the
+    /// day someone writes an auxiliary engine it is two mobility modules.
+    /// Effects are behaviours, not slots.
+    fn validate_modules(&self, v: &VehicleDef, report: &mut ValidationReport) {
+        let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for id in &v.modules {
+            if !self.modules.contains_key(id) {
+                report.error(format!(
+                    "vehicle `{}` carries missing module `{}`",
+                    v.id, id
+                ));
+            }
+            if !seen.insert(id.as_str()) {
+                report.warn(format!(
+                    "vehicle `{}` lists module `{}` twice; a module is carried once, so the repeat does nothing",
+                    v.id, id
+                ));
+            }
+        }
+
+        // A wireless set is the one module whose presence the rest of the
+        // content already has an opinion about: `radio` is what the chain of
+        // command reads to decide whether she can be reached at all. A
+        // vehicle with a radio module and no radio hardware is a crew who
+        // can lose a set they never had — harmless today, and wrong the
+        // moment losing it means something. A warning rather than an error
+        // because the reverse pairing (hardware, no module) is a legitimate
+        // way to write a set that cannot be shot off, and neither direction
+        // should stop a mod from loading.
+        //
+        // Asked of `modules_for` rather than of the declared list, so it
+        // reports what the vehicle will actually spawn carrying: a chassis
+        // that declares nothing inherits the standard four, and inheriting a
+        // wireless set she does not mount is exactly the mismatch worth
+        // hearing about.
+        if v.radio.is_none() {
+            for m in self.modules_for(v) {
+                if m.effect == ModuleEffect::Radio {
+                    report.warn(format!(
+                        "vehicle `{}` carries module `{}` but mounts no radio, so there is no set aboard to lose",
+                        v.id, m.id
+                    ));
+                }
             }
         }
     }

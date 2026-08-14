@@ -123,6 +123,30 @@ pub struct Unit {
     /// as what it was: crews who never counted their shells.
     #[serde(default)]
     pub ammo: std::collections::BTreeMap<String, u32>,
+    /// What is still working inside her: [`crate::data::ModuleDef`] id to
+    /// hits remaining before that module is destroyed.
+    ///
+    /// Stamped at spawn from what the vehicle carries — each module's
+    /// `toughness`, so every entry starts at full — and counted down by the
+    /// outcome engine, where a value of zero means destroyed rather than
+    /// absent. Absent means the vehicle never had one, which is a different
+    /// sentence entirely: a crew who lost their wireless set and a crew who
+    /// never had one behave the same today and will not behave the same
+    /// under a repair or resupply rule.
+    ///
+    /// **Nothing reads this yet.** A battle fought to its end leaves every
+    /// count exactly where it started; the outcome chunk is what makes a
+    /// module something a penetration can find.
+    ///
+    /// A `BTreeMap` for the same reason [`Self::ammo`] is one: the moment a
+    /// hit breaks something these keys are walked to produce events, and
+    /// hash order in an event stream is a determinism bug this project has
+    /// already shipped once and did not notice for months.
+    ///
+    /// `#[serde(default)]` so a save written before modules existed opens as
+    /// what it was — a vehicle with nothing inside to lose but her crew.
+    #[serde(default)]
+    pub modules: std::collections::BTreeMap<String, u32>,
     /// Damage type of the last hit this unit took, if any. Read by the
     /// campaign when working out what became of the crew.
     pub last_hit_by: Option<crate::data::DamageType>,
@@ -487,6 +511,18 @@ impl BattleState {
             // which is every vehicle in every mod written before this
             // existed and is why nothing had to change to keep working.
             ammo: vehicle.stowage.clone(),
+            // Everything aboard starts intact, which is why this is
+            // `toughness` rather than zero: the map counts hits *remaining*,
+            // so a module runs down to nothing rather than up to a limit and
+            // "is it destroyed" is a comparison against zero wherever it is
+            // asked. `modules_for` is what decides which modules those are,
+            // including the standard set a chassis that declares none
+            // inherits.
+            modules: registry
+                .modules_for(vehicle)
+                .into_iter()
+                .map(|m| (m.id.clone(), m.toughness))
+                .collect(),
             last_hit_by: None,
             pressure: 0,
             detached: false,

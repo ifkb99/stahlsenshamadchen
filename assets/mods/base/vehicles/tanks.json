@@ -22,6 +22,12 @@
         "stowage": {
             "ball_mg": 2400
         },
+        "modules": [
+            "main_gun",
+            "tracks",
+            "ammo_rack",
+            "radio_set"
+        ],
         "crew_slots": [
             "commander",
             "driver"
@@ -55,6 +61,12 @@
             "ap_37": 120,
             "ball_mg": 2400
         },
+        "modules": [
+            "main_gun",
+            "tracks",
+            "ammo_rack",
+            "radio_set"
+        ],
         "crew_slots": [
             "commander",
             "driver",
@@ -90,6 +102,12 @@
             "he_75": 30,
             "ball_mg": 2800
         },
+        "modules": [
+            "main_gun",
+            "tracks",
+            "ammo_rack",
+            "radio_set"
+        ],
         "crew_slots": [
             "commander",
             "driver",
@@ -126,6 +144,12 @@
             "he_88": 28,
             "ball_mg": 2400
         },
+        "modules": [
+            "main_gun",
+            "tracks",
+            "ammo_rack",
+            "radio_set"
+        ],
         "crew_slots": [
             "commander",
             "driver",
@@ -161,6 +185,12 @@
             "ap_88": 28,
             "he_88": 12
         },
+        "modules": [
+            "main_gun",
+            "tracks",
+            "ammo_rack",
+            "radio_set"
+        ],
         "crew_slots": [
             "commander",
             "driver",
@@ -193,6 +223,12 @@
         "stowage": {
             "he_105": 40
         },
+        "modules": [
+            "main_gun",
+            "tracks",
+            "ammo_rack",
+            "radio_set"
+        ],
         "crew_slots": [
             "commander",
             "driver",

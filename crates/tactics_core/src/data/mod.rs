@@ -6,6 +6,7 @@ mod command;
 mod cores;
 mod defs;
 mod manifest;
+mod modules;
 mod morale;
 mod registry;
 mod scale;
@@ -19,6 +20,7 @@ pub use cores::{
 };
 pub use defs::*;
 pub use manifest::ModManifest;
+pub use modules::{ModuleDef, ModuleEffect, STANDARD_MODULES};
 pub use morale::{MoraleRules, MoraleRung, holds_together};
 pub use registry::{DataError, DataRegistry, ValidationReport, parse_color};
 pub use scale::Scale;

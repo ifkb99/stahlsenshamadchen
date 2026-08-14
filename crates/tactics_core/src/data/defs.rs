@@ -147,6 +147,25 @@ pub struct VehicleDef {
     /// nothing, fires exactly as it always did, and validates.
     #[serde(default)]
     pub stowage: std::collections::BTreeMap<String, u32>,
+    /// What is aboard that can be broken separately from the vehicle:
+    /// [`crate::data::ModuleDef`] ids, in no particular order.
+    ///
+    /// A list rather than a map because a module is a thing a vehicle either
+    /// has or does not; how much of it there is lives on the definition, as
+    /// `size`. Naming the same id twice is meaningless — per-module state is
+    /// keyed by id — and validation says so.
+    ///
+    /// **Empty means "assume the usual four", not "an empty hull."** A
+    /// vehicle written before modules existed still has a gun, running gear,
+    /// racks and a wireless set, and spawning her as a shell with nothing
+    /// inside would make every mod in existence wrong at once. The rule is
+    /// deliberately mechanical so it can be stated in one sentence: an empty
+    /// list means look up [`crate::data::STANDARD_MODULES`] in the registry
+    /// and take whichever of them the loaded content actually declares. A mod
+    /// that declares no modules at all therefore yields units with nothing
+    /// inside to hit, which is precisely today's game.
+    #[serde(default)]
+    pub modules: Vec<String>,
     /// Requisition cost on the overworld.
     #[serde(default)]
     pub cost: i32,
