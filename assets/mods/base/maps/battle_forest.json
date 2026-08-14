@@ -97,12 +97,7 @@
     ],
     "sides": [
         {
-            "name": "Kuhlmann Academy",
-            "ai": {
-                "planner": "utility",
-                "difficulty": 4,
-                "doctrine": "recon_pull"
-            }
+            "name": "Kuhlmann Academy"
         },
         {
             "name": "Iron Valkyries",

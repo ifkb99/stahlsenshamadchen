@@ -96,12 +96,7 @@
     ],
     "sides": [
         {
-            "name": "Kuhlmann Academy",
-            "ai": {
-                "planner": "utility",
-                "difficulty": 4,
-                "doctrine": "massed_armor"
-            }
+            "name": "Kuhlmann Academy"
         },
         {
             "name": "Iron Valkyries",

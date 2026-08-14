@@ -366,6 +366,50 @@ tuning, and the doctrine coefficients re-read against the new outcome
 space. This is where the delegation-tax and stalemate numbers get
 re-baselined and quoted.
 
+**B4 ✅ done** (2026-08-14), in four slices plus the ground it asked for:
+
+- **Blast asks the plate it faces** and only the big guns skip "wounded"
+  (`8bc7b4d`): the thinnest-plate overmatch that let a frontal 105
+  bounce wreck a heavy through her rear armor died on the instrument's
+  first table, and the savage threshold rose so a 75 wounds before it
+  kills — the dramatic middle state exists now (0.5 wounded / 2.6 out
+  per battle, from 0.1 / 3.0).
+- **The brew-up chain** (`b782f4b`, the designer's ruling that the one
+  integer is fine only if everything around it is simulated): per-round
+  `volatility`, `safety` as wet stowage in battle, and per-vehicle racks
+  (bulk / standard / sparse). Brewed deaths 49% → 26%; battles end
+  through the people aboard.
+- **The inversion cured** (`3d793f6`): the plateau rule — among tiles
+  within 0.3 of the best score, take the nearest — replaced the
+  clumping (x, y) tie-break that made noise accidentally load-bearing,
+  and the skill-gap table moved onto a mirrored arena so it stops
+  measuring the map. The written metric is met: difficulty 5 over
+  difficulty 1 wins ~78% at 1:1.8–2.1 exchange, both seatings, with
+  equal skill at parity.
+- **The loader's choice and the progress clock** (`5a78bbe`): AP-or-HE
+  is decided at the racks per target through one value function shared
+  with the AI's pricing (a hopeless 75 harasses a heavy's tracks with
+  HE instead of going silent), and the stalemate clock measures
+  progress rather than proximity — the mutually-unkillable staring
+  contest this made reachable now winds down and the score decides it.
+- **The ground** (`189bcfd`, per the designer: balance was overfitting
+  one map): `battle_plains` and `battle_forest`, both regulation
+  hexagons with six units and two formations a side, mirrored orders of
+  battle — and `balance --sim` samples the whole battle-map pool per
+  seed, so every future map is free balance signal. A random map
+  generator is recorded in TODO as the eventual real answer.
+
+Deferred out of B4 with reasons: artillery *lead* (aiming ahead of a
+mover needs an observed heading — target-track memory the command
+picture could carry; a bad guess is worse than aiming true); the
+mirrored arena's residual side-B edge (suspected hex-grid mirror-parity
+artifact in the instrument, not the game); and the doctrine-coefficient
+re-read — including the delegation-tax regression (massed under command
+currently underperforms flat massed) — which belongs to the map-pool
+era now that the pool exists, exactly per the designer's overfitting
+point. Those plus `brewup_percent` fine-tuning are the standing tuning
+backlog, all instrument-visible.
+
 Its first target was measured on 2026-08-13 by the `skillgap` example
 (folded into `balance --sim` by B5, which is where it lives now) after
 the designer asked whether a skill gap wins cleanly here the way
