@@ -10,33 +10,43 @@
 //!
 //! The **analytic** pass answers "what did that number just do" without playing
 //! anything: it stands two vehicles on an empty field and asks the real combat
-//! code what would happen. It runs in milliseconds, so it belongs in the tight
-//! loop where you are editing a json file and want to know whether the 88 can
-//! still hurt a Löwe from the front.
+//! code what would happen. It runs in well under a second, so it belongs in the
+//! tight loop where you are editing a json file and want to know whether the 88
+//! can still hurt a Löwe from the front.
 //!
 //! The **simulated** pass (`--sim`) fights whole battles and reports what
-//! actually happened — who won, how long it took, which vehicles died. It is
-//! slower and noisier, and it is the check at the end, because the analytic
-//! numbers can all look reasonable while the fights they produce are terrible.
+//! actually happened — who won, what killed them, what it cost the girls, how
+//! many shells went out. It is slower and noisier, and it is the check at the
+//! end, because the analytic numbers can all look reasonable while the fights
+//! they produce are terrible.
 //!
-//! Everything here goes through `preview_attack` and `resolve_round` rather
-//! than reimplementing the formulas, so the report cannot drift from the game.
-//! A harness that computes its own damage would eventually be measuring a
-//! second, imaginary game.
+//! Both passes are organised around the **kill chain** the ballistics rewrite
+//! installed, because that is now the shape of the game: a round is chambered,
+//! it hits or it does not, it gets through the plate or it does nothing at all,
+//! and what it finds behind the plate is girls and modules rather than a hit
+//! point pool. Every number below therefore comes out of `preview_attack`,
+//! `chambered`, `flight_ticks` and `resolve_round` rather than a formula
+//! written here — the tables are forced through the engine by loading the
+//! round under test into the racks and asking, not by multiplying the same
+//! numbers a second time in a second place. A harness that computes its own
+//! penetration would eventually be measuring a second, imaginary game.
+//!
+//! The one exception is labelled where it appears: the "shots to knock out"
+//! table folds the brew-up and blast-overmatch rolls into a closed form,
+//! assembled from the real constants but not run through the resolver. The
+//! note under that table says so, and the `--sim` kill-cause table is what
+//! checks it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::io::Write;
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{
-    BattleState, EndReason, Event, Order, SideState, UnitId, preview_attack,
+    AttackPreview, BattleState, EndReason, Event, Order, SideState, UnitId, flight_ticks,
+    preview_attack,
 };
-use tactics_core::data::{ArmorFacing, DamageType, DataRegistry};
+use tactics_core::data::{ArmorFacing, DataRegistry, ModuleEffect, WeaponDef};
 use tactics_core::map::{Facing, HexMap, MapFile, UnitPlacement};
-use tactics_core::roster::Roster;
-
-/// How far apart the analytic duel stands, in hexes. Inside every weapon's
-/// band except the howitzer's minimum, and far enough that range falloff is
-/// doing something.
-const DUEL_RANGE: i32 = 4;
+use tactics_core::roster::{GirlId, Roster};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -52,12 +62,16 @@ fn main() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
     let (registry, _) = DataRegistry::load_dir(&root).expect("mods load");
 
+    let mut duels = Duels::new(&registry);
     roster_table(&registry);
-    gun_table(&registry);
-    flags(&registry);
+    penetration_table(&registry, &mut duels);
+    kill_chain_table(&registry, &mut duels);
+    flight_table(&registry);
+    flags(&registry, &mut duels);
     if sim {
         simulate(&registry, games);
         delegation_tax(&registry, games);
+        skill_gap(&registry, games);
     } else {
         println!("\n(pass --sim to fight {games} battles and see what these numbers do)");
     }
@@ -73,196 +87,281 @@ fn heading(title: &str) {
     println!("{}", "-".repeat(title.len().max(60)));
 }
 
+/// Column heading that fits, without mangling short names.
+fn short(id: &str) -> String {
+    if id.len() <= 11 {
+        id.to_string()
+    } else {
+        id.chars().take(10).chain(std::iter::once('.')).collect()
+    }
+}
+
+/// Every vehicle in the roster, sorted, so every table has the same columns
+/// in the same order.
+fn vehicle_ids(reg: &DataRegistry) -> Vec<String> {
+    let mut ids: Vec<String> = reg.vehicles.keys().cloned().collect();
+    ids.sort();
+    ids
+}
+
+/// Every gun paired with every round it can chamber, sorted.
+///
+/// A weapon whose mod declares no ammunition is deliberately absent: it fires
+/// on the legacy path, whose penetration is derived inside `chambered` from
+/// the weapon's own numbers and is not reachable from here without writing
+/// that derivation down a second time. [`legacy_guns`] names them instead, so
+/// they are reported as untabulated rather than silently missing.
+fn gun_rounds(reg: &DataRegistry) -> Vec<(String, String)> {
+    let mut ids: Vec<&String> = reg.weapons.keys().collect();
+    ids.sort();
+    let mut out = Vec::new();
+    for id in ids {
+        let weapon = &reg.weapons[id];
+        for ammo in &weapon.ammo {
+            if reg.ammo(ammo).is_some() {
+                out.push((id.clone(), ammo.clone()));
+            }
+        }
+    }
+    out
+}
+
+fn legacy_guns(reg: &DataRegistry) -> Vec<String> {
+    let mut ids: Vec<String> = reg
+        .weapons
+        .values()
+        .filter(|w| w.ammo.is_empty())
+        .map(|w| w.id.clone())
+        .collect();
+    ids.sort();
+    ids
+}
+
+/// The three ranges every gun is tabulated at: the near edge of its band, the
+/// middle of it, and the end of its reach. Kinetic penetration falls off
+/// across exactly this span, so the near and far rows are the two ends of the
+/// only curve in the data.
+fn bands(weapon: &WeaponDef) -> [i32; 3] {
+    let near = (weapon.range[0] as i32).max(1);
+    let far = (weapon.range[1] as i32).max(near);
+    [near, (near + far) / 2, far]
+}
+
+/// Which arc a shot lands on, and the target facing that produces it when the
+/// attacker stands due west. Front is nose-on, rear is tail-on, and either
+/// eastward diagonal presents a flank.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Arc {
+    Front,
+    Side,
+    Rear,
+}
+
+impl Arc {
+    fn facing(self) -> Facing {
+        match self {
+            Arc::Front => Facing::West,
+            Arc::Side => Facing::NorthEast,
+            Arc::Rear => Facing::East,
+        }
+    }
+
+    fn expected(self) -> ArmorFacing {
+        match self {
+            Arc::Front => ArmorFacing::Front,
+            Arc::Side => ArmorFacing::Side,
+            Arc::Rear => ArmorFacing::Rear,
+        }
+    }
+
+    fn index(self) -> u8 {
+        match self {
+            Arc::Front => 0,
+            Arc::Side => 1,
+            Arc::Rear => 2,
+        }
+    }
+}
+
 // --- the analytic pass ----------------------------------------------------
 
-fn roster_table(reg: &DataRegistry) {
-    heading("vehicles");
-    println!(
-        "{:<16} {:>3} {:>10} {:>9} {:>8} {:>6} {:>5}",
-        "id", "hp", "armour F/S/R", "speed", "sight", "safety", "cost"
-    );
-    let mut ids: Vec<_> = reg.vehicles.keys().collect();
-    ids.sort();
-    for id in ids {
-        let v = &reg.vehicles[id];
-        println!(
-            "{:<16} {:>3} {:>10} {:>9} {:>8} {:>6} {:>5}",
-            id,
-            v.max_hp,
-            format!("{}/{}/{}", v.armor.front, v.armor.side, v.armor.rear),
-            reg.scale.format_speed(v.movement.points),
-            reg.scale.format_distance(v.vision_range as i32),
-            v.safety,
-            v.cost,
+/// A memo over duels, because the tables below ask the same question from
+/// several directions and each answer costs a whole battlefield.
+///
+/// The cache is keyed by everything that changes the answer and read through
+/// sorted iteration everywhere it is printed, so hash order never reaches the
+/// output.
+struct Duels<'r> {
+    reg: &'r DataRegistry,
+    shots: HashMap<(String, String, String, u8, i32), Option<AttackPreview>>,
+    facts: HashMap<String, Option<Facts>>,
+}
+
+/// What a vehicle is made of, as the engine counts it. Read off a spawned
+/// unit rather than off the definition so that the substance pool here is
+/// literally `BattleState::substance` and the interior weights are literally
+/// the modules the engine stamped aboard — including the standard four a
+/// chassis that declares none inherits.
+#[derive(Clone, Copy)]
+struct Facts {
+    /// Full substance complement: two points per girl plus every module's
+    /// toughness.
+    substance: u32,
+    /// Girls aboard — the seats a behind-armor roll can find.
+    seats: u32,
+    /// Total weight a behind-armor effect roll draws from.
+    interior: u32,
+    /// The ammunition stowage's share of that weight, which is the only
+    /// module whose destruction is usually the end of the vehicle.
+    rack: u32,
+    /// The thinnest plate on the hull, which is what blast overmatch is
+    /// measured against.
+    thinnest: i32,
+}
+
+impl<'r> Duels<'r> {
+    fn new(reg: &'r DataRegistry) -> Self {
+        Self {
+            reg,
+            shots: HashMap::new(),
+            facts: HashMap::new(),
+        }
+    }
+
+    /// One prospective shot, as the engine previews it: `weapon` firing
+    /// `ammo` at `vehicle` from `dist` hexes, striking `arc`.
+    fn shot(
+        &mut self,
+        weapon: &str,
+        ammo: &str,
+        vehicle: &str,
+        arc: Arc,
+        dist: i32,
+    ) -> Option<AttackPreview> {
+        let key = (
+            weapon.to_string(),
+            ammo.to_string(),
+            vehicle.to_string(),
+            arc.index(),
+            dist,
         );
+        if let Some(hit) = self.shots.get(&key) {
+            return hit.clone();
+        }
+        let value = duel(self.reg, weapon, ammo, vehicle, arc, dist);
+        self.shots.insert(key, value.clone());
+        value
+    }
+
+    fn facts(&mut self, vehicle: &str) -> Option<Facts> {
+        if let Some(known) = self.facts.get(vehicle) {
+            return *known;
+        }
+        let value = facts_for(self.reg, vehicle);
+        self.facts.insert(vehicle.to_string(), value);
+        value
     }
 }
 
-/// Expected damage per shot and rounds-to-kill, for every gun against every
-/// vehicle's frontal armour. The single most useful table for balance: it says
-/// what can hurt what, and how long it takes.
-fn gun_table(reg: &DataRegistry) {
-    heading(&format!(
-        "expected damage per shot at {DUEL_RANGE} hexes ({}), front armour",
-        reg.scale.format_distance(DUEL_RANGE)
-    ));
-
-    let mut vehicles: Vec<_> = reg.vehicles.keys().cloned().collect();
-    vehicles.sort();
-    let mut weapons: Vec<_> = reg.weapons.keys().cloned().collect();
-    weapons.sort();
-
-    print!("{:<14}", "");
-    for v in &vehicles {
-        print!("{:>13}", short(v));
-    }
-    println!();
-
-    for w in &weapons {
-        print!("{:<14}", w);
-        for v in &vehicles {
-            match duel(reg, w, v, Facing::West) {
-                Some(shot) => {
-                    let ttk = rounds_to_kill(reg, w, v, shot.expected);
-                    print!("{:>13}", format!("{:.1} ({})", shot.expected, ttk));
-                }
-                None => print!("{:>13}", "-"),
-            }
-        }
-        println!();
-    }
-    println!("\n  cell is `expected damage per shot (rounds to kill)`; `inf` means it cannot");
-    println!("  get through in any useful time, `-` means the gun is not carried in range");
-
-    heading("the same guns from behind, for comparison");
-    print!("{:<14}", "");
-    for v in &vehicles {
-        print!("{:>13}", short(v));
-    }
-    println!();
-    for w in &weapons {
-        print!("{:<14}", w);
-        for v in &vehicles {
-            match duel(reg, w, v, Facing::East) {
-                Some(shot) => print!("{:>13}", format!("{:.1}", shot.expected)),
-                None => print!("{:>13}", "-"),
-            }
-        }
-        println!();
-    }
-}
-
-/// Things worth a second look. Not failures — this game has not decided all of
-/// these — but the shapes that usually mean a number is wrong.
-fn flags(reg: &DataRegistry) {
-    heading("worth a look");
-    let mut said = false;
-
-    let mut vehicles: Vec<_> = reg.vehicles.keys().cloned().collect();
-    vehicles.sort();
-    let mut weapons: Vec<_> = reg.weapons.keys().cloned().collect();
-    weapons.sort();
-
-    for w in &weapons {
-        let Some(def) = reg.weapon(w) else { continue };
-        for v in &vehicles {
-            let Some(veh) = reg.vehicle(v) else { continue };
-            let Some(shot) = duel(reg, w, v, Facing::West) else {
-                continue;
-            };
-            let ttk = rounds_to_kill(reg, w, v, shot.expected);
-            // Small arms that can kill armour at all is the `.max(1)` damage
-            // floor showing through: a non-penetrating hit should do nothing,
-            // and instead it chips. Worst where the armour is thickest.
-            if def.damage_type == DamageType::SmallArms && veh.armor.front >= 5 && ttk != "inf" {
-                println!(
-                    "  {w} ({:?}) kills {v} (front armour {}) in {ttk} rounds — the \
-                     `.max(1)` damage floor",
-                    def.damage_type, veh.armor.front
-                );
-                said = true;
-            }
-            // A gun that needs longer than a battle is effectively no gun.
-            if def.damage_type != DamageType::SmallArms && ttk == "inf" {
-                println!("  {w} cannot meaningfully hurt {v} from the front");
-                said = true;
-            }
-        }
-    }
-
-    // A vehicle that outranges its own eyes needs a spotter, which is a
-    // deliberate design point for gun tanks and an accident anywhere else.
-    for v in &vehicles {
-        let Some(veh) = reg.vehicle(v) else { continue };
-        let reach = veh
-            .weapons
-            .iter()
-            .filter_map(|w| reg.weapon(w))
-            .map(|w| w.range[1])
-            .max()
-            .unwrap_or(0);
-        if reach > veh.vision_range {
-            println!(
-                "  {v} shoots {} but sees {} — needs a spotter",
-                reg.scale.format_distance(reach as i32),
-                reg.scale.format_distance(veh.vision_range as i32),
-            );
-            said = true;
-        }
-    }
-    if !said {
-        println!("  nothing stood out");
-    }
-}
-
-struct Shot {
-    expected: f32,
-}
-
-/// Stand two vehicles on an empty field and ask the real combat code what one
-/// shot would do. `target_facing` selects the armour arc: the attacker is west
-/// of the target, so a target facing west is hit head-on and one facing east
-/// is hit from behind.
+/// Stand two vehicles on an empty field, load exactly one kind of round into
+/// the attacker, and ask the real combat code what one shot would do.
+///
+/// Forcing the round is what makes this a table *per round* rather than per
+/// gun: `chambered` fires the first ammunition in the weapon's list with
+/// anything left in the racks, so emptying every other rack through the
+/// engine's own `set_loadout` leaves the round under test as the only thing
+/// the gun can put downrange. Nothing here reimplements penetration; it
+/// arranges the world so that `preview_attack` answers the question asked.
+///
+/// The two vehicles stand in the same map row, which makes the shot square on
+/// to the struck hex face — obliquity exactly 1.00 — so the plate in the
+/// table is the plate on the datasheet and the reader is comparing armor
+/// rather than geometry.
 fn duel(
     reg: &DataRegistry,
     weapon: &str,
+    ammo: &str,
     target_vehicle: &str,
-    target_facing: Facing,
-) -> Option<Shot> {
-    let attacker_vehicle = reg
+    arc: Arc,
+    dist: i32,
+) -> Option<AttackPreview> {
+    // Sorted rather than "whichever the hash hands over first": the choice of
+    // firing platform must not move between runs.
+    let mut carriers: Vec<&String> = reg
         .vehicles
         .values()
-        .find(|v| v.weapons.iter().any(|w| w == weapon))?;
+        .filter(|v| v.weapons.iter().any(|w| w == weapon))
+        .map(|v| &v.id)
+        .collect();
+    carriers.sort();
+    let attacker_vehicle = reg.vehicle(carriers.first()?)?;
     let weapon_index = attacker_vehicle.weapons.iter().position(|w| w == weapon)?;
 
-    let state = two_unit_field(reg, &attacker_vehicle.id, target_vehicle, target_facing)?;
-    let preview = preview_attack(reg, &state, UnitId(0), weapon_index, UnitId(1), false)?;
-    if !preview.in_range {
-        return None;
+    let mut state = two_unit_field(
+        reg,
+        &attacker_vehicle.id,
+        target_vehicle,
+        arc.facing(),
+        dist,
+    )?;
+    let loaded: Vec<String> = state.unit(UnitId(0))?.ammo.keys().cloned().collect();
+    for id in loaded {
+        if id != ammo {
+            state.set_loadout(reg, UnitId(0), &id, 0).ok()?;
+        }
     }
-    debug_assert_eq!(preview.facing, expected_arc(target_facing));
-    Some(Shot {
-        expected: preview.expected_damage,
+    // One round is all a preview needs, and a gun this vehicle cannot chamber
+    // the round in refuses here rather than quietly previewing something else.
+    state.set_loadout(reg, UnitId(0), ammo, 1).ok()?;
+
+    let preview = preview_attack(reg, &state, UnitId(0), weapon_index, UnitId(1), false)?;
+    debug_assert_eq!(preview.facing, arc.expected());
+    Some(preview)
+}
+
+/// What the engine says is aboard a fresh vehicle of this type.
+fn facts_for(reg: &DataRegistry, vehicle: &str) -> Option<Facts> {
+    let state = two_unit_field(reg, vehicle, vehicle, Facing::West, 2)?;
+    let unit = state.unit(UnitId(1))?;
+    let (_, substance) = state.substance(reg, unit);
+    let crew_weight = reg.balance.crew_weight.max(0) as u32;
+    let seats = unit.crew.len() as u32;
+    let mut interior = crew_weight * seats;
+    let mut rack = 0;
+    for id in unit.modules.keys() {
+        if let Some(module) = reg.module(id) {
+            interior += module.size;
+            if module.effect == ModuleEffect::Ammo {
+                rack += module.size;
+            }
+        }
+    }
+    let armor = &reg.vehicle(vehicle)?.armor;
+    let thinnest = [ArmorFacing::Front, ArmorFacing::Side, ArmorFacing::Rear]
+        .into_iter()
+        .map(|f| armor.value(f))
+        .min()
+        .unwrap_or(0)
+        .max(0);
+    Some(Facts {
+        substance,
+        seats,
+        interior,
+        rack,
+        thinnest,
     })
 }
 
-fn expected_arc(facing: Facing) -> ArmorFacing {
-    match facing {
-        Facing::West => ArmorFacing::Front,
-        Facing::East => ArmorFacing::Rear,
-        _ => ArmorFacing::Side,
-    }
-}
-
-/// A strip of grass with one vehicle at each end. `shape: free` because this
-/// is deliberately not a whole overworld tile.
+/// A strip of grass with one vehicle at each end, `dist` hexes apart.
+/// `shape: free` because this is deliberately not a whole overworld tile.
 fn two_unit_field(
     reg: &DataRegistry,
     attacker: &str,
     target: &str,
     target_facing: Facing,
+    dist: i32,
 ) -> Option<BattleState> {
-    let width = (DUEL_RANGE + 3) as usize;
+    let width = (dist + 3) as usize;
     let row = "g".repeat(width);
     let file: MapFile = serde_json::from_value(serde_json::json!({
         "id": "balance_field",
@@ -286,7 +385,7 @@ fn two_unit_field(
             leads: false,
         },
         UnitPlacement {
-            at: [1 + DUEL_RANGE, 1],
+            at: [1 + dist, 1],
             side: 1,
             vehicle: target.to_string(),
             crew: Vec::new(),
@@ -318,31 +417,420 @@ fn two_unit_field(
     ))
 }
 
-/// Rounds to remove a target's hit points, given a weapon's cadence.
-fn rounds_to_kill(reg: &DataRegistry, weapon: &str, vehicle: &str, per_shot: f32) -> String {
-    let (Some(w), Some(v)) = (reg.weapon(weapon), reg.vehicle(vehicle)) else {
-        return "-".into();
-    };
-    let shots = (reg.scale.ticks_per_round as f32 / w.reload(&reg.scale) as f32).max(0.0);
-    let per_round = per_shot * shots;
-    if per_round <= 0.01 {
-        return "inf".into();
+fn roster_table(reg: &DataRegistry) {
+    heading("vehicles");
+    println!(
+        "{:<16} {:>12} {:>9} {:>9} {:>8} {:>6} {:>5} {:>9}",
+        "id", "armour F/S/R", "substance", "speed", "sight", "safety", "cost", "rounds"
+    );
+    for id in vehicle_ids(reg) {
+        let v = &reg.vehicles[&id];
+        // Substance is the hit-point pool's successor and is derived, not
+        // declared: two points per seat plus every module's toughness.
+        let substance: u32 = 2 * v.crew_slots.len() as u32
+            + reg.modules_for(v).iter().map(|m| m.toughness).sum::<u32>();
+        let rounds: u32 = v.stowage.values().sum();
+        println!(
+            "{:<16} {:>12} {:>9} {:>9} {:>8} {:>6} {:>5} {:>9}",
+            id,
+            format!("{}/{}/{}", v.armor.front, v.armor.side, v.armor.rear),
+            substance,
+            reg.scale.format_speed(v.movement.points),
+            reg.scale.format_distance(v.vision_range as i32),
+            v.safety,
+            v.cost,
+            rounds,
+        );
     }
-    let rounds = v.max_hp as f32 / per_round;
-    // Longer than a battle lasts is the same as never, for balance purposes.
-    if rounds > 40.0 {
-        "inf".into()
-    } else {
-        format!("{rounds:.0}")
+    println!(
+        "\n  `substance` is what she is made of — two points per girl plus every\n  \
+         module's toughness — which is what a penetration spends itself against\n  \
+         now that there are no hit points. `rounds` is everything in the racks."
+    );
+}
+
+/// The penetration gate, gun by gun and round by round: the odds of getting
+/// through, which is the first question the whole model asks.
+fn penetration_table(reg: &DataRegistry, duels: &mut Duels) {
+    heading(&format!(
+        "penetration: P(pen) %, square on (obliquity 1.00), scatter ±{}%",
+        reg.balance.pen_scatter
+    ));
+    let vehicles = vehicle_ids(reg);
+    print!("{:<26}", "");
+    for v in &vehicles {
+        print!("{:>12}", short(v));
+    }
+    println!();
+
+    for (weapon_id, ammo_id) in gun_rounds(reg) {
+        let (Some(weapon), Some(ammo)) = (reg.weapon(&weapon_id), reg.ammo(&ammo_id)) else {
+            continue;
+        };
+        let [near, mid, far] = bands(weapon);
+        println!(
+            "\n{weapon_id} / {ammo_id}  ({}, pen {}→{} over {}, blast {})",
+            ammo.class.as_str(),
+            ammo.penetration[0],
+            ammo.penetration[1],
+            reg.scale.format_range(weapon.range),
+            ammo.blast,
+        );
+        for (label, arc, dist) in [
+            ("front  near", Arc::Front, near),
+            ("front   mid", Arc::Front, mid),
+            ("front   max", Arc::Front, far),
+            ("side    mid", Arc::Side, mid),
+            ("rear    mid", Arc::Rear, mid),
+        ] {
+            print!("{:<26}", format!("  {label}  {dist} hex"));
+            for vehicle in &vehicles {
+                match duels.shot(&weapon_id, &ammo_id, vehicle, arc, dist) {
+                    Some(shot) => print!("{:>12}", shot.pen_chance),
+                    None => print!("{:>12}", "-"),
+                }
+            }
+            println!();
+        }
+    }
+    println!(
+        "\n  every cell is `preview_attack`'s own pen chance with that round forced\n  \
+         into the racks, so it is the number the AI plans on and the die the\n  \
+         resolver throws. `-` means no vehicle in the roster carries that gun."
+    );
+    let legacy = legacy_guns(reg);
+    if !legacy.is_empty() {
+        println!(
+            "  not tabulated: {} — no ammunition declared, so they fire the legacy\n  \
+             path off the weapon's own numbers.",
+            legacy.join(", ")
+        );
     }
 }
 
-/// Column heading that fits, without mangling short names.
-fn short(id: &str) -> String {
-    if id.len() <= 12 {
-        id.to_string()
+/// One shot's worth of the whole chain, folded into "how many of these does
+/// it take".
+struct KillChain {
+    /// Expected shots fired until the target is out of the fight.
+    shots: f32,
+    /// The same, in rounds of the battle clock, at this gun's cadence.
+    rounds: f32,
+}
+
+/// Expected shots to knock out, at mid range, front plate.
+///
+/// The chain, in the order the engine walks it: hit chance, penetration
+/// chance, and then the behind-armor budget — the ledger damage the round
+/// carries, spent as one effect roll per `points_per_effect`, each roll
+/// picking a girl or a module weighted by size. Everything up to and
+/// including the budget is read off `preview_attack`; what is *modeled* here
+/// is the two catastrophes, because they are rolls rather than expectations:
+/// a rack hit lighting the racks, and blast overmatching a thin skin. Both
+/// are assembled from the real constants and both are checked by the
+/// `--sim` kill-cause table.
+///
+/// What it deliberately leaves out is the crew's nerve. Bail-out is a morale
+/// roll and the commonest end of a real tank; the fought-out numbers will
+/// therefore always come in *under* this table, and the gap between them is
+/// itself worth watching.
+fn kill_chain(
+    reg: &DataRegistry,
+    shot: &AttackPreview,
+    facts: Facts,
+    weapon: &WeaponDef,
+    overmatches: bool,
+) -> KillChain {
+    let per_effect = reg.balance.points_per_effect.max(1);
+    let hit = shot.hit.total as f32 / 100.0;
+    let pen = shot.pen_chance as f32 / 100.0;
+    let rolls = ((shot.damage.max(1) + per_effect - 1) / per_effect) as f32;
+    // The same test `behind_armor_effects` makes: double the price of a roll
+    // arriving at once puts a girl straight out instead of wounding her.
+    let savage = shot.damage >= per_effect * 2;
+
+    let interior = facts.interior.max(1) as f32;
+    let crew_share = (reg.balance.crew_weight.max(0) as u32 * facts.seats) as f32 / interior;
+    // Each roll takes one substance point — a wound, or one module hit — and
+    // a savage roll that lands on a girl takes both of hers at once.
+    let per_pen = rolls * (1.0 + if savage { crew_share } else { 0.0 });
+    let per_shot = hit * pen * per_pen;
+
+    // The rack, and the fire it starts. `brewup_percent` is scaled by the
+    // round's post-pen potency and by how full the racks still are; at the
+    // start of a battle they are full, which is the worst case and the one
+    // worth tabulating. The potency is recovered from the ledger damage the
+    // preview reports over the weapon's own weight, which is exactly how
+    // `Round::loaded` built it.
+    let rack_found = 1.0 - (1.0 - facts.rack as f32 / interior).powf(rolls);
+    let potency = if weapon.damage > 0 {
+        shot.damage as f32 / weapon.damage as f32
     } else {
-        id.chars().take(11).chain(std::iter::once('.')).collect()
+        1.0
+    };
+    let brew = rack_found * ((reg.balance.brewup_percent.max(0) as f32 * potency) / 100.0).min(1.0);
+    // A bounce is not always nothing: blast comfortably over the thinnest
+    // plate wrecks the vehicle without consulting the gate at all.
+    let catastrophe = hit * (pen * brew + (1.0 - pen) * if overmatches { 1.0 } else { 0.0 });
+
+    let attrition = if per_shot > 0.0 {
+        (facts.substance as f32 / per_shot).ceil()
+    } else {
+        f32::INFINITY
+    };
+    // E[min(geometric catastrophe, attrition)] — the sum of the odds of her
+    // still being in the fight after each shot.
+    let shots = if catastrophe > 0.0 {
+        let survive = 1.0 - catastrophe;
+        if attrition.is_finite() {
+            (1.0 - survive.powf(attrition)) / catastrophe
+        } else {
+            1.0 / catastrophe
+        }
+    } else {
+        attrition
+    };
+    let cadence = reg.scale.ticks_per_round as f32 / weapon.reload(&reg.scale).max(1) as f32;
+    KillChain {
+        shots,
+        rounds: shots / cadence.max(0.001),
+    }
+}
+
+fn kill_chain_table(reg: &DataRegistry, duels: &mut Duels) {
+    heading("expected shots to knock out — mid range, front plate");
+    let vehicles = vehicle_ids(reg);
+    print!("{:<26}", "");
+    for v in &vehicles {
+        print!("{:>12}", short(v));
+    }
+    println!();
+
+    for (weapon_id, ammo_id) in gun_rounds(reg) {
+        let (Some(weapon), Some(ammo)) = (reg.weapon(&weapon_id), reg.ammo(&ammo_id)) else {
+            continue;
+        };
+        let mid = bands(weapon)[1];
+        print!("{:<26}", format!("{weapon_id} / {ammo_id}"));
+        for vehicle in &vehicles {
+            let cell = match (
+                duels.shot(&weapon_id, &ammo_id, vehicle, Arc::Front, mid),
+                duels.facts(vehicle),
+            ) {
+                (Some(shot), Some(facts)) => {
+                    let overmatch = ammo.blast > 0 && ammo.blast >= facts.thinnest * 2;
+                    let chain = kill_chain(reg, &shot, facts, weapon, overmatch);
+                    if chain.shots.is_finite() && chain.shots < 400.0 {
+                        format!("{:.1} ({:.1}r)", chain.shots, chain.rounds)
+                    } else {
+                        "never".to_string()
+                    }
+                }
+                _ => "-".to_string(),
+            };
+            print!("{cell:>12}");
+        }
+        println!();
+    }
+    println!(
+        "\n  cell is `shots (rounds of battle time)` for one gun firing that round\n  \
+         at its own cadence. Hit, penetration and the effect budget are engine\n  \
+         calls; the brew-up and blast-overmatch terms are MODELED from the same\n  \
+         constants the resolver rolls against. Bail-out is not modeled at all,\n  \
+         so the fought-out battles should come in under this — the gap is the\n  \
+         crew's nerve, and `--sim` counts it."
+    );
+}
+
+/// How long a shell is in the air, which is how much warning its target gets.
+fn flight_table(reg: &DataRegistry) {
+    let indirect: Vec<(String, String)> = gun_rounds(reg)
+        .into_iter()
+        .filter(|(w, _)| reg.weapon(w).is_some_and(|w| w.indirect))
+        .collect();
+    if indirect.is_empty() {
+        return;
+    }
+    heading("shell flight: how much warning the ground gets");
+    println!(
+        "{:<26} {:>10} {:>8} {:>8} {:>14}",
+        "gun / round", "range", "ticks", "seconds", "target moves"
+    );
+    // What the quickest thing on the field covers while the shell is up: the
+    // lead an artillery order has to guess, in the only unit that matters.
+    let fastest = reg
+        .vehicles
+        .values()
+        .map(|v| v.movement.points)
+        .max()
+        .unwrap_or(1);
+    for (weapon_id, ammo_id) in indirect {
+        let (Some(weapon), Some(ammo)) = (reg.weapon(&weapon_id), reg.ammo(&ammo_id)) else {
+            continue;
+        };
+        for (label, dist) in bands(weapon)
+            .into_iter()
+            .zip(["near", "mid", "max"])
+            .map(|(d, l)| (l, d))
+        {
+            let ticks = flight_ticks(&reg.scale, ammo.velocity, dist);
+            let seconds = reg.scale.seconds(ticks as u32);
+            let hexes = fastest as f32 * ticks as f32 / reg.scale.ticks_per_round as f32;
+            println!(
+                "{:<26} {:>10} {:>8} {:>8} {:>14}",
+                format!("{weapon_id} / {ammo_id}"),
+                format!("{label} {dist}h"),
+                ticks,
+                format!("{seconds:.0}s"),
+                format!("{hexes:.1} hex"),
+            );
+        }
+    }
+    println!(
+        "\n  a shell is aimed at ground, so `target moves` is how far the quickest\n  \
+         vehicle in the roster ({}) travels before it lands — the lead an\n  \
+         artillery order has to guess, and the reason standing still is the\n  \
+         mistake it historically was.",
+        reg.scale.format_speed(fastest)
+    );
+}
+
+/// Things worth a second look. Not failures — this game has not decided all of
+/// these — but the shapes that usually mean a number is wrong.
+fn flags(reg: &DataRegistry, duels: &mut Duels) {
+    heading("worth a look");
+    let mut said = false;
+    let vehicles = vehicle_ids(reg);
+    let pairs = gun_rounds(reg);
+
+    // A gun is judged on its best round at its best range, and on its blast
+    // as well as its penetration: a 105 that bounces off a medium still
+    // wrecks a scout car, and calling that "cannot hurt" would be the same
+    // half-truth the pre-ballistics version of this line told.
+    let mut guns: Vec<String> = pairs.iter().map(|(w, _)| w.clone()).collect();
+    guns.dedup();
+    for weapon_id in &guns {
+        let Some(weapon) = reg.weapon(weapon_id) else {
+            continue;
+        };
+        let near = bands(weapon)[0];
+        let rounds: Vec<String> = pairs
+            .iter()
+            .filter(|(w, _)| w == weapon_id)
+            .map(|(_, a)| a.clone())
+            .collect();
+        let best_blast = rounds
+            .iter()
+            .filter_map(|a| reg.ammo(a))
+            .map(|a| a.blast)
+            .max()
+            .unwrap_or(0);
+        let mut helpless = Vec::new();
+        for vehicle in &vehicles {
+            let Some(facts) = duels.facts(vehicle) else {
+                continue;
+            };
+            let best_pen = rounds
+                .iter()
+                .filter_map(|a| duels.shot(weapon_id, a, vehicle, Arc::Front, near))
+                .map(|s| s.pen_chance)
+                .max()
+                .unwrap_or(0);
+            let overmatches = best_blast > 0 && best_blast >= facts.thinnest * 2;
+            if best_pen == 0 && !overmatches {
+                helpless.push(vehicle.clone());
+            }
+        }
+        if !helpless.is_empty() {
+            println!(
+                "  {weapon_id} cannot meaningfully hurt: {}\n    \
+                 (no round it chambers gets through the front plate even at {}, and\n    \
+                 its heaviest blast {best_blast} does not overmatch their thinnest plate)",
+                helpless.join(", "),
+                reg.scale.format_distance(near),
+            );
+            said = true;
+        }
+    }
+
+    // A vehicle nothing on the field can touch is not a design achievement,
+    // it is a battle that cannot end. Every arc, every round, best range.
+    for vehicle in &vehicles {
+        let Some(facts) = duels.facts(vehicle) else {
+            continue;
+        };
+        let mut reachable = false;
+        for (weapon_id, ammo_id) in &pairs {
+            let Some(weapon) = reg.weapon(weapon_id) else {
+                continue;
+            };
+            let near = bands(weapon)[0];
+            let blast = reg.ammo(ammo_id).map(|a| a.blast).unwrap_or(0);
+            if blast > 0 && blast >= facts.thinnest * 2 {
+                reachable = true;
+                break;
+            }
+            for arc in [Arc::Front, Arc::Side, Arc::Rear] {
+                if duels
+                    .shot(weapon_id, ammo_id, vehicle, arc, near)
+                    .is_some_and(|s| s.pen_chance > 0)
+                {
+                    reachable = true;
+                    break;
+                }
+            }
+            if reachable {
+                break;
+            }
+        }
+        if !reachable {
+            println!(
+                "  NOTHING in the roster can hurt {vehicle} from any arc with any round — \
+                 she cannot be killed"
+            );
+            said = true;
+        }
+    }
+
+    // A round no gun lists is content nobody will ever see fired.
+    let mut orphans: Vec<&String> = reg
+        .ammo
+        .keys()
+        .filter(|id| {
+            !reg.weapons
+                .values()
+                .any(|w| w.ammo.iter().any(|a| &a == id))
+        })
+        .collect();
+    orphans.sort();
+    for ammo in orphans {
+        println!("  {ammo} is declared but no weapon can chamber it");
+        said = true;
+    }
+
+    // A vehicle that outranges its own eyes needs a spotter, which is a
+    // deliberate design point for gun tanks and an accident anywhere else.
+    for vehicle in &vehicles {
+        let Some(veh) = reg.vehicle(vehicle) else {
+            continue;
+        };
+        let reach = veh
+            .weapons
+            .iter()
+            .filter_map(|w| reg.weapon(w))
+            .map(|w| w.range[1])
+            .max()
+            .unwrap_or(0);
+        if reach > veh.vision_range {
+            println!(
+                "  {vehicle} shoots {} but sees {} — needs a spotter",
+                reg.scale.format_distance(reach as i32),
+                reg.scale.format_distance(veh.vision_range as i32),
+            );
+            said = true;
+        }
+    }
+    if !said {
+        println!("  nothing stood out");
     }
 }
 
@@ -358,7 +846,21 @@ struct Tally {
     deaths: HashMap<String, usize>,
     shots: u32,
     hits: u32,
+    bounces: u32,
+    misses: u32,
     hits_by_arc: HashMap<String, u32>,
+    /// What actually ended each vehicle, by the flag she died carrying.
+    causes: BTreeMap<&'static str, usize>,
+    girls_wounded: usize,
+    girls_out: usize,
+    /// Rounds that drove out, and rounds still aboard at the end, by ammo
+    /// id. The difference is what the battle cost in ammunition.
+    ammo_aboard: BTreeMap<String, u32>,
+    ammo_left: BTreeMap<String, u32>,
+    racks_destroyed: usize,
+    shells: u32,
+    shells_on_target: u32,
+    shells_bounced: u32,
 }
 
 fn simulate(reg: &DataRegistry, games: usize) {
@@ -373,12 +875,30 @@ fn simulate(reg: &DataRegistry, games: usize) {
         ai.insert(1, planner(reg, seed + 1, "elastic_defense"));
         let mut rounds = 0;
         let mut last_hit: HashMap<UnitId, String> = HashMap::new();
+        // Final state per girl, so a girl wounded and then killed is counted
+        // once, as killed.
+        let mut girls: BTreeMap<GirlId, bool> = BTreeMap::new();
+        for unit in &state.units {
+            for (id, count) in &unit.ammo {
+                *t.ammo_aboard.entry(id.clone()).or_default() += count;
+            }
+        }
         while !state.is_over() && rounds < 60 {
             ai.plan_round(reg, &mut state);
             rounds += 1;
+            // A shell announces itself and then, if anybody was standing on
+            // the ground it came down on, the ordinary vocabulary follows it
+            // immediately. Watching the next event is how artillery gets
+            // credited without the resolver having to say so twice.
+            let mut shell_from: Option<UnitId> = None;
             for event in state.resolve_round(reg) {
+                let landed = std::mem::take(&mut shell_from);
                 match event {
                     Event::ShotFired { .. } => t.shots += 1,
+                    Event::ShellLanded { attacker, .. } => {
+                        t.shells += 1;
+                        shell_from = Some(attacker);
+                    }
                     Event::ShotHit {
                         attacker,
                         target,
@@ -387,6 +907,9 @@ fn simulate(reg: &DataRegistry, games: usize) {
                     } => {
                         t.hits += 1;
                         *t.hits_by_arc.entry(format!("{facing:?}")).or_default() += 1;
+                        if landed == Some(attacker) {
+                            t.shells_on_target += 1;
+                        }
                         // Remembered so a kill can be credited: `UnitDestroyed`
                         // says who died, not who did it, because death is
                         // reaped at the end of a tick and may have several
@@ -395,9 +918,45 @@ fn simulate(reg: &DataRegistry, games: usize) {
                             last_hit.insert(target, a.vehicle.clone());
                         }
                     }
+                    Event::ShotMissed { .. } => t.misses += 1,
+                    Event::ShotBounced { attacker, .. } => {
+                        t.bounces += 1;
+                        if landed == Some(attacker) {
+                            t.shells_on_target += 1;
+                            t.shells_bounced += 1;
+                        }
+                    }
+                    Event::CrewHit { girl, out, .. } => {
+                        let entry = girls.entry(girl).or_insert(false);
+                        *entry |= out;
+                    }
+                    Event::ModuleHit {
+                        module, destroyed, ..
+                    } => {
+                        if destroyed
+                            && reg
+                                .module(&module)
+                                .is_some_and(|m| m.effect == ModuleEffect::Ammo)
+                        {
+                            t.racks_destroyed += 1;
+                        }
+                    }
                     Event::UnitDestroyed { unit, .. } => {
                         if let Some(u) = state.units.get(unit.index()) {
                             *t.deaths.entry(u.vehicle.clone()).or_default() += 1;
+                            // The flags are still on her: reap clears `alive`
+                            // and nothing else, so the cause of death is
+                            // readable exactly here.
+                            let cause = if u.brewed {
+                                "brewed"
+                            } else if u.wrecked {
+                                "wrecked by blast"
+                            } else if u.abandoned {
+                                "abandoned"
+                            } else {
+                                "crew out"
+                            };
+                            *t.causes.entry(cause).or_default() += 1;
                         }
                         if let Some(killer) = last_hit.get(&unit) {
                             *t.kills.entry(killer.clone()).or_default() += 1;
@@ -408,15 +967,27 @@ fn simulate(reg: &DataRegistry, games: usize) {
             }
         }
         t.rounds.push(rounds);
+        for out in girls.values() {
+            if *out {
+                t.girls_out += 1;
+            } else {
+                t.girls_wounded += 1;
+            }
+        }
+        // What is still in the racks when the shooting stops. Everything
+        // missing either went downrange or burned with the rack that held
+        // it, and those two are not separable from outside the engine —
+        // which is what the caveat under the table says.
+        for unit in &state.units {
+            for (id, count) in &unit.ammo {
+                *t.ammo_left.entry(id.clone()).or_default() += count;
+            }
+        }
         match state.over.map(|r| (r.winner, r.reason)) {
             Some((Some(w), _)) => {
                 *t.wins
                     .entry(state.sides[w as usize].name.clone())
                     .or_default() += 1;
-                // Everything still alive on the winning side did the killing.
-                for u in state.alive_units().filter(|u| u.side == w) {
-                    *t.kills.entry(u.vehicle.clone()).or_default() += 0;
-                }
             }
             Some((None, EndReason::Stalemate)) => {
                 t.stalemates += 1;
@@ -443,11 +1014,20 @@ fn simulate(reg: &DataRegistry, games: usize) {
         t.rounds.iter().max().copied().unwrap_or(0)
     );
     if t.shots > 0 {
+        // Four outcomes now, not two: a shot that hits and a shot that gets
+        // through are different events, and the gap between them is the
+        // whole penetration gate. The remainder is shells that came down on
+        // ground nobody was standing on.
+        let elsewhere = t.shots.saturating_sub(t.hits + t.bounces + t.misses);
         println!(
-            "  gunnery: {} shots, {} hits ({:.0}%)",
+            "  gunnery: {} shots — {} penetrated ({:.0}%), {} bounced, {} missed, {} \
+             fell on empty ground",
             t.shots,
             t.hits,
-            100.0 * t.hits as f32 / t.shots as f32
+            100.0 * t.hits as f32 / t.shots as f32,
+            t.bounces,
+            t.misses,
+            elsewhere,
         );
     }
     let mut arcs: Vec<_> = t.hits_by_arc.iter().collect();
@@ -472,6 +1052,76 @@ fn simulate(reg: &DataRegistry, games: usize) {
                 t.deaths.get(vehicle).copied().unwrap_or(0)
             );
         }
+    }
+
+    // What actually killed them. The single most useful line in this report
+    // after the outcome, because it says which half of the model is doing
+    // the work: fires, blast, nerve, or the girls themselves.
+    let total_deaths: usize = t.causes.values().sum();
+    if total_deaths > 0 {
+        print!("  killed by:");
+        for (cause, n) in &t.causes {
+            print!(
+                " {cause} {n} ({:.0}%)",
+                100.0 * *n as f32 / total_deaths as f32
+            );
+        }
+        println!();
+    }
+    println!(
+        "  crew cost: {:.1} girls wounded and {:.1} out per battle ({} and {} across the\n    \
+         run, by her state at the end — a girl wounded and then killed is counted\n    \
+         once, as out)",
+        t.girls_wounded as f32 / games.max(1) as f32,
+        t.girls_out as f32 / games.max(1) as f32,
+        t.girls_wounded,
+        t.girls_out,
+    );
+
+    if !t.ammo_aboard.is_empty() {
+        println!("  ammunition per battle (expended or lost with the rack):");
+        println!(
+            "    {:<12} {:>10} {:>10} {:>8}",
+            "round", "aboard", "gone", "share"
+        );
+        for (id, aboard) in &t.ammo_aboard {
+            let left = t.ammo_left.get(id).copied().unwrap_or(0);
+            let gone = aboard.saturating_sub(left);
+            let per = gone as f32 / games.max(1) as f32;
+            let aboard_per = *aboard as f32 / games.max(1) as f32;
+            println!(
+                "    {:<12} {:>10.0} {:>10.1} {:>7.0}%",
+                id,
+                aboard_per,
+                per,
+                if *aboard > 0 {
+                    100.0 * gone as f32 / *aboard as f32
+                } else {
+                    0.0
+                },
+            );
+        }
+        println!(
+            "    {} ammunition racks were destroyed across the run, and a wrecked\n    \
+             rack zeroes what was still in it — so `gone` is rounds fired plus\n    \
+             rounds lost, not rounds fired.",
+            t.racks_destroyed
+        );
+    }
+
+    if t.shells > 0 {
+        println!(
+            "  artillery: {} shells landed, {} on an occupied hex ({:.0}%) — {} through, {} bounced",
+            t.shells,
+            t.shells_on_target,
+            100.0 * t.shells_on_target as f32 / t.shells as f32,
+            t.shells_on_target - t.shells_bounced,
+            t.shells_bounced,
+        );
+        println!(
+            "    a shell is aimed at ground ticks before it arrives, so the rest\n    \
+             landed on an empty hex and paid out only in blast on the neighbours."
+        );
     }
 
     // Outcomes worth noticing, in the same spirit as the analytic flags.
@@ -574,5 +1224,91 @@ fn delegation_tax(reg: &DataRegistry, games: usize) {
     println!(
         "\n  a side's tax is its win drop against the same flat opponent when it\n  \
          fights through missions instead; zero is the target"
+    );
+}
+
+/// Does skill win cleanly? Identical forces, identical doctrine, and the only
+/// thing that differs is how well each side executes.
+///
+/// This was a standalone `skillgap` example until the instruments were
+/// rebuilt around the kill chain; it lives here because one question about
+/// the data deserves one instrument, and because its answer has to be read
+/// beside the kill causes and the ammunition economy rather than in another
+/// terminal. Every pairing is mirrored — (5,3) and (3,5) — so a result that
+/// is really about which side of the river a force deploys on cannot be
+/// mistaken for a result about skill.
+///
+/// The bar, written down by the ballistics doc before B4 starts: a
+/// difficulty-5 side against difficulty-1 with equal forces should win most
+/// battles at a loss ratio visibly better than 1:2. Skill should buy
+/// *cleanliness*, not merely wins.
+fn skill_gap(reg: &DataRegistry, games: usize) {
+    heading(&format!(
+        "skill gap: {games} battles per pairing, same doctrine, only execution differs"
+    ));
+    println!(
+        "  {:<12} {:>5} {:>5} {:>6} {:>12} {:>12} {:>8}",
+        "pairing", "A won", "B won", "draws", "A lost/game", "B lost/game", "ratio"
+    );
+    for (a, b) in [(5, 5), (1, 1), (5, 3), (3, 5), (5, 1), (1, 5)] {
+        let (mut a_wins, mut b_wins, mut draws) = (0, 0, 0);
+        let (mut a_losses, mut b_losses) = (0usize, 0usize);
+        for seed in 0..games as u64 {
+            let mut state =
+                BattleState::from_map(reg, "river_crossing", 9000 + seed).expect("battle");
+            let mut ai = AiDriver::new();
+            for (side, diff) in [(0u8, a), (1u8, b)] {
+                ai.insert(
+                    side,
+                    make_battle_planner(
+                        &AiConfig {
+                            planner: "utility".into(),
+                            difficulty: diff,
+                            doctrine: None,
+                        },
+                        seed * 2 + side as u64,
+                        reg,
+                    ),
+                );
+            }
+            let mut rounds = 0;
+            while !state.is_over() && rounds < 60 {
+                ai.plan_round(reg, &mut state);
+                state.resolve_round(reg);
+                rounds += 1;
+            }
+            match state.over.and_then(|r| r.winner) {
+                Some(0) => a_wins += 1,
+                Some(_) => b_wins += 1,
+                None => draws += 1,
+            }
+            a_losses += state.lost_units().filter(|u| u.side == 0).count();
+            b_losses += state.lost_units().filter(|u| u.side == 1).count();
+        }
+        let per = |l: usize| l as f32 / games.max(1) as f32;
+        println!(
+            "  {:<12} {:>5} {:>5} {:>6} {:>12.2} {:>12.2} {:>8}",
+            format!("{a} vs {b}"),
+            a_wins,
+            b_wins,
+            draws,
+            per(a_losses),
+            per(b_losses),
+            format!(
+                "1:{:.1}",
+                if a_losses > 0 {
+                    b_losses as f32 / a_losses as f32
+                } else {
+                    f32::INFINITY
+                }
+            ),
+        );
+        // Each pairing is a few hundred battles' worth of planning; print it
+        // as it finishes rather than making the reader wait for the block.
+        let _ = std::io::stdout().flush();
+    }
+    println!(
+        "\n  ratio is B's losses per A's loss: a side that wins by outfighting\n  \
+         rather than by outlasting shows it here, not in the win column."
     );
 }

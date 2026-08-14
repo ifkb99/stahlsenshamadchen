@@ -367,7 +367,8 @@ space. This is where the delegation-tax and stalemate numbers get
 re-baselined and quoted.
 
 Its first target was measured on 2026-08-13 by the `skillgap` example
-after the designer asked whether a skill gap wins cleanly here the way
+(folded into `balance --sim` by B5, which is where it lives now) after
+the designer asked whether a skill gap wins cleanly here the way
 it does in military history: **it does not, and difficulty is inverted
 in practice.** With identical forces and doctrine, the noiseless
 difficulty-5 utility planner loses to a noisy one in both side
@@ -387,6 +388,29 @@ better than 1:2, and skill should buy *cleanliness*, not just wins.
 pass rewritten around the kill chain (P(pen) tables per gun × armor ×
 range, time-to-kill distributions, ammo economy), playthrough narration,
 HUD polish, perf additions for the new hot paths.
+
+**B5 (the balance instrument) ✅ done.** Both passes now speak the kill
+chain, and the analytic tables are forced *through* the engine rather
+than derived beside it: a duel loads exactly the round under test into
+the racks with `set_loadout`, so `chambered` has one choice and the
+printed penetration is `preview_attack`'s own — the number the AI plans
+on. Analytic: P(pen) per gun × round × target at near/mid/max on the
+front plate plus side and rear at mid (square on, obliquity 1.00);
+expected shots and rounds to knock out through hit × pen × effect
+budget against the substance pool, with the brew-up and blast-overmatch
+terms labelled as modeled; shell flight ticks at each band beside how
+far the quickest vehicle moves in them; and a "worth a look" that
+judges a gun on blast overmatch as well as penetration, flags a vehicle
+nothing can hurt, and flags a round no gun can chamber. Simulated: kill
+causes by the flag the vehicle died carrying, crew wounded/out per
+battle, ammunition gone per round-type, artillery's shells-on-occupied-
+ground rate, and the skill-gap table, folded in from the standalone
+example, which is deleted — one question about the data, one
+instrument. Two things it says immediately that B4 needs: **the 105's
+blast (6) overmatches even the Löwe's thinnest plate (3), so a direct
+hit wrecks a heavy tank without consulting the gate at all**, and half
+of all deaths are ammunition fires. The other half of B5 — playthrough
+narration, HUD polish, perf additions — is untouched.
 
 Order: B0 → B1 → B2 → B3/B5 in parallel → B4 last, because tuning an
 economy before the instruments can see it is guessing.

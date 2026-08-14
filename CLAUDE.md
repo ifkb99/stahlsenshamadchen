@@ -25,16 +25,23 @@ cargo run --release -p tactics_core --example balance    # what the data does
 cargo run --release -p tactics_core --example balance -- --sim   # ...fought out
 ```
 
-`balance` is the content-iteration loop. The analytic pass is instant and
-answers "what did that number just do" by standing two vehicles on an empty
-field and asking the *real* combat code — `preview_attack`, not a reimplemented
-formula, so the report cannot drift from the game. `--sim` fights whole battles
-and reports what happened, which is the check at the end: the analytic numbers
-can all look sensible while the fights they produce are terrible.
+`balance` is the content-iteration loop, and it is built around the kill chain
+rather than around damage. The analytic pass is instant and answers "what did
+that number just do" by standing two vehicles on an empty field and asking the
+*real* combat code — `preview_attack` with the round under test forced into the
+racks through `set_loadout`, not a reimplemented formula, so the report cannot
+drift from the game. It prints P(pen) per gun × round × target × range band,
+expected shots to knock out, shell flight times, and a "worth a look" section
+that judges a gun on blast overmatch as well as penetration. `--sim` fights
+whole battles and adds what killed them (brewed / wrecked / abandoned / crew
+out), what it cost the girls, the ammunition economy, artillery's hit rate on
+occupied ground, the delegation tax and the skill-gap table.
 
-It earns its keep immediately. It states the `.max(1)` damage floor as "mg
-kills heavy_tank in 3 rounds" — the same as a 37 mm gun — and reports that most
-battles currently end in stalemate rather than a decision.
+It earns its keep immediately. It reports that the 105 mm shell's blast
+overmatches even the Löwe's thinnest plate, so a direct hit wrecks a heavy tank
+without consulting the penetration gate at all; that half of all deaths are
+ammunition fires; and that a difficulty-5 side still does not beat a
+difficulty-1 one cleanly.
 
 ### Objectives
 
@@ -222,9 +229,10 @@ rule they defend (`unspotted_enemies_still_ambush`).
 ### Correctness
 
 - **Difficulty is inverted in practice: less noise plays worse.**
-  `cargo run --release -p tactics_core --example skillgap` measures it —
-  same map, same doctrine, only `difficulty` differing, mirrored across
-  sides. A noiseless (difficulty 5) utility side loses to a noisy one in
+  The skill-gap table at the end of `cargo run --release -p tactics_core
+  --example balance -- --sim` measures it (it was a standalone `skillgap`
+  example until B5 folded it in) — same map, same doctrine, only
+  `difficulty` differing, mirrored across sides. A noiseless (difficulty 5) utility side loses to a noisy one in
   BOTH orientations (9–27 vs diff 3; 16–17 and 16–20 vs diff 1), and two
   noiseless sides produce a deterministic 36–0 sweep where two noisy ones
   produce 19–17. The greedy argmax coordinates badly with itself —
@@ -253,11 +261,10 @@ rule they defend (`unspotted_enemies_still_ambush`).
   Harmless today — the overworld panel does not print elevation and only
   `max_climb` reads it — but a strategic map wants its own vertical scale, or
   its elevation digits want to mean something other than levels.
-- **`raw_damage` has a `.max(1)` floor** (`combat.rs:217`), so any weapon that
-  hits does at least 1 damage regardless of armour. An MG now fires 6 bursts a
-  round, which means machine guns can grind down a heavy tank given time. This
-  is the single most important thing for the ballistics rewrite to remove: a
-  non-penetrating hit should do nothing, not a chip.
+- ~~**`raw_damage` has a `.max(1)` floor**~~ Fixed by the ballistics rewrite's
+  B1 chunk: `raw_damage` is gone, a hit that does not penetrate does nothing
+  structural, and the instrument that used to print "mg kills heavy_tank in 3
+  rounds" now prints "mg cannot meaningfully hurt heavy_tank".
 
 ### Robustness
 
