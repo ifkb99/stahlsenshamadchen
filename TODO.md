@@ -59,6 +59,7 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 - ability to retreat from a battle, with lowered morale. maybe other penalties too
 - indirect fire option for artillery. rethink how this operates once implementing chain of command
 ### Realistic Ballistics
+- **the design and build order live in `assets/wiki/reference/ballistics.md`** — decisions taken 2026-08-13 (no HP, CM-style outcomes; named-girl crew hits by station; modules as content; ammo loadouts as data with editing stubbed), the pipeline, and chunks B0–B5 with routing. read it before touching combat.
 The balance harness prerequisite is met, and battles now resolve rather than
 stalemate, so there is finally a baseline to measure a rewrite against.
 - **remove the `.max(1)` damage floor** (`combat.rs`). any weapon that hits does at least 1 damage regardless of armour, so an MG firing 6 bursts a round grinds down a heavy tank. the single most consequential thing in the combat model, and the period decision makes it worse — a roster spanning twenty years of armour development is exactly where a damage floor breaks, since the point of a 1943 gun meeting 1960s armour is that it *cannot* get through
@@ -83,6 +84,7 @@ stalemate, so there is finally a baseline to measure a rewrite against.
 - engineer unit to build roads/buildings, repair other units (or self). needs resources to repair, can carry a moderate amount
 - logistics unit to carry resources
 ### Campaign
+- **one continuous world, two zoom levels** (noted 2026-08-13, deliberately deferred until most other MVP work is sorted): vehicles "exist" on the battle layer at all times and the overworld becomes a zoomed-out view of the same space rather than a separate board that spawns battles. no map tiles to retreat from — a withdrawal is driving away on real ground, so pursuit and luring become real maneuvers instead of tile transitions. this dissolves the `from_placements` seam, `choose_battle_map`, and battle-as-event; it is a large structural change and everything above it should settle first
 - girl progression: xp, leveling, skills. fire emblem is a stated inspiration and this is the emotional engine of the genre. sketch the shape early since it lives on the girl-instance model
 - basic requisition flow: vehicle costs, side funds, and income all exist but nothing spends money until academy mode. a minimal buy/reinforce loop shouldn't wait for the 4x layer
 ### Content gaps
