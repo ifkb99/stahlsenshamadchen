@@ -152,6 +152,29 @@ pub enum Event {
         facing: ArmorFacing,
         remaining_hp: i32,
     },
+    /// The round struck and the armor held. Nothing structural happened —
+    /// there is no damage floor any more — but the event is said out loud
+    /// because a shot that silently does nothing is indistinguishable from
+    /// a bug, and because the crew inside heard it: `rattled` is true for
+    /// anything heavier than small arms, and the morale ladder charges for
+    /// it. Bullets pattering on plate frighten nobody buttoned up behind
+    /// it, which is deliberate — pressure from plinking would rebuild the
+    /// machine-gun-grinds-a-heavy-tank defect one layer up.
+    ShotBounced {
+        attacker: UnitId,
+        target: UnitId,
+        facing: ArmorFacing,
+        rattled: bool,
+    },
+    /// This gun has just spent the last round it can fire. Announced once,
+    /// at the moment of the spend, so the silence that follows reads as a
+    /// fact the player was told rather than an order the game ate. A weapon
+    /// whose mod declares no ammunition never fires this: uncounted rounds
+    /// are infinite ones.
+    WeaponDry {
+        unit: UnitId,
+        weapon: String,
+    },
     ShotMissed {
         attacker: UnitId,
         at: Hex,
@@ -1163,6 +1186,21 @@ impl BattleState {
                 _ => None,
             })
             .collect();
+        // A shell that strikes and fails to get through still rings the
+        // hull like a bell; small-arms fire does not (`rattled` is false),
+        // or suppression would quietly rebuild the damage floor's defect in
+        // morale instead of hit points.
+        let clangs: Vec<UnitId> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::ShotBounced {
+                    target,
+                    rattled: true,
+                    ..
+                } => Some(*target),
+                _ => None,
+            })
+            .collect();
         let losses: Vec<(u8, Hex)> = events
             .iter()
             .filter_map(|e| match e {
@@ -1191,6 +1229,9 @@ impl BattleState {
 
         for id in hits {
             add(self, id, rules.hit);
+        }
+        for id in clangs {
+            add(self, id, rules.bounced);
         }
         for members in bereaved {
             // The whole formation, wherever it is standing: unlike watching a

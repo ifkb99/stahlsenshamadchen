@@ -96,14 +96,20 @@ What happens to one fired round, replacing `raw_damage`:
 1. **To-hit is kept.** The existing accuracy machinery — base accuracy,
    falloff, gunnery, cover, elevation, facing — survives unchanged. It was
    never the problem.
-2. **Impact geometry.** The existing three-arc facing (front/side/rear)
-   picks the armor plate. On top of it, *obliquity*: the exact bearing from
-   shooter to target versus the plate's normal — geometry we already have —
-   scales effective armor up as the impact goes oblique and raises the
-   ricochet chance sharply near the arc seams. A shot that arrives nearly
-   parallel to the plate glances off however big the gun is. This is what
-   makes angling and flanking physical rather than a flat side-armor
-   discount.
+2. **Impact geometry.** The hull is a hexagonal prism: the struck *face*
+   is the one whose normal lies nearest the incoming ray (the same
+   quantisation the three-arc facing already performs), the arc decides
+   which armor value that face wears — three faces of front plate, two of
+   side, one of rear — and *obliquity* is the ray's residual angle off
+   that face's own normal, at most thirty degrees by construction, worth
+   up to ~15% extra effective armor. Angling is therefore about which
+   armor class each threat axis meets, exactly the decision turning a real
+   hull makes. (The first draft measured obliquity against the arc's
+   central normal; since the front arc spans ±90° of incoming ray, its
+   edges read as near-parallel strikes on the glacis and became
+   impenetrable — the empirical trace that caught it is in the B1 commit.)
+   Ricochet is not a separate mechanism: it is penetration failing, and
+   the scatter makes marginal shots genuinely marginal.
 3. **The penetration roll.** Interpolated penetration for the range, a
    small quality scatter (data — rounds are not clones), against effective
    armor. **All comparisons are ratio-based** (pen/armor), never absolute
@@ -222,14 +228,29 @@ table, the loadout-editing engine stub. Deliberately consumes nothing:
 the event-stream baseline must come out byte-identical, which is the
 proof it stayed a data chunk.
 
-**B1. The gate: pen-or-nothing (4/5 — Fable).** The floor dies. Hit →
-facing + obliquity → interpolated penetration → roll; non-pen does zero
-structural damage and feeds shock; consumption turns on (counts decrement,
-a dry gun is silent). HP survives this chunk as a temporary severity
-ledger so the whole suite keeps meaning something while the gate goes in;
-`expected_damage` learns P(pen) so the planners stop plinking the moment
-the gate exists. Deliberate baseline regen; balance bracketed before and
-after (the MG-grinds-heavies line must die in the same commit).
+**B1. The gate: pen-or-nothing (4/5 — Fable).** ✅ Done. The floor died.
+Hit → hex-face impact geometry → interpolated penetration × integer
+scatter → roll; a non-pen does zero structural damage, announces itself
+(`ShotBounced`), and rattles the crew through a new `morale.bounced`
+pressure rung — never for small arms, which would have rebuilt the defect
+in morale. Consumption is on (`WeaponDry` announces the last round; blind
+shelling spends shells); the analytic `penetration_chance` and the
+resolver's roll enumerate the same finite comparison so the AI can never
+be lied to; `expected_damage` = hit × pen × damage, and a zero-value shot
+is *not taken* — crews finally hold fire. The obliquity model earned its
+correction mid-build: measuring against the armor arc's central normal
+made front-arc edges impenetrable (a duel's return fire went silent for a
+tick until the hulls turned — caught by the crew's-clock test timing, of
+all things); the shipped model strikes the hex face whose normal is
+nearest the ray, ±30° residual, and `no_seam_of_the_hull_is_impenetrable`
+pins it. Measured at 36 games: flat massed-vs-elastic swung 16-20-0 →
+4-29-3 — tank destroyers 87 kills to 5 losses, light tanks 2 to 63,
+frontal plate finally meaning what the roster always claimed — and the
+instrument's "worth a look" now prints "gun_75 cannot meaningfully hurt
+heavy_tank from the front" where the MG absurdities used to be. That
+swing is deliberately not chased here: B4 re-baselines after B3 gives HE
+its external blast (until then artillery is soft-target-only, a known
+interim). Round resolution 1.11 ms.
 
 **B2. Outcomes: the end of hit points (5/5 — Fable, the heart).** Crew
 stations and named-girl wounds, modules from data, brew-up on ammo

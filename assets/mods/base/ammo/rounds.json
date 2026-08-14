@@ -4,7 +4,7 @@
         "name": "7.92mm Ball",
         "class": "small_arms",
         "penetration": [1, 1],
-        "post_pen": 0.4,
+        "post_pen": 1.0,
         "blast": 0,
         "velocity": 850,
         "description": "Belted rifle ammunition. It will not open a tank and was never meant to; what it opens is everything standing beside one."

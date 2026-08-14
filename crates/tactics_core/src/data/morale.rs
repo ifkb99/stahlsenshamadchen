@@ -57,6 +57,18 @@ pub struct MoraleRules {
     pub rungs: Vec<MoraleRung>,
     /// Pressure from taking a hit.
     pub hit: u32,
+    /// Pressure from a shell that struck and did not get through.
+    ///
+    /// The armor held, and the crew still heard it arrive — being rung like
+    /// a bell is real even when nothing breaks. Less than [`Self::hit`] in
+    /// the base data, and **never charged for small-arms fire**: bullets
+    /// pattering on plate frighten nobody buttoned up behind it, and letting
+    /// them would quietly rebuild the machine-gun-grinds-a-heavy-tank defect
+    /// one layer up, in morale instead of hit points. `#[serde(default)]`
+    /// for the same additivity reason as [`Self::leader_lost`]: a mod that
+    /// says nothing feels nothing.
+    #[serde(default)]
+    pub bounced: u32,
     /// Pressure from watching a friend die within sight.
     pub ally_destroyed: u32,
     /// Pressure on every surviving member of a formation whose leader is
@@ -104,6 +116,7 @@ impl Default for MoraleRules {
                 },
             ],
             hit: 3,
+            bounced: 1,
             ally_destroyed: 4,
             // Mirrors the shipped `mod.json`: watching your commander go is
             // at least as bad as watching anybody else go. Note this is the

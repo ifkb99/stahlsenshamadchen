@@ -16,7 +16,8 @@
         "speed_per_driving": 5,
         "accuracy_per_gunnery": 3,
         "substitution_penalty": 2,
-        "vision_per_observation": 5
+        "vision_per_observation": 5,
+        "pen_scatter": 15
     },
     "cores": [
         {
@@ -362,6 +363,7 @@
             }
         ],
         "hit": 3,
+        "bounced": 1,
         "ally_destroyed": 4,
         "leader_lost": 4,
         "recovery": 2,

@@ -818,9 +818,22 @@ fn attack_preview_describes_the_target() {
     assert_eq!(preview.target_side, state.sides[target.side as usize].name);
     assert_eq!(preview.target_max_hp, vehicle.max_hp);
     assert_eq!(preview.distance, attacker.pos.distance_to(target.pos));
-    assert!(preview.damage >= 1, "a hit always does something");
-    assert_eq!(preview.lethal, preview.damage >= preview.target_hp);
-    let expected = preview.hit.total as f32 / 100.0 * preview.damage as f32;
+    // The old assertion here — "a hit always does something" — was the
+    // damage floor's own slogan, and the floor is dead. What the preview
+    // owes the player now is the round by name, the odds of it beating the
+    // plate, and arithmetic that multiplies through honestly.
+    assert!(preview.ammo.is_some(), "the chambered round is named");
+    assert!(
+        (0..=100).contains(&preview.pen_chance),
+        "penetration is a percentage"
+    );
+    assert_eq!(
+        preview.lethal,
+        preview.damage >= preview.target_hp && preview.pen_chance > 0,
+        "lethal means a penetration that would finish her, not a wish"
+    );
+    let expected = preview.hit.total as f32 / 100.0 * preview.pen_chance as f32 / 100.0
+        * preview.damage as f32;
     assert!((preview.expected_damage - expected).abs() < 1e-3);
 }
 
@@ -3568,7 +3581,15 @@ fn a_breaking_crew_refuses_to_advance_and_says_so() {
 /// something, or licence to disobey reads as the game cheating.
 #[test]
 fn crews_report_moving_up_the_ladder() {
-    let reg = registry();
+    let mut reg = registry();
+    // The scene needs an attritional fight: with the damage floor gone a 75
+    // through a medium's plate is lethal in two, and the crews died faster
+    // than their nerves could be seen fraying. Softening the gun keeps the
+    // duel going long enough for pressure to cross a rung, which is the
+    // thing under test — the ladder's reporting, not the gun's lethality.
+    if let Some(w) = reg.weapons.get_mut("gun_75") {
+        w.damage = 2;
+    }
     let mut state = duel(&reg, 22);
     for side in state.living_sides() {
         state.apply(&reg, &Order::Commit { side }).unwrap();
@@ -7145,6 +7166,19 @@ fn a_target_watched_across_rounds_is_not_news_twice() {
     // round owes nothing — her gun speaks on the first tick it is ready.
     let mut reg = registry();
     reg.command = None;
+    // Soft guns for the same reason as `crews_report_moving_up_the_ladder`:
+    // the clock across the round boundary is the thing under test, and it
+    // needs both crews alive to see round two. The reload is pinned at five
+    // ticks so the arithmetic discriminates: first shots at tick 2 (the
+    // reaction delay), again at 7, and the barrel is ready exactly as round
+    // two opens — so tick 0 proves the clock did not re-charge, while a
+    // re-charged clock would show tick 2. With the gun's own reload of
+    // three the carry-over happens to equal the delay and the test could
+    // not tell a cooling barrel from a re-taxed crew.
+    if let Some(w) = reg.weapons.get_mut("gun_75") {
+        w.damage = 2;
+        w.reload_ticks = Some(5);
+    }
     let mut state = duel(&reg, 102);
     let watcher = UnitId(0);
     // Round one: they see each other, shots are exchanged, the clock is paid.
@@ -7323,16 +7357,19 @@ fn an_overwatching_crew_trusts_her_gun_over_her_tracks() {
     let mut state = open_ground_stage(&reg, [3, 1], 203);
     let watcher = UnitId(0);
     let parked = state.unit(watcher).unwrap().pos;
-    // Area fire on the mouth of the curtain: legal without a spot, and it
-    // marks her intent as overwatch for the whole round.
-    let mouth = state.unit(UnitId(1)).unwrap().pos + tactics_core::Hex::new(0, -1);
+    // Area fire on an empty patch of grass: legal without a spot, and it
+    // marks her intent as overwatch for the whole round. Deliberately NOT
+    // the curtain's mouth — with real penetration a blind 75 that happens
+    // to land on the walker as she steps out can kill her, and this test
+    // is about the drill deferring to the fire order, not about luck.
+    let ground = parked + tactics_core::Hex::new(1, 1);
     state
         .apply(
             &reg,
             &Order::SetFire {
                 unit: watcher,
                 fire: FireIntent::Area {
-                    at: mouth,
+                    at: ground,
                     weapon: 0,
                 },
             },
@@ -7393,6 +7430,277 @@ fn a_mod_that_prices_no_reactions_gets_the_drill_at_the_next_tick() {
         Some(seen + 1),
         "with reactions unpriced the drill is as instant as a tick model allows"
     );
+}
+
+// --- the penetration gate (ballistics B1) ----------------------------------
+
+/// A recon car's machine gun and a heavy tank, adjacent on open grass. The
+/// oldest complaint in the balance tables, staged.
+fn plink_stage(reg: &DataRegistry, seed: u64) -> BattleState {
+    two_side_battle(
+        reg,
+        &["ggggg", "ggggg", "ggggg"],
+        vec![
+            unit_at([1, 1], 0, "recon_car", "Plinker"),
+            unit_at([3, 1], 1, "heavy_tank", "Wall"),
+        ],
+        seed,
+    )
+}
+
+#[test]
+fn an_ordered_shot_that_cannot_penetrate_bounces_and_does_nothing() {
+    // The floor is dead. A machine gun ORDERED onto a heavy tank still
+    // obeys — the rounds go downrange — but what comes of them is a bounce
+    // event and nothing else: no chip, no hit points, and no pressure,
+    // because bullets pattering on plate frighten nobody buttoned up
+    // behind it. Grinding a heavy tank down with an MG was the balance
+    // instrument's oldest "worth a look" line, and this is its tombstone.
+    let reg = registry_wireless();
+    let mut state = plink_stage(&reg, 301);
+    let (plinker, wall) = (UnitId(0), UnitId(1));
+    let wall_hp = state.unit(wall).unwrap().hp;
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: plinker,
+                fire: FireIntent::Target {
+                    target: wall,
+                    weapon: 0,
+                },
+            },
+        )
+        .unwrap();
+    commit_all(&reg, &mut state);
+
+    let mut bounced = 0;
+    let mut hit = 0;
+    while state.resolving_tick().is_some() && !state.is_over() {
+        for event in state.step_tick(&reg) {
+            match event {
+                BattleEvent::ShotBounced {
+                    target, rattled, ..
+                } if target == wall => {
+                    assert!(!rattled, "small arms do not rattle a tank crew");
+                    bounced += 1;
+                }
+                BattleEvent::ShotHit { target, .. } if target == wall => hit += 1,
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        bounced > 0,
+        "the bursts that struck were announced as bounces"
+    );
+    assert_eq!(hit, 0, "and not one of them counted as a hit");
+    let wall = state.unit(wall).unwrap();
+    assert_eq!(wall.hp, wall_hp, "armor that holds costs nothing");
+    assert_eq!(
+        wall.pressure, 0,
+        "and plinking does not fray anyone's nerves"
+    );
+}
+
+#[test]
+fn a_gun_that_cannot_hurt_what_it_sees_holds_its_fire() {
+    // The same scene with nobody ordering anything: opportunity fire prices
+    // the shot at zero and the crew keeps her gun quiet and her position
+    // secret. Before the gate this was impossible — the floor made every
+    // shot worth something, so every gun in range always spoke.
+    let reg = registry_wireless();
+    let mut state = plink_stage(&reg, 302);
+    let plinker = UnitId(0);
+    commit_all(&reg, &mut state);
+    while state.resolving_tick().is_some() && !state.is_over() {
+        for event in state.step_tick(&reg) {
+            if let BattleEvent::ShotFired { attacker, .. } = event {
+                assert_ne!(
+                    attacker, plinker,
+                    "nothing aboard can hurt a heavy tank, so she holds fire"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_kinetic_round_that_beats_a_plate_up_close_fades_at_the_end_of_its_reach() {
+    // Velocity, cashed out: the same gun against the same plate penetrates
+    // at arm's length and bounces at the end of its reach, because a solid
+    // shot arrives with whatever speed the air has left it. Scatter is
+    // zeroed so the gate is a hard threshold and the test is arithmetic,
+    // not luck; the interpolation endpoints are set so the plate sits
+    // between them.
+    let mut reg = registry_wireless();
+    reg.balance.pen_scatter = 0;
+    if let Some(ammo) = reg.ammo.get_mut("ap_75") {
+        ammo.penetration = [7, 4]; // medium front plate is 5: beaten near, safe far
+    }
+    if let Some(w) = reg.weapons.get_mut("gun_75") {
+        w.range = [1, 4];
+    }
+    let shoot = |reg: &DataRegistry, dist: i32, seed: u64| -> (u32, u32) {
+        let row = "g".repeat(8);
+        let mut state = two_side_battle(
+            reg,
+            &[&row, &row, &row],
+            vec![
+                unit_at([1, 1], 0, "medium_tank", "Gunner"),
+                unit_at([1 + dist, 1], 1, "medium_tank", "Plate"),
+            ],
+            seed,
+        );
+        state
+            .apply(
+                reg,
+                &Order::SetFire {
+                    unit: UnitId(0),
+                    fire: FireIntent::Target {
+                        target: UnitId(1),
+                        weapon: 0,
+                    },
+                },
+            )
+            .unwrap();
+        commit_all(reg, &mut state);
+        let (mut hits, mut bounces) = (0, 0);
+        while state.resolving_tick().is_some() && !state.is_over() {
+            for event in state.step_tick(reg) {
+                match event {
+                    BattleEvent::ShotHit {
+                        target: UnitId(1), ..
+                    } => hits += 1,
+                    BattleEvent::ShotBounced {
+                        target: UnitId(1), ..
+                    } => bounces += 1,
+                    _ => {}
+                }
+            }
+        }
+        (hits, bounces)
+    };
+
+    let (near_hits, near_bounces) = shoot(&reg, 1, 303);
+    assert!(near_hits > 0, "point blank, the round goes through");
+    assert_eq!(near_bounces, 0, "every time");
+
+    let (far_hits, far_bounces) = shoot(&reg, 4, 304);
+    assert_eq!(far_hits, 0, "at the end of its reach it cannot");
+    assert!(far_bounces > 0, "and the plate says so out loud");
+}
+
+#[test]
+fn no_seam_of_the_hull_is_impenetrable() {
+    // The regression that shaped the obliquity model, pinned. An earlier
+    // draft measured impact angle against the armor ARC's central normal;
+    // the front arc spans ninety degrees of incoming ray, so its edges
+    // read as near-parallel strikes and tripled the plate — a tank went
+    // impenetrable from directions her side armor was plainly facing, and
+    // a duel's return fire went silent for a tick until the hulls turned.
+    // The hull is a hexagonal prism: the struck face's own normal is never
+    // more than thirty degrees off the shot, so a round that comfortably
+    // beats every plate gets in from every bearing there is.
+    let mut reg = registry_wireless();
+    reg.balance.pen_scatter = 0;
+    let row = "g".repeat(9);
+    let mut state = two_side_battle(
+        &reg,
+        &[&row, &row, &row, &row, &row],
+        vec![
+            unit_at([1, 1], 0, "medium_tank", "Gunner"),
+            unit_at([4, 2], 1, "medium_tank", "Hull"),
+        ],
+        305,
+    );
+    let (gunner, hull) = (UnitId(0), UnitId(1));
+    let center = state.unit(hull).unwrap().pos;
+    let ring: Vec<tactics_core::Hex> = center
+        .all_neighbors()
+        .into_iter()
+        .chain(center.all_neighbors().into_iter().map(|n| n + (n - center)))
+        .collect();
+    for post in ring {
+        if state.map.get(post).is_none() || state.unit_at(post).is_some() {
+            continue;
+        }
+        state.units[gunner.index()].pos = post;
+        let preview = tactics_core::battle::preview_attack(&reg, &state, gunner, 0, hull, false)
+            .expect("both stand on the field");
+        assert_eq!(
+            preview.pen_chance, 100,
+            "a 75 that beats every plate of a medium gets in from {post:?} too"
+        );
+    }
+}
+
+#[test]
+fn the_racks_run_dry_and_the_gun_falls_silent() {
+    // One armor-piercing round left and no high explosive at all: she
+    // fires it, the moment is announced, and the gun says nothing for the
+    // rest of the battle — silence the player was told about rather than
+    // an order the game ate.
+    let reg = registry_wireless();
+    let mut state = duel(&reg, 306);
+    let shooter = UnitId(0);
+    state.units[shooter.index()].ammo = [("ap_75".to_string(), 1), ("he_75".to_string(), 0)]
+        .into_iter()
+        .collect();
+    commit_all(&reg, &mut state);
+
+    let (mut fired, mut dry_said) = (0, false);
+    while state.resolving_tick().is_some() && !state.is_over() {
+        for event in state.step_tick(&reg) {
+            match event {
+                BattleEvent::ShotFired { attacker, .. } if attacker == shooter => fired += 1,
+                BattleEvent::WeaponDry { unit, .. } if unit == shooter => dry_said = true,
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(
+        fired, 1,
+        "the last round goes downrange and nothing follows it"
+    );
+    assert!(dry_said, "and running dry is said out loud");
+    assert_eq!(
+        state.unit(shooter).map(|u| u.ammo["ap_75"]),
+        Some(0),
+        "the rack is empty"
+    );
+}
+
+#[test]
+fn a_mod_without_ammunition_still_fights_with_its_guns_own_numbers() {
+    // Additivity, read strictly: ammunition is content a mod may decline.
+    // Stripping every weapon's ammo list drops combat onto the legacy
+    // path — the gun's own damage and penetration through the same gate,
+    // nothing counted, nothing spent — so a pre-ballistics mod keeps the
+    // relationships its author tuned, forever, with infinite rounds.
+    let mut reg = registry_wireless();
+    for weapon in reg.weapons.values_mut() {
+        weapon.ammo.clear();
+    }
+    let mut state = duel(&reg, 307);
+    let racks: Vec<_> = state.units.iter().map(|u| u.ammo.clone()).collect();
+    commit_all(&reg, &mut state);
+
+    let mut hit = false;
+    while state.resolving_tick().is_some() && !state.is_over() {
+        for event in state.step_tick(&reg) {
+            if matches!(event, BattleEvent::ShotHit { .. }) {
+                hit = true;
+            }
+        }
+    }
+    assert!(hit, "a 75 still beats a medium's plate on its own numbers");
+    for (unit, before) in state.units.iter().zip(racks) {
+        assert_eq!(
+            unit.ammo, before,
+            "uncounted rounds are infinite ones: nothing was spent"
+        );
+    }
 }
 
 // --- the chain of command under adversarial load ---------------------------

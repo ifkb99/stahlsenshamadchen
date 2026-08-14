@@ -1,14 +1,11 @@
-//! Ammunition as content, and the promise that it does nothing yet.
+//! Ammunition as content: the data layer of the ballistics rewrite.
 //!
-//! This is the data layer of the ballistics rewrite. Rounds exist, guns name
-//! the ones they chamber, vehicles carry counts, and those counts ride
-//! through a save — but combat still resolves every shot from the weapon's
-//! own `damage`/`penetration`/`damage_type`, exactly as it did before. Half
-//! of what follows therefore defends the new data, and half defends the fact
-//! that it changed nothing: `ammunition_is_inert_and_a_fought_round_spends_none`
-//! is the test the *next* chunk is expected to delete, and the byte-identical
-//! `tests/snapshots/event_stream.txt` is the same claim made across four
-//! seeds at once.
+//! Rounds exist, guns name the ones they chamber, vehicles carry counts, and
+//! those counts ride through a save. The pipeline chunk that spends them has
+//! landed since this file was written: the inertness test the data chunk
+//! shipped with (`ammunition_is_inert_and_a_fought_round_spends_none`) died
+//! on schedule and its successor below requires the opposite — every shot
+//! fired costs exactly one round.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -402,16 +399,12 @@ fn ammunition_counts_survive_a_save_and_a_reload() {
 }
 
 #[test]
-fn ammunition_is_inert_and_a_fought_round_spends_none() {
-    // The whole claim of this chunk, stated as a test. Fight several rounds
-    // with both sides shooting and require every count to be exactly where
-    // it started — combat resolves from the weapon's own numbers and has
-    // never heard of a rack.
-    //
-    // **This test is expected to die.** The penetration pipeline is the chunk
-    // that makes a shot cost a round, and when it lands this assertion
-    // becomes false on purpose. Deleting it then is correct; deleting it now
-    // means something read the ammunition that should not have.
+fn every_shot_fired_costs_exactly_one_round_from_the_racks() {
+    // The successor to `ammunition_is_inert_and_a_fought_round_spends_none`,
+    // which the data chunk flagged for deletion by exactly this pipeline:
+    // now a fought battle's shot count and its emptied racks must agree to
+    // the round. Blind shells at empty ground count too — shelling nothing
+    // still costs the shell.
     let reg = registry();
     let mut state = BattleState::from_map(&reg, "river_crossing", 11).expect("battle");
     let before: Vec<BTreeMap<String, u32>> = state.units.iter().map(|u| u.ammo.clone()).collect();
@@ -431,28 +424,35 @@ fn ammunition_is_inert_and_a_fought_round_spends_none() {
     ai.insert(0, planner(7));
     ai.insert(1, planner(8));
 
-    let mut shots = 0;
+    let mut shots_by: BTreeMap<UnitId, u32> = BTreeMap::new();
     for _ in 0..6 {
         if state.is_over() {
             break;
         }
         ai.plan_round(&reg, &mut state);
         for event in state.resolve_round(&reg) {
-            if matches!(event, tactics_core::battle::Event::ShotFired { .. }) {
-                shots += 1;
+            if let tactics_core::battle::Event::ShotFired { attacker, .. } = event {
+                *shots_by.entry(attacker).or_default() += 1;
             }
         }
     }
     assert!(
-        shots > 0,
+        shots_by.values().sum::<u32>() > 0,
         "the battle has to actually be fought for this to mean anything"
     );
 
-    let after: Vec<BTreeMap<String, u32>> = state.units.iter().map(|u| u.ammo.clone()).collect();
-    assert_eq!(
-        before, after,
-        "{shots} shots were fired and not one of them cost a round"
-    );
+    for unit in &state.units {
+        let spent: u32 = before[unit.id.index()]
+            .values()
+            .sum::<u32>()
+            .saturating_sub(unit.ammo.values().sum::<u32>());
+        assert_eq!(
+            spent,
+            shots_by.get(&unit.id).copied().unwrap_or(0),
+            "{}'s racks and her gun camera disagree",
+            unit.name
+        );
+    }
 }
 
 #[test]

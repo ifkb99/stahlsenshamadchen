@@ -2,7 +2,9 @@
 //! advantage, blind fire, and opportunity fire.
 
 use super::{BattleState, Event, FireIntent, UnitId, fog, stats};
-use crate::data::{ArmorFacing, DamageType, DataRegistry, Scale, TerrainDef, WeaponDef};
+use crate::data::{
+    AmmoClass, AmmoDef, ArmorFacing, DamageType, DataRegistry, Scale, TerrainDef, WeaponDef,
+};
 use hexx::Hex;
 use rand::RngExt;
 
@@ -214,40 +216,219 @@ fn hit_chance_inner(
     chance.clamp(MIN_HIT, MAX_HIT)
 }
 
-/// Damage a hit would deal, before the RNG decides whether it hits.
-pub fn raw_damage(
+/// The round a weapon would put downrange right now.
+///
+/// Ammunition is content: a weapon fires the first round in its declared
+/// list with anything left in the racks, so the list's order is the
+/// loader's standing preference. A weapon whose mod declares no ammunition
+/// at all fires forever on its own legacy numbers — that is what keeps a
+/// pre-ballistics mod fighting with the relationships its author tuned —
+/// while a weapon with a list and empty racks chambers nothing and is
+/// silent. Silence is announced once, by [`Event::WeaponDry`] at the moment
+/// the last round is spent, not per refused tick.
+pub struct Round<'r> {
+    /// The ammunition definition. `None` is the legacy path: nothing is
+    /// spent by firing, because there is nothing counted to spend.
+    pub ammo: Option<&'r AmmoDef>,
+    /// Flat penetration for the legacy path, pre-scaled by the weapon's
+    /// damage type so old content keeps its old relationships (explosive
+    /// always treated armor as half, small arms as double).
+    legacy_pen: f32,
+    /// What the hit-point ledger loses if this round gets through. The
+    /// weapon's damage scaled by the round's behind-armor potency — a
+    /// stand-in that the outcome chunk (B2) replaces with effect rolls
+    /// against the crew and modules.
+    pub damage: i32,
+    /// Bullets bouncing off plate frighten nobody buttoned up behind it.
+    pub small_arms: bool,
+}
+
+impl Round<'_> {
+    /// Penetration of this round at `dist` hexes, over the firing weapon's
+    /// range band. Kinetic ammunition falls off downrange, chemical is
+    /// flat, and both of those facts live in the data, not here.
+    pub fn pen_at(&self, dist: i32, range: [u32; 2]) -> f32 {
+        match self.ammo {
+            Some(ammo) => ammo.penetration_at(dist.max(0) as u32, range) as f32,
+            None => self.legacy_pen,
+        }
+    }
+
+    /// What the campaign's crew-fate roll should believe came aboard.
+    fn damage_type(&self) -> Option<DamageType> {
+        self.ammo.map(|a| match a.class {
+            // A shaped charge's jet and spall are kinetic events for the
+            // girls inside; the distinction that matters downstream is
+            // "something sharp came through" versus blast versus bullets.
+            AmmoClass::Kinetic | AmmoClass::Chemical => DamageType::Kinetic,
+            AmmoClass::Explosive => DamageType::Explosive,
+            AmmoClass::SmallArms => DamageType::SmallArms,
+        })
+    }
+}
+
+/// What `unit`'s `weapon` would fire right now, or `None` for a gun with an
+/// ammunition list and nothing left on it.
+pub fn chambered<'r>(
+    registry: &'r DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    weapon: &WeaponDef,
+) -> Option<Round<'r>> {
+    if weapon.ammo.is_empty() {
+        let legacy_pen = weapon.penetration.max(1) as f32
+            * match weapon.damage_type {
+                DamageType::Kinetic => 1.0,
+                DamageType::Explosive => 2.0,
+                DamageType::SmallArms => 0.5,
+            };
+        return Some(Round {
+            ammo: None,
+            legacy_pen,
+            damage: weapon.damage,
+            small_arms: matches!(weapon.damage_type, DamageType::SmallArms),
+        });
+    }
+    let u = state.unit(unit)?;
+    let ammo = weapon
+        .ammo
+        .iter()
+        .filter(|id| u.ammo.get(*id).copied().unwrap_or(0) > 0)
+        .find_map(|id| registry.ammo(id))?;
+    Some(Round {
+        ammo: Some(ammo),
+        legacy_pen: 0.0,
+        damage: (weapon.damage as f32 * ammo.post_pen).round().max(0.0) as i32,
+        small_arms: matches!(ammo.class, AmmoClass::SmallArms),
+    })
+}
+
+/// Axial hex coordinates on the flat plane, for angle arithmetic. Any
+/// consistent hex-metric embedding works because only angles between
+/// *differences* are read; this is the standard one.
+fn cartesian(h: Hex) -> (f32, f32) {
+    (h.x as f32 + h.y as f32 * 0.5, h.y as f32 * 0.866_025_4)
+}
+
+/// How much thicker the struck plate stands for a shot arriving off its
+/// normal: 1.0 square on, up to ~1.15 at the worst angle a hex face can be
+/// hit at.
+///
+/// The hull is modelled as a hexagonal prism. The struck *face* is the one
+/// whose outward normal lies nearest the incoming ray — which is exactly
+/// the quantisation [`struck_facing`] already performs — and the armor
+/// *value* on that face is the arc's (three faces wear front plate, two
+/// side, one rear). Obliquity is then the ray's angle off that face's own
+/// normal, which by construction is at most thirty degrees: modest,
+/// continuous, and never absurd. An earlier draft measured the angle
+/// against the *arc's central* normal instead, and the front arc spans
+/// ninety degrees of incoming ray — a shot from its edge read as striking
+/// the glacis nearly parallel and clamped to triple armor, making a tank
+/// quantised as "frontal" impenetrable from directions the side plate was
+/// plainly facing. Angling therefore lives where the hex geometry puts it:
+/// turning the hull decides which armor class each threat axis meets, and
+/// this factor prices the residual few degrees, not the seam.
+pub fn obliquity_scale(target_pos: Hex, attacker_pos: Hex) -> f32 {
+    let (tx, ty) = cartesian(target_pos);
+    let (ax, ay) = cartesian(attacker_pos);
+    let (ix, iy) = (ax - tx, ay - ty);
+    let len = (ix * ix + iy * iy).sqrt();
+    if len == 0.0 {
+        return 1.0;
+    }
+    let (ix, iy) = (ix / len, iy / len);
+    let face = target_pos.main_direction_to(attacker_pos);
+    let (nx, ny) = cartesian(Hex::ZERO.neighbor(face));
+    let nlen = (nx * nx + ny * ny).sqrt();
+    let cos = (ix * nx / nlen + iy * ny / nlen).max(0.5);
+    1.0 / cos
+}
+
+/// The chance this penetration beats this armor, counting exactly the
+/// outcomes [`penetration_roll`] can roll.
+///
+/// The scatter is an integer percent and the roll a uniform integer in
+/// `-s..=s`, so this is a finite count rather than an integral — which is
+/// the point: the number the AI plans on and the die the resolver throws
+/// can never disagree about what is possible, because they are the same
+/// comparison enumerated versus sampled.
+pub fn penetration_chance(pen: f32, armor: f32, scatter: i32) -> f32 {
+    if armor <= 0.0 {
+        return 1.0;
+    }
+    if pen <= 0.0 {
+        return 0.0;
+    }
+    let s = scatter.max(0);
+    let through = (-s..=s)
+        .filter(|r| pen * (100 + r) as f32 >= armor * 100.0)
+        .count();
+    through as f32 / (2 * s + 1) as f32
+}
+
+/// One fired round against one plate: the sampled twin of
+/// [`penetration_chance`], sharing its comparison verbatim.
+fn penetration_roll(state: &mut BattleState, pen: f32, armor: f32, scatter: i32) -> bool {
+    if armor <= 0.0 {
+        return true;
+    }
+    if pen <= 0.0 {
+        return false;
+    }
+    let s = scatter.max(0);
+    let r = state.rng.random_range(-s..=s);
+    pen * (100 + r) as f32 >= armor * 100.0
+}
+
+/// Everything about one prospective shot that armor decides: which plate,
+/// how thick it effectively stands, the odds of getting through, and what
+/// the ledger loses if it does.
+pub struct ShotProfile {
+    pub facing: ArmorFacing,
+    /// Plate value after obliquity, in the abstract armor units.
+    pub effective_armor: f32,
+    /// Probability the chambered round defeats it, 0..=1.
+    pub pen_chance: f32,
+    /// Ledger damage if it penetrates. Cover and elevation deliberately do
+    /// not scale this any more: they already price themselves into the hit
+    /// chance, and a round that is through the plate is through — the tree
+    /// the shell passed did not make the inside of the tank bigger.
+    pub damage: i32,
+}
+
+/// Work out what `round` fired from `attacker_pos` does to `target`'s armor.
+pub fn shot_profile(
     registry: &DataRegistry,
     state: &BattleState,
     weapon: &WeaponDef,
+    round: &Round<'_>,
     attacker_pos: Hex,
     target: UnitId,
-) -> i32 {
-    let Some(tgt) = state.unit(target) else {
-        return 0;
-    };
-    let Some(vehicle) = registry.vehicle(&tgt.vehicle) else {
-        return 0;
-    };
+) -> Option<ShotProfile> {
+    let tgt = state.unit(target)?;
+    let vehicle = registry.vehicle(&tgt.vehicle)?;
     let facing = struck_facing(tgt.pos, tgt.facing, attacker_pos);
-    let armor = vehicle.armor.value(facing);
-    let effective_armor = match weapon.damage_type {
-        DamageType::Kinetic => armor,
-        DamageType::Explosive => armor / 2,
-        DamageType::SmallArms => armor * 2,
-    }
-    .max(0);
-    let pen = weapon.penetration.max(1) as f32;
-    let mut dmg = weapon.damage as f32 * (pen / (pen + effective_armor as f32));
-    if let Some(terrain) = terrain_at(registry, state, tgt.pos) {
-        dmg *= (100 - terrain.cover) as f32 / 100.0;
-    }
-    if elevation_at(state, attacker_pos) > elevation_at(state, tgt.pos) {
-        dmg *= 1.1;
-    }
-    (dmg.round() as i32).max(1)
+    let plate = vehicle.armor.value(facing).max(0);
+    // Nothing to slope: an unarmored bed is an unarmored bed from any angle.
+    let effective_armor = if plate == 0 {
+        0.0
+    } else {
+        plate as f32 * obliquity_scale(tgt.pos, attacker_pos)
+    };
+    let pen = round.pen_at(attacker_pos.distance_to(tgt.pos), weapon.range);
+    Some(ShotProfile {
+        facing,
+        effective_armor,
+        pen_chance: penetration_chance(pen, effective_armor, registry.balance.pen_scatter),
+        damage: round.damage,
+    })
 }
 
-/// Expected damage (hit chance x damage), the currency of AI scoring.
+/// Expected outcome of a shot — hit chance x penetration chance x ledger
+/// damage — the currency of AI scoring. Zero for a dry gun, and zero for a
+/// gun whose round cannot beat the plate it would strike, which is what
+/// finally lets a crew *hold fire* instead of plinking: the floor that made
+/// every shot worth something is gone.
 /// `from` is where the attacker would fire from (hypothetical or real).
 pub fn expected_damage(
     registry: &DataRegistry,
@@ -261,8 +442,14 @@ pub fn expected_damage(
     let Some(tgt) = state.unit(target) else {
         return 0.0;
     };
+    let Some(round) = chambered(registry, state, attacker, weapon) else {
+        return 0.0;
+    };
+    let Some(profile) = shot_profile(registry, state, weapon, &round, from, target) else {
+        return 0.0;
+    };
     let p = hit_chance(registry, state, attacker, from, weapon, tgt.pos, blind) as f32 / 100.0;
-    p * raw_damage(registry, state, weapon, from, target) as f32
+    p * profile.pen_chance * profile.damage as f32
 }
 
 /// Everything the player should know before committing to a shot.
@@ -283,15 +470,23 @@ pub struct AttackPreview {
     /// which case the numbers below are hypothetical.
     pub in_range: bool,
     pub hit: HitBreakdown,
-    /// Damage a hit would deal.
+    /// Display name of the chambered round, or `None` for a gun whose racks
+    /// are empty — in which case every number below it is zero and the
+    /// player is being told exactly why.
+    pub ammo: Option<String>,
+    /// Chance the round defeats the plate it would strike, as a percent.
+    pub pen_chance: i32,
+    /// Damage a *penetrating* hit would deal. A hit that does not get
+    /// through deals nothing at all.
     pub damage: i32,
-    /// Which armour arc the shot lands on, and how thick it is against this
-    /// weapon's damage type.
+    /// Which armour arc the shot lands on.
     pub facing: ArmorFacing,
+    /// The plate after obliquity: what the round actually has to beat,
+    /// rounded for display.
     pub effective_armor: i32,
-    /// Hit chance times damage.
+    /// Hit chance x penetration chance x damage.
     pub expected_damage: f32,
-    /// Whether this shot would finish the target outright.
+    /// Whether a penetrating hit would finish the target outright.
     pub lethal: bool,
     /// Whether the target is able to shoot back, and for how much.
     pub counter: Option<CounterPreview>,
@@ -339,15 +534,28 @@ pub fn preview_attack(
     let distance = att.pos.distance_to(tgt.pos);
     let in_range = (weapon.range[0] as i32..=weapon.range[1] as i32).contains(&distance);
     let hit = hit_breakdown(registry, state, attacker, att.pos, weapon, tgt.pos, blind);
-    let damage = raw_damage(registry, state, weapon, att.pos, target);
+    // A dry gun previews honestly: the round is named as missing and every
+    // consequence of it is zero, which tells the player exactly why the
+    // shot she is hovering cannot happen.
+    let round = chambered(registry, state, attacker, weapon);
+    let profile = round
+        .as_ref()
+        .and_then(|r| shot_profile(registry, state, weapon, r, att.pos, target));
     let facing = struck_facing(tgt.pos, tgt.facing, att.pos);
-    let armor = tgt_vehicle.armor.value(facing);
-    let effective_armor = match weapon.damage_type {
-        DamageType::Kinetic => armor,
-        DamageType::Explosive => armor / 2,
-        DamageType::SmallArms => armor * 2,
-    }
-    .max(0);
+    let (pen_chance, damage, effective_armor) = profile
+        .as_ref()
+        .map(|p| {
+            (
+                (p.pen_chance * 100.0).round() as i32,
+                p.damage,
+                p.effective_armor.round() as i32,
+            )
+        })
+        .unwrap_or((0, 0, tgt_vehicle.armor.value(facing).max(0)));
+    let ammo = round.as_ref().map(|r| match r.ammo {
+        Some(a) => a.name.clone(),
+        None => weapon.name.clone(),
+    });
 
     // Return fire is just opportunity fire: the target needs to see the
     // attacker and own a loaded direct-fire weapon that reaches.
@@ -365,16 +573,23 @@ pub fn preview_attack(
                         && (w.range[0] as i32..=w.range[1] as i32).contains(&distance)
                         && weapon_ready(state, target, *i)
                 })
-                .map(|(_, w)| CounterPreview {
-                    weapon_name: w.name.clone(),
-                    hit_chance: hit_chance(registry, state, target, tgt.pos, w, att.pos, false),
-                    damage: raw_damage(registry, state, w, tgt.pos, attacker),
+                .map(|(_, w)| {
+                    let damage = chambered(registry, state, target, w)
+                        .and_then(|r| shot_profile(registry, state, w, &r, tgt.pos, attacker))
+                        .map(|p| (p.pen_chance * p.damage as f32).round() as i32)
+                        .unwrap_or(0);
+                    CounterPreview {
+                        weapon_name: w.name.clone(),
+                        hit_chance: hit_chance(registry, state, target, tgt.pos, w, att.pos, false),
+                        damage,
+                    }
                 })
         } else {
             None
         }
     };
 
+    let pen = pen_chance as f32 / 100.0;
     Some(AttackPreview {
         weapon_name: weapon.name.clone(),
         weapon_range: weapon.range,
@@ -389,9 +604,11 @@ pub fn preview_attack(
         target_max_hp: tgt_vehicle.max_hp,
         distance,
         in_range,
-        expected_damage: hit.total as f32 / 100.0 * damage as f32,
-        lethal: damage >= tgt.hp,
+        expected_damage: hit.total as f32 / 100.0 * pen * damage as f32,
+        lethal: damage >= tgt.hp && pen > 0.0,
         hit,
+        ammo,
+        pen_chance,
         damage,
         facing,
         effective_armor,
@@ -400,14 +617,22 @@ pub fn preview_attack(
 }
 
 /// Resolve one shot from `attacker` at `target`. Damage lands immediately but
-/// death does not: see [`reap`]. Reloading and fog are handled by the callers
-/// below.
+/// death does not: see [`reap`]. Reloading, ammunition spend and fog are
+/// handled by the callers below.
+///
+/// Two dice, in order: does it hit, then does it get through. A hit that
+/// does not penetrate does **nothing structural** — no chip, no floor —
+/// which is the single most consequential rule in the rewrite. What a
+/// bounce does do is announce itself ([`Event::ShotBounced`]) and, for
+/// anything heavier than small arms, rattle the crew through the morale
+/// ladder: the plate held, and they still heard it arrive.
 #[allow(clippy::too_many_arguments)]
 fn resolve_shot(
     registry: &DataRegistry,
     state: &mut BattleState,
     attacker: UnitId,
     weapon: &WeaponDef,
+    round: &Round<'_>,
     target: UnitId,
     blind: bool,
     opportunity: bool,
@@ -436,24 +661,39 @@ fn resolve_shot(
         return;
     }
 
-    let damage = raw_damage(registry, state, weapon, att_pos, target);
-    let facing = {
-        let tgt = state.unit(target).expect("target checked above");
-        struck_facing(tgt.pos, tgt.facing, att_pos)
+    let Some(profile) = shot_profile(registry, state, weapon, round, att_pos, target) else {
+        return;
     };
+    let pen = round.pen_at(att_pos.distance_to(tgt_pos), weapon.range);
+    if !penetration_roll(
+        state,
+        pen,
+        profile.effective_armor,
+        registry.balance.pen_scatter,
+    ) {
+        events.push(Event::ShotBounced {
+            attacker,
+            target,
+            facing: profile.facing,
+            rattled: !round.small_arms,
+        });
+        return;
+    }
+
+    let damage_type = round.damage_type().unwrap_or(weapon.damage_type);
     let tgt = state.unit_mut(target).expect("target checked above");
-    tgt.hp -= damage;
+    tgt.hp -= profile.damage;
     // Remembered so that, if this is the hit that kills it, the campaign can
     // ask what actually went through the crew compartment. A kinetic
     // penetration and a machine gun finishing off a burning wreck are very
     // different days for the girls inside.
-    tgt.last_hit_by = Some(weapon.damage_type);
+    tgt.last_hit_by = Some(damage_type);
     let remaining = tgt.hp;
     events.push(Event::ShotHit {
         attacker,
         target,
-        damage,
-        facing,
+        damage: profile.damage,
+        facing: profile.facing,
         remaining_hp: remaining.max(0),
     });
 }
@@ -508,8 +748,43 @@ fn weapon_at<'r>(
         .and_then(|w| registry.weapon(w))
 }
 
-/// Fire one weapon at a unit, spending its reload and giving away the
-/// shooter's position.
+/// Take the chambered round out of the racks, announcing the moment a gun
+/// runs completely dry. Returns `None` — and fires nothing — for a gun
+/// whose whole ammunition list is spent; the legacy path spends nothing
+/// and never runs dry, because a mod that counts no rounds has infinite
+/// ones, which is exactly the game it shipped with.
+fn chamber_and_spend<'r>(
+    registry: &'r DataRegistry,
+    state: &mut BattleState,
+    unit: UnitId,
+    weapon: &WeaponDef,
+    events: &mut Vec<Event>,
+) -> Option<Round<'r>> {
+    let round = chambered(registry, state, unit, weapon)?;
+    if let Some(ammo) = round.ammo {
+        if let Some(u) = state.unit_mut(unit)
+            && let Some(count) = u.ammo.get_mut(&ammo.id)
+        {
+            *count = count.saturating_sub(1);
+        }
+        let dry = state.unit(unit).is_some_and(|u| {
+            weapon
+                .ammo
+                .iter()
+                .all(|id| u.ammo.get(id).copied().unwrap_or(0) == 0)
+        });
+        if dry {
+            events.push(Event::WeaponDry {
+                unit,
+                weapon: weapon.id.clone(),
+            });
+        }
+    }
+    Some(round)
+}
+
+/// Fire one weapon at a unit, spending its reload and a round from the
+/// racks, and giving away the shooter's position.
 fn fire_at_unit(
     registry: &DataRegistry,
     state: &mut BattleState,
@@ -525,6 +800,9 @@ fn fire_at_unit(
     let Some(tgt_pos) = state.unit(target).map(|t| t.pos) else {
         return;
     };
+    let Some(round) = chamber_and_spend(registry, state, attacker, &weapon, events) else {
+        return;
+    };
     if let Some(att) = state.unit_mut(attacker) {
         if att.pos != tgt_pos {
             att.facing = att.pos.main_direction_to(tgt_pos);
@@ -538,6 +816,7 @@ fn fire_at_unit(
         state,
         attacker,
         &weapon,
+        &round,
         target,
         false,
         opportunity,
@@ -563,6 +842,11 @@ fn fire_at_tile(
     let Some((att_pos, side)) = state.unit(attacker).map(|a| (a.pos, a.side)) else {
         return;
     };
+    // Spent whether or not anybody is standing there: shelling empty ground
+    // costs the shell.
+    let Some(round) = chamber_and_spend(registry, state, attacker, &weapon, events) else {
+        return;
+    };
     if let Some(att) = state.unit_mut(attacker) {
         if att.pos != at {
             att.facing = att.pos.main_direction_to(at);
@@ -573,7 +857,7 @@ fn fire_at_tile(
     }
     match state.unit_at(at).filter(|t| t.side != side).map(|t| t.id) {
         Some(target) => resolve_shot(
-            registry, state, attacker, &weapon, target, true, false, events,
+            registry, state, attacker, &weapon, &round, target, true, false, events,
         ),
         None => {
             events.push(Event::ShotFired {
@@ -642,8 +926,13 @@ pub fn best_opportunity_shot(
             {
                 continue;
             }
+            // Worthless shots are not taken, and this is new discipline
+            // rather than an optimisation: with the damage floor gone, a
+            // gun whose round cannot beat the plate — or whose racks are
+            // empty — expects zero, and a crew that used to plink now
+            // holds fire and keeps her position quiet instead.
             let value = expected_damage(registry, state, unit, att.pos, weapon, enemy.id, false);
-            if best.is_none_or(|(_, _, v)| value > v) {
+            if value > 0.0 && best.is_none_or(|(_, _, v)| value > v) {
                 best = Some((index, enemy.id, value));
             }
         }

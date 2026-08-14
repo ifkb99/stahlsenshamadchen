@@ -124,6 +124,15 @@ fn main() {
                     name(&state, *target)
                 ),
                 Event::ShotMissed { .. } => println!("   miss"),
+                Event::ShotBounced { target, facing, .. } => {
+                    println!("   BOUNCES off {} ({facing:?})", name(&state, *target))
+                }
+                Event::WeaponDry { unit, weapon } => {
+                    println!(
+                        "   >> {} has fired her last {weapon} round",
+                        name(&state, *unit)
+                    )
+                }
                 Event::UnitDestroyed { unit, .. } => {
                     println!("   ** {} DESTROYED **", name(&state, *unit))
                 }

@@ -1094,6 +1094,9 @@ fn pump_events(
         | BattleEvent::OrdersDelivered { unit }
         | BattleEvent::TookCover { unit, .. }
         | BattleEvent::ContactReported { by: unit, .. } => own_unit(unit),
+        // How much ammunition the enemy has left is her quartermaster's
+        // secret, not something the sound of her gun gives away.
+        BattleEvent::WeaponDry { unit, .. } => own_unit(unit),
         _ => true,
     });
     if drained.is_empty() {
@@ -1258,6 +1261,20 @@ fn pump_events(
             BattleEvent::TookCover { unit, .. } => {
                 log.push(format!(
                     "{} is under fire and breaks for cover.",
+                    name(*unit)
+                ));
+            }
+            // The armor holding is news the player must hear, or the shot
+            // reads as the game eating a hit.
+            BattleEvent::ShotBounced { target, facing, .. } => {
+                log.push(format!(
+                    "The round bounces off {}'s {facing:?} armor.",
+                    name(*target)
+                ));
+            }
+            BattleEvent::WeaponDry { unit, weapon } => {
+                log.push(format!(
+                    "{} has fired her last {weapon} round.",
                     name(*unit)
                 ));
             }

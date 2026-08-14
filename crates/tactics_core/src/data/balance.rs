@@ -53,6 +53,19 @@ pub struct Balance {
     /// A penalty rather than nothing, because a commander can lay a gun; she
     /// is just not the gunner.
     pub substitution_penalty: i32,
+    /// Round-to-round penetration variance, as a percent.
+    ///
+    /// No two shells leave the same barrel identically, and armor plate is
+    /// not uniform either: a fired round's penetration is scaled by a
+    /// uniformly random factor in `100 ± pen_scatter` percent before it
+    /// meets the plate. This is what makes a marginal shot *marginal* —
+    /// sometimes through, sometimes a bounce — rather than a foregone
+    /// conclusion the AI can price as certainty. Zero collapses every
+    /// matchup to a hard threshold, which is both a legitimate mod choice
+    /// and what the deterministic tests set. An integer percent rather than
+    /// a float because the analytic chance the AI reads and the roll the
+    /// resolver makes must count the same finite outcomes, exactly.
+    pub pen_scatter: i32,
 }
 
 impl Default for Balance {
@@ -62,6 +75,7 @@ impl Default for Balance {
             speed_per_driving: 5,
             accuracy_per_gunnery: 3,
             substitution_penalty: 2,
+            pen_scatter: 15,
         }
     }
 }

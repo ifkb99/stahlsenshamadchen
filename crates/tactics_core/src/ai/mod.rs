@@ -242,6 +242,16 @@ pub fn best_weapon_against(
         }
         let dmg =
             crate::battle::expected_damage(registry, state, unit, from, weapon, target.id, false);
+        // A gun that expects nothing — racks empty, or a round that cannot
+        // beat the plate it would strike — is not a weapon against this
+        // target at all. This is the line that makes `threatened` honest
+        // now that the damage floor is gone: a machine gun in range of a
+        // heavy tank no longer counts as somebody shooting at her, so the
+        // drill stops breaking cover for it and a movement to contact
+        // stops pausing for it.
+        if dmg <= 0.0 {
+            continue;
+        }
         let kill = dmg >= target.hp as f32 * 0.9;
         if best.is_none_or(|(_, d, _)| dmg > d) {
             best = Some((i, dmg, kill));
