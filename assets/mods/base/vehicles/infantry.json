@@ -34,7 +34,8 @@
         ],
         "cost": 5,
         "safety": 3,
-        "capacity": 0
+        "capacity": 0,
+        "sprite": "mods/base/sprites/rifle_platoon.png"
     },
     {
         "id": "scout_section",
@@ -69,6 +70,7 @@
         ],
         "cost": 4,
         "safety": 4,
-        "capacity": 0
+        "capacity": 0,
+        "sprite": "mods/base/sprites/scout_section.png"
     }
 ]

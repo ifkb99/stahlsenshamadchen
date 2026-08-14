@@ -64,6 +64,14 @@ WHEEL = (40, 38, 35)
 GUN = (58, 60, 50)
 TEAM = (255, 0, 255)
 OUTLINE = (24, 26, 20)
+# Infantry share the roster's palette rather than getting one of their own —
+# a squad is the same army as the tanks. The coat is a shade off the hull so a
+# figure standing beside a vehicle does not vanish into it, and boots take the
+# track tone because the darkest value at the bottom of a shape is what makes
+# it read as standing on the ground.
+COAT = (76, 82, 62)
+BOOTS = TRACK
+HELMET = (94, 100, 76)
 
 
 def norm(v):
@@ -416,6 +424,188 @@ def artillery():
     return boxes
 
 
+def soldier(fx, fy, crouch=0.0, rifle=True):
+    """One figure: boots, coat, helmet, a marked helmet top and a rifle.
+
+    Infantry cannot be drawn as a hull, so the unit is drawn as its people,
+    and the whole silhouette argument rests on the parts that survive being
+    fourteen pixels tall: the gap between figures, the round-shouldered
+    stack of three boxes, and the muzzle sticking out in front. `crouch`
+    drops one figure onto its knees, which costs a third of its height and
+    is the only pose difference a sprite this size can carry.
+
+    The academy's colour goes on the helmet top, in the same place and for
+    the same reason it goes on a turret roof: the camera looks down, so that
+    face is visible in every frame, and one plate per figure means a squad
+    reads as a squad rather than as a single marked man with company."""
+    legs_top = 6.0 - crouch
+    coat_top = legs_top + 6.0
+    lid = coat_top + 2.2
+    boxes = [
+        Box(fx - 1.4, fx + 1.4, fy - 1.9, fy + 1.9, 0.0, legs_top, BOOTS),
+        # The coat is wider than the legs and wider still across the
+        # shoulders than fore-and-aft, so a figure has a front to it.
+        Box(fx - 1.9, fx + 2.0, fy - 2.5, fy + 2.5, legs_top, coat_top, COAT),
+        Box(fx - 1.7, fx + 1.7, fy - 2.1, fy + 2.1, coat_top, lid, HELMET),
+        Box(fx - 1.4, fx + 1.4, fy - 1.8, fy + 1.8, lid, lid + 0.9, TEAM),
+    ]
+    if rifle:
+        # Held across the body and pointing forward. Short, and deliberately
+        # nothing like a tank gun: it clears the figure by about its own
+        # width, which is all the reach a rifle is entitled to look like.
+        z = legs_top + 3.4
+        boxes.append(Box(fx + 1.0, fx + 6.4, fy - 0.6, fy + 0.6, z, z + 0.9, GUN))
+    return boxes
+
+
+def rifle_platoon():
+    """A crowd. Five figures scattered across the hex, one of them shouldering
+    the launcher, and no hull anywhere.
+
+    The count is the characterisation and it is what separates this from the
+    scouts at a glance: five bodies in loose order fill the frame the way a
+    tank's hull does, so the tile still reads as occupied from across the
+    board. They are placed off any grid — a rank would read as a parade, and
+    the thing a player must recognise instantly is *infantry*, not armour."""
+    boxes = []
+    for fx, fy in ((9.5, -1.5), (2.0, 6.5), (0.5, -7.5), (-7.5, 1.0), (-9.5, -6.0)):
+        boxes += soldier(fx, fy)
+    # The launcher man, at the back and to the left, carries his tube over the
+    # shoulder instead of a rifle. It is the longest thing in the sprite and
+    # the only one that points up, which is exactly how it should be read: this
+    # platoon can hurt a tank, and that fact deserves a silhouette.
+    boxes += soldier(-6.0, 8.5, rifle=False)
+    x, z = -8.0, 11.4
+    for _ in range(5):
+        boxes.append(Box(x, x + 2.4, 7.6, 9.4, z, z + 1.5, GUN))
+        x += 2.0
+        z += 0.7
+    return boxes
+
+
+def scout_section():
+    """Three figures, well spread, and two of them down on a knee.
+
+    Everything about it is the rifle platoon minus: fewer bodies, lower
+    profile, wider spacing. That is the honest picture of what the section
+    does — it is bought for its eyes, not its weight — and at this size the
+    difference a player actually sees is that the shape is sparse and short
+    where the platoon's is dense and tall."""
+    boxes = []
+    boxes += soldier(8.0, 2.0, crouch=3.5)
+    boxes += soldier(-2.0, -8.0, crouch=3.5)
+    # The one standing figure has the glasses up, which is a box held at the
+    # face rather than a barrel held at the hip: shorter than a rifle and
+    # higher, so the pose differs from the platoon's even in outline.
+    boxes += soldier(-9.0, 7.0, rifle=False)
+    boxes.append(Box(-7.6, -5.4, 5.4, 8.6, 12.6, 14.0, GUN))
+    return boxes
+
+
+def halftrack():
+    """Wheels in front, tracks behind, and the back of it open to the sky.
+
+    The mixed running gear is the name of the vehicle, so it is drawn
+    literally: a wheeled axle under the cab and a track bogie under the
+    troop compartment, with clear air between them. The compartment is
+    walls-and-no-roof for the same reason the artillery's is, and it is what
+    says *this one does not protect anybody* next to the closed carriers."""
+    boxes = [
+        # Front axle. Two wheels only, set right under the cab. The gap aft of
+        # them has to be wide enough to survive the side-on frame, where the
+        # running gear is a single dark bar along the bottom of the sprite and
+        # a two-pixel break in it simply is not there — five units of daylight
+        # is what makes this a halftrack rather than a short APC.
+        Box(8, 15.5, 6.5, 10, 0, 8, WHEEL),
+        Box(8, 15.5, -10, -6.5, 0, 8, WHEEL),
+        # Track bogie under the rear half.
+        Box(-15, 2.5, 6.5, 11, 0.5, 7.5, TRACK),
+        Box(-15, 2.5, -11, -6.5, 0.5, 7.5, TRACK),
+        # Hull, low and flat: everything that gives this thing height is
+        # either the cab or the compartment walls.
+        Box(-15, 16, -8, 8, 4, 9, HULL),
+        # Cab, closed and roofed, up front. Its roof line sits below the
+        # compartment walls, which keeps the open box behind it the tallest
+        # thing on the vehicle and therefore the part that reads first.
+        Box(5, 15, -7, 7, 9, 14, HULL),
+        Box(6.5, 12, -4, 4, 14, 14.9, TEAM),
+        # Compartment floor, so the hollow has a bottom.
+        Box(-14, 4, -7.5, 7.5, 9, 9.6, TRACK),
+        # Three walls and no roof. The front of the compartment is the back
+        # of the cab, so there are only three to draw.
+        Box(-14, 4, 7.5, 9, 9, 15.5, TURRET),
+        Box(-14, 4, -9, -7.5, 9, 15.5, TURRET),
+        Box(-14.5, -13, -9, 9, 9, 15.5, TURRET),
+        Box(-14.9, -14.5, -6, 6, 10, 14.5, TEAM),
+        # Markings on both outer walls: the frames show the near wall in one
+        # and the far wall in another, and a unit that loses its colour when
+        # it turns is a unit somebody shoots by mistake.
+        Box(-11, 1, 9, 9.4, 10.5, 14, TEAM),
+        Box(-11, 1, -9.4, -9, 10.5, 14, TEAM),
+        # Pintle machine gun over the cab roof, pointing forward. It is a
+        # post and a barrel rather than a mount, because anything with a
+        # footprint up there starts to look like a turret.
+        Box(2.5, 4.5, -1.2, 1.2, 15.5, 17.5, GUN),
+        Box(4.5, 12, -0.7, 0.7, 16.2, 17.2, GUN),
+    ]
+    return boxes
+
+
+def apc():
+    """A low closed box on tracks. The point is that there is nothing on top.
+
+    It has to be recognisable as *not* a fighting vehicle in the same glance
+    that the IFV is recognisable as one, and the two are otherwise the same
+    hull on purpose — one factory, one chassis, one of them given a turret.
+    So the roof here is left clear apart from a hatch, the hull is drawn
+    lower than any gun tank's, and the machine gun is a stub at the hatch
+    rather than anything that could traverse."""
+    return [
+        Box(-15, 14, 6.5, 11, 0.5, 7, TRACK),
+        Box(-15, 14, -11, -6.5, 0.5, 7, TRACK),
+        # Hull: long, wide and shallow. The whole vehicle is the box.
+        Box(-15, 14, -8, 8, 3, 10, HULL),
+        # A sloped front, which is the one piece of shaping it gets: the step
+        # is cut off short of the nose so the glacis runs back to a flat roof.
+        Box(-15, 8, -7, 7, 10, 12, TURRET),
+        Box(-12, -2, -5, 5, 12, 12.9, TEAM),
+        Box(-15.9, -15, -6, 6, 4, 9, TEAM),
+        # Commander's hatch, offset to the left and small enough that it
+        # cannot be mistaken for the IFV's turret.
+        Box(-6, -1.5, 1.0, 5.0, 12, 13.6, TURRET),
+        # And the gun on it: a stub barrel, shorter than the scout car's and
+        # sitting well below the height a turret gun would.
+        Box(-1.5, 6.5, 2.4, 3.6, 12.5, 13.5, GUN),
+    ]
+
+
+def ifv():
+    """The carrier that shoots back: the APC's hull with a small turret and a
+    thin autocannon.
+
+    Turret and barrel are both deliberately undersized against the gun
+    tanks — this outguns infantry and nothing else — but they are *there*,
+    standing proud of a roof that the APC leaves bare, and that contrast is
+    the only thing a player needs to read to know which of the two is worth
+    shooting first."""
+    return [
+        Box(-15, 14, 6.5, 11, 0.5, 7.5, TRACK),
+        Box(-15, 14, -11, -6.5, 0.5, 7.5, TRACK),
+        # The same hull as the APC, carried a touch higher.
+        Box(-15, 14, -8, 8, 3.5, 10.5, HULL),
+        Box(-15, 8, -7, 7, 10.5, 12.5, TURRET),
+        Box(-15.9, -15, -6, 6, 4.5, 9.5, TEAM),
+        # Small turret, set back over the hull rather than forward, so the
+        # deck ahead of it stays visible as deck.
+        Box(-8, -0.5, -5, 5, 12.5, 15.5, TURRET),
+        Box(-7, -2, -4, 4, 15.5, 16.4, TEAM),
+        # 20 mm: thin in section and stopping short of the nose, which is
+        # what keeps it from reading as a tank's gun.
+        Box(-0.5, 1.5, -2, 2, 13.2, 14.8, GUN),
+        Box(1.5, 13, -0.7, 0.7, 13.7, 14.4, GUN),
+    ]
+
+
 def write_png(path, frames):
     w, h = FRAME_W * FRAMES, FRAME_H
     raw = b""
@@ -448,6 +638,11 @@ if __name__ == "__main__":
         ("heavy_tank", heavy_tank()),
         ("tank_destroyer", tank_destroyer()),
         ("artillery", artillery()),
+        ("rifle_platoon", rifle_platoon()),
+        ("scout_section", scout_section()),
+        ("halftrack", halftrack()),
+        ("apc", apc()),
+        ("ifv", ifv()),
     )
     for name, model in roster:
         frames = [render(model, yaw) for yaw in YAWS]

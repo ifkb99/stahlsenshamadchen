@@ -34,7 +34,8 @@
         ],
         "cost": 8,
         "safety": 4,
-        "capacity": 1
+        "capacity": 1,
+        "sprite": "mods/base/sprites/halftrack.png"
     },
     {
         "id": "apc",
@@ -71,7 +72,8 @@
         ],
         "cost": 10,
         "safety": 4,
-        "capacity": 1
+        "capacity": 1,
+        "sprite": "mods/base/sprites/apc.png"
     },
     {
         "id": "ifv",
@@ -112,6 +114,7 @@
         ],
         "cost": 14,
         "safety": 3,
-        "capacity": 1
+        "capacity": 1,
+        "sprite": "mods/base/sprites/ifv.png"
     }
 ]
