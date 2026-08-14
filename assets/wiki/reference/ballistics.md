@@ -132,12 +132,20 @@ What happens to one fired round, replacing `raw_damage`:
    is measurably harder to torch, which quietly makes ammo counts a
    survival stat as well as an economy.
 5. **High explosive.** Against armor a direct HE hit penetrates only the
-   thinnest plates but delivers its `blast` externally: mobility and
-   antenna damage, heavy shock. Against soft and open vehicles it is
-   simply lethal. Against a hex (indirect impact) it affects everyone in
-   and adjacent to the tile, scaled by cover — which is the first time
-   terrain cover has mattered against artillery, and one more reason crews
-   already drilled to scatter and dig in were built first.
+   thinnest plates but delivers its `blast` externally — overpressure and
+   fragmentation, per the designer's ruling (2026-08-13): *a huge HE shell
+   hitting or landing near a tank definitely does something to it.* What
+   it does is roll against what physically lives outside the plate:
+   mobility (the classic result of a 105 arriving next to a track), the
+   radio antenna, and the crew's nerves through the morale ladder. Blast
+   *overmatch* goes further: a large enough shell against thin enough
+   armor wrecks the vehicle without consulting the penetration gate at
+   all — a recon car under a 105 is not a bounce. Against soft and open
+   vehicles HE is simply lethal. Against a hex (indirect impact, B3) it
+   affects everyone in and adjacent to the tile, scaled by cover — the
+   first time terrain cover has mattered against artillery. Until B2/B3
+   land, HE that cannot penetrate only rattles: a known interim, not the
+   design.
 
 ## What a vehicle is, without hit points
 
@@ -281,8 +289,16 @@ economy before the instruments can see it is guessing.
 
 ## Open questions, carried deliberately
 
-- **Hit location inside a facing** (hull vs turret, weak points): the
-  pipeline's impact-geometry step is where it would slot; not MVP.
+- **Hit location inside a facing** (hull vs turret, weak points): ruled
+  with the designer (2026-08-13) as too deep for MVP — at 100 m hexes the
+  player commands sections, not gun-laying, so exterior weak points would
+  be invisible dice while doubling the armor schema on every vehicle. The
+  *angle* story (arcs + hex-face obliquity + angling as armor-class
+  selection) carries the MVP, and the interesting half of "what did it
+  hit" lives inside anyway: B2's post-pen rolls are weighted by what the
+  round passes through, so a driver's-plate penetration finds the driver.
+  If post-MVP feel wants more exterior texture, weak points slot into the
+  impact-geometry step without disturbing anything above it.
 - **APCR/HEAT premium rounds as scarce stowage:** the data schema carries
   them from B0 (class + flat curve is all HEAT needs); shipping them in
   the base mod waits for the balance pass to want them.
