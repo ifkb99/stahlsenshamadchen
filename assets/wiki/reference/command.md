@@ -513,12 +513,30 @@ carrying forward:
 
 - **Standing orders execute as delegation, through the same door.** An army
   that was not moved by hand this turn acts on its mission when the side ends
-  its turn, by calling `apply_move` internally — so a mission move captures,
-  triggers battles and stops short of enemies exactly as a hand-ordered one
-  does, and the game layer's `BattleTriggered` handling needed no changes at
-  all. An army that cannot comply today keeps its orders and tries again
-  tomorrow; forgetting a standing order because of one blocked road would be
-  the system deciding the player did not mean it.
+  its turn, through the same internal mover the player's own click drives — so
+  a mission move captures ground and reports its battles by the same code, and
+  the game layer's `BattleTriggered` handling needed no changes at all. An army
+  that cannot comply today keeps its orders and tries again tomorrow;
+  forgetting a standing order because of one blocked road would be the system
+  deciding the player did not mean it.
+- **An operational `Advance` is movement to contact; everything else avoids.**
+  The one thing a mission changes about a move is what it does with a hostile
+  army in the road. Under `Advance` there are no walls: the route is planned as
+  though enemies were open ground, the march halts on the tile in front of the
+  first one it meets, and halting there *is* the attack — at most one per move,
+  since nothing walks past the enemy it just found. Under `Withdraw`, and under
+  every hand order, enemies are impassable except at the destination named, and
+  stopping short of one starts nothing.
+
+  Both halves are rulings rather than conveniences. Only ever attacking the
+  ordered tile was the earlier behaviour and it made a delegated advance
+  useless: an army sent at ground beyond an enemy routed *around* him, or drove
+  up beside him and waited there for the rest of the campaign, because taking
+  ground and taking what stands on the road to it were being treated as
+  different acts. And the player's click stays a march, not a declaration of
+  war — she may put a company in front of an enemy to hold a line without that
+  being today's battle — while an army falling back that started a fight on the
+  way out would be obeying the reverse of what it was told.
 - **An army is a formation.** This was the missing half of "battle
   inheritance": field battles deployed as flat pools, so there was nobody for a
   campaign order to be *given* to. `deploy` now fills the terrain map's

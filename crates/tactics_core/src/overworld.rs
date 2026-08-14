@@ -292,6 +292,30 @@ pub enum OverworldSetupError {
 const ARMY_CLASS: MovementClass = MovementClass::Tracked;
 const ARMY_CLIMB: i32 = 9;
 
+/// What a move does about a hostile army standing in the road.
+///
+/// Not a mod-facing knob and not part of any order's wire format: it is the one
+/// internal difference between the two things a move can mean, and it exists so
+/// that mission execution and the player's click can share
+/// [`OverworldState::move_army`] instead of the AI growing a second, subtly
+/// different mover of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Engagement {
+    /// Go round. Hostile armies are impassable except at the ordered
+    /// destination, and halting short of one is just a day's march that ended.
+    /// This is what a hand order means — the player's click on a patch of
+    /// ground is not a declaration of war on whatever happens to be between her
+    /// and it — and what a withdrawal means, which is trying to be somewhere
+    /// else rather than trying to fight.
+    Avoid,
+    /// Movement to contact. Hostile armies are ordinary ground as far as the
+    /// route is concerned, the walk halts on the tile in front of the first one
+    /// it actually meets, and halting there is an attack. Only a delegated
+    /// [`ArmyMission::Advance`] moves this way, because "move on `to` and take
+    /// what is on the way" is exactly what that order says.
+    EnRoute,
+}
+
 impl OverworldState {
     pub fn from_map(
         registry: &DataRegistry,
@@ -729,11 +753,29 @@ impl OverworldState {
         events
     }
 
+    /// Move an army toward `to` the way a hand order does: hostile armies are
+    /// obstacles to be gone round, and the only fight this can start is the one
+    /// the player pointed at.
+    ///
+    /// This is the public shape of movement and its semantics are the player's
+    /// — see [`Engagement::Avoid`]. Delegated missions reach the same code
+    /// through [`Self::move_army`] with their own engagement rule; there is
+    /// deliberately no second movement path.
     fn apply_move(
         &mut self,
         registry: &DataRegistry,
         id: ArmyId,
         to: Hex,
+    ) -> Result<Vec<OverworldEvent>, OverworldError> {
+        self.move_army(registry, id, to, Engagement::Avoid)
+    }
+
+    fn move_army(
+        &mut self,
+        registry: &DataRegistry,
+        id: ArmyId,
+        to: Hex,
+        engagement: Engagement,
     ) -> Result<Vec<OverworldEvent>, OverworldError> {
         let (side, pos, movement, moved) = {
             let army = self.army(id).ok_or(OverworldError::NoSuchArmy)?;
@@ -750,9 +792,18 @@ impl OverworldState {
             if from == next {
                 return Some(0);
             }
-            // Armies may not path through any other army; ending on an
-            // enemy is the attack case, handled below.
-            if next != to && self.army_at(next).is_some() {
+            // Ending on an enemy is the attack case, handled below, so `to`
+            // itself is always open. Everything else depends on what the move
+            // is: a friend is furniture either way, and a hostile army is a
+            // wall to a march that means to avoid it and ordinary ground to
+            // one that means to hit whatever it finds. Routing an advance
+            // *around* the enemy in its road was the old behaviour and it is
+            // precisely the bug — an operational advance that side-steps
+            // contact is not an advance.
+            if next != to
+                && let Some(other) = self.army_at(next)
+                && (other.side == side || engagement == Engagement::Avoid)
+            {
                 return None;
             }
             self.edge_cost(registry, from, next)
@@ -760,8 +811,15 @@ impl OverworldState {
         .ok_or(OverworldError::NoPath)?;
 
         // Trim the path to this turn's movement budget.
+        //
+        // Why the walk stopped is recorded here rather than worked out again
+        // from where the army ended up: an army can halt one tile short of an
+        // enemy because the day ran out, and that is a march that stopped, not
+        // an attack that started. Only a walk halted *by* a hostile army it
+        // could otherwise have stepped onto has made contact.
         let mut budget = movement;
         let mut walked = vec![pos];
+        let mut blocked_by: Option<(ArmyId, Hex)> = None;
         for pair in path.windows(2) {
             let Some(step) = self.edge_cost(registry, pair[0], pair[1]) else {
                 break;
@@ -770,7 +828,10 @@ impl OverworldState {
                 break;
             }
             // Stop short of any occupied tile; battle triggers if hostile.
-            if self.army_at(pair[1]).is_some() {
+            if let Some(other) = self.army_at(pair[1]) {
+                if other.side != side {
+                    blocked_by = Some((other.id, pair[1]));
+                }
                 break;
             }
             budget -= step;
@@ -803,9 +864,25 @@ impl OverworldState {
             });
         }
 
-        // If we stopped adjacent to the ordered destination because an
-        // enemy holds it, that's an attack.
-        if let Some(defender) = self.army_at(to)
+        // An army brought up short by an enemy standing in its road has made
+        // contact, and under an advance that is the fight it was sent to have.
+        // At most one battle comes out of one move: the walk stopped at the
+        // first hostile and nothing goes past it, so this and the ordered
+        // destination below are alternatives rather than two chances to fire.
+        //
+        // Under `Avoid` this branch can only be the enemy sitting on `to`
+        // itself, which is the same battle the next branch would have
+        // announced, on the same tile — the hand order's behaviour is
+        // unchanged whichever of the two says it.
+        if let Some((defender, at)) = blocked_by {
+            events.push(OverworldEvent::BattleTriggered {
+                attacker: id,
+                defender,
+                at,
+            });
+        } else if let Some(defender) = self.army_at(to)
+            // If we stopped adjacent to the ordered destination because an
+            // enemy holds it, that's an attack.
             && defender.side != side
             && destination.distance_to(to) == 1
         {
@@ -836,29 +913,40 @@ impl OverworldState {
     /// order means; forgetting it because of one bad day would be the system
     /// quietly deciding the player did not mean it.
     ///
-    /// Everything it does goes through [`Self::apply_move`], so a mission move
-    /// captures ground, triggers battles and stops short of enemies in exactly
-    /// the way a hand-ordered one does. There is deliberately no second path
+    /// Everything it does goes through [`Self::move_army`], the same mover the
+    /// player's own click drives, so a mission captures ground and reports its
+    /// battles by exactly the same code. There is deliberately no second path
     /// for the AI to drive an army along.
+    ///
+    /// What the mission chooses is the one thing the two moves differ on, the
+    /// [`Engagement`]. An `Advance` is movement to contact — it paths as though
+    /// hostile armies were open ground and attacks the first one that stops it,
+    /// because an operational order to take ground is an order to take what is
+    /// standing on the road to it, and the alternative is what this used to do:
+    /// walk up beside the enemy and wait there for ever. A `Withdraw` avoids,
+    /// as a hand order does. An army falling back is trying to be somewhere
+    /// else, and one that started a battle on the way out would be obeying the
+    /// opposite of what it was told.
     fn run_standing_missions(&mut self, registry: &DataRegistry) -> Vec<OverworldEvent> {
         let side = self.active_side;
-        let ordered: Vec<(ArmyId, Hex)> = self
+        let ordered: Vec<(ArmyId, Hex, Engagement)> = self
             .armies
             .iter()
             .filter(|a| a.alive && a.side == side && !a.moved)
             .filter_map(|a| match a.mission.as_ref()? {
-                ArmyMission::Advance { to } | ArmyMission::Withdraw { to } => Some((a.id, *to)),
+                ArmyMission::Advance { to } => Some((a.id, *to, Engagement::EnRoute)),
+                ArmyMission::Withdraw { to } => Some((a.id, *to, Engagement::Avoid)),
                 ArmyMission::Hold => None,
             })
             .collect();
         let mut events = Vec::new();
-        for (id, to) in ordered {
+        for (id, to, engagement) in ordered {
             // Arrived, destroyed since the list was taken, or overtaken by a
             // battle that spent its turn: nothing to do either way.
             if self.army(id).is_none_or(|a| a.moved || a.pos == to) {
                 continue;
             }
-            if let Ok(more) = self.apply_move(registry, id, to) {
+            if let Ok(more) = self.move_army(registry, id, to, engagement) {
                 events.extend(more);
             }
         }

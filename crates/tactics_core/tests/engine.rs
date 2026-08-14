@@ -1221,6 +1221,177 @@ fn a_hand_moved_army_is_not_second_guessed_by_its_mission() {
     );
 }
 
+/// One company on the trunk road with an enemy standing on it three hexes
+/// ahead, and open ground beyond that to be ordered onto.
+///
+/// `frontier`'s row 2 is an unbroken highway from column 2 to column 11 with
+/// plains either side, so the enemy blocks the direct road without walling it
+/// off — which is the interesting case. A march that means to avoid contact can
+/// go round; the question these tests ask is which marches take that offer.
+///
+/// Wireless, because what is being weighed is what an order *does*, not whether
+/// headquarters could get it out.
+fn blocked_road(reg: &DataRegistry) -> (OverworldState, ArmyId, ArmyId, hexx::Hex) {
+    let mut state = OverworldState::from_map(reg, "frontier", 1).unwrap();
+    let army = state.senior_army(0).unwrap();
+    let blocker = state.senior_army(1).unwrap();
+    state.army_mut(army).unwrap().pos = tactics_core::offset_to_hex(2, 2);
+    state.army_mut(blocker).unwrap().pos = tactics_core::offset_to_hex(5, 2);
+    (state, army, blocker, tactics_core::offset_to_hex(9, 2))
+}
+
+#[test]
+fn a_standing_advance_engages_the_army_blocking_its_road() {
+    // The bug this pins: an advance aimed at ground *beyond* an enemy used to
+    // treat that enemy as a wall, so it either detoured around him or halted
+    // beside him and stood there for the rest of the campaign, because the only
+    // thing that ever started a battle was an enemy sitting on the tile the
+    // order named. An operational advance is movement to contact. It fights
+    // what is in the road.
+    let reg = registry_wireless();
+    let (mut state, army, blocker, target) = blocked_road(&reg);
+    let at = state.army(blocker).unwrap().pos;
+    state
+        .apply(
+            &reg,
+            &OverworldOrder::SetMission {
+                army,
+                mission: ArmyMission::Advance { to: target },
+            },
+        )
+        .unwrap();
+
+    let events = state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            OverworldEvent::BattleTriggered { attacker, defender, at: hex }
+                if *attacker == army && *defender == blocker && *hex == at
+        )),
+        "she was told to take the road and somebody is on it: {events:?}"
+    );
+    assert_eq!(
+        state.army(army).unwrap().pos.distance_to(at),
+        1,
+        "and she is up against him, not on him — the battle decides the tile"
+    );
+    // One move, one battle. Nothing walks past the enemy it just found to go
+    // looking for the next one.
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| matches!(e, OverworldEvent::BattleTriggered { .. }))
+            .count(),
+        1,
+        "{events:?}"
+    );
+    assert_eq!(
+        state.army(army).unwrap().mission,
+        Some(ArmyMission::Advance { to: target }),
+        "the order stands; the battle is how she carries it out"
+    );
+}
+
+#[test]
+fn a_standing_withdraw_goes_round_the_enemy_rather_than_through_him() {
+    // The same road and the same enemy, under the opposite order. An army
+    // falling back is trying to be somewhere else; one that started a battle on
+    // the way out would be obeying the reverse of what it was told. So a
+    // withdrawal keeps the avoid semantics a hand order has — the enemy is a
+    // wall, it goes round him if there is a way round, and it does not go
+    // anywhere at all if there is not.
+    //
+    // On this road there is a way round — plains either side of the highway —
+    // and she takes it, ending the day beside him without a shot. Adjacency is
+    // not contact; the order is.
+    let reg = registry_wireless();
+    let (mut state, army, blocker, target) = blocked_road(&reg);
+    let at = state.army(blocker).unwrap().pos;
+    let start = state.army(army).unwrap().pos;
+    state
+        .apply(
+            &reg,
+            &OverworldOrder::SetMission {
+                army,
+                mission: ArmyMission::Withdraw { to: target },
+            },
+        )
+        .unwrap();
+
+    let events = state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::BattleTriggered { .. })),
+        "a withdrawal does not pick fights: {events:?}"
+    );
+    let ended = state.army(army).unwrap().pos;
+    assert_ne!(ended, at, "and it certainly does not drive through him");
+    assert_ne!(
+        ended, start,
+        "she is not stuck either — the enemy is a wall, not a full stop"
+    );
+    assert_eq!(
+        state.army(army).unwrap().mission,
+        Some(ArmyMission::Withdraw { to: target }),
+        "the order survives the day, as every standing order does"
+    );
+}
+
+#[test]
+fn a_hand_ordered_march_past_an_enemy_is_not_a_declaration_of_war() {
+    // The player's click is not an order to attack. She may put a company on
+    // the tile in front of an enemy to hold a line, or send it somewhere the
+    // short way happens to run past him, and neither is a decision to fight
+    // today. Only pointing *at* the enemy is that. This is the half of the
+    // ruling that the advance change must not quietly take away.
+    let reg = registry_wireless();
+    let (mut state, army, blocker, target) = blocked_road(&reg);
+    let at = state.army(blocker).unwrap().pos;
+
+    // Straight up to his front bumper and stop.
+    let beside = tactics_core::offset_to_hex(4, 2);
+    let events = state
+        .apply(&reg, &OverworldOrder::MoveArmy { army, to: beside })
+        .unwrap();
+    assert_eq!(state.army(army).unwrap().pos, beside);
+    assert_eq!(state.army(army).unwrap().pos.distance_to(at), 1);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::BattleTriggered { .. })),
+        "standing next to somebody is not attacking him: {events:?}"
+    );
+
+    // And a march aimed at ground on the far side of him is a march, not an
+    // assault: it finds its own way there and starts nothing on the way.
+    next_turn_of(&reg, &mut state, 0);
+    let events = state
+        .apply(&reg, &OverworldOrder::MoveArmy { army, to: target })
+        .unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::BattleTriggered { .. })),
+        "the ordered destination was empty ground: {events:?}"
+    );
+    assert_ne!(state.army(army).unwrap().pos, at);
+
+    // Pointing at him, on the other hand, is exactly that — unchanged.
+    next_turn_of(&reg, &mut state, 0);
+    let events = state
+        .apply(&reg, &OverworldOrder::MoveArmy { army, to: at })
+        .unwrap();
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            OverworldEvent::BattleTriggered { attacker, defender, at: hex }
+                if *attacker == army && *defender == blocker && *hex == at
+        )),
+        "she was aimed at him: {events:?}"
+    );
+}
+
 #[test]
 fn a_withdrawing_army_fights_its_battle_toward_the_exit() {
     let reg = registry_wireless();
@@ -7931,10 +8102,29 @@ fn a_campaign_run_by_standing_orders_and_planners_plays_itself_out() {
         battles > 0,
         "sixty days of two planners should meet somewhere"
     );
+    // The order held on day one has to *resolve*: either it goes out on the
+    // first morning the wire is up, or the company it was for stops existing
+    // and it is dropped, there being nobody to give it to. What must not happen
+    // is that it sits in the drawer for ever while its army is alive and
+    // reachable.
+    //
+    // Stated as the pair rather than as "it transmitted" because which of the
+    // two a sixty-day brawl produces is an accident of the brawl, not a rule.
+    // It used to be the first here — the senior company was destroyed, the
+    // junior inherited headquarters and heard herself — and it is now the
+    // second, because an advance that engages what blocks it fights different
+    // battles on different days and this run gets the junior overrun instead.
+    // The rule the waiting tray actually promises is pinned properly by
+    // `an_army_mission_out_of_range_waits_and_then_transmits`.
     assert!(
-        transmitted,
-        "the order held for the junior company on day one has to go out \
-         eventually, or standing orders die in the drawer"
+        transmitted || state.army(junior).is_none(),
+        "a held order must either go out or die with the army it was for, \
+         never sit in the drawer while she is alive to receive it"
+    );
+    assert!(
+        state.waiting_missions.is_empty(),
+        "and headquarters is not still holding it: {:?}",
+        state.waiting_missions
     );
 }
 
