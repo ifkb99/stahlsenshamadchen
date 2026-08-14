@@ -88,6 +88,11 @@ stalemate, so there is finally a baseline to measure a rewrite against.
 - girl progression: xp, leveling, skills. fire emblem is a stated inspiration and this is the emotional engine of the genre. sketch the shape early since it lives on the girl-instance model
 - basic requisition flow: vehicle costs, side funds, and income all exist but nothing spends money until academy mode. a minimal buy/reinforce loop shouldn't wait for the 4x layer
 ### Content gaps
+- **a random map generator** (noted 2026-08-14, deliberately not yet): real
+  balance work needs terrain the numbers were not tuned on, and the designer
+  wants one eventually. Until then the answer is more hand-made maps and a
+  harness that samples them — `balance --sim` draws from the whole battle-map
+  roster, so every map added is free balance signal.
 - **every overworld battle is fought on `river_crossing`.** `choose_battle_map` looks for a map named `battle_<terrain>` and otherwise returns the first battle map in the registry — and the base mod ships exactly one. wants a `battle_plains`, `battle_forest`, `battle_city` and so on, each the radius-20 hexagon; `validate-mods` rejects any that are not, so the sizing cannot drift
 ### Game Theme
 - late 1960s tech, with a cutesy anime vibe. going for "Wargame Red Dragon but anime"

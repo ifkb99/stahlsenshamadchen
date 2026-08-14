@@ -319,6 +319,88 @@ pub fn chambered<'r>(
     Some(Round::loaded(ammo, weapon))
 }
 
+/// What one round is expected to accomplish against one profile: the
+/// penetration chain's value plus a modest price on blast, because a shell
+/// that cannot get through still rattles tracks and antennas from outside.
+/// The one value function behind both the loader's choice and the AI's shot
+/// pricing — if they read different formulas, the crew would load a round
+/// the planner did not price, and every number upstream would quietly lie.
+fn round_worth(profile: &ShotProfile, ammo: Option<&AmmoDef>) -> f32 {
+    /// What a point of blast is worth next to a point of expected
+    /// penetration damage. An AI pricing constant in the same family as the
+    /// evaluator's SUPPORT and DEVOLVED, not physics — the physics of blast
+    /// live in `overpressure`.
+    const BLAST_WORTH: f32 = 0.3;
+    let blast = ammo.map(|a| a.blast).unwrap_or(0).max(0) as f32;
+    profile.pen_chance * profile.damage as f32 + (1.0 - profile.pen_chance) * BLAST_WORTH * blast
+}
+
+/// The round the loader picks with a target in her commander's sights: the
+/// listed ammunition with stock remaining that expects the most against
+/// THAT vehicle, ties to the earlier listing (the loader's standing
+/// preference). This is the AP-or-HE decision made where it was really
+/// made — at the racks, by the crew, per target — rather than in the order
+/// stream: the commander calls the target, the loader picks the round.
+/// Legacy-path weapons (no ammo list) have nothing to choose.
+pub fn best_round_against<'r>(
+    registry: &'r DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    weapon: &WeaponDef,
+    target: UnitId,
+) -> Option<Round<'r>> {
+    if weapon.ammo.is_empty() {
+        return chambered(registry, state, unit, weapon);
+    }
+    let u = state.unit(unit)?;
+    let mut best: Option<(f32, Round<'r>)> = None;
+    for id in &weapon.ammo {
+        if u.ammo.get(id).copied().unwrap_or(0) == 0 {
+            continue;
+        }
+        let Some(ammo) = registry.ammo(id) else {
+            continue;
+        };
+        let round = Round::loaded(ammo, weapon);
+        let Some(profile) = shot_profile(registry, state, weapon, &round, u.pos, target) else {
+            continue;
+        };
+        let worth = round_worth(&profile, Some(ammo));
+        if best.as_ref().is_none_or(|(w, _)| worth > *w) {
+            best = Some((worth, round));
+        }
+    }
+    best.map(|(_, round)| round)
+}
+
+/// The round for shelling ground nobody has confirmed: the most blast
+/// aboard, ties to the earlier listing. Area fire is suppression and
+/// harassment, and solid shot into an empty treeline is a wasted rack slot.
+pub fn best_round_for_ground<'r>(
+    registry: &'r DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    weapon: &WeaponDef,
+) -> Option<Round<'r>> {
+    if weapon.ammo.is_empty() {
+        return chambered(registry, state, unit, weapon);
+    }
+    let u = state.unit(unit)?;
+    let mut best: Option<(i32, Round<'r>)> = None;
+    for id in &weapon.ammo {
+        if u.ammo.get(id).copied().unwrap_or(0) == 0 {
+            continue;
+        }
+        let Some(ammo) = registry.ammo(id) else {
+            continue;
+        };
+        if best.as_ref().is_none_or(|(b, _)| ammo.blast > *b) {
+            best = Some((ammo.blast, Round::loaded(ammo, weapon)));
+        }
+    }
+    best.map(|(_, round)| round)
+}
+
 /// A round that has left the muzzle and has not arrived yet.
 ///
 /// Only indirect fire is ever in this list. At this scale a direct-fire shot
@@ -651,11 +733,12 @@ pub fn shot_profile(
     })
 }
 
-/// Expected outcome of a shot — hit chance x penetration chance x ledger
-/// damage — the currency of AI scoring. Zero for a dry gun, and zero for a
-/// gun whose round cannot beat the plate it would strike, which is what
-/// finally lets a crew *hold fire* instead of plinking: the floor that made
-/// every shot worth something is gone.
+/// Expected outcome of a shot — hit chance times what the loader's best
+/// round is worth against that plate ([`round_worth`]: the penetration
+/// chain plus a modest price on blast) — the currency of AI scoring. Zero
+/// for a dry gun. A gun whose best round can neither penetrate nor blast
+/// expects nothing and holds its fire; one that can only rattle tracks
+/// with high explosive expects a little, and harasses.
 /// `from` is where the attacker would fire from (hypothetical or real).
 pub fn expected_damage(
     registry: &DataRegistry,
@@ -669,14 +752,14 @@ pub fn expected_damage(
     let Some(tgt) = state.unit(target) else {
         return 0.0;
     };
-    let Some(round) = chambered(registry, state, attacker, weapon) else {
+    let Some(round) = best_round_against(registry, state, attacker, weapon, target) else {
         return 0.0;
     };
     let Some(profile) = shot_profile(registry, state, weapon, &round, from, target) else {
         return 0.0;
     };
     let p = hit_chance(registry, state, attacker, from, weapon, tgt.pos, blind) as f32 / 100.0;
-    p * profile.pen_chance * profile.damage as f32
+    p * round_worth(&profile, round.ammo)
 }
 
 /// Everything the player should know before committing to a shot.
@@ -778,7 +861,7 @@ pub fn preview_attack(
     // A dry gun previews honestly: the round is named as missing and every
     // consequence of it is zero, which tells the player exactly why the
     // shot she is hovering cannot happen.
-    let round = chambered(registry, state, attacker, weapon);
+    let round = best_round_against(registry, state, attacker, weapon, target);
     let profile = round
         .as_ref()
         .and_then(|r| shot_profile(registry, state, weapon, r, att.pos, target));
@@ -815,7 +898,7 @@ pub fn preview_attack(
                         && weapon_ready(registry, state, target, *i)
                 })
                 .map(|(_, w)| {
-                    let damage = chambered(registry, state, target, w)
+                    let damage = best_round_against(registry, state, target, w, attacker)
                         .and_then(|r| shot_profile(registry, state, w, &r, tgt.pos, attacker))
                         .map(|p| (p.pen_chance * p.damage as f32).round() as i32)
                         .unwrap_or(0);
@@ -1439,9 +1522,17 @@ fn chamber_and_spend<'r>(
     state: &mut BattleState,
     unit: UnitId,
     weapon: &WeaponDef,
+    aim: Option<UnitId>,
     events: &mut Vec<Event>,
 ) -> Option<Round<'r>> {
-    let round = chambered(registry, state, unit, weapon)?;
+    // The loader's choice: a confirmed target gets the round that expects
+    // the most against it, ground gets the most blast aboard. Same
+    // selectors the AI priced the shot with, so what leaves the muzzle is
+    // what the plan was worth.
+    let round = match aim {
+        Some(target) => best_round_against(registry, state, unit, weapon, target)?,
+        None => best_round_for_ground(registry, state, unit, weapon)?,
+    };
     if let Some(ammo) = round.ammo {
         if let Some(u) = state.unit_mut(unit)
             && let Some(count) = u.ammo.get_mut(&ammo.id)
@@ -1481,7 +1572,8 @@ fn fire_at_unit(
     let Some(tgt_pos) = state.unit(target).map(|t| t.pos) else {
         return;
     };
-    let Some(round) = chamber_and_spend(registry, state, attacker, &weapon, events) else {
+    let Some(round) = chamber_and_spend(registry, state, attacker, &weapon, Some(target), events)
+    else {
         return;
     };
     if let Some(att) = state.unit_mut(attacker) {
@@ -1542,7 +1634,7 @@ fn fire_at_tile(
     };
     // Spent whether or not anybody is standing there: shelling empty ground
     // costs the shell.
-    let Some(round) = chamber_and_spend(registry, state, attacker, &weapon, events) else {
+    let Some(round) = chamber_and_spend(registry, state, attacker, &weapon, None, events) else {
         return;
     };
     if let Some(att) = state.unit_mut(attacker) {

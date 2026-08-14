@@ -975,7 +975,31 @@ impl BattleState {
             self.award_objective_points();
         }
 
-        if self.in_contact() || events.iter().any(|e| matches!(e, Event::ShotHit { .. })) {
+        // The stalemate clock measures PROGRESS, not proximity. It used to
+        // reset on mere mutual spotting, and the post-hit-point physics
+        // made that a livelock: two survivors neither can kill hold each
+        // other in sight forever — the loader happily harassing tracks
+        // with high explosive — and a battle that will never produce
+        // another loss never ends. Now only fighting that changes
+        // something resets it: hits, bounces (the guns are still trying),
+        // anything breaking or burning, anyone dying or leaving. Crews
+        // staring at each other across a field with dry racks or hopeless
+        // guns wind the clock down exactly like crews that lost contact,
+        // and the score decides what the staring was worth.
+        let progress = events.iter().any(|e| {
+            matches!(
+                e,
+                Event::ShotHit { .. }
+                    | Event::ShotBounced { .. }
+                    | Event::CrewHit { .. }
+                    | Event::ModuleHit { .. }
+                    | Event::BrewedUp { .. }
+                    | Event::Abandoned { .. }
+                    | Event::UnitDestroyed { .. }
+                    | Event::UnitExited { .. }
+            )
+        });
+        if progress {
             self.last_contact_round = self.round;
         }
         self.check_victory(&mut events);
@@ -1624,11 +1648,6 @@ impl BattleState {
             }
         }
         None
-    }
-
-    /// Does any side currently have an enemy in sight?
-    fn in_contact(&self) -> bool {
-        (0..self.sides.len() as u8).any(|side| !self.fog.side(side).spotted.is_empty())
     }
 
     fn finish(&mut self, winner: Option<u8>, reason: EndReason, events: &mut Vec<Event>) {
