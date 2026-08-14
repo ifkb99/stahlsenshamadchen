@@ -221,6 +221,20 @@ rule they defend (`unspotted_enemies_still_ambush`).
 
 ### Correctness
 
+- **Difficulty is inverted in practice: less noise plays worse.**
+  `cargo run --release -p tactics_core --example skillgap` measures it —
+  same map, same doctrine, only `difficulty` differing, mirrored across
+  sides. A noiseless (difficulty 5) utility side loses to a noisy one in
+  BOTH orientations (9–27 vs diff 3; 16–17 and 16–20 vs diff 1), and two
+  noiseless sides produce a deterministic 36–0 sweep where two noisy ones
+  produce 19–17. The greedy argmax coordinates badly with itself —
+  deterministic ties clump units and freeze them on local optima, and the
+  noise that was meant to model incompetence accidentally implements
+  dispersion and exploration. Same pathology family as the pre-objectives
+  stalemates (11/12 at zero noise). Loss ratios also hover at 1:0.8–1.3
+  in every pairing: nobody wins cleanly, which is not what a skill gap
+  does in military history. This is the ballistics B4 pass's first
+  target; see `assets/wiki/reference/ballistics.md`.
 - **Army-contained unit placements are never validated.**
   `map.rs:312` passes `a.at` (the army's own hex) instead of `u.at` when
   checking each unit inside an `ArmyPlacement`, so a unit's own coordinates are

@@ -366,6 +366,23 @@ tuning, and the doctrine coefficients re-read against the new outcome
 space. This is where the delegation-tax and stalemate numbers get
 re-baselined and quoted.
 
+Its first target was measured on 2026-08-13 by the `skillgap` example
+after the designer asked whether a skill gap wins cleanly here the way
+it does in military history: **it does not, and difficulty is inverted
+in practice.** With identical forces and doctrine, the noiseless
+difficulty-5 utility planner loses to a noisy one in both side
+orientations, and every pairing's loss ratio sits near 1:1 — no
+lopsided victories exist in the current space at all. The greedy argmax
+coordinates badly with itself (deterministic clumping, frozen local
+optima) and difficulty noise accidentally implements the dispersion and
+exploration that good play actually needs. What generalship historically
+buys — fighting only unfair fights: local concentration against isolated
+enemies, ambush from cover, refusing engagements at bad odds — is
+exactly what the evaluator does not yet price, and B4's success metric
+is therefore written down now: a difficulty-5 side against difficulty-1
+with equal forces should win most battles at a loss ratio visibly
+better than 1:2, and skill should buy *cleanliness*, not just wins.
+
 **B5. Instruments and presentation (3/5 — Opus).** The balance analytic
 pass rewritten around the kill chain (P(pen) tables per gun × armor ×
 range, time-to-kill distributions, ammo economy), playthrough narration,
