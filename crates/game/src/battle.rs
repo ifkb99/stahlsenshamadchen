@@ -844,6 +844,7 @@ fn deploy(
                 // id, which is the thing this whole refactor is getting away
                 // from.
                 placements.push(UnitPlacement {
+                    aboard_at: None,
                     at: tactics_core::hex_to_offset(hex),
                     side: force.side,
                     vehicle: unit.vehicle.clone(),
@@ -1323,6 +1324,12 @@ fn pump_events(
             }
             BattleEvent::Abandoned { unit } => {
                 log.push(format!("The crew abandons {}.", name(*unit)));
+            }
+            BattleEvent::Mounted { unit, into } => {
+                log.push(format!("{} mounts up in {}.", name(*unit), name(*into)));
+            }
+            BattleEvent::Dismounted { unit, .. } => {
+                log.push(format!("{} dismounts.", name(*unit)));
             }
             // The armor holding is news the player must hear, or the shot
             // reads as the game eating a hit.

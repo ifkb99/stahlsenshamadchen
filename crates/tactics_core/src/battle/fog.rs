@@ -346,6 +346,9 @@ pub fn recompute(registry: &DataRegistry, state: &mut BattleState) -> Vec<Event>
         // event order that follows from it — never depends on hash ordering.
         let key: Vec<(UnitId, Hex, u32)> = state
             .side_units(side)
+            // Passengers see nothing for their side: buttoned up in the
+            // back of a carrier, her eyes are the carrier's problem.
+            .filter(|u| u.aboard.is_none())
             .map(|u| {
                 (
                     u.id,
@@ -393,7 +396,11 @@ pub fn recompute(registry: &DataRegistry, state: &mut BattleState) -> Vec<Event>
         let fog = state.fog.side(side);
         let mut spotted = HashSet::new();
         let mut spotted_now = Vec::new();
-        for unit in state.units.iter().filter(|u| u.alive && u.side != side) {
+        for unit in state
+            .units
+            .iter()
+            .filter(|u| u.alive && u.side != side && u.aboard.is_none())
+        {
             let revealed = fog.revealed.contains(&unit.id);
             if !(fog.visible.contains(&unit.pos) || revealed) {
                 continue;

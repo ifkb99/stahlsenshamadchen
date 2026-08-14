@@ -187,6 +187,25 @@ pub struct Unit {
     /// everyone aboard carry the fire.
     #[serde(default)]
     pub brewed: bool,
+    /// The carrier this unit is riding in, when she is riding at all.
+    ///
+    /// Aboard, she is off the map in every sense that matters to the enemy:
+    /// unspottable, untargetable, occupying no hex of her own (her `pos`
+    /// mirrors the carrier's so nothing downstream reads a stale tile), and
+    /// silent — she neither sees for her side nor shoots for it. What she
+    /// keeps is her radio, her nerves, and her share of whatever comes
+    /// through the carrier's armor.
+    #[serde(default)]
+    pub aboard: Option<UnitId>,
+    /// A standing order to go and board this carrier: she marches toward it
+    /// round after round — re-pathed from wherever she stands, like a
+    /// personal tasking — and steps aboard the tick she arrives alongside.
+    #[serde(default)]
+    pub boarding: Option<UnitId>,
+    /// She has been told to get off: executed at the next transport pass,
+    /// onto the first free tile beside the carrier.
+    #[serde(default)]
+    pub dismounting: bool,
     /// Destroyed as a vehicle by catastrophic damage that was not a fire —
     /// blast overmatch flattening a soft skin, for now. Kept separate from
     /// [`Self::brewed`] because the campaign's fate rolls care about the
@@ -542,6 +561,41 @@ impl BattleState {
             );
         }
         state.face_units_at_enemies(placements);
+        // Mounted starts: a placement naming `aboard_at` boards the
+        // transport standing at those coordinates, after every unit exists.
+        // A dangling reference degrades to spawning on foot — the map
+        // should fight even when its author moved the halftrack and forgot
+        // the riders — and validation is where the author hears about it.
+        for (i, placement) in placements.iter().enumerate() {
+            let Some(coords) = placement.aboard_at else {
+                continue;
+            };
+            let carrier_pos = crate::offset_to_hex(coords[0], coords[1]);
+            let rider = UnitId(i as u32);
+            let Some(carrier) = state
+                .units
+                .iter()
+                .find(|u| u.pos == carrier_pos && u.id != rider && u.aboard.is_none())
+                .map(|u| u.id)
+            else {
+                continue;
+            };
+            let fits = state
+                .unit(carrier)
+                .and_then(|c| registry.vehicle(&c.vehicle))
+                .is_some_and(|v| v.capacity as usize > state.passengers(carrier).len());
+            let on_foot = state
+                .unit(rider)
+                .and_then(|u| registry.vehicle(&u.vehicle))
+                .is_some_and(|v| v.movement.class == crate::data::MovementClass::Foot);
+            if fits && on_foot {
+                let pos = state.unit(carrier).map(|c| c.pos).unwrap_or(carrier_pos);
+                if let Some(u) = state.units.get_mut(rider.index()) {
+                    u.aboard = Some(carrier);
+                    u.pos = pos;
+                }
+            }
+        }
         state.fog = FogMap::new(state.sides.len());
         fog::recompute(registry, &mut state);
         state
@@ -697,6 +751,9 @@ impl BattleState {
             abandoned: false,
             brewed: false,
             wrecked: false,
+            aboard: None,
+            boarding: None,
+            dismounting: false,
             last_hit_by: None,
             pressure: 0,
             detached: false,
@@ -793,7 +850,21 @@ impl BattleState {
     }
 
     pub fn unit_at(&self, hex: Hex) -> Option<&Unit> {
-        self.units.iter().find(|u| u.alive && u.pos == hex)
+        // A passenger's `pos` mirrors her carrier's, so she must never
+        // answer for the hex: one filter here keeps every occupancy,
+        // targeting and collision read in the game passenger-blind at once.
+        self.units
+            .iter()
+            .find(|u| u.alive && u.aboard.is_none() && u.pos == hex)
+    }
+
+    /// Everyone riding in `carrier`, in id order.
+    pub fn passengers(&self, carrier: UnitId) -> Vec<UnitId> {
+        self.units
+            .iter()
+            .filter(|u| u.alive && u.aboard == Some(carrier))
+            .map(|u| u.id)
+            .collect()
     }
 
     /// The unit at `hex` if `side` may act on it as a target: an enemy its

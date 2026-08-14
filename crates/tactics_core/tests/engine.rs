@@ -523,6 +523,7 @@ fn sides_that_can_see_each_other_are_never_called_off() {
     ];
     let placements = vec![
         UnitPlacement {
+            aboard_at: None,
             at: [0, 1],
             side: 0,
             vehicle: "medium_tank".into(),
@@ -533,6 +534,7 @@ fn sides_that_can_see_each_other_are_never_called_off() {
             leads: false,
         },
         UnitPlacement {
+            aboard_at: None,
             at: [2, 1],
             side: 1,
             vehicle: "medium_tank".into(),
@@ -1413,6 +1415,7 @@ fn a_withdrawing_army_fights_its_battle_toward_the_exit() {
     // Two companies facing each other along the trunk road, each one a
     // formation, exactly as the campaign's `deploy` assembles them.
     let placement = |col: i32, side: u8, formation: &str, leads: bool| UnitPlacement {
+        aboard_at: None,
         at: [col, 20],
         side,
         vehicle: "medium_tank".into(),
@@ -1545,6 +1548,7 @@ fn two_side_battle(
 
 fn unit_at(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> UnitPlacement {
     UnitPlacement {
+        aboard_at: None,
         at,
         side,
         vehicle: vehicle.into(),
@@ -3988,6 +3992,7 @@ fn an_executor_only_command_fills_gaps_without_issuing_missions() {
     let map = HexMap::from_map_file(&file).unwrap();
     let placement =
         |col: i32, row: i32, name: &str, formation: Option<&str>, leads: bool| UnitPlacement {
+            aboard_at: None,
             at: [col, row],
             side: 0,
             vehicle: "medium_tank".into(),
@@ -8351,6 +8356,325 @@ fn an_unseen_crew_holds_her_rockets_for_the_killing_shot() {
     assert!(
         watch("apc", 2, 602),
         "a taxi allowed to close is the shot the rockets were carried for"
+    );
+}
+
+// --- the ride (infantry N2) ------------------------------------------------
+
+/// A taxi, her platoon beside her, and an enemy across the field. Which
+/// enemy matters: a recon car can watch the whole exercise and hurt none
+/// of it, a tank destroyer makes the ride a coffin — each test picks.
+fn taxi_stage(reg: &DataRegistry, enemy: &str, seed: u64) -> BattleState {
+    let row = "g".repeat(12);
+    two_side_battle(
+        reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([1, 1], 0, "apc", "Taxi"),
+            unit_at([2, 1], 0, "rifle_platoon", "Riders"),
+            unit_at([10, 1], 1, enemy, "Overwatch"),
+        ],
+        seed,
+    )
+}
+
+#[test]
+fn a_platoon_boards_rides_hidden_and_steps_off_where_the_ride_ends() {
+    // The whole taxi doctrine in one test: she mounts by order, vanishes
+    // from the enemy's picture while the carrier stays plainly visible,
+    // rides wherever it drives, and steps off beside it when told —
+    // reappearing to the enemy the same tick her boots touch ground.
+    let reg = registry_wireless();
+    let mut state = taxi_stage(&reg, "recon_car", 701);
+    let (taxi, riders) = (UnitId(0), UnitId(1));
+    state
+        .apply(
+            &reg,
+            &Order::Mount {
+                unit: riders,
+                into: taxi,
+            },
+        )
+        .unwrap();
+    commit_all(&reg, &mut state);
+    let events = state.resolve_round(&reg);
+    assert!(
+        events.iter().any(
+            |e| matches!(e, BattleEvent::Mounted { unit, into } if *unit == riders && *into == taxi)
+        ),
+        "standing alongside, she steps up the same round"
+    );
+    assert!(
+        !state.fog.side(1).spotted.contains(&riders),
+        "aboard, the enemy's picture holds only the taxi"
+    );
+    assert!(
+        state.fog.side(1).spotted.contains(&taxi),
+        "which it can see just fine"
+    );
+
+    // The ride: the taxi drives, the platoon's position mirrors hers.
+    let dest = state.unit(taxi).unwrap().pos + tactics_core::Hex::new(3, 0);
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: taxi,
+                to: dest,
+            },
+        )
+        .unwrap();
+    commit_all(&reg, &mut state);
+    state.resolve_round(&reg);
+    assert_eq!(
+        state.unit(riders).unwrap().pos,
+        state.unit(taxi).unwrap().pos,
+        "she rides where the carrier is"
+    );
+
+    state
+        .apply(&reg, &Order::Dismount { unit: riders })
+        .unwrap();
+    commit_all(&reg, &mut state);
+    let events = state.resolve_round(&reg);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::Dismounted { unit, .. } if *unit == riders)),
+        "and steps off when told"
+    );
+    let (r, t) = (
+        state.unit(riders).unwrap().pos,
+        state.unit(taxi).unwrap().pos,
+    );
+    assert_eq!(r.distance_to(t), 1, "onto the ground beside the ride");
+}
+
+#[test]
+fn a_penetrated_taxi_shares_its_luck_with_everyone_aboard() {
+    // The shared-fate ruling: a round through a loaded carrier does not
+    // check tickets. The pool a penetration rolls against includes the
+    // passengers' girls and troops, so riding a taxi under fire costs
+    // exactly what the period says it cost.
+    let reg = registry_wireless();
+    let mut state = taxi_stage(&reg, "tank_destroyer", 702);
+    let (taxi, riders, gun) = (UnitId(0), UnitId(1), UnitId(2));
+    state.units[riders.index()].aboard = Some(taxi);
+    state.units[riders.index()].pos = state.units[taxi.index()].pos;
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: gun,
+                fire: FireIntent::Target {
+                    target: taxi,
+                    weapon: 0,
+                },
+            },
+        )
+        .unwrap();
+    commit_all(&reg, &mut state);
+
+    let mut rider_hurt = false;
+    for _ in 0..4 {
+        if state.is_over() {
+            break;
+        }
+        for event in state.resolve_round(&reg) {
+            if matches!(
+                event,
+                BattleEvent::CrewHit { unit, .. } | BattleEvent::ModuleHit { unit, .. }
+                    if unit == riders
+            ) {
+                rider_hurt = true;
+            }
+        }
+        commit_all(&reg, &mut state);
+    }
+    assert!(
+        rider_hurt,
+        "an 88 through the box finds the people packed inside it"
+    );
+}
+
+#[test]
+fn a_brewed_carrier_burns_its_passengers_and_spits_out_the_rest() {
+    // The worst ride there is. The carrier's racks go up, every passenger
+    // is rolled through the fire, and whoever is left picks herself up
+    // beside the wreck — dismounted by catastrophe rather than by order.
+    let mut reg = registry_wireless();
+    reg.balance.brewup_percent = 100;
+    if let Some(rack) = reg.modules.get_mut("ammo_rack_sparse") {
+        // The apc's rack becomes most of what a penetration can find, so
+        // the brew is round one business and the test is about the fire,
+        // not about waiting for it.
+        rack.size = 100;
+    }
+    let mut state = taxi_stage(&reg, "tank_destroyer", 703);
+    let (taxi, riders, gun) = (UnitId(0), UnitId(1), UnitId(2));
+    state.units[riders.index()].aboard = Some(taxi);
+    state.units[riders.index()].pos = state.units[taxi.index()].pos;
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: gun,
+                fire: FireIntent::Target {
+                    target: taxi,
+                    weapon: 0,
+                },
+            },
+        )
+        .unwrap();
+    commit_all(&reg, &mut state);
+
+    let (mut brewed, mut rider_events) = (false, 0);
+    for _ in 0..4 {
+        if state.is_over() {
+            break;
+        }
+        for event in state.resolve_round(&reg) {
+            match event {
+                BattleEvent::BrewedUp { unit } if unit == taxi => brewed = true,
+                BattleEvent::CrewHit { unit, .. } | BattleEvent::ModuleHit { unit, .. }
+                    if unit == riders =>
+                {
+                    rider_events += 1;
+                }
+                _ => {}
+            }
+        }
+        if brewed {
+            break;
+        }
+        commit_all(&reg, &mut state);
+    }
+    assert!(brewed, "the racks go up");
+    assert!(
+        rider_events > 0,
+        "and the fire rolls through the passengers"
+    );
+    let riders_unit = &state.units[riders.index()];
+    assert!(riders_unit.aboard.is_none(), "nobody stays aboard a pyre");
+    if riders_unit.alive {
+        assert_eq!(
+            riders_unit.pos,
+            state.units[taxi.index()].pos,
+            "the survivors pick themselves up beside the wreck"
+        );
+    }
+}
+
+#[test]
+fn a_carrier_that_leaves_the_map_takes_her_passengers_home() {
+    // Withdrawal by taxi: the carrier drives onto her side's exit with the
+    // platoon aboard, and both leave the battle as withdrawals — exited,
+    // never mourned, each scored as a unit that came home.
+    let reg = registry_wireless();
+    let mut state = objective_battle(
+        &reg,
+        serde_json::json!([
+            { "id": "west_road", "at": [[0, 0]], "value": 1, "kind": "exit", "side": 0 }
+        ]),
+        None,
+        vec![
+            unit_at([2, 0], 0, "apc", "Taxi"),
+            unit_at([3, 0], 0, "rifle_platoon", "Riders"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+    );
+    let (taxi, riders) = (UnitId(0), UnitId(1));
+    state.units[riders.index()].aboard = Some(taxi);
+    state.units[riders.index()].pos = state.units[taxi.index()].pos;
+    let exit = tactics_core::offset_to_hex(0, 0);
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: taxi,
+                to: exit,
+            },
+        )
+        .unwrap();
+    commit_all(&reg, &mut state);
+    state.resolve_round(&reg);
+
+    for unit in [taxi, riders] {
+        let u = &state.units[unit.index()];
+        assert!(
+            !u.alive && u.exited,
+            "{} left the battle by the road, not the graveyard",
+            u.name
+        );
+    }
+}
+
+#[test]
+fn a_taxi_under_at_threat_puts_her_passengers_on_the_ground() {
+    // The one dismount reflex that keeps taxis from being coffins: the
+    // planner sees the carrier under a threat that can actually hurt her
+    // and puts the platoon on the ground without being asked. Nothing
+    // mounts on its own initiative — the reflex only ever gets people OFF.
+    let reg = registry_wireless();
+    let mut state = taxi_stage(&reg, "tank_destroyer", 705);
+    let (taxi, riders) = (UnitId(0), UnitId(1));
+    state.units[riders.index()].aboard = Some(taxi);
+    state.units[riders.index()].pos = state.units[taxi.index()].pos;
+    // The tank destroyer across the field is spotted and can gut an apc
+    // from there: the ride is a coffin and the planner must know it.
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(2)),
+        "the stage needs the threat visible"
+    );
+
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
+        make_battle_planner(
+            &AiConfig {
+                planner: "utility".into(),
+                difficulty: 5,
+                doctrine: None,
+            },
+            705,
+            &reg,
+        ),
+    );
+    ai.plan_round(&reg, &mut state);
+    assert!(
+        state.units[riders.index()].dismounting,
+        "the planner ordered her off the moment the ride was a target"
+    );
+}
+
+#[test]
+fn a_scenario_may_spawn_the_riders_already_riding() {
+    // Mounted starts are map data: `aboard_at` names the carrier's tile
+    // and the platoon spawns aboard — the way the campaign will hand a
+    // motorised column to a battle.
+    let reg = registry_wireless();
+    let row = "g".repeat(8);
+    let mut riders = unit_at([3, 1], 0, "rifle_platoon", "Riders");
+    riders.aboard_at = Some([1, 1]);
+    let state = two_side_battle(
+        &reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([1, 1], 0, "apc", "Taxi"),
+            riders,
+            unit_at([6, 1], 1, "medium_tank", "East"),
+        ],
+        706,
+    );
+    let (taxi, platoon) = (UnitId(0), UnitId(1));
+    assert_eq!(
+        state.units[platoon.index()].aboard,
+        Some(taxi),
+        "she spawns in the back, not on the grass"
+    );
+    assert!(
+        !state.fog.side(1).spotted.contains(&platoon),
+        "and the enemy's opening picture holds only the taxi"
     );
 }
 

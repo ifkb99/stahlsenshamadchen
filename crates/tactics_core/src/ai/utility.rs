@@ -88,6 +88,33 @@ impl UtilityPlanner {
         let Some(pos) = state.unit(unit).map(|u| u.pos) else {
             return Vec::new();
         };
+        // A passenger plans exactly one thing: whether this is where she
+        // gets off. The MVP reflexes, per the design doc: dismount when the
+        // ride is under a threat that can actually hurt it (a taxi in an
+        // RPG's sights is a coffin), or when the ride has brought her to
+        // ground worth holding — otherwise stay aboard and be carried.
+        // Planning a taxi run end-to-end is the willingness work's
+        // business, later; nothing here MOUNTS on its own initiative.
+        if let Some(carrier) = state.unit(unit).and_then(|u| u.aboard) {
+            let ride_threatened = super::threatened(registry, state, carrier);
+            let at_the_objective = state.unit(carrier).is_some_and(|c| {
+                state
+                    .map
+                    .objectives()
+                    .iter()
+                    .filter(|o| o.kind == crate::map::ObjectiveKind::Hold)
+                    .filter(|o| o.open_to(c.side))
+                    .any(|o| o.hexes.iter().any(|h| c.pos.distance_to(*h) <= 2))
+            });
+            return if ride_threatened || at_the_objective {
+                vec![Order::Dismount { unit }]
+            } else {
+                vec![Order::SetFire {
+                    unit,
+                    fire: FireIntent::Hold,
+                }]
+            };
+        }
         let mut options: Vec<Hex> = reachable(registry, state, unit).into_keys().collect();
         options.sort_unstable_by_key(|h| (h.x, h.y));
 

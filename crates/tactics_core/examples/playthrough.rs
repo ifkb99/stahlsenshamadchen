@@ -151,6 +151,14 @@ fn main() {
                 Event::Abandoned { unit } => {
                     println!("   >> the crew abandons {}", name(&state, *unit))
                 }
+                Event::Mounted { unit, into } => println!(
+                    "   >> {} mounts up in {}",
+                    name(&state, *unit),
+                    name(&state, *into)
+                ),
+                Event::Dismounted { unit, at } => {
+                    println!("   >> {} dismounts at {at:?}", name(&state, *unit))
+                }
                 Event::ShotMissed { .. } => println!("   miss"),
                 Event::ShotBounced { target, facing, .. } => {
                     println!("   BOUNCES off {} ({facing:?})", name(&state, *target))

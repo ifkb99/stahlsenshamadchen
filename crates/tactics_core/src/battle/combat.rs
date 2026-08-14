@@ -1139,24 +1139,40 @@ fn effect_rolls(
         if unit.brewed {
             break;
         }
-        let targets = interior(registry, unit);
-        let total: u32 = targets.iter().map(|(_, w)| w).sum();
+        // The pool is everything physically inside the hull: the target's
+        // own crew and modules, and — the shared-fate ruling — every
+        // passenger's girls and troops too, in passenger id order. A round
+        // that comes through a loaded carrier does not check tickets.
+        let mut targets: Vec<(UnitId, InteriorChoice, u32)> = interior(registry, unit)
+            .into_iter()
+            .map(|(choice, w)| (target, choice, w))
+            .collect();
+        for rider in state.passengers(target) {
+            if let Some(r) = state.unit(rider) {
+                targets.extend(
+                    interior(registry, r)
+                        .into_iter()
+                        .map(|(choice, w)| (rider, choice, w)),
+                );
+            }
+        }
+        let total: u32 = targets.iter().map(|(_, _, w)| w).sum();
         if total == 0 {
             break;
         }
         let mut pick = state.rng.random_range(0..total);
         let mut chosen = None;
-        for (candidate, weight) in targets {
+        for (who, candidate, weight) in targets {
             if pick < weight {
-                chosen = Some(candidate);
+                chosen = Some((who, candidate));
                 break;
             }
             pick -= weight;
         }
         match chosen.expect("total > 0 guarantees a pick") {
-            InteriorChoice::Seat(seat) => crew_hit(state, target, seat, savage, events),
-            InteriorChoice::Module(id) => {
-                module_hit(registry, state, target, &id, potency, events);
+            (who, InteriorChoice::Seat(seat)) => crew_hit(state, who, seat, savage, events),
+            (who, InteriorChoice::Module(id)) => {
+                module_hit(registry, state, who, &id, potency, events);
             }
         }
     }
@@ -1517,7 +1533,7 @@ fn overpressure(
 /// the flags. A vehicle that is merely mission-killed, gun and tracks
 /// gone with the crew grimly aboard, stays alive: recovering her is a
 /// campaign story, not a contradiction.
-pub fn reap(state: &mut BattleState, events: &mut Vec<Event>) {
+pub fn reap(registry: &DataRegistry, state: &mut BattleState, events: &mut Vec<Event>) {
     let done: Vec<(UnitId, Hex)> = state
         .units
         .iter()
@@ -1536,10 +1552,37 @@ pub fn reap(state: &mut BattleState, events: &mut Vec<Event>) {
         .map(|u| (u.id, u.pos))
         .collect();
     for (id, at) in done {
+        let brewed = state.units.get(id.index()).is_some_and(|u| u.brewed);
         if let Some(unit) = state.units.get_mut(id.index()) {
             unit.alive = false;
         }
         events.push(Event::UnitDestroyed { unit: id, at });
+        // The ride ending the hard way. A brew rolls every passenger
+        // through the fire — three savage picks each, the flames not
+        // caring who — and whoever is left picks herself up beside the
+        // wreck; any other death simply puts them on the ground where it
+        // happened. A passenger the fire finishes is reaped the next tick,
+        // by the same pass, like every other death.
+        for rider in state.passengers(id) {
+            if brewed {
+                effect_rolls(registry, state, rider, 3, true, 1.0, events);
+            }
+            let survivor = state
+                .unit(rider)
+                .is_some_and(|u| !u.crew.is_empty() && state.fighting_crew(u) > 0);
+            let ground = state.units.get(id.index()).map(|c| c.pos).unwrap_or(at);
+            if let Some(u) = state.units.get_mut(rider.index()) {
+                u.aboard = None;
+                u.dismounting = false;
+                u.pos = ground;
+            }
+            if survivor {
+                events.push(Event::Dismounted {
+                    unit: rider,
+                    at: ground,
+                });
+            }
+        }
     }
 }
 
@@ -1789,7 +1832,11 @@ pub fn best_opportunity_shot(
             continue;
         }
         // Enemies in id order, so ties resolve the same way in every replay.
-        for enemy in state.alive_units().filter(|e| e.side != att.side) {
+        // Passengers are not on the field to be shot at.
+        for enemy in state
+            .alive_units()
+            .filter(|e| e.side != att.side && e.aboard.is_none())
+        {
             if !spotted.contains(&enemy.id)
                 || !reacted_to(enemy.id)
                 || !shot_exists(state, weapon, att.pos, enemy.pos, true)
@@ -1870,6 +1917,11 @@ pub fn fire_decision(
     unit: UnitId,
 ) -> Option<FireAction> {
     let att = state.unit(unit)?;
+    // Nobody shoots from inside a carrier: firing ports are a doctrine
+    // argument for a later pass, and today the ride is a ride.
+    if att.aboard.is_some() {
+        return None;
+    }
     let (intent, att_pos, side) = (att.intent.fire, att.pos, att.side);
 
     match intent {

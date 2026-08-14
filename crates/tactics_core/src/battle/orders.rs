@@ -97,6 +97,14 @@ pub enum Order {
         formation: FormationId,
         mission: Mission,
     },
+    /// Go and board this carrier: a standing order — she marches toward it
+    /// round after round and steps aboard the tick she arrives alongside.
+    /// Refused for anything that is not a foot unit boarding a transport of
+    /// her own side with room left.
+    Mount { unit: UnitId, into: UnitId },
+    /// Get off, onto the first free tile beside the carrier, at the next
+    /// transport pass. Dismounting into an ambush is a thing that happens.
+    Dismount { unit: UnitId },
     /// This side is done planning. When every side with units has committed,
     /// the round starts resolving.
     Commit { side: u8 },
@@ -225,6 +233,19 @@ pub enum Event {
     /// let the two read alike.
     Abandoned {
         unit: UnitId,
+    },
+    /// She stepped aboard. From this tick she is off the map in every sense
+    /// the enemy cares about, and shares whatever comes through the
+    /// carrier's armor.
+    Mounted {
+        unit: UnitId,
+        into: UnitId,
+    },
+    /// She stepped off, at `at` — by order, or because the ride ended the
+    /// hard way and this is where the survivors picked themselves up.
+    Dismounted {
+        unit: UnitId,
+        at: Hex,
     },
     ShotMissed {
         attacker: UnitId,
@@ -406,6 +427,16 @@ pub enum OrderError {
     CannotSupportThat,
     #[error("the racks are only open during deployment")]
     LoadoutClosed,
+    #[error("that vehicle carries nobody")]
+    NotATransport,
+    #[error("the carrier is full")]
+    TransportFull,
+    #[error("only foot units ride")]
+    CannotRide,
+    #[error("she is already aboard a carrier")]
+    AlreadyAboard,
+    #[error("she is not aboard anything")]
+    NotAboard,
     #[error("no such ammunition")]
     NoSuchAmmo,
     #[error("no weapon on this vehicle chambers that ammunition")]
@@ -457,6 +488,54 @@ impl BattleState {
                 // The recall: she rejoins her formation's tasking.
                 u.detached = false;
                 u.tasking = None;
+                Ok(Vec::new())
+            }
+            Order::Mount { unit, into } => {
+                self.planning_unit_side(*unit)?;
+                let rider = self.unit(*unit).ok_or(OrderError::NoSuchUnit)?;
+                let carrier = self.unit(*into).ok_or(OrderError::NoSuchUnit)?;
+                if rider.aboard.is_some() {
+                    return Err(OrderError::AlreadyAboard);
+                }
+                if carrier.side != rider.side {
+                    return Err(OrderError::FriendlyTarget);
+                }
+                let vehicle = registry
+                    .vehicle(&carrier.vehicle)
+                    .ok_or(OrderError::NoSuchUnit)?;
+                if vehicle.capacity == 0 {
+                    return Err(OrderError::NotATransport);
+                }
+                if self.passengers(*into).len() as u32 >= vehicle.capacity {
+                    return Err(OrderError::TransportFull);
+                }
+                let on_foot = registry
+                    .vehicle(&rider.vehicle)
+                    .is_some_and(|v| v.movement.class == crate::data::MovementClass::Foot);
+                if !on_foot {
+                    return Err(OrderError::CannotRide);
+                }
+                let carrier_pos = carrier.pos;
+                if let Some(u) = self.unit_mut(*unit) {
+                    u.boarding = Some(*into);
+                    u.dismounting = false;
+                    u.planned = true;
+                }
+                // Start walking now: the standing order re-paths her every
+                // round after this, exactly as a personal tasking does.
+                self.march_toward(registry, *unit, carrier_pos);
+                Ok(Vec::new())
+            }
+            Order::Dismount { unit } => {
+                self.planning_unit_side(*unit)?;
+                let rider = self.unit(*unit).ok_or(OrderError::NoSuchUnit)?;
+                if rider.aboard.is_none() {
+                    return Err(OrderError::NotAboard);
+                }
+                if let Some(u) = self.unit_mut(*unit) {
+                    u.dismounting = true;
+                    u.planned = true;
+                }
                 Ok(Vec::new())
             }
             Order::SetMission { formation, mission } => {
@@ -916,6 +995,12 @@ impl BattleState {
         self.run_crew_drill(registry, &mut events);
 
         self.resolve_movement(registry, &mut events);
+        // Boarding, dismounting, and keeping every passenger's position
+        // mirrored on her carrier — after movement so a rider who walked
+        // alongside this tick steps up this tick, and before the fog
+        // recompute so she vanishes from (or reappears in) the enemy's
+        // picture in the same slice of time she changed state.
+        self.resolve_transport(registry, &mut events);
 
         // The shells fired one or more ticks ago come down here, AFTER
         // movement: a shell lands on whoever is standing on the hex once
@@ -1056,7 +1141,9 @@ impl BattleState {
         let ids: Vec<UnitId> = self
             .units
             .iter()
-            .filter(|u| u.alive && u.intent.is_empty())
+            // A passenger has no ground to break for; her cover is the
+            // carrier, for better and much worse.
+            .filter(|u| u.alive && u.intent.is_empty() && u.aboard.is_none())
             .map(|u| u.id)
             .collect();
         for id in ids {
@@ -1103,6 +1190,117 @@ impl BattleState {
             }
             events.push(Event::TookCover { unit: id, at: dest });
         }
+    }
+
+    /// Boarding, dismounting, and the passenger position mirror.
+    fn resolve_transport(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
+        // Dismounts first, in id order: the tile beside the carrier that a
+        // dismounting rider takes may be the tile a boarding one crosses.
+        let dismounting: Vec<UnitId> = self
+            .units
+            .iter()
+            .filter(|u| u.alive && u.dismounting && u.aboard.is_some())
+            .map(|u| u.id)
+            .collect();
+        for id in dismounting {
+            let Some(carrier_pos) = self
+                .unit(id)
+                .and_then(|u| u.aboard)
+                .and_then(|c| self.unit(c))
+                .map(|c| c.pos)
+            else {
+                continue;
+            };
+            let Some(ground) = self.dismount_tile(registry, id, carrier_pos) else {
+                // Nowhere to stand: she stays aboard and tries again next
+                // tick rather than being silently teleported or dropped.
+                continue;
+            };
+            if let Some(u) = self.unit_mut(id) {
+                u.aboard = None;
+                u.dismounting = false;
+                u.pos = ground;
+            }
+            events.push(Event::Dismounted {
+                unit: id,
+                at: ground,
+            });
+        }
+
+        // Boardings, in id order.
+        let boarding: Vec<(UnitId, UnitId)> = self
+            .units
+            .iter()
+            .filter(|u| u.alive && u.aboard.is_none())
+            .filter_map(|u| u.boarding.map(|c| (u.id, c)))
+            .collect();
+        for (id, carrier) in boarding {
+            let Some(c) = self.unit(carrier).filter(|c| c.alive) else {
+                // The ride she was walking to is gone; the order dies with
+                // it and she is simply a platoon standing where she stands.
+                if let Some(u) = self.unit_mut(id) {
+                    u.boarding = None;
+                }
+                continue;
+            };
+            let capacity = registry
+                .vehicle(&c.vehicle)
+                .map(|v| v.capacity)
+                .unwrap_or(0);
+            let (c_pos, adjacent) = (c.pos, {
+                let u = self.unit(id).expect("collected above");
+                u.pos.distance_to(c.pos) <= 1
+            });
+            if !adjacent {
+                continue;
+            }
+            if (self.passengers(carrier).len() as u32) < capacity {
+                if let Some(u) = self.unit_mut(id) {
+                    u.aboard = Some(carrier);
+                    u.boarding = None;
+                    u.pos = c_pos;
+                    // Whatever she was doing on foot ends at the tailgate.
+                    u.intent = UnitIntent::default();
+                }
+                events.push(Event::Mounted {
+                    unit: id,
+                    into: carrier,
+                });
+            }
+        }
+
+        // The mirror: passengers ride where the carrier is, every tick,
+        // so nothing downstream ever reads a stale hex.
+        let rides: Vec<(UnitId, Hex)> = self
+            .units
+            .iter()
+            .filter(|u| u.alive)
+            .filter_map(|u| u.aboard.and_then(|c| self.unit(c)).map(|c| (u.id, c.pos)))
+            .collect();
+        for (id, pos) in rides {
+            if let Some(u) = self.unit_mut(id) {
+                u.pos = pos;
+            }
+        }
+    }
+
+    /// The first tile beside `carrier_pos` a dismounting foot unit can
+    /// stand on: on the map, unoccupied, and priced for foot movement.
+    /// Lowest (x, y) so replays agree where she stepped off.
+    fn dismount_tile(
+        &self,
+        registry: &DataRegistry,
+        unit: UnitId,
+        carrier_pos: Hex,
+    ) -> Option<Hex> {
+        let mut tiles: Vec<Hex> = carrier_pos.all_neighbors().into();
+        tiles.sort_unstable_by_key(|h| (h.x, h.y));
+        let u = self.unit(unit)?;
+        tiles.into_iter().find(|hex| {
+            self.map.contains(*hex)
+                && self.unit_at(*hex).is_none()
+                && movement::edge_cost_for(registry, self, u, carrier_pos, *hex).is_some()
+        })
     }
 
     /// Everyone advances along their ordered route as far as this tick's
@@ -1257,7 +1455,7 @@ impl BattleState {
         for (id, action) in decisions {
             combat::execute_fire(registry, self, id, action, events);
         }
-        combat::reap(self, events);
+        combat::reap(registry, self, events);
     }
 
     /// Turn this tick's events into pressure on the crews that felt them.
@@ -1411,6 +1609,27 @@ impl BattleState {
             committed: vec![false; self.sides.len()],
         };
         events.push(Event::RoundStarted { round: self.round });
+        // A standing boarding order is a march that renews itself: she
+        // re-paths toward wherever her ride now stands, every round, until
+        // she is aboard or the ride is gone.
+        let boarders: Vec<(UnitId, Hex)> = self
+            .units
+            .iter()
+            .filter(|u| u.alive && u.aboard.is_none())
+            .filter_map(|u| {
+                u.boarding
+                    .and_then(|c| self.unit(c))
+                    .filter(|c| c.alive)
+                    .map(|c| (u.id, c.pos))
+            })
+            .collect();
+        for (id, to) in boarders {
+            self.march_toward(registry, id, to);
+            if let Some(u) = self.unit_mut(id) {
+                u.planned = true;
+            }
+        }
+
         // A personal destination reached is a personal destination done:
         // she holds the ground she was sent to, still detached, and the
         // panel stops saying she is on her way.

@@ -87,6 +87,14 @@ impl From<Facing> for hexx::EdgeDirection {
 pub struct UnitPlacement {
     /// `[column, row]` offset coordinates into the rows grid.
     pub at: [i32; 2],
+    /// Spawn already riding in the transport placed at these offset
+    /// coordinates. The scenario says who starts mounted — the AI plans no
+    /// taxi runs of its own yet — and a reference nothing stands on, or
+    /// something without lift, degrades to spawning on foot at `at` rather
+    /// than to an error: a map should fight even when its author moved the
+    /// halftrack and forgot the riders.
+    #[serde(default)]
+    pub aboard_at: Option<[i32; 2]>,
     /// Index into the map's `sides` list.
     pub side: u8,
     pub vehicle: String,

@@ -747,6 +747,7 @@ fn an_order_waiting_at_the_radio_survives_a_save() {
 
 fn unit_at(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> tactics_core::map::UnitPlacement {
     tactics_core::map::UnitPlacement {
+        aboard_at: None,
         at,
         side,
         vehicle: vehicle.into(),
@@ -1263,4 +1264,36 @@ fn a_shell_in_flight_survives_a_save() {
         actual, expected,
         "a reloaded battle must bring the shell down exactly as the unsaved one would"
     );
+}
+
+#[test]
+fn a_mounted_platoon_rides_through_a_save() {
+    // The aboard state is battle state like any other: a platoon saved in
+    // the back of her carrier steps out of the file still in the back of
+    // her carrier, position mirrored, standing boarding orders intact.
+    let reg = registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 44).expect("battle");
+    // Surgery rather than content: no shipped map mounts anybody yet, and
+    // this test is about the fields, not the scenario.
+    let (carrier, rider) = (
+        tactics_core::battle::UnitId(0),
+        tactics_core::battle::UnitId(1),
+    );
+    let pos = state.units[carrier.index()].pos;
+    state.units[rider.index()].aboard = Some(carrier);
+    state.units[rider.index()].pos = pos;
+    state.units[rider.index()].dismounting = true;
+
+    let text = SaveGame::new(&reg, None, Some(state.clone()))
+        .to_json()
+        .expect("to json");
+    let restored = SaveGame::from_json(&reg, &text)
+        .expect("parse")
+        .0
+        .battle
+        .expect("battle came back");
+    let r = &restored.units[rider.index()];
+    assert_eq!(r.aboard, Some(carrier), "still aboard");
+    assert_eq!(r.pos, pos, "still where the carrier is");
+    assert!(r.dismounting, "and still under orders to get off");
 }

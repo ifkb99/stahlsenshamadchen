@@ -375,6 +375,7 @@ fn two_unit_field(
 
     let placements = vec![
         UnitPlacement {
+            aboard_at: None,
             at: [1, 1],
             side: 0,
             vehicle: attacker.to_string(),
@@ -385,6 +386,7 @@ fn two_unit_field(
             leads: false,
         },
         UnitPlacement {
+            aboard_at: None,
             at: [1 + dist, 1],
             side: 1,
             vehicle: target.to_string(),
@@ -1320,6 +1322,7 @@ fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
         let y = (3 + i * 2) as i32;
         for (side, x) in [(0u8, 2i32), (1u8, 22i32)] {
             placements.push(UnitPlacement {
+                aboard_at: None,
                 at: [x, y],
                 side,
                 vehicle: vehicle.to_string(),

@@ -329,6 +329,7 @@ fn infantry_field(reg: &DataRegistry) -> BattleState {
     let map = HexMap::from_map_file(&file).expect("map");
     let placements = vec![
         UnitPlacement {
+            aboard_at: None,
             at: [0, 0],
             side: 0,
             vehicle: "rifle_platoon".into(),
@@ -339,6 +340,7 @@ fn infantry_field(reg: &DataRegistry) -> BattleState {
             leads: false,
         },
         UnitPlacement {
+            aboard_at: None,
             at: [4, 1],
             side: 1,
             vehicle: "apc".into(),
