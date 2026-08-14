@@ -8525,6 +8525,19 @@ fn a_commander_woken_four_mornings_running_still_goes_back_on_her_own_clock() {
     rules.review.max_ticks = 5;
     reg.command = Some(rules);
     strip_radios(&mut reg);
+    // Defang every gun: legacy path, penetration zero. The scene needs
+    // twelve rounds of a battle that can neither kill nor end — since the
+    // planner learned to spread across score plateaus, her marchers really
+    // do reach the far ford and really do meet the enemy picketed there,
+    // and a contact that gets somebody killed starts the stalemate clock
+    // on a battle this test needs to keep breathing. Toothless guns keep
+    // the contact alive (bounces forever), the crews alive, and the
+    // commander's pulse the only thing left to observe — which is the
+    // test.
+    for weapon in reg.weapons.values_mut() {
+        weapon.ammo.clear();
+        weapon.penetration = 0;
+    }
     let mut state = succession_stage(&reg);
     assert!(state.fog.side(1).spotted.is_empty(), "a quiet field");
 

@@ -1242,9 +1242,84 @@ fn delegation_tax(reg: &DataRegistry, games: usize) {
 /// difficulty-5 side against difficulty-1 with equal forces should win most
 /// battles at a loss ratio visibly better than 1:2. Skill should buy
 /// *cleanliness*, not merely wins.
+/// A mirror-symmetric arena for the skill-gap study: identical forces on
+/// identical ground, because river_crossing's two sides field different
+/// vehicles and the first version of this table measured the map more than
+/// the players — side B won every pairing regardless of who was smarter.
+/// Forest belts at equal distance from both edges give cover texture, and a
+/// single held objective in the middle forces contact the way the shipped
+/// scenarios do: two campers on a featureless field would stalemate and the
+/// table would measure patience.
+fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
+    let width = 25usize;
+    let mut rows = Vec::new();
+    for _ in 0..13 {
+        let mut row: Vec<char> = "g".repeat(width).chars().collect();
+        row[8] = 'f';
+        row[16] = 'f';
+        rows.push(row.into_iter().collect::<String>());
+    }
+    let file: MapFile = serde_json::from_value(serde_json::json!({
+        "id": "skill_arena",
+        "kind": "battle",
+        "shape": "free",
+        "palette": { "g": "grass", "f": "forest" },
+        "rows": rows,
+        "objectives": [
+            {
+                "id": "center",
+                "name": "The Crossroads",
+                "at": [[12, 5], [12, 6], [12, 7]],
+                "value": 2
+            }
+        ],
+        "victory_score": 30,
+    }))
+    .ok()?;
+    let map = HexMap::from_map_file(&file).ok()?;
+
+    let roster_of = ["medium_tank", "medium_tank", "tank_destroyer", "light_tank"];
+    let mut placements = Vec::new();
+    for (i, vehicle) in roster_of.iter().enumerate() {
+        let y = (3 + i * 2) as i32;
+        for (side, x) in [(0u8, 2i32), (1u8, 22i32)] {
+            placements.push(UnitPlacement {
+                at: [x, y],
+                side,
+                vehicle: vehicle.to_string(),
+                crew: Vec::new(),
+                name: Some(format!("{vehicle} {i}")),
+                facing: None,
+                formation: None,
+                leads: false,
+            });
+        }
+    }
+    let sides = vec![
+        SideState {
+            name: "A".into(),
+            ai: None,
+        },
+        SideState {
+            name: "B".into(),
+            ai: None,
+        },
+    ];
+    let (roster, crews) = Roster::stamp_for(reg, &placements);
+    Some(BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    ))
+}
+
 fn skill_gap(reg: &DataRegistry, games: usize) {
     heading(&format!(
-        "skill gap: {games} battles per pairing, same doctrine, only execution differs"
+        "skill gap: {games} battles per pairing on a mirrored arena — same forces, same doctrine, only execution differs"
     ));
     println!(
         "  {:<12} {:>5} {:>5} {:>6} {:>12} {:>12} {:>8}",
@@ -1254,8 +1329,9 @@ fn skill_gap(reg: &DataRegistry, games: usize) {
         let (mut a_wins, mut b_wins, mut draws) = (0, 0, 0);
         let (mut a_losses, mut b_losses) = (0usize, 0usize);
         for seed in 0..games as u64 {
-            let mut state =
-                BattleState::from_map(reg, "river_crossing", 9000 + seed).expect("battle");
+            let Some(mut state) = symmetric_arena(reg, 9000 + seed) else {
+                continue;
+            };
             let mut ai = AiDriver::new();
             for (side, diff) in [(0u8, a), (1u8, b)] {
                 ai.insert(

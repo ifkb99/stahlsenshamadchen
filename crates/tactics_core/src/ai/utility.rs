@@ -18,10 +18,13 @@ use std::collections::VecDeque;
 
 /// The best tile found for one unit, and the shot that came with it.
 struct Choice {
-    score: f32,
     dest: Hex,
     attack: Option<(UnitId, usize)>,
 }
+
+/// One scored candidate: the tile, its (possibly noisy) score, and the
+/// attack the evaluator found from it.
+type Candidate = (Hex, f32, Option<(UnitId, usize)>);
 
 pub struct UtilityPlanner {
     /// What this side values. Doctrine, not difficulty.
@@ -88,18 +91,37 @@ impl UtilityPlanner {
         let mut options: Vec<Hex> = reachable(registry, state, unit).into_keys().collect();
         options.sort_unstable_by_key(|h| (h.x, h.y));
 
-        let mut best: Option<Choice> = None;
+        let mut scored: Vec<Candidate> = Vec::with_capacity(options.len());
         for tile in options {
-            let scored = self.evaluator.score_tile(registry, state, unit, tile);
-            let score = self.noisy_score(scored.score);
-            if best.as_ref().is_none_or(|b| score > b.score) {
-                best = Some(Choice {
-                    score,
-                    dest: tile,
-                    attack: scored.attack,
-                });
-            }
+            let tile_score = self.evaluator.score_tile(registry, state, unit, tile);
+            scored.push((tile, self.noisy_score(tile_score.score), tile_score.attack));
         }
+        let top = scored
+            .iter()
+            .map(|(_, s, _)| *s)
+            .fold(f32::NEG_INFINITY, f32::max);
+
+        // Among tiles the evaluator cannot meaningfully tell apart, take the
+        // one closest to where she already stands. This is the fix for the
+        // skillgap instrument's inversion finding, and it is deterministic
+        // rather than another kind of noise. Open ground scores in broad
+        // plateaus, and the old rule — strictly-better-or-keep-the-first,
+        // over a fixed (x, y) sweep — sent every unit on a side to the SAME
+        // corner of every plateau: identical crews made identical choices
+        // and arrived as a queue, which is why a noiseless side clumped,
+        // burned its movement crossing its own plateau, and lost to any
+        // opponent scattered by randomness. Preferring the nearest
+        // equivalent tile keeps a dispersed side dispersed (units standing
+        // apart stay apart when the ground between is all the same),
+        // conserves movement for ground that is actually better, and is
+        // what a crew would do: nobody drives across a field to park on
+        // identical grass.
+        const PLATEAU: f32 = 0.3;
+        let best = scored
+            .into_iter()
+            .filter(|(_, s, _)| *s >= top - PLATEAU)
+            .min_by_key(|(tile, _, _)| (pos.distance_to(*tile), tile.x, tile.y))
+            .map(|(tile, _, attack)| Choice { dest: tile, attack });
 
         let (dest, attack) = match best {
             Some(choice) => (choice.dest, choice.attack),

@@ -228,21 +228,27 @@ rule they defend (`unspotted_enemies_still_ambush`).
 
 ### Correctness
 
-- **Difficulty is inverted in practice: less noise plays worse.**
-  The skill-gap table at the end of `cargo run --release -p tactics_core
-  --example balance -- --sim` measures it (it was a standalone `skillgap`
-  example until B5 folded it in) — same map, same doctrine, only
-  `difficulty` differing, mirrored across sides. A noiseless (difficulty 5) utility side loses to a noisy one in
-  BOTH orientations (9–27 vs diff 3; 16–17 and 16–20 vs diff 1), and two
-  noiseless sides produce a deterministic 36–0 sweep where two noisy ones
-  produce 19–17. The greedy argmax coordinates badly with itself —
-  deterministic ties clump units and freeze them on local optima, and the
-  noise that was meant to model incompetence accidentally implements
-  dispersion and exploration. Same pathology family as the pre-objectives
-  stalemates (11/12 at zero noise). Loss ratios also hover at 1:0.8–1.3
-  in every pairing: nobody wins cleanly, which is not what a skill gap
-  does in military history. This is the ballistics B4 pass's first
-  target; see `assets/wiki/reference/ballistics.md`.
+- ~~**Difficulty is inverted in practice: less noise plays worse.**~~
+  Fixed, in two halves, and the fix is worth understanding before touching
+  the utility planner's tile choice. The pathology: the greedy argmax
+  broke score ties toward the first tile of a fixed (x, y) sweep, so on
+  the broad plateaus open ground scores in, every identical unit drove to
+  the SAME corner of every plateau — a noiseless side clumped, queued,
+  and lost to anyone scattered by randomness (difficulty 5 lost to
+  difficulty 1 in both orientations). The cure is deterministic, not more
+  noise: among tiles within `PLATEAU` (0.3) of the best score, take the
+  one nearest the unit's own position. Units standing apart stay apart
+  when the ground between is all the same, and nobody burns movement
+  crossing a plateau to park on identical grass. The second half was the
+  instrument itself: the skill-gap table fought on `river_crossing`,
+  whose sides field different vehicles, so it measured the map — it now
+  fights on a mirrored arena inside `balance --sim`. Measured after: 5v1
+  wins 29–7 / 28–8 across orientations at 1:1.9–2.1 exchange (B4's
+  written success metric was "most battles at visibly better than 1:2"),
+  equal-skill pairings sit at parity, and the deterministic 36–0 sweep is
+  gone. Residual, tracked: side B retains a modest edge on the mirrored
+  arena (33–3 vs 23–13 in the 5-vs-3 orientations), suspected
+  resolution-order artifact worth a look in B4's remainder.
 - **Army-contained unit placements are never validated.**
   `map.rs:312` passes `a.at` (the army's own hex) instead of `u.at` when
   checking each unit inside an `ArmyPlacement`, so a unit's own coordinates are
