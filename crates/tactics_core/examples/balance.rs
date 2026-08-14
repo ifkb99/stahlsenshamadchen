@@ -45,7 +45,7 @@ use tactics_core::battle::{
     preview_attack,
 };
 use tactics_core::data::{ArmorFacing, DataRegistry, ModuleEffect, WeaponDef};
-use tactics_core::map::{Facing, HexMap, MapFile, UnitPlacement};
+use tactics_core::map::{Facing, HexMap, MapFile, MapKind, UnitPlacement};
 use tactics_core::roster::{GirlId, Roster};
 
 fn main() {
@@ -863,13 +863,47 @@ struct Tally {
     shells_bounced: u32,
 }
 
+/// Every battle map the loaded mods ship, sorted by id.
+///
+/// The fought-out pass used to play every battle on `river_crossing`, which
+/// meant every conclusion it reached was a conclusion about one river, one
+/// town and two fords. A gun that only ever gets its range on open ground and
+/// a scout that only earns her keep in timber both looked like flat balance
+/// facts. Sampling the roster instead spreads the sample over the shapes the
+/// game actually ships, so a number that is only good on one of them shows up
+/// as variance rather than as truth.
+///
+/// Sorted because a `HashMap`'s iteration order is not a decision, and the
+/// whole table has to be reproducible from the seed.
+fn battle_maps(reg: &DataRegistry) -> Vec<&str> {
+    let mut ids: Vec<&str> = reg
+        .maps
+        .values()
+        .filter(|m| m.kind == MapKind::Battle)
+        .map(|m| m.id.as_str())
+        .collect();
+    ids.sort_unstable();
+    assert!(!ids.is_empty(), "no battle maps to fight on");
+    ids
+}
+
+/// Which ground this battle is fought on. Keyed on the seed rather than the
+/// game index so the pairing of map to battle survives changing `--games`.
+fn map_for<'a>(maps: &[&'a str], seed: u64) -> &'a str {
+    maps[seed as usize % maps.len()]
+}
+
 fn simulate(reg: &DataRegistry, games: usize) {
-    heading(&format!("fought out: {games} battles on river_crossing"));
+    let maps = battle_maps(reg);
+    heading(&format!(
+        "fought out: {games} battles across {}",
+        maps.join(", ")
+    ));
     let mut t = Tally::default();
 
     for game in 0..games {
         let seed = 1000 + game as u64;
-        let mut state = BattleState::from_map(reg, "river_crossing", seed).expect("battle");
+        let mut state = BattleState::from_map(reg, map_for(&maps, seed), seed).expect("battle");
         let mut ai = AiDriver::new();
         ai.insert(0, planner(reg, seed, "massed_armor"));
         ai.insert(1, planner(reg, seed + 1, "elastic_defense"));
@@ -1171,15 +1205,17 @@ fn planner_with(
 /// battles is one they will rightly refuse to pay for. Zero is the target;
 /// the design doc's build order drives it there across chunks 2 through 7.
 fn delegation_tax(reg: &DataRegistry, games: usize) {
+    let maps = battle_maps(reg);
     heading(&format!(
-        "delegation tax: {games} battles per pairing, opponent held constant"
+        "delegation tax: {games} battles per pairing across {}, opponent held constant",
+        maps.join(", ")
     ));
     let run = |p0: &str, p1: &str| -> (usize, usize, usize, f32) {
         let (mut wins_massed, mut wins_elastic, mut draws) = (0, 0, 0);
         let mut rounds_total = 0u32;
         for game in 0..games {
             let seed = 1000 + game as u64;
-            let mut state = BattleState::from_map(reg, "river_crossing", seed).expect("battle");
+            let mut state = BattleState::from_map(reg, map_for(&maps, seed), seed).expect("battle");
             let mut ai = AiDriver::new();
             ai.insert(0, planner_with(reg, seed, p0, "massed_armor"));
             ai.insert(1, planner_with(reg, seed + 1, p1, "elastic_defense"));
