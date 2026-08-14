@@ -8086,6 +8086,229 @@ fn an_emptied_rack_is_harder_to_torch() {
     assert!(!torch(&reg, true, 408), "empty racks cannot");
 }
 
+// --- soft targets and hidden ones (infantry N1) ----------------------------
+
+#[test]
+fn a_platoon_in_the_trees_is_invisible_until_the_scout_closes() {
+    // Concealment: standing on ground somebody can see is not being seen.
+    // A rifle platoon at concealment 40 doubles to 80 in the treeline, so
+    // the recon car that sees twenty hexes of open ground spots her at
+    // four — while a tank on the same tile is spotted at the full twenty,
+    // which is the additivity half of the claim.
+    let reg = registry_wireless();
+    let row = format!("gggggg{}g", "f");
+    let stage = |vehicle: &str, dist: i32| -> BattleState {
+        two_side_battle(
+            &reg,
+            &[&row, &row, &row],
+            vec![
+                unit_at([6 - dist.min(6), 1], 0, "recon_car", "Scout"),
+                unit_at([6, 1], 1, vehicle, "Quarry"),
+            ],
+            501,
+        )
+    };
+
+    let far = stage("rifle_platoon", 6);
+    assert!(
+        !far.fog.side(0).spotted.contains(&UnitId(1)),
+        "six hexes out, the treeline keeps her"
+    );
+    let near = stage("rifle_platoon", 3);
+    assert!(
+        near.fog.side(0).spotted.contains(&UnitId(1)),
+        "three hexes out, even trees are not enough"
+    );
+    let control = stage("medium_tank", 6);
+    assert!(
+        control.fog.side(0).spotted.contains(&UnitId(1)),
+        "a tank on the same tile hides from nobody"
+    );
+}
+
+#[test]
+fn springing_the_ambush_spends_it() {
+    // The other half of concealment: firing reveals, unconditionally. The
+    // platoon the carrier could not see kills it from three hexes — and is
+    // seen by everyone from the muzzle flash on.
+    let reg = registry_wireless();
+    let rows = ["ggggg", "ggfgg", "ggggg"];
+    let mut state = two_side_battle(
+        &reg,
+        &rows,
+        vec![
+            unit_at([2, 1], 0, "rifle_platoon", "Ambush"),
+            unit_at([4, 1], 1, "apc", "Taxi"),
+        ],
+        502,
+    );
+    let (platoon, taxi) = (UnitId(0), UnitId(1));
+    assert!(
+        !state.fog.side(1).spotted.contains(&platoon),
+        "the taxi drives past a treeline it cannot read"
+    );
+    assert!(
+        state.fog.side(0).spotted.contains(&taxi),
+        "while the platoon has watched her come the whole way"
+    );
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: platoon,
+                fire: FireIntent::Target {
+                    target: taxi,
+                    weapon: 1,
+                },
+            },
+        )
+        .unwrap();
+    commit_all(&reg, &mut state);
+    let events = state.resolve_round(&reg);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            BattleEvent::ShotFired { attacker, weapon, .. }
+                if *attacker == platoon && weapon == "rpg"
+        )),
+        "the rocket goes out"
+    );
+    assert!(
+        state.fog.side(1).spotted.contains(&platoon) || state.unit(taxi).is_none_or(|u| !u.alive),
+        "and the ambush is spent: sprung means seen"
+    );
+}
+
+#[test]
+fn a_thinned_platoon_shoots_at_half_strength() {
+    // The troops module's firepower meaning: every weapon the platoon
+    // fires scales by the riflemen still standing. Half the sections is
+    // half the fire, through the same preview the player reads.
+    let reg = registry_wireless();
+    let row = "g".repeat(6);
+    let mut state = two_side_battle(
+        &reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([1, 1], 0, "rifle_platoon", "Platoon"),
+            unit_at([3, 1], 1, "scout_section", "Target"),
+        ],
+        503,
+    );
+    let (platoon, target) = (UnitId(0), UnitId(1));
+    let full = tactics_core::battle::preview_attack(&reg, &state, platoon, 0, target, false)
+        .expect("both stand")
+        .damage;
+    assert!(full > 0, "a whole platoon's rifles are worth something");
+
+    state.units[platoon.index()]
+        .modules
+        .insert("rifle_sections".into(), 3);
+    let half = tactics_core::battle::preview_attack(&reg, &state, platoon, 0, target, false)
+        .expect("both stand")
+        .damage;
+    assert_eq!(
+        half,
+        full * 3 / 6,
+        "three of six sections left is half the fire"
+    );
+}
+
+#[test]
+fn a_shellburst_beside_a_platoon_is_attrition_not_erasure() {
+    // The plate-zero carve-out: a dispersed platoon has no hull for blast
+    // overmatch to crush, so splash converts to casualty rolls. Shell after
+    // shell lands next door and the platoon bleeds — and is still a platoon,
+    // never a single-event deletion.
+    let reg = registry_wireless();
+    let row = "g".repeat(9);
+    let mut state = two_side_battle(
+        &reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([0, 1], 0, "artillery", "Battery"),
+            unit_at([5, 1], 1, "rifle_platoon", "Platoon"),
+        ],
+        504,
+    );
+    let (_, platoon) = (UnitId(0), UnitId(1));
+    let beside = state.unit(platoon).unwrap().pos + tactics_core::Hex::new(1, 0);
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: UnitId(0),
+                fire: FireIntent::Area {
+                    at: beside,
+                    weapon: 0,
+                },
+            },
+        )
+        .unwrap();
+    commit_all(&reg, &mut state);
+
+    let mut bled = false;
+    for _ in 0..4 {
+        if state.is_over() {
+            break;
+        }
+        for event in state.resolve_round(&reg) {
+            if matches!(
+                event,
+                BattleEvent::ModuleHit { unit, .. } | BattleEvent::CrewHit { unit, .. }
+                    if unit == platoon
+            ) {
+                bled = true;
+            }
+        }
+        commit_all(&reg, &mut state);
+    }
+    assert!(bled, "four volleys next door draw blood");
+    let unit = state.units[platoon.index()].clone();
+    assert!(
+        !unit.wrecked,
+        "but a spread-out platoon is not a hull to crush"
+    );
+}
+
+#[test]
+fn a_remnant_platoon_is_a_story_not_a_gun() {
+    // Troops at zero: the girls are alive, the platoon is finished. Her
+    // rifles are worth nothing, she holds fire even with an enemy in her
+    // lap, and her condition says what the withdraw machinery needs to
+    // hear.
+    let reg = registry_wireless();
+    let row = "g".repeat(5);
+    let mut state = two_side_battle(
+        &reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([1, 1], 0, "rifle_platoon", "Remnant"),
+            unit_at([3, 1], 1, "scout_section", "Enemy"),
+        ],
+        505,
+    );
+    let platoon = UnitId(0);
+    state.units[platoon.index()]
+        .modules
+        .insert("rifle_sections".into(), 0);
+    assert!(
+        state.condition(&reg, state.unit(platoon).unwrap()) < 0.5,
+        "a shattered platoon reads as one"
+    );
+    commit_all(&reg, &mut state);
+    for event in state.resolve_round(&reg) {
+        assert!(
+            !matches!(event, BattleEvent::ShotFired { attacker, .. } if attacker == platoon),
+            "two girls and no riflemen fire nothing worth firing"
+        );
+    }
+    assert!(
+        state.units[platoon.index()].alive,
+        "and she is a story still on the field, not a deletion"
+    );
+}
+
 // --- the chain of command under adversarial load ---------------------------
 //
 // Everything above tests one rule at a time on a stage built to show it. This

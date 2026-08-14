@@ -380,7 +380,9 @@ pub fn recompute(registry: &DataRegistry, state: &mut BattleState) -> Vec<Event>
             let fog = state.fog.side_mut(side);
             fog.explored.extend(visible.iter().copied());
             fog.visible = visible;
-            state.fog.visible_key[side as usize] = key;
+            // Cloned rather than moved: the concealment pass below still
+            // reads the spotter list.
+            state.fog.visible_key[side as usize] = key.clone();
         }
 
         // Units are visited in id order and events pushed in that order, so
@@ -392,8 +394,48 @@ pub fn recompute(registry: &DataRegistry, state: &mut BattleState) -> Vec<Event>
         let mut spotted = HashSet::new();
         let mut spotted_now = Vec::new();
         for unit in state.units.iter().filter(|u| u.alive && u.side != side) {
-            if !(fog.visible.contains(&unit.pos) || fog.revealed.contains(&unit.id)) {
+            let revealed = fog.revealed.contains(&unit.id);
+            if !(fog.visible.contains(&unit.pos) || revealed) {
                 continue;
+            }
+            // Concealment: standing on ground somebody can see is not the
+            // same as being seen. A concealed unit on a visible tile is
+            // spotted only by a spotter whose own sight reaches the tile
+            // AND who stands inside her vision range scaled down by the
+            // target's `concealment` — counted twice when the target is in
+            // real cover, which is where a platoon in the treeline becomes
+            // the ambush the design doc promises. Firing bypasses all of
+            // it (`revealed`): an ambush is spent by springing it.
+            // Vehicles default to concealment 0 and skip this entirely —
+            // spotted exactly as they always were.
+            if !revealed {
+                let concealment = registry
+                    .vehicle(&unit.vehicle)
+                    .map(|v| v.concealment)
+                    .unwrap_or(0);
+                if concealment > 0 {
+                    let covered = state
+                        .map
+                        .get(unit.pos)
+                        .and_then(|t| registry.terrain(&t.terrain))
+                        .is_some_and(|t| t.cover >= 30);
+                    let hidden = if covered {
+                        concealment.saturating_mul(2).min(95)
+                    } else {
+                        concealment.min(95)
+                    };
+                    let seen = key.iter().any(|(sid, spos, srange)| {
+                        let effective = srange * (100 - hidden) / 100;
+                        spos.distance_to(unit.pos) <= effective as i32
+                            && state
+                                .fog
+                                .cached(*sid, *spos, *srange)
+                                .is_some_and(|tiles| tiles.contains(&unit.pos))
+                    });
+                    if !seen {
+                        continue;
+                    }
+                }
             }
             spotted.insert(unit.id);
             if !fog.spotted.contains(&unit.id) {

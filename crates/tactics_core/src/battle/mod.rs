@@ -251,6 +251,32 @@ impl Unit {
         !declared
     }
 
+    /// What fraction of this unit's fighting bodies are still on their
+    /// feet, as (have, total) over every [`ModuleEffect::Troops`] module
+    /// aboard. `None` when the unit has no troops modules at all — a tank
+    /// crew is not a fraction of anything, and every weapon it fires is
+    /// fired at full weight. The three meanings the design doc promises
+    /// hang off this one reading: interior weight is the module's own
+    /// `size` (free), firepower scales by this fraction, and a remnant is
+    /// simply this reaching zero while the girls live.
+    pub fn troops(&self, registry: &DataRegistry) -> Option<(u32, u32)> {
+        let mut have = 0u32;
+        let mut total = 0u32;
+        let mut any = false;
+        for (id, hits) in &self.modules {
+            let Some(module) = registry.module(id) else {
+                continue;
+            };
+            if module.effect != ModuleEffect::Troops {
+                continue;
+            }
+            any = true;
+            have += (*hits).min(module.toughness);
+            total += module.toughness;
+        }
+        (any && total > 0).then_some((have, total))
+    }
+
     /// How much of this vehicle's movement her running gear still delivers,
     /// in halves so the arithmetic stays integer: 2 intact, 1 damaged, 0
     /// destroyed. Reads the worst mobility module aboard, because one

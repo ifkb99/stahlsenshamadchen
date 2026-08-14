@@ -303,12 +303,17 @@ pub fn chambered<'r>(
                 DamageType::Explosive => 2.0,
                 DamageType::SmallArms => 0.5,
             };
-        return Some(Round {
-            ammo: None,
-            legacy_pen,
-            damage: weapon.damage,
-            small_arms: matches!(weapon.damage_type, DamageType::SmallArms),
-        });
+        return Some(mustered(
+            registry,
+            state,
+            unit,
+            Round {
+                ammo: None,
+                legacy_pen,
+                damage: weapon.damage,
+                small_arms: matches!(weapon.damage_type, DamageType::SmallArms),
+            },
+        ));
     }
     let u = state.unit(unit)?;
     let ammo = weapon
@@ -316,7 +321,27 @@ pub fn chambered<'r>(
         .iter()
         .filter(|id| u.ammo.get(*id).copied().unwrap_or(0) > 0)
         .find_map(|id| registry.ammo(id))?;
-    Some(Round::loaded(ammo, weapon))
+    Some(mustered(registry, state, unit, Round::loaded(ammo, weapon)))
+}
+
+/// A platoon shoots with the riflemen she still has. Any unit carrying
+/// [`ModuleEffect::Troops`] modules scales every round's effect by the
+/// fraction still standing — half the platoon is half the fire, and a
+/// remnant with the girls alone left rounds down to nearly nothing, which
+/// is what makes her want the exit rather than the fight. A unit with no
+/// troops modules (every tank there is) passes through untouched.
+fn mustered<'r>(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    mut round: Round<'r>,
+) -> Round<'r> {
+    if let Some(u) = state.unit(unit)
+        && let Some((have, total)) = u.troops(registry)
+    {
+        round.damage = (round.damage as u32 * have / total.max(1)) as i32;
+    }
+    round
 }
 
 /// What one round is expected to accomplish against one profile: the
@@ -361,7 +386,7 @@ pub fn best_round_against<'r>(
         let Some(ammo) = registry.ammo(id) else {
             continue;
         };
-        let round = Round::loaded(ammo, weapon);
+        let round = mustered(registry, state, unit, Round::loaded(ammo, weapon));
         let Some(profile) = shot_profile(registry, state, weapon, &round, u.pos, target) else {
             continue;
         };
@@ -395,7 +420,10 @@ pub fn best_round_for_ground<'r>(
             continue;
         };
         if best.as_ref().is_none_or(|(b, _)| ammo.blast > *b) {
-            best = Some((ammo.blast, Round::loaded(ammo, weapon)));
+            best = Some((
+                ammo.blast,
+                mustered(registry, state, unit, Round::loaded(ammo, weapon)),
+            ));
         }
     }
     best.map(|(_, round)| round)
@@ -1091,6 +1119,49 @@ fn interior(registry: &DataRegistry, unit: &super::Unit) -> Vec<(InteriorChoice,
 /// One thing a behind-armor effect roll can land on: a seat (an index
 /// into the unit's crew list) or a module by id. Owned, so the picked
 /// list outlives the borrow of the unit it was read from.
+/// Spend `rolls` weighted picks against what is aboard `target` — the
+/// shared engine behind a penetration's interior budget and a shellburst's
+/// splash over soft, dispersed things. Stops early on a brew-up or an
+/// emptied interior.
+fn effect_rolls(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    target: UnitId,
+    rolls: i32,
+    savage: bool,
+    potency: f32,
+    events: &mut Vec<Event>,
+) {
+    for _ in 0..rolls {
+        let Some(unit) = state.unit(target) else {
+            return;
+        };
+        if unit.brewed {
+            break;
+        }
+        let targets = interior(registry, unit);
+        let total: u32 = targets.iter().map(|(_, w)| w).sum();
+        if total == 0 {
+            break;
+        }
+        let mut pick = state.rng.random_range(0..total);
+        let mut chosen = None;
+        for (candidate, weight) in targets {
+            if pick < weight {
+                chosen = Some(candidate);
+                break;
+            }
+            pick -= weight;
+        }
+        match chosen.expect("total > 0 guarantees a pick") {
+            InteriorChoice::Seat(seat) => crew_hit(state, target, seat, savage, events),
+            InteriorChoice::Module(id) => {
+                module_hit(registry, state, target, &id, potency, events);
+            }
+        }
+    }
+}
+
 enum InteriorChoice {
     Seat(usize),
     Module(String),
@@ -1133,35 +1204,15 @@ fn behind_armor_effects(
     // per battle, meaning the dramatic middle state effectively never
     // happened and a girl's first hit was almost always her last.
     let savage = profile.damage >= per_effect * 3;
-
-    for _ in 0..rolls {
-        let Some(unit) = state.unit(target) else {
-            return;
-        };
-        if unit.brewed {
-            break;
-        }
-        let targets = interior(registry, unit);
-        let total: u32 = targets.iter().map(|(_, w)| w).sum();
-        if total == 0 {
-            break;
-        }
-        let mut pick = state.rng.random_range(0..total);
-        let mut chosen = None;
-        for (candidate, weight) in targets {
-            if pick < weight {
-                chosen = Some(candidate);
-                break;
-            }
-            pick -= weight;
-        }
-        match chosen.expect("total > 0 guarantees a pick") {
-            InteriorChoice::Seat(seat) => crew_hit(state, target, seat, savage, events),
-            InteriorChoice::Module(id) => {
-                module_hit(registry, state, target, &id, round.post_pen_scale(), events);
-            }
-        }
-    }
+    effect_rolls(
+        registry,
+        state,
+        target,
+        rolls,
+        savage,
+        round.post_pen_scale(),
+        events,
+    );
 
     // The bail-out check, gated exactly the way disobedience is: the rung
     // decides whether nerve is even in question, and only then do the dice
@@ -1409,7 +1460,21 @@ fn overpressure(
             .collect();
         (plate, exterior)
     };
-    if blast >= plate * 2 && blast > 0 {
+    if plate == 0 {
+        // Soft, dispersed things do not have a hull for overpressure to
+        // crush: a platoon is thirty people behind folds in the ground,
+        // not a box. Splash against plate zero converts to casualty rolls
+        // through the same weighted interior machinery a penetration uses
+        // — artillery against infantry is attrition, brutal attrition,
+        // never a single-event erasure. (Direct hits never reach here:
+        // against no armor the gate always passes and the full budget
+        // rolls in the ordinary way.)
+        let per_effect = registry.balance.points_per_effect.max(1);
+        let rolls = (blast.max(1) + per_effect - 1) / per_effect;
+        effect_rolls(registry, state, target, rolls, false, 1.0, events);
+        return;
+    }
+    if blast >= plate * 2 {
         // Overmatch: the shell does not need the gate's permission. Reap
         // folds the flag into `alive` at the end of the tick and announces
         // the destruction, the same simultaneity bargain every other death
