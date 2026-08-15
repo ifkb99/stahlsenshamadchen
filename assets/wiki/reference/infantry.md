@@ -189,6 +189,52 @@ was owed. The two named tuning numbers for the next balance pass:
 hidden to ever engage). Both are AI-employment questions more than data
 questions, and they wait on the pool-era doctrine re-read.
 
+## The employment pass (2026-08-14, after the baseline was read)
+
+The baseline's two named numbers — *transports as coffins* and *infantry
+that never shoots* — were AI-employment questions, and the designer
+rejected the obvious cures ("scaling the objective value up… feels
+manual rather than emergent"). Three changes went in instead, none of
+them a multiplier and none of them naming a chassis in Rust.
+
+- **Leaders claim gunnery** (`d525a1e`). The leadership seats were
+  written with the skills a leader obviously has and gunnery was not
+  among them, so no seat was responsible for it, `crew_skill` fell
+  through to "best aboard", and every girl read gunnery through her
+  cores at the untrained penalty. The platoon laid every weapon it owns
+  four levels below ordinary — a silent −12 percentage points on every
+  infantry weapon in the game. Expected shots to knock a target out:
+  RPG 9.1 → 6.7, rifles 28.9 → 23.6.
+- **Danger priced as a fraction** (`4ffbfd2`). The evaluator's threat
+  term was absolute, so five points of expected damage read identically
+  to a fresh heavy tank and to a loaded taxi with one girl left. It is
+  now divided by what she can still absorb — against
+  `BattleState::typical_substance`, the field's own mean complement, so
+  the reference is data rather than a constant — and multiplied by what
+  is riding on her. Honest measurement: **this barely moves the pool
+  tables**, because threat reaches six hexes with a 1/distance falloff
+  while the guns reach sixteen, so for most of an approach march it is
+  zero. Repricing zero changes nothing. Removing the six-hex gate was
+  tried and cost the skill-gap table more than it won.
+- **The commander reads her infantry** (`7d812aa`). A formation is an
+  infantry element because somebody in it walks — recognised off the
+  chassis, exactly as a base of fire is recognised by somebody laying an
+  indirect weapon — and such a formation is given the *covered* ground
+  and told to hold it rather than drawing a slot in the tank rotation.
+  The maps had to earn it: the taxi and her platoon shipped inside the
+  armoured formation, so each side now fields three formations — line,
+  guns, grenadiers. Massed armour's delegation tax falls from 8 wins to
+  5, and side 0's foot troops fire 9 rounds a pairing against the flat
+  control's 2. Draws rise 2 → 5, which is what infantry sitting on
+  objectives costs.
+
+**Still open, and now understood rather than guessed:** 21 of 24 taxis
+die whether the side fights flat or under command, because a mission
+belongs to a formation and the carrier holds the ground her passengers
+were sent to hold. "Deliver them and get out" is a sentence about one
+unit. `Unit.detached` is the seam; the work is logged in TODO under
+Chain of Command beside the assignable postures.
+
 ## Open questions, carried deliberately
 
 - **Squad splitting** — deferred per the designer ("unless it is easy":

@@ -78,6 +78,15 @@ stalemate, so there is finally a baseline to measure a rewrite against.
   saves, replays and external brains carry it; pairs with the target-track
   memory item (observed headings enabling wait-for-the-flank and artillery
   lead).
+- **per-unit tasking, so a taxi can be told to deliver and get out** (noted
+  2026-08-14, from the infantry-employment pass): a mission belongs to a
+  *formation*, so the carrier in a grenadier section holds the ground her
+  passengers were sent to hold, and 21 of 24 taxis die there whether the side
+  fights flat or under command. "Unload here and withdraw" is a sentence about
+  one unit and there is no way to say it. `Unit.detached` is the existing seam
+  — it already excuses a unit from her formation's standing mission — so the
+  work is a brain that detaches an emptied carrier and something for her to do
+  next. Same vocabulary as the postures above and probably the same pass.
 (WEGO landed: rounds are plan-then-resolve, orders are per-unit intents, and AI is split into planner + doctrine + difficulty. the seams left for this are the planner registry, which can build child planners, and the unused `initiative`/`delegation` doctrine weights)
 - **the design and build order live in `assets/wiki/reference/command.md`** — formations as data, missions as orders in the order stream (so saves/replays/NN/LLM brains all speak one vocabulary), comms as checks. read it before touching anything below. chunk 0 (the shared `AiDriver` planning loop) is done
 - planners are held per side; command wants them per formation, with a commander planner owning subordinates that have their own doctrine
