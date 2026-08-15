@@ -220,6 +220,21 @@ Two things about it are load-bearing:
 - **`run_script` must stay `.after(InputSystems)`.** Bevy clears `just_pressed`
   at the top of `PreUpdate`, so a press injected before that is wiped before
   any handler sees it — the symptom is a click that silently selects nothing.
+- **Scripts wait on the game, not on a stopwatch.** `until <predicate>` and
+  `expect <predicate>` read [`ScriptFacts`], which whichever screen is on
+  publishes for them; a failed `expect`, a timed-out `until` or a degenerate
+  screenshot makes the process exit nonzero, so a tour is a test. Prefer
+  `until idle` over `wait N` for anything that waits on the simulation — a
+  `wait` that guessed short photographs a half-played round and says nothing
+  about it.
+- **`idle` is `Battle::listening`, and both must stay one predicate.** It
+  means "a keystroke would be acted on this frame", which is not the same as
+  "the phase is planning": sprites finishing a walk hold the keyboard, and a
+  side that has committed is done talking. When those drifted apart, `until
+  idle` came true a frame early, four `key Enter` presses advanced the battle
+  by one round, and every screenshot after them described the wrong turn
+  while the script reported success. Anything new that makes `handle_input`
+  refuse a keystroke belongs inside `listening`, not beside it.
 
 Rust edition 2024, resolver 3. `[profile.dev]` builds the workspace at
 `opt-level = 1` and dependencies at 3, because AI search is slow at opt-level 0.

@@ -23,7 +23,7 @@ click left
 wait 0.6
 log "Mina ordered away from her platoon"
 key Enter
-wait 9
+until idle
 
 # Round two. She is out of contact — the log said so as she drove out of
 # earshot — and a direct order to her is now *accepted and held* rather than
@@ -66,7 +66,7 @@ click left
 wait 0.6
 log "Anka drives after her"
 key Enter
-wait 9
+until idle
 key F
 wait 0.8
 log "contact restored, and the waiting order lands"

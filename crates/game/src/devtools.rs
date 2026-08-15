@@ -57,16 +57,52 @@
 //! | `click <left\|right\|middle>` | tap a mouse button for one frame |
 //! | `shot <path>` | capture the window; the script waits for it to land |
 //! | `log <text>` | print a marker, to correlate stdout with screenshots |
+//! | `until <predicate> [<secs>]` | block until the game says so, or give up |
+//! | `expect <predicate>` | assert now; a failure makes the run exit nonzero |
 //! | `quit` | exit once every pending screenshot has been written |
 //!
 //! A script that ends without `quit` leaves the game running normally, which
 //! is useful for setting up a state by hand and then taking over.
+//!
+//! # Waiting on the game rather than on the clock
+//!
+//! `wait` blocks on a stopwatch, and for a long time that was the only way to
+//! say "let the round finish" — every tour in `scripts/dev/` guessed a number
+//! of seconds and hoped. A guess that is too short photographs a half-played
+//! animation and the screenshot lies about what the state is; a guess that is
+//! too long makes every tour slow to keep the margin. Neither failure is
+//! visible in the output, which is the worst property a test harness can have.
+//!
+//! `until` blocks on a [`Predicate`] over [`ScriptFacts`] instead — what the
+//! game actually says about itself — so `until idle` means the round has
+//! finished and nothing is animating, however long that took on this machine.
+//! `expect` asks the same questions as an assertion, so a tour can state what
+//! it believes and fail loudly when that stops being true.
+//!
+//! The predicate vocabulary is deliberately small and closed, for the reason
+//! the whole format is: a script that could compute would be a program nobody
+//! reviews, and a typo in a closed vocabulary is a parse warning rather than
+//! silent nonsense.
+//!
+//! | Predicate | True when |
+//! | --- | --- |
+//! | `idle` | not resolving, not animating: the frame is settled |
+//! | `over` | the battle has been decided |
+//! | `turn >= <n>` | the round (or campaign day) has reached `n` (`>= > == <= <`) |
+//! | `score <side> >= <n>` | that side's objective points |
+//! | `unit "<name>" alive\|dead\|aboard\|afoot` | what became of her |
+//! | `log "<text>"` | that text has appeared in the on-screen log |
+//!
+//! Facts are published by whichever screen is on ([`ScriptFacts`]), so a
+//! script that asks a battle question on the campaign map simply never comes
+//! true and times out saying so.
 
 use crate::map_render::ScriptedCursor;
 use bevy::app::AppExit;
 use bevy::input::{ButtonInput, InputSystems};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk};
+use std::collections::HashSet;
 use tactics_core::Hex;
 
 pub struct DevToolsPlugin;
@@ -106,8 +142,60 @@ impl Plugin for DevToolsPlugin {
 
 /// Dev tooling is gated behind `STAHL_DEBUG` so that a release build handed to
 /// a player has no scripted input path at all.
-fn debug_enabled() -> bool {
+///
+/// Crate-visible because the screens gate their fact publishers on it too: a
+/// player's build should not be walking every unit once a frame to fill in a
+/// resource nobody reads.
+pub(crate) fn debug_enabled() -> bool {
     std::env::var("STAHL_DEBUG").is_ok()
+}
+
+/// What the screen currently on knows about itself, in the small vocabulary a
+/// script is allowed to ask about.
+///
+/// **Published by the screens, read by the runner** — deliberately that way
+/// round. `run_script` is screen-agnostic and must stay so, the battle screen's
+/// own `Battle` resource is private to its module, and the campaign map will
+/// want to answer the same questions in its own terms. One flat resource that
+/// each screen fills in leaves the dependency pointing from the game at the
+/// dev tooling, which is the direction that costs nothing when the dev tooling
+/// is compiled out of a player's build.
+///
+/// Everything here is a *fact about now*. Nothing accumulates, because a
+/// resource that remembered would have to be reset on every screen change and
+/// would quietly answer for the last battle. The one thing a script wants
+/// history for — has this line ever appeared in the log — is accumulated by
+/// the runner instead, from the rolling window below.
+#[derive(Resource, Default)]
+pub(crate) struct ScriptFacts {
+    /// Rounds on the battle screen, days on the campaign map. One name
+    /// because a script asking "how far in are we" means the same thing on
+    /// both and should not need two words for it.
+    pub turn: u32,
+    /// Nothing resolving and nothing animating: what the screen is drawing is
+    /// what the state says, and a screenshot taken now will not lie.
+    pub idle: bool,
+    /// The battle has been decided. Always false where the question has no
+    /// meaning.
+    pub over: bool,
+    /// Objective points by side.
+    pub score: Vec<u32>,
+    pub units: Vec<UnitFact>,
+    /// The on-screen log as it stands. A rolling window of the last few
+    /// lines, not a transcript — see [`Script::seen_log`].
+    pub log: Vec<String>,
+}
+
+/// One unit, as a script may ask about her.
+pub(crate) struct UnitFact {
+    pub name: String,
+    /// False for a crew that was destroyed *or* that drove off by an exit.
+    /// The distinction matters to the game and not to a script, which only
+    /// ever asks "is she still out there".
+    pub alive: bool,
+    /// Riding in something. The state a `Mounted` event leaves behind, and
+    /// the reason a script can wait for a mount without an event log.
+    pub aboard: bool,
 }
 
 /// Screenshots requested but not yet written to disk. `quit` waits on this so
@@ -139,7 +227,95 @@ enum Action {
     /// makes it exact, and matches the rest of the format: scripts address
     /// the world, never the screen.
     Focus(Hex),
+    /// Block until the game says so. The deadline is not optional in spirit —
+    /// a predicate that never comes true would hang the run forever with no
+    /// output, which is exactly the failure `until` exists to replace — so an
+    /// omitted one gets [`DEFAULT_TIMEOUT`].
+    Until {
+        predicate: Predicate,
+        secs: f32,
+    },
+    Expect(Predicate),
     Quit,
+}
+
+/// How long an `until` waits before giving up and saying so. Generous,
+/// because the thing it usually waits for is a round of twelve ticks
+/// animating on a machine that may be building at the same time; finite,
+/// because a script that hangs teaches nobody anything.
+const DEFAULT_TIMEOUT: f32 = 30.0;
+
+/// A question a script may ask about the running game.
+#[derive(Debug, Clone, PartialEq)]
+enum Predicate {
+    Idle,
+    Over,
+    Turn { op: Cmp, n: u32 },
+    Score { side: usize, op: Cmp, n: u32 },
+    Unit { name: String, is: UnitIs },
+    Log(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cmp {
+    Ge,
+    Gt,
+    Eq,
+    Le,
+    Lt,
+}
+
+impl Cmp {
+    fn holds(self, left: u32, right: u32) -> bool {
+        match self {
+            Cmp::Ge => left >= right,
+            Cmp::Gt => left > right,
+            Cmp::Eq => left == right,
+            Cmp::Le => left <= right,
+            Cmp::Lt => left < right,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnitIs {
+    Alive,
+    Dead,
+    Aboard,
+    /// On the ground under her own power: alive and riding nothing. The
+    /// answer to "has she got off yet", which is not the same as `alive`.
+    Afoot,
+}
+
+impl Predicate {
+    /// Whether this holds, given what the screen last published and what the
+    /// runner has seen go by in the log.
+    ///
+    /// A unit named by a script that no screen has published is *not* a
+    /// failure of the predicate, it is a script that has not caught up yet:
+    /// `alive` is false and `dead` is true for somebody who does not exist,
+    /// which is the reading that makes `until unit "X" dead` terminate when
+    /// she is removed and `expect unit "X" alive` fail loudly on a typo.
+    fn holds(&self, facts: &ScriptFacts, seen_log: &HashSet<String>) -> bool {
+        match self {
+            Predicate::Idle => facts.idle,
+            Predicate::Over => facts.over,
+            Predicate::Turn { op, n } => op.holds(facts.turn, *n),
+            Predicate::Score { side, op, n } => {
+                op.holds(facts.score.get(*side).copied().unwrap_or(0), *n)
+            }
+            Predicate::Unit { name, is } => {
+                let unit = facts.units.iter().find(|u| u.name == *name);
+                match is {
+                    UnitIs::Alive => unit.is_some_and(|u| u.alive),
+                    UnitIs::Dead => !unit.is_some_and(|u| u.alive),
+                    UnitIs::Aboard => unit.is_some_and(|u| u.alive && u.aboard),
+                    UnitIs::Afoot => unit.is_some_and(|u| u.alive && !u.aboard),
+                }
+            }
+            Predicate::Log(text) => seen_log.iter().any(|line| line.contains(text.as_str())),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,6 +336,21 @@ struct Script {
     /// Keys and buttons tapped last frame, released at the start of this one.
     tapped_keys: Vec<KeyCode>,
     tapped_buttons: Vec<MouseButton>,
+    /// Every distinct log line this run has seen go past.
+    ///
+    /// [`ScriptFacts::log`] is the screen's rolling window of the last few
+    /// lines, so a script that asked it directly could only ever match what
+    /// happened in the last moment. Accumulating here gives `log "..."` the
+    /// meaning a script wants — *has this ever happened* — without making the
+    /// game keep a transcript it has no use for. A burst long enough to push
+    /// a line through the window inside one frame would be missed; the log is
+    /// paced by the animation timer, so in practice they arrive a few a
+    /// second.
+    seen_log: HashSet<String>,
+    /// How many `expect`s have failed. `quit` reads it and exits nonzero,
+    /// which is what makes a tour something CI can run rather than something
+    /// a person has to look at.
+    failures: usize,
 }
 
 impl Script {
@@ -184,6 +375,8 @@ impl Script {
             waiting_since: None,
             tapped_keys: Vec::new(),
             tapped_buttons: Vec::new(),
+            seen_log: HashSet::new(),
+            failures: 0,
         })
     }
 }
@@ -216,9 +409,91 @@ fn parse_action(line: &str) -> Option<Action> {
         "shot" if !rest.is_empty() => Some(Action::Shot(rest.to_string())),
         "log" => Some(Action::Log(rest.to_string())),
         "focus" => parse_pair(rest).map(|(q, r)| Action::Focus(Hex::new(q as i32, r as i32))),
+        // The timeout rides on the end of the same line rather than taking a
+        // keyword, because it is the only number an `until` can carry and a
+        // keyword would be ceremony. `until idle` and `until idle 90` both
+        // read as English.
+        "until" => {
+            let (body, secs) = match rest.rsplit_once(char::is_whitespace) {
+                Some((head, tail)) => match tail.parse::<f32>() {
+                    Ok(secs) => (head.trim(), secs),
+                    Err(_) => (rest, DEFAULT_TIMEOUT),
+                },
+                None => (rest, DEFAULT_TIMEOUT),
+            };
+            parse_predicate(body).map(|predicate| Action::Until { predicate, secs })
+        }
+        "expect" => parse_predicate(rest).map(Action::Expect),
         "quit" => Some(Action::Quit),
         _ => None,
     }
+}
+
+/// `idle`, `turn >= 3`, `unit "Grenadier 2" aboard`, `log "brews up"`.
+///
+/// Quoted names are taken whole, so a unit called `Anvil 1` needs no
+/// escaping; everything else is whitespace-separated words. Anything that
+/// does not parse returns `None` and the loader warns with the line, which is
+/// the same forgiveness the rest of the format has.
+fn parse_predicate(text: &str) -> Option<Predicate> {
+    let text = text.trim();
+    let (head, rest) = match text.split_once(char::is_whitespace) {
+        Some((head, rest)) => (head, rest.trim()),
+        None => (text, ""),
+    };
+    match head {
+        "idle" if rest.is_empty() => Some(Predicate::Idle),
+        "over" if rest.is_empty() => Some(Predicate::Over),
+        "turn" => {
+            let (op, n) = parse_comparison(rest)?;
+            Some(Predicate::Turn { op, n })
+        }
+        "score" => {
+            let (side, rest) = rest.split_once(char::is_whitespace)?;
+            let (op, n) = parse_comparison(rest)?;
+            Some(Predicate::Score {
+                side: side.trim().parse().ok()?,
+                op,
+                n,
+            })
+        }
+        "unit" => {
+            let (name, state) = parse_quoted(rest)?;
+            Some(Predicate::Unit {
+                name,
+                is: match state.trim() {
+                    "alive" => UnitIs::Alive,
+                    "dead" => UnitIs::Dead,
+                    "aboard" => UnitIs::Aboard,
+                    "afoot" => UnitIs::Afoot,
+                    _ => return None,
+                },
+            })
+        }
+        "log" => parse_quoted(rest).map(|(text, _)| Predicate::Log(text)),
+        _ => None,
+    }
+}
+
+/// `>= 3`, `== 0`, `< 12`.
+fn parse_comparison(text: &str) -> Option<(Cmp, u32)> {
+    let (op, n) = text.trim().split_once(char::is_whitespace)?;
+    let op = match op.trim() {
+        ">=" => Cmp::Ge,
+        ">" => Cmp::Gt,
+        "==" | "=" => Cmp::Eq,
+        "<=" => Cmp::Le,
+        "<" => Cmp::Lt,
+        _ => return None,
+    };
+    Some((op, n.trim().parse().ok()?))
+}
+
+/// A `"quoted string"` and whatever follows it.
+fn parse_quoted(text: &str) -> Option<(String, &str)> {
+    let rest = text.trim().strip_prefix('"')?;
+    let (inside, after) = rest.split_once('"')?;
+    Some((inside.to_string(), after))
 }
 
 /// `3,-1` or `3 -1`; used for both hex coordinates and pixel positions.
@@ -308,6 +583,7 @@ fn run_script(
     mut focus: ResMut<crate::camera::CameraFocus>,
     rotation: Res<crate::iso::ViewRotation>,
     center: Res<crate::iso::ViewCenter>,
+    facts: Option<Res<ScriptFacts>>,
     time: Res<Time>,
 ) {
     // Release last frame's taps first, so a keystroke occupies exactly one
@@ -317,6 +593,18 @@ fn run_script(
     }
     for button in script.tapped_buttons.drain(..) {
         buttons.release(button);
+    }
+
+    // Sweep up whatever the log has said since the last frame, whether or not
+    // a predicate is waiting on it — a script that only started watching when
+    // it reached the `until` would miss the line it was waiting for.
+    let facts = facts.map(|f| f.into_inner());
+    if let Some(facts) = &facts {
+        for line in &facts.log {
+            if !script.seen_log.contains(line) {
+                script.seen_log.insert(line.clone());
+            }
+        }
     }
 
     let now = time.elapsed_secs();
@@ -338,13 +626,62 @@ fn run_script(
             }
             script.waiting_since = None;
         }
+        Action::Until { predicate, secs } => {
+            let started = *script.waiting_since.get_or_insert(now);
+            let met = facts
+                .as_ref()
+                .is_some_and(|f| predicate.holds(f, &script.seen_log));
+            if met {
+                script.waiting_since = None;
+            } else if now - started < secs {
+                return;
+            } else {
+                // Loud, and counted as a failure: a timed-out `until` means
+                // the script asked for something that never happened, and
+                // every action after it is running against a game in a state
+                // it did not expect. Carrying on anyway is deliberate — the
+                // screenshots after the failure are usually what explains it.
+                script.failures += 1;
+                match facts.is_some() {
+                    true => warn!("dev script: SCRIPT FAIL: gave up waiting for {predicate:?}"),
+                    false => warn!(
+                        "dev script: SCRIPT FAIL: gave up waiting for {predicate:?} — no screen \
+                         is publishing facts, so nothing could ever have answered it"
+                    ),
+                }
+                script.waiting_since = None;
+            }
+        }
+        Action::Expect(predicate) => {
+            let met = facts
+                .as_ref()
+                .is_some_and(|f| predicate.holds(f, &script.seen_log));
+            if met {
+                info!("dev script: ok, {predicate:?}");
+            } else {
+                script.failures += 1;
+                warn!("dev script: SCRIPT FAIL: expected {predicate:?}");
+            }
+        }
         Action::Quit => {
             // Hold the door until every screenshot observer has fired.
             if pending.0 > 0 {
                 return;
             }
-            info!("dev script: finished, exiting");
-            exit.write(AppExit::Success);
+            // A tour is a test now, so it has to be able to fail the way a
+            // test does. `AppExit::Error` is what makes `cargo run` return
+            // nonzero and a CI step go red; without it a script that watched
+            // every assertion fail would still exit 0 and be believed.
+            match script.failures {
+                0 => {
+                    info!("dev script: finished, exiting");
+                    exit.write(AppExit::Success);
+                }
+                failures => {
+                    error!("dev script: finished with {failures} failure(s)");
+                    exit.write(AppExit::error());
+                }
+            }
         }
         Action::Cursor(target) => *cursor = target.unwrap_or(ScriptedCursor::None),
         Action::Key { code, hold } => match hold {
@@ -361,12 +698,34 @@ fn run_script(
         }
         Action::Shot(path) => {
             pending.0 += 1;
+            let named = path.clone();
             commands
                 .spawn(Screenshot::primary_window())
                 .observe(save_to_disk(path.clone()))
                 .observe(
-                    move |_: On<ScreenshotCaptured>, mut pending: ResMut<PendingShots>| {
+                    move |captured: On<ScreenshotCaptured>,
+                          mut pending: ResMut<PendingShots>,
+                          mut script: ResMut<Script>| {
                         pending.0 = pending.0.saturating_sub(1);
+                        // A capture taken before the window has a swapchain
+                        // comes back as a single pixel and is written to disk
+                        // as a valid, useless PNG. Nothing about that is
+                        // visible in a script's output — the file exists, the
+                        // run exits 0 — and it is the same class of lie as a
+                        // stopwatch that guessed too short. Counting it as a
+                        // failure is the whole fix; the run carries on,
+                        // because the later shots are usually fine and worth
+                        // having.
+                        let size = captured.image.texture_descriptor.size;
+                        if size.width <= 1 || size.height <= 1 {
+                            script.failures += 1;
+                            warn!(
+                                "dev script: SCRIPT FAIL: {named} captured at \
+                                 {}x{} — the window had no surface to \
+                                 photograph",
+                                size.width, size.height
+                            );
+                        }
                     },
                 );
         }
@@ -431,6 +790,128 @@ mod tests {
         ));
         // Comments and unknown verbs are the two ways a line can be dropped.
         assert!(parse_action("frobnicate 3").is_none());
+    }
+
+    fn facts() -> ScriptFacts {
+        ScriptFacts {
+            turn: 3,
+            idle: true,
+            over: false,
+            score: vec![7, 0],
+            units: vec![
+                UnitFact {
+                    name: "Grenadier 1".into(),
+                    alive: true,
+                    aboard: false,
+                },
+                UnitFact {
+                    name: "Grenadier 2".into(),
+                    alive: true,
+                    aboard: true,
+                },
+                UnitFact {
+                    name: "Anvil 3".into(),
+                    alive: false,
+                    aboard: false,
+                },
+            ],
+            log: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_predicate_parses_into_the_question_it_asks() {
+        assert_eq!(parse_predicate("idle"), Some(Predicate::Idle));
+        assert_eq!(
+            parse_predicate("turn >= 4"),
+            Some(Predicate::Turn { op: Cmp::Ge, n: 4 })
+        );
+        assert_eq!(
+            parse_predicate("score 1 == 0"),
+            Some(Predicate::Score {
+                side: 1,
+                op: Cmp::Eq,
+                n: 0
+            })
+        );
+        // The quotes are what let a call sign contain a space, which every
+        // one of them does.
+        assert_eq!(
+            parse_predicate("unit \"Grenadier 2\" aboard"),
+            Some(Predicate::Unit {
+                name: "Grenadier 2".into(),
+                is: UnitIs::Aboard
+            })
+        );
+        assert_eq!(
+            parse_predicate("log \"brews up\""),
+            Some(Predicate::Log("brews up".into()))
+        );
+        // A closed vocabulary: anything else is a warning at load, not a
+        // silently-false question at run time.
+        assert!(parse_predicate("vibes good").is_none());
+        assert!(parse_predicate("turn ~ 4").is_none());
+        assert!(parse_predicate("unit Grenadier 2 aboard").is_none());
+        assert!(parse_predicate("idle please").is_none());
+    }
+
+    #[test]
+    fn until_takes_its_deadline_off_the_end_of_the_line() {
+        assert!(matches!(
+            parse_action("until idle"),
+            Some(Action::Until { secs, .. }) if secs == DEFAULT_TIMEOUT
+        ));
+        assert!(matches!(
+            parse_action("until idle 90"),
+            Some(Action::Until { secs, .. }) if secs == 90.0
+        ));
+        // A trailing word that is not a number belongs to the predicate, so
+        // the state a unit is in is never mistaken for a timeout.
+        assert!(matches!(
+            parse_action("until unit \"Grenadier 2\" afoot"),
+            Some(Action::Until { predicate: Predicate::Unit { is: UnitIs::Afoot, .. }, secs })
+                if secs == DEFAULT_TIMEOUT
+        ));
+        assert!(matches!(
+            parse_action("expect over"),
+            Some(Action::Expect(Predicate::Over))
+        ));
+    }
+
+    #[test]
+    fn a_predicate_answers_from_what_the_screen_published() {
+        let facts = facts();
+        let seen: HashSet<String> = ["Grenadier 2 mounts up in Grenadier 1.".to_string()]
+            .into_iter()
+            .collect();
+        let holds = |text: &str| {
+            parse_predicate(text)
+                .unwrap_or_else(|| panic!("{text}"))
+                .holds(&facts, &seen)
+        };
+
+        assert!(holds("idle"));
+        assert!(!holds("over"));
+        assert!(holds("turn >= 3") && holds("turn == 3") && !holds("turn > 3"));
+        assert!(holds("score 0 >= 7") && holds("score 1 == 0"));
+        // A side nobody published scores nothing rather than panicking.
+        assert!(holds("score 9 == 0"));
+
+        assert!(holds("unit \"Grenadier 2\" aboard"));
+        assert!(!holds("unit \"Grenadier 2\" afoot"));
+        assert!(holds("unit \"Grenadier 1\" afoot"));
+        assert!(holds("unit \"Anvil 3\" dead") && !holds("unit \"Anvil 3\" alive"));
+        // A dead crew is neither aboard nor afoot: both readings are about
+        // somebody who is still out there.
+        assert!(!holds("unit \"Anvil 3\" afoot") && !holds("unit \"Anvil 3\" aboard"));
+        // Somebody no screen has published reads as gone, so a script waiting
+        // for a death terminates and one asserting life fails loudly.
+        assert!(holds("unit \"Nobody\" dead") && !holds("unit \"Nobody\" alive"));
+
+        // Matched as a substring of a line the log has ever carried, not of
+        // the line it happens to be showing now.
+        assert!(holds("log \"mounts up\""));
+        assert!(!holds("log \"brews up\""));
     }
 
     #[test]

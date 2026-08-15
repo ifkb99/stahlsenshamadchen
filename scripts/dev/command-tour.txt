@@ -54,7 +54,7 @@ shot /tmp/command-04-mission.png
 # Commit. Whatever the player left unplanned inside a formation under orders
 # is planned by that formation's executors, and the round plays out.
 key Enter
-wait 9
+until idle
 
 # Pick the platoon up again to read its orders back: the mission has landed
 # (MissionReceived in the log) so it is standing rather than travelling, and
@@ -69,7 +69,7 @@ shot /tmp/command-05-standing.png
 # enemies nobody can see any more are dimmed ghosts on the hex they were last
 # reported from.
 key Enter
-wait 9
+until idle
 log "two rounds fought: fresh contacts and ghosts"
 shot /tmp/command-06-picture.png
 

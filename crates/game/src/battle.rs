@@ -139,6 +139,29 @@ impl Battle {
         !self.state.is_over() && self.state.is_planning() && self.anim.is_empty()
     }
 
+    /// Whether a keystroke would actually be acted on this frame.
+    ///
+    /// `accepting_orders` is not the whole answer — sprites finishing a walk
+    /// hold the keyboard too, and the side may have committed already — and
+    /// the difference matters to exactly two callers who must never disagree:
+    /// [`handle_input`], which ignores a key it is not listening for, and the
+    /// dev harness's `idle` fact, which is a script's way of asking "are you
+    /// listening yet". They disagreed once, and the symptom was silent and
+    /// nasty: `until idle` came true while unit sprites were still walking,
+    /// the script pressed Enter into a game that was not listening, and four
+    /// commits advanced the battle by one round while every screenshot after
+    /// them quietly described the wrong turn.
+    ///
+    /// So: one predicate, both callers. Anything new that would make
+    /// `handle_input` refuse a keystroke belongs in here, not beside it.
+    fn listening(&self, movers_idle: bool) -> bool {
+        movers_idle
+            && self.accepting_orders()
+            && self
+                .human_side()
+                .is_some_and(|side| !self.state.has_committed(side))
+    }
+
     /// The formations the player commands, in the order their map declared
     /// them — which is the order `F` walks and the order the panel names.
     fn own_formations(&self) -> Vec<usize> {
@@ -498,7 +521,62 @@ impl Plugin for BattlePlugin {
                     .chain()
                     .run_if(in_state(AppState::Battle)),
             );
+        // Only a dev build answers questions about itself. The publisher
+        // walks every unit once a frame, which is nothing next to rendering
+        // them but is pure waste in a build nobody is scripting.
+        if crate::devtools::debug_enabled() {
+            app.init_resource::<crate::devtools::ScriptFacts>()
+                .add_systems(
+                    Update,
+                    publish_script_facts
+                        .after(finish_battle)
+                        .run_if(in_state(AppState::Battle)),
+                );
+        }
     }
+}
+
+/// Tell the script runner what this screen knows about itself.
+///
+/// Runs last in the frame and reads only what is already settled, so an
+/// `until idle` sees the state the next screenshot would photograph rather
+/// than a half-applied one. The facts themselves are deliberately thin — see
+/// [`crate::devtools::ScriptFacts`] — and the translation lives here rather
+/// than in the runner because `Battle` is this module's business and the
+/// campaign map will answer the same questions in its own terms.
+fn publish_script_facts(
+    battle: Res<Battle>,
+    log: Res<BattleLog>,
+    movers: Query<&Mover>,
+    mut facts: ResMut<crate::devtools::ScriptFacts>,
+) {
+    facts.turn = battle.state.round;
+    // "Idle" means the game is *waiting for the player*: the only moment a
+    // script's keystroke does what a person's would, and the only moment a
+    // screenshot shows a settled board. That is exactly `listening`, and it
+    // is a method on `Battle` rather than a copy of the conditions here
+    // precisely so the two cannot drift — see the note on it for what
+    // drifting cost.
+    //
+    // A battle that has ended is idle too — nothing is moving and nothing
+    // more will — or every tour that fights to a finish would hang on its
+    // last `until`.
+    facts.idle = battle.state.is_over() || battle.listening(movers.is_empty());
+    facts.over = battle.state.is_over();
+    facts.score.clone_from(&battle.state.score);
+    facts.log = log.0.iter().cloned().collect();
+    facts.units.clear();
+    facts.units.extend(
+        battle
+            .state
+            .units
+            .iter()
+            .map(|unit| crate::devtools::UnitFact {
+                name: unit.name.clone(),
+                alive: unit.alive,
+                aboard: unit.aboard.is_some(),
+            }),
+    );
 }
 
 // --- setup ----------------------------------------------------------------
@@ -1639,15 +1717,12 @@ fn handle_input(
     movers: Query<&Mover>,
 ) {
     let registry = &mods.0;
-    if !movers.is_empty() || !battle.accepting_orders() {
+    if !battle.listening(movers.is_empty()) {
         return;
     }
     let Some(side) = battle.human_side() else {
         return;
     };
-    if battle.state.has_committed(side) {
-        return;
-    }
 
     // Enter closes this side's orders. The round only starts once every side
     // has done the same.
