@@ -26,6 +26,82 @@ struct Choice {
 /// attack the evaluator found from it.
 type Candidate = (Hex, f32, Option<(UnitId, usize)>);
 
+/// Rounds a taxi run costs over and above the driving: walking to the
+/// tailgate, climbing in, and stepping off at the far end.
+///
+/// An AI pricing constant in the same family as the evaluator's `SUPPORT` and
+/// the brain's `DEVOLVED` — it exists to stop a platoon mounting up to save
+/// herself half a hex, which is the failure mode a pure time comparison has.
+///
+/// Priced at two rounds first, on the mechanics alone: a mount resolves the
+/// tick she reaches the carrier and a dismount the tick after it is ordered.
+/// That was too cheap, and the harness said so. A platoon delivered near her
+/// objective would re-board for a three-hex hop, ride one hex, meet the
+/// at-the-objective dismount reflex, and step off again — costing the
+/// commanded side a win and three platoons over 36 battles. Four is the
+/// measured price: it removes the short-hop churn entirely while leaving
+/// every genuinely long journey (six a run, unchanged at six rounds and
+/// beyond) still worth taking. The mechanical cost was never the whole cost;
+/// a ride is not door to door, and the walk at each end is real.
+const BOARDING_ROUNDS: f32 = 4.0;
+
+/// Where this unit is ultimately trying to be, as far as anyone can say.
+///
+/// Her formation's standing mission first — the commander has already decided
+/// which ground matters and a taxi run toward some other hex would be a unit
+/// arguing with her orders — and failing that the nearest piece of ground her
+/// side may hold. `None` for a unit with neither, which is a unit with no
+/// reason to go anywhere and therefore no reason to ride.
+///
+/// Deliberately the *anchor* rather than a scored tile: this answers "how far
+/// is the journey", which is a question about the destination, and the
+/// evaluator's per-tile gradient cannot answer it because a greedy planner
+/// only ever sees one round of ground.
+fn journey_end(state: &BattleState, unit: UnitId) -> Option<Hex> {
+    use crate::battle::Mission;
+    let me = state.unit(unit)?;
+    let mission = state
+        .command
+        .formation_of(unit)
+        .and_then(|f| f.mission_for(unit));
+    if let Some(mission) = mission {
+        return match mission {
+            Mission::Advance { to } | Mission::Assault { to } => Some(*to),
+            Mission::Hold { at } => *at,
+            Mission::Recon { toward } => Some(*toward),
+            // An ordered withdrawal is a lane, and driving to it is exactly
+            // what a taxi is for — but a unit under orders to leave has more
+            // urgent business than a rendezvous, and `Withdraw` already pulls
+            // hard through the evaluator. Support anchors on other people,
+            // who move.
+            Mission::Withdraw { .. } | Mission::Support { .. } => None,
+        };
+    }
+    state
+        .map
+        .objectives()
+        .iter()
+        .filter(|o| o.kind == crate::map::ObjectiveKind::Hold)
+        .filter(|o| o.open_to(me.side))
+        .map(|o| o.anchor())
+        .min_by_key(|anchor| (anchor.distance_to(me.pos), anchor.x, anchor.y))
+}
+
+/// How many rounds it takes this unit to cover `hexes`, by her own speed.
+///
+/// Movement points are a speed on this scale — one point is about one hex of
+/// clear ground per round — so this is the whole of the arithmetic, and it is
+/// the reason a taxi run is worth planning at all: a platoon walks at one and
+/// her ride drives at six.
+fn rounds_to_cover(registry: &DataRegistry, state: &BattleState, unit: UnitId, hexes: i32) -> f32 {
+    let points = state
+        .unit(unit)
+        .and_then(|u| registry.vehicle(&u.vehicle))
+        .map(|v| v.movement.points.max(1))
+        .unwrap_or(1);
+    hexes as f32 / points as f32
+}
+
 pub struct UtilityPlanner {
     /// What this side values. Doctrine, not difficulty.
     pub evaluator: Evaluator,
@@ -65,6 +141,101 @@ impl UtilityPlanner {
         )
     }
 
+    /// Whoever is walking toward `carrier` to get aboard her, if anybody.
+    ///
+    /// Read off `boarding`, which is the engine's own standing-order state,
+    /// so this never asks whose idea the mount was. A player's `M` sets the
+    /// same field, and a carrier her side's executor is planning for her —
+    /// one in a formation under a mission, which is the delegated case — will
+    /// go and collect the platoon the player just ordered aboard. A carrier
+    /// the player is steering herself is hers to steer, as it should be.
+    ///
+    /// Lowest id when two are walking toward the same ride. This planner
+    /// never creates that (it only offers rides nobody has claimed), but a
+    /// keyboard can.
+    fn fare_waiting_on(&self, state: &BattleState, carrier: UnitId) -> Option<UnitId> {
+        state
+            .units
+            .iter()
+            .filter(|u| u.alive && u.aboard.is_none() && u.boarding == Some(carrier))
+            .map(|u| u.id)
+            .min_by_key(|id| id.index())
+    }
+
+    /// The carrier worth mounting, if riding beats walking.
+    ///
+    /// Every gate here is a reason a real platoon would refuse the lift:
+    ///
+    /// - **She has somewhere to be.** No journey, no taxi.
+    /// - **Nobody is shooting at either of them.** Mounting under fire is how
+    ///   a platoon dies in the back of a hull, and a ride already under threat
+    ///   would eject her on the tick she boarded — the dismount reflex and
+    ///   this one would spend the battle arguing.
+    /// - **The ride is free.** Full carriers and ones somebody else is
+    ///   already walking to are not offers, which is what keeps two platoons
+    ///   from both marching at a taxi with one seat.
+    /// - **It saves time.** The whole decision, in one comparison: rounds
+    ///   spent walking the journey, against rounds spent walking to the
+    ///   tailgate plus rounds spent being driven, plus what boarding costs.
+    ///   Nothing in it knows what an APC is.
+    fn ride_worth_taking(
+        &self,
+        registry: &DataRegistry,
+        state: &BattleState,
+        unit: UnitId,
+    ) -> Option<UnitId> {
+        let me = state.unit(unit)?;
+        if !registry
+            .vehicle(&me.vehicle)
+            .is_some_and(|v| v.movement.class == crate::data::MovementClass::Foot)
+        {
+            return None;
+        }
+        if super::threatened(registry, state, unit) {
+            return None;
+        }
+        let goal = journey_end(state, unit)?;
+        let on_foot = rounds_to_cover(registry, state, unit, me.pos.distance_to(goal));
+
+        let mut best: Option<(f32, UnitId)> = None;
+        // `side_units` walks alive units; taking ids in order and comparing
+        // strictly keeps the choice independent of iteration order.
+        let mut carriers: Vec<&crate::battle::Unit> = state
+            .side_units(me.side)
+            .filter(|c| c.id != unit && c.aboard.is_none())
+            .collect();
+        carriers.sort_unstable_by_key(|c| c.id.index());
+        for carrier in carriers {
+            let capacity = registry
+                .vehicle(&carrier.vehicle)
+                .map(|v| v.capacity)
+                .unwrap_or(0);
+            if capacity == 0 || state.passengers(carrier.id).len() as u32 >= capacity {
+                continue;
+            }
+            if self.fare_waiting_on(state, carrier.id).is_some() {
+                continue;
+            }
+            if super::threatened(registry, state, carrier.id) {
+                continue;
+            }
+            // The rendezvous closes from both ends, so the walk to the
+            // tailgate is shared: she covers her share and the carrier covers
+            // the rest, which is why this divides the gap by the two speeds
+            // added together rather than by hers alone.
+            let gap = me.pos.distance_to(carrier.pos);
+            let closing = rounds_to_cover(registry, state, unit, gap)
+                .min(rounds_to_cover(registry, state, carrier.id, gap));
+            let driven =
+                rounds_to_cover(registry, state, carrier.id, carrier.pos.distance_to(goal));
+            let by_taxi = closing + driven + BOARDING_ROUNDS;
+            if by_taxi < on_foot && best.is_none_or(|(t, _)| by_taxi < t) {
+                best = Some((by_taxi, carrier.id));
+            }
+        }
+        best.map(|(_, id)| id)
+    }
+
     fn noisy_score(&mut self, score: f32) -> f32 {
         if self.noise > 0.0 {
             score + self.rng.random_range(-self.noise..self.noise)
@@ -88,13 +259,20 @@ impl UtilityPlanner {
         let Some(pos) = state.unit(unit).map(|u| u.pos) else {
             return Vec::new();
         };
-        // A passenger plans exactly one thing: whether this is where she
-        // gets off. The MVP reflexes, per the design doc: dismount when the
-        // ride is under a threat that can actually hurt it (a taxi in an
-        // RPG's sights is a coffin), or when the ride has brought her to
-        // ground worth holding — otherwise stay aboard and be carried.
-        // Planning a taxi run end-to-end is the willingness work's
-        // business, later; nothing here MOUNTS on its own initiative.
+        // A passenger plans exactly one thing: whether this is where she gets
+        // off — dismount when the ride is under a threat that can actually
+        // hurt it (a taxi in an RPG's sights is a coffin), or when the ride
+        // has brought her to ground worth holding.
+        //
+        // A drop-off *short* of the objective was tried here and measurably
+        // did not earn its keep: dismounting a round before the carrier came
+        // under fire cost two more platoons over 36 battles, because it
+        // traded dying in the back of a hull for walking the last stretch in
+        // the open. The narrated battles say why no look-ahead could have
+        // worked — the taxi is usually killed by something the side has not
+        // spotted, so there was nothing to see coming. What is left is a
+        // question about where the carrier was sent, not about when the
+        // passenger jumped; see TODO under Chain of Command.
         if let Some(carrier) = state.unit(unit).and_then(|u| u.aboard) {
             let ride_threatened = super::threatened(registry, state, carrier);
             let at_the_objective = state.unit(carrier).is_some_and(|c| {
@@ -115,6 +293,58 @@ impl UtilityPlanner {
                 }]
             };
         }
+        // The driver's half of a taxi run. A platoon walks at one hex a round
+        // and her ride drives at six, so a passenger marching after a carrier
+        // that is doing its own planning never catches it — the pickup has to
+        // be somebody's job, and it is the carrier's. While anybody is
+        // boarding her she drives to meet them and then stands still until
+        // they are up: a rendezvous, closed from both ends, which halves the
+        // wait and cannot be got by making the infantry walk faster.
+        //
+        // Self-preservation still outranks the schedule. A carrier under fire
+        // she can feel falls straight through to the ordinary scoring and
+        // saves herself, which also keeps the two reflexes from arguing —
+        // without it a threatened taxi would sit for her fare while the
+        // passenger aboard was being told to dismount.
+        if let Some(fare) = self.fare_waiting_on(state, unit)
+            && !super::threatened(registry, state, unit)
+        {
+            let Some(theirs) = state.unit(fare).map(|u| u.pos) else {
+                return Vec::new();
+            };
+            // Adjacent is aboard next tick, so there is nothing left to do
+            // but hold the door. Said out loud rather than returning nothing,
+            // so she counts as planned and the round can close.
+            if pos.distance_to(theirs) <= 1 {
+                return vec![Order::SetFire {
+                    unit,
+                    fire: FireIntent::Hold,
+                }];
+            }
+            let mut approach: Vec<Hex> = reachable(registry, state, unit).into_keys().collect();
+            approach.sort_unstable_by_key(|h| (h.x, h.y));
+            if let Some(dest) = approach
+                .into_iter()
+                .min_by_key(|h| (h.distance_to(theirs), h.x, h.y))
+                && dest != pos
+            {
+                return vec![Order::SetMove { unit, to: dest }];
+            }
+            return vec![Order::SetFire {
+                unit,
+                fire: FireIntent::Hold,
+            }];
+        }
+
+        // The fare's half. Ride when riding is faster than walking, by the
+        // arithmetic and nothing else: how far the journey is, how fast she
+        // walks it, how far the ride is and how fast it drives. Infantry take
+        // taxis across a map and walk the last few hexes for exactly the
+        // reason people do.
+        if let Some(into) = self.ride_worth_taking(registry, state, unit) {
+            return vec![Order::Mount { unit, into }];
+        }
+
         let mut options: Vec<Hex> = reachable(registry, state, unit).into_keys().collect();
         options.sort_unstable_by_key(|h| (h.x, h.y));
 

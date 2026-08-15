@@ -8482,6 +8482,213 @@ fn taxi_stage(reg: &DataRegistry, enemy: &str, seed: u64) -> BattleState {
     )
 }
 
+/// A long road with a piece of ground worth holding at the far end, a
+/// platoon and an empty taxi at the near end, and an enemy parked on the
+/// objective behind a forest curtain so that nobody is spotted at the bell.
+///
+/// The distances are the whole point: on foot the objective is a march of
+/// twenty-odd rounds and by taxi it is four or five, which is the gap a taxi
+/// run exists to close. `walk` shortens it so the same stage can ask the
+/// opposite question.
+fn taxi_run_stage(reg: &DataRegistry, walk: i32, seed: u64) -> BattleState {
+    let mut row: Vec<char> = "g".repeat(30).chars().collect();
+    row[15] = 'f';
+    let row: String = row.into_iter().collect();
+    let goal = 1 + walk;
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "taxi_run",
+        "palette": { "g": "grass", "f": "forest" },
+        "rows": [row],
+        "objectives": [{ "id": "far_end", "name": "The Far End", "at": [[goal, 0]], "value": 3 }],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let placements = vec![
+        unit_at([1, 0], 0, "rifle_platoon", "Riders"),
+        unit_at([2, 0], 0, "apc", "Taxi"),
+        unit_at([29, 0], 1, "medium_tank", "Watcher"),
+    ];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    )
+}
+
+/// Every order one side's planner issues in a round, in the order it issues
+/// them. The planner is only reachable through the driver, which is the right
+/// seam to test at anyway: what matters is the order that reaches the engine.
+fn orders_planned(reg: &DataRegistry, state: &mut BattleState, side: u8, seed: u64) -> Vec<Order> {
+    let mut ai = AiDriver::new();
+    ai.insert(
+        side,
+        make_battle_planner(
+            &AiConfig {
+                planner: "utility".into(),
+                difficulty: 5,
+                doctrine: Some("massed_armor".into()),
+            },
+            seed,
+            reg,
+        ),
+    );
+    let mut orders = Vec::new();
+    ai.plan_round_with(reg, state, |d| {
+        if d.side == side {
+            orders.push(d.order.clone());
+        }
+    });
+    orders
+}
+
+#[test]
+fn a_platoon_with_a_long_march_ahead_of_her_calls_for_the_taxi() {
+    // The AI could mount nobody. `Order::Mount` has been in the engine since
+    // the ride landed, the player's `M` has used it all along, and every
+    // planner ignored it — so half the transport machinery was dead for
+    // every side the player was not personally commanding, and a battle taxi
+    // was a thing that made exactly one delivery per battle.
+    //
+    // What decides it is arithmetic and nothing else: rounds spent walking
+    // the journey against rounds spent walking to the tailgate, being driven,
+    // and getting out. Twenty-six hexes at one hex a round is a march; the
+    // same trip at six is not. Nothing here knows what an APC is.
+    let reg = registry_wireless();
+    let mut state = taxi_run_stage(&reg, 26, 55);
+    let (riders, taxi) = (UnitId(0), UnitId(1));
+    let orders = orders_planned(&reg, &mut state, 0, 55);
+    assert!(
+        orders
+            .iter()
+            .any(|o| matches!(o, Order::Mount { unit, into } if *unit == riders && *into == taxi)),
+        "she should be calling for the ride: {orders:?}"
+    );
+}
+
+#[test]
+fn a_platoon_with_a_short_walk_ahead_of_her_walks() {
+    // The other half of the same comparison, and the reason it is a
+    // comparison rather than a preference. Three hexes is a walk; mounting up
+    // for it would cost more rounds than it saved, and a platoon that boarded
+    // for every journey would spend a battle climbing in and out. Measured:
+    // pricing boarding at two rounds instead of four let exactly this happen
+    // near an objective and cost the commanded side a win and three platoons.
+    let reg = registry_wireless();
+    let mut state = taxi_run_stage(&reg, 3, 56);
+    let orders = orders_planned(&reg, &mut state, 0, 56);
+    assert!(
+        !orders.iter().any(|o| matches!(o, Order::Mount { .. })),
+        "the objective is three hexes away; she walks: {orders:?}"
+    );
+}
+
+#[test]
+fn the_taxi_drives_to_the_pickup_rather_than_leaving_without_her() {
+    // The driver's half, and the half without which the feature is a joke: a
+    // platoon walks at one hex a round and her ride drives at six, so a
+    // passenger marching after a carrier that is doing its own planning never
+    // catches it. The pickup has to be somebody's job. While anybody is
+    // boarding her the carrier closes the gap and then holds the door, which
+    // is a rendezvous — it cannot be got by making the infantry walk faster.
+    let reg = registry_wireless();
+    let mut state = taxi_run_stage(&reg, 26, 57);
+    let (riders, taxi) = (UnitId(0), UnitId(1));
+    // Put the two of them well apart, so "toward her" and "toward the
+    // objective" are opposite directions and the assertion cannot pass by
+    // accident.
+    state.units[taxi.index()].pos = tactics_core::offset_to_hex(9, 0);
+    state
+        .apply(
+            &reg,
+            &Order::Mount {
+                unit: riders,
+                into: taxi,
+            },
+        )
+        .expect("a foot unit may board a friendly transport with room");
+    let before = state.unit(taxi).unwrap().pos;
+    let gap_before = before.distance_to(state.unit(riders).unwrap().pos);
+
+    let orders = orders_planned(&reg, &mut state, 0, 57);
+    let dest = orders
+        .iter()
+        .find_map(|o| match o {
+            Order::SetMove { unit, to } if *unit == taxi => Some(*to),
+            _ => None,
+        })
+        .expect("the taxi has somewhere to be: the pickup");
+    assert!(
+        dest.distance_to(state.unit(riders).unwrap().pos) < gap_before,
+        "she should be closing on her fare, not driving for the objective"
+    );
+}
+
+#[test]
+fn the_ai_runs_a_platoon_across_the_map_and_puts_her_down_on_the_objective() {
+    // The whole run, end to end, with nobody steering: she calls the taxi,
+    // the taxi comes for her, she boards, she is driven twenty-odd hexes, and
+    // she gets off on the ground she was making for. On foot the same journey
+    // is a twenty-six round march, so arriving inside ten is proof the ride
+    // happened rather than proof she is a fast walker.
+    let reg = registry_wireless();
+    let mut state = taxi_run_stage(&reg, 26, 58);
+    let riders = UnitId(0);
+    let goal = tactics_core::offset_to_hex(27, 0);
+    let start = state.unit(riders).unwrap().pos.distance_to(goal);
+
+    let mut ai = AiDriver::new();
+    for side in 0..2u8 {
+        ai.insert(
+            side,
+            make_battle_planner(
+                &AiConfig {
+                    planner: "utility".into(),
+                    difficulty: 5,
+                    doctrine: Some("massed_armor".into()),
+                },
+                58 + side as u64,
+                &reg,
+            ),
+        );
+    }
+    let mut mounted = false;
+    let mut rounds = 0;
+    while !state.is_over() && rounds < 10 {
+        ai.plan_round(&reg, &mut state);
+        for event in &state.resolve_round(&reg) {
+            if matches!(event, BattleEvent::Mounted { unit, .. } if *unit == riders) {
+                mounted = true;
+            }
+        }
+        rounds += 1;
+    }
+    assert!(mounted, "she never got aboard");
+    let ended = state
+        .units
+        .get(riders.index())
+        .map(|u| u.pos.distance_to(goal))
+        .expect("she is on the roll one way or another");
+    assert!(
+        ended < start / 2,
+        "ten rounds of riding should have carried her most of the way: {start} -> {ended}"
+    );
+}
+
 #[test]
 fn a_platoon_boards_rides_hidden_and_steps_off_where_the_ride_ends() {
     // The whole taxi doctrine in one test: she mounts by order, vanishes
