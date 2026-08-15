@@ -8450,6 +8450,124 @@ fn a_platoon_boards_rides_hidden_and_steps_off_where_the_ride_ends() {
     assert_eq!(r.distance_to(t), 1, "onto the ground beside the ride");
 }
 
+/// Score a tile with every doctrinal preference switched off except the two
+/// the risk tests care about: the shot in front of her and the danger she is
+/// in. Cover, elevation, mass, scouting and objectives are all zeroed, and
+/// `withdraw_threshold` with them — the caution term reads damage too, and
+/// holding it at zero is what leaves the fractional-risk factor as the only
+/// thing that can move between two otherwise identical states.
+fn risk_score(reg: &DataRegistry, state: &BattleState, unit: UnitId, tile: [i32; 2]) -> f32 {
+    let evaluator = Evaluator::new(tactics_core::data::DoctrineDef {
+        id: "risk_probe".into(),
+        name: String::new(),
+        description: String::new(),
+        aggression: 0.5,
+        cover_value: 0.0,
+        elevation_value: 0.0,
+        concentration: 0.0,
+        scouting: 0.0,
+        objective_value: 0.0,
+        indirect_appetite: 1.0,
+        withdraw_threshold: 0.0,
+        initiative: 0.5,
+        delegation: 0.5,
+    });
+    evaluator
+        .score_tile(
+            reg,
+            state,
+            unit,
+            tactics_core::offset_to_hex(tile[0], tile[1]),
+        )
+        .score
+}
+
+/// How much harder `unit` prefers ground away from the gun than ground near
+/// it. A difference of scores rather than a score, because only a difference
+/// is a decision — and because every term that does not involve the threat
+/// cancels between two states that differ in one thing.
+fn shyness(reg: &DataRegistry, state: &BattleState, unit: UnitId) -> f32 {
+    risk_score(reg, state, unit, [1, 1]) - risk_score(reg, state, unit, [7, 1])
+}
+
+#[test]
+fn a_loaded_taxi_reads_the_same_gun_as_a_bigger_danger_than_an_empty_one() {
+    // Danger used to be an absolute: expected damage in substance points,
+    // read identically by whoever it was aimed at. So a battle taxi with a
+    // platoon in the back weighed a tank destroyer's gun exactly as she
+    // weighed it empty, and drove into it exactly as readily — which is how
+    // a harness run ends with 22 of 24 APCs lost and most of the infantry
+    // dead aboard them.
+    //
+    // What changed is the currency, not the courage: the same expected
+    // damage is divided by what she can still absorb and multiplied by what
+    // is riding on her. Nothing here knows what an APC is — she is careful
+    // because she is small and because the platoon is real, and a chassis a
+    // mod adds tomorrow gets the same treatment for free.
+    //
+    // The two states differ in one field. The platoon stands on the taxi's
+    // own hex in both, so the mass term, the fog and every friend-relative
+    // distance are identical; only `aboard` is set, and only the passenger
+    // stake can account for the difference.
+    let reg = registry_wireless();
+    let mut empty = taxi_stage(&reg, "tank_destroyer", 703);
+    let (taxi, riders) = (UnitId(0), UnitId(1));
+    assert!(
+        empty.fog.side(0).spotted.contains(&UnitId(2)),
+        "the threat term only counts guns the side can actually see"
+    );
+    empty.units[riders.index()].pos = empty.units[taxi.index()].pos;
+
+    let mut loaded = empty.clone();
+    loaded.units[riders.index()].aboard = Some(taxi);
+
+    let (empty, loaded) = (shyness(&reg, &empty, taxi), shyness(&reg, &loaded, taxi));
+    assert!(
+        loaded > empty,
+        "with the platoon aboard the taxi should shy from the gun harder \
+         than she does empty: {loaded} vs {empty}"
+    );
+}
+
+#[test]
+fn a_crew_with_less_of_herself_left_weighs_the_same_shell_more_heavily() {
+    // The other half of pricing risk as a fraction, and the half that applies
+    // to everything on the field rather than to carriers. A crew is a third
+    // of a hit from being finished when a third of her is left, and the
+    // arithmetic says so now without consulting a doctrine — `caution` reads
+    // damage too, but as an appetite for withdrawing scaled by
+    // `withdraw_threshold`, which this probe holds at zero.
+    //
+    // The damage is her radio set and nothing else: on a wireless registry it
+    // does no work, it is not her gun and it is not her tracks, so her shot,
+    // her reach and her speed are untouched and every term in the score but
+    // the threat is identical between the two states. All that differs is
+    // that there is less of her.
+    let reg = registry_wireless();
+    let fresh = taxi_stage(&reg, "tank_destroyer", 704);
+    let mut hurt = fresh.clone();
+    let radio = hurt.units[0]
+        .modules
+        .keys()
+        .find(|id| {
+            reg.module(id)
+                .is_some_and(|m| m.effect == tactics_core::data::ModuleEffect::Radio)
+        })
+        .cloned()
+        .expect("the taxi carries a set");
+    hurt.units[0].modules.insert(radio, 0);
+
+    let (fresh, hurt) = (
+        shyness(&reg, &fresh, UnitId(0)),
+        shyness(&reg, &hurt, UnitId(0)),
+    );
+    assert!(
+        hurt > fresh,
+        "a crew with less left should shy from the gun harder than a whole \
+         one: {hurt} vs {fresh}"
+    );
+}
+
 #[test]
 fn a_penetrated_taxi_shares_its_luck_with_everyone_aboard() {
     // The shared-fate ruling: a round through a loaded carrier does not

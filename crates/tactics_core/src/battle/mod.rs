@@ -966,6 +966,34 @@ impl BattleState {
         (have, total)
     }
 
+    /// What a vehicle on this field is *like*, in substance points: the mean
+    /// full complement across everything fielded, dead and alive alike.
+    ///
+    /// A reference scale, and the reason the AI can talk about danger as a
+    /// fraction without a constant in Rust saying how big a tank is. A mod
+    /// whose vehicles carry ten girls apiece, or a scenario of nothing but
+    /// scout sections, moves this with the content instead of measuring its
+    /// units against a number written for the base game.
+    ///
+    /// Constant for the length of a battle: a unit's *full* complement is
+    /// structural — how many seats and modules the chassis declares — and
+    /// nothing during a fight adds or removes either. Casualties move the
+    /// remaining half only. The dead are counted for the same reason: the
+    /// reference is what this scenario put on the field, not who is left on
+    /// it, and a shrinking denominator would make everyone quietly braver
+    /// as the battle wore on.
+    pub fn typical_substance(&self, registry: &DataRegistry) -> f32 {
+        if self.units.is_empty() {
+            return 1.0;
+        }
+        let total: u32 = self
+            .units
+            .iter()
+            .map(|u| self.substance(registry, u).1)
+            .sum();
+        (total as f32 / self.units.len() as f32).max(1.0)
+    }
+
     pub fn obeys(&self, registry: &DataRegistry, unit: &Unit) -> bool {
         self.morale(registry, unit).obeys
     }

@@ -87,6 +87,71 @@ impl Evaluator {
                 }
             }
         }
+        // ...and what that costs *her*, which is a different question and was
+        // not being asked. The sum above is in substance points, an absolute
+        // quantity, so five points of expected damage read exactly the same to
+        // a fresh heavy tank as to a battle taxi with a platoon in the back
+        // and one girl still on her feet. Every unit on the field weighed
+        // danger by the size of the shell rather than by what the shell would
+        // take from her.
+        //
+        // Danger is therefore priced as a *fraction*, out of two ratios, both
+        // read off state that already exists. No chassis is named here and
+        // none should be — an APC is timid because she is small and soft, not
+        // because a table says APCs are timid, and a mod's own vehicles get
+        // the same treatment on the day they are written:
+        //
+        // - **Fragility: how much of her a hit is.** Expected damage over
+        //   what she can still absorb, restated against the field's own
+        //   reference so it stays in the same units as every other term. A
+        //   nine-point taxi feels a five-point shell as most of herself; a
+        //   fifteen-point heavy feels it as a third. And because the divisor
+        //   is what is *left* rather than her full complement, the same crew
+        //   grows more careful as she is worn down — which `caution` below
+        //   also does, but does as a doctrine's appetite for withdrawing,
+        //   scaled by `withdraw_threshold`. This one is not an opinion: there
+        //   is simply less of her, and it applies to the stubbornest side on
+        //   the field.
+        // - **Stake: what is riding on her.** A loaded carrier gambles her
+        //   passengers on every tile she picks, because shared fate is real —
+        //   a penetration rolls the platoon in the back through the same
+        //   interior pool and a brew-up burns them. An empty taxi risks a
+        //   hull; a full one risks the infantry's whole afternoon, and ought
+        //   to drive like it. Empty, the factor is exactly one and this costs
+        //   nothing.
+        //
+        // Capped, because the fragility ratio diverges: a crew down to her
+        // last point would weigh a scratch as fifteen times a mortal threat,
+        // and someone four times as careful as a fresh crew is already
+        // refusing every tile a fresh crew would take. Past that the term
+        // stops discriminating and only makes the arithmetic loud.
+        //
+        // Know what this can and cannot reach. Threat is a short-ranged term
+        // by construction — six hexes, with a 1/distance falloff — while the
+        // guns on this field shoot sixteen, so for most of an approach march
+        // it is *zero* and no amount of repricing zero changes a decision.
+        // Measured: a tenfold exposure changed the pool run's taxi losses by
+        // two, and removing the six-hex gate entirely (letting threat reach
+        // as far as a weapon does) cost the skill-gap table more than it won
+        // anywhere. Whether a vehicle is somewhere she should not be is
+        // therefore mostly not a question this term can answer; it is a
+        // question about who sent her, which is the commander's.
+        let exposure = {
+            /// Most a crew may multiply danger by for being small, worn down,
+            /// or loaded. Four is "refuses what a fresh crew accepts", which
+            /// is as far as the distinction still says anything.
+            const MAX_EXPOSURE: f32 = 4.0;
+            let left = state.substance(registry, me).0.max(1) as f32;
+            let riding: u32 = state
+                .units
+                .iter()
+                .filter(|u| u.alive && u.aboard == Some(unit))
+                .map(|u| state.substance(registry, u).0)
+                .sum();
+            let fragility = state.typical_substance(registry) / left;
+            let stake = 1.0 + riding as f32 / left;
+            (fragility * stake).min(MAX_EXPOSURE)
+        };
         // Condition replaces the hit-point fraction: girls and modules
         // remaining over the full complement. A crew that has taken wounds
         // and lost gear grows cautious by exactly the machinery that used
@@ -252,7 +317,7 @@ impl Evaluator {
 
         TileScore {
             score: attack_value * attack_scale * 2.0 * (0.5 + doctrine.aggression)
-                - threat * caution
+                - threat * caution * exposure
                 + terrain_value
                 + mass
                 + objective

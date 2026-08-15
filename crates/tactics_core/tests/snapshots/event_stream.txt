@@ -222,7 +222,7 @@ ShotFired { attacker: UnitId(4), from: Hex { x: 17, y: 19, z: -36 }, at: Hex { x
 ShotMissed { attacker: UnitId(4), at: Hex { x: 10, y: 20, z: -30 } }
 RoundStarted { round: 4 }
 order SetFire { unit: UnitId(0), fire: Target { target: UnitId(4), weapon: 0 } }
-order SetMove { unit: UnitId(2), to: Hex { x: 12, y: 20, z: -32 } }
+order SetMove { unit: UnitId(2), to: Hex { x: 10, y: 19, z: -29 } }
 order SetMove { unit: UnitId(3), to: Hex { x: 1, y: 20, z: -21 } }
 order SetFire { unit: UnitId(3), fire: Target { target: UnitId(4), weapon: 0 } }
 order Commit { side: 0 }
