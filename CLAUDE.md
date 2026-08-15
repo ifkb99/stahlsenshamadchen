@@ -89,6 +89,62 @@ to advance: with elimination as the only victory condition, holding the best
 cover on the map is optimal play, and the stalemate rate *rose* as difficulty
 noise fell (11/12 at zero noise). See TODO.md under Design Decisions.
 
+### Infantry, passengers and concealment
+
+Infantry are a `VehicleDef` like everything else — `MovementClass::Foot`,
+armour 0/0/0, leadership seats in the ordinary crew model and the rest of the
+platoon abstracted into a `ModuleEffect::Troops` module. The design record is
+`assets/wiki/reference/infantry.md`; what follows is only the parts that will
+bite someone editing the code.
+
+- **A passenger is `alive` but not on the field.** She has no independent
+  position (hers mirrors the carrier's), she is invisible to spotting, and
+  `unit_at` filters her out. That filter is the same shape as the exit rule
+  above and has the same trap: **never decide "is anybody here" by scanning
+  `units` yourself.** Go through `unit_at` / `spotted_enemy_at`, or a stack of
+  a carrier and her platoon reads as two occupants of one hex and blocks
+  movement onto a hex that is not full. `BattleState::passengers` is the
+  reverse lookup, and it is the only correct way to ask what a carrier is
+  carrying.
+- **Shared fate is not optional.** A penetration into a loaded carrier rolls
+  every passenger's girls and troops into the same interior pool, and a
+  brew-up burns them. `effect_rolls` is where that happens, and it is shared
+  with the plate-zero splash path — change one and you have changed both.
+- **Plate zero is carved out of the overpressure overmatch rule.** Blast ≥
+  twice the struck plate wrecks a vehicle, and against armour 0 that would
+  mean one shell in a neighbouring hex deletes a dispersed platoon. For soft
+  targets splash converts to casualty rolls instead. Artillery against
+  infantry is attrition, brutal but never a single-event erasure.
+- **The troops module means three things at once** and they are easy to
+  separate by accident: interior weight (casualty rolls find the sections far
+  more often than the two girls, which is the whole of the "leaders last"
+  model), firepower (`mustered` scales every weapon's damage by hits
+  remaining over toughness), and combat effectiveness (at zero the platoon is
+  a remnant, alive and pulled hard toward withdrawal).
+- **`concealment` scales the *spotter's* range, not the target's.** It is a
+  per-target effective range inside the spotting pass, doubled when the
+  target stands in cover ≥ 30, and bypassed entirely once she fires
+  (`reveal_to_all` is untouched — an ambush is spent by springing it). The
+  tile-vision cache is not involved and must not learn about it: that cache
+  is a pure function of the map, which is what makes it exact rather than an
+  approximation.
+- **Ambush discipline applies to every unit, not just infantry.**
+  `AMBUSH_PATIENCE` in `combat.rs` holds an *unseen* crew's opportunity fire
+  below a quarter of the target's remaining substance — let them close. An
+  ordered shot is exempt: discipline is about what a crew does on its own
+  initiative. Leader-assignable postures are the designed future (TODO, under
+  Chain of Command).
+- **The AI reads what a formation is made of, and never what it is called.**
+  `lays_indirect`, `goes_on_foot` and the balance instrument's taxi/foot
+  columns all recognise a role off the hardware, so a mod that adds a mortar
+  section or a paratroop platoon gets the behaviour on the day it is written.
+  Follow that pattern rather than adding a `role` field; a chassis id in an
+  `if` inside `ai/` is the smell.
+- **The AI can mount nobody.** `Order::Mount` is fully supported by the
+  engine and by the player's `M` key, and re-mounting after a dismount is
+  legal, but no planner ever issues it. Tracked in TODO beside per-unit
+  tasking; the two are one mechanism.
+
 ### Saving
 
 `tactics_core::save` serialises a game in progress; F5/F9 on the campaign map
@@ -214,6 +270,14 @@ Consequences that are easy to violate by accident:
   `spotted_enemy_at` exists so callers do not reach for `unit_at` and leak.
 - **Damage lands during a tick; death is reaped at the end of it.** That is what
   lets two crews kill each other simultaneously. Do not make `reap` eager.
+- **`alive` and "standing on a hex" are two different questions.** `alive`
+  goes false when she is destroyed *and* when she drives off by an exit, so
+  classify outcomes with `surviving_units()` / `lost_units()` or a successful
+  withdrawal is recorded as a dead crew. A passenger is the mirror case: she
+  stays `alive` and her `pos` mirrors her carrier's, so she is on no hex that
+  anybody may interact with — `unit_at` filters `aboard.is_none()` in one
+  place precisely so every occupancy, targeting and collision read in the
+  game inherits it. Never reimplement either check by scanning `units`.
 
 ## Style
 
@@ -250,7 +314,7 @@ rule they defend (`unspotted_enemies_still_ambush`).
   arena (33–3 vs 23–13 in the 5-vs-3 orientations), suspected
   resolution-order artifact worth a look in B4's remainder.
 - **Army-contained unit placements are never validated.**
-  `map.rs:312` passes `a.at` (the army's own hex) instead of `u.at` when
+  `map.rs:962` passes `a.at` (the army's own hex) instead of `u.at` when
   checking each unit inside an `ArmyPlacement`, so a unit's own coordinates are
   neither validated nor used. `frontier.json` accordingly carries 14 `at`
   fields on army units that are leftover battle coordinates and mean nothing.
@@ -326,11 +390,16 @@ rule they defend (`unspotted_enemies_still_ambush`).
 
   | | |
   | --- | --- |
-  | round resolution | 1.12 ms (0.93–1.27 across seeds) |
-  | `reachable()` per call | 24.0 µs |
-  | `unit_vision` per unit, cold | 73.4 µs |
-  | utility order | 0.03 ms |
+  | round resolution | 1.07 ms (0.79–1.43 across seeds) |
+  | `reachable()` per call | 24.6 µs |
+  | `unit_vision` per unit, cold | 74.9 µs |
+  | utility order | 0.05 ms |
   | mcts order, difficulty 3 / 4 | 1.84 s / 4.24 s |
+
+  Utility order was 0.03 ms until the evaluator started pricing danger as a
+  fraction of what a crew can absorb, which walks the unit list once more per
+  candidate tile. Anything added to `score_tile` is paid for at that rate —
+  it is the hottest function the AI has.
 
   Run it `--release` or the figures are meaningless. Note this supersedes the
   "~39 µs per call on the 768-tile map" figure that used to appear below: that
@@ -348,14 +417,20 @@ rule they defend (`unspotted_enemies_still_ambush`).
 
 ### Content gaps the scale decision exposes
 
-- **Every overworld battle is fought on `river_crossing`.**
-  `choose_battle_map` (`game/src/overworld.rs:693`) looks for a map named
+- ~~**Every overworld battle is fought on `river_crossing`.**~~ Half fixed.
+  `choose_battle_map` (`game/src/overworld.rs:870`) looks for a map named
   `battle_<terrain>` and otherwise returns the first battle map in the
-  registry — and the base mod ships exactly one. With "1 overworld hex = 1
-  battle map" now enforced as a shape, this wants a `battle_plains`,
-  `battle_forest`, `battle_city` and so on, each the radius-20 hexagon (41
-  across, 1261 tiles). `validate-mods` rejects any that are not, so the
-  sizing cannot drift the way it did as a rectangle.
+  registry, and the base mod shipped exactly one. It now ships three —
+  `river_crossing`, `battle_plains`, `battle_forest`, each the radius-20
+  hexagon, and `balance --sim` samples all of them so every map added is free
+  balance signal. What is still missing is *coverage*: the terrain ids the
+  overworld actually uses have no `battle_` map of their own except plains
+  and forest, so a fight on a mountain or in a town still falls through to
+  whichever map iterates first. Adding `battle_city`, `battle_hills` and so
+  on is content work with no engine question left in it.
+  **`river_crossing` is the determinism baseline's ground and deliberately
+  fields no infantry** — putting a platoon on it means regenerating the
+  snapshot and losing the check that says a chunk changed no rules.
 - ~~**`frontier` was not checked against the 4 km hex.**~~ Checked, and it
   holds without changes. It is 14 × 9 hexes = 56 × 36 km, and an army with
   `movement: 4` covers 16 km per turn. The turn length is now stated:
@@ -365,7 +440,7 @@ rule they defend (`unspotted_enemies_still_ambush`).
   is an ordinary *sustained* advance for an armoured formation even though
   the same tanks do 30 km/h in a battle. An operational turn is mostly not
   spent driving.
-- `deploy` (`game/src/battle.rs:356`) sorts deployable tiles by depth from the
+- `deploy` (`game/src/battle.rs:761`) sorts deployable tiles by depth from the
   map edge, so it scaled to the larger map with no changes. Worth knowing it is
   already scale-independent before anyone "fixes" it. On a hexagon the lowest
   columns exist only in the middle rows, so a side now deploys out of the

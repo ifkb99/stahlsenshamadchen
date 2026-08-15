@@ -1,0 +1,114 @@
+# The ride, end to end: a platoon rides, gets off, and gets back on.
+#
+#   STAHL_PRESENT=immediate STAHL_DEBUG=1 STAHL_BATTLE=battle_plains \
+#     STAHL_SCRIPT=scripts/dev/infantry-tour.txt cargo run -p stahlsenshamädchen
+#
+# Every other tour runs on river_crossing, which deliberately fields no
+# infantry — it is the ground the determinism baseline is recorded on. So the
+# five infantry sprites, the passenger panel, the M/U keys and the concealment
+# the platoon fights under had never once been through the scripted harness.
+# This is that tour. It needs battle_plains, which is why the map is named on
+# the command line above and not left to the default.
+#
+# Hexes are axial. battle_plains puts side 0's APC at offset [3, 20], which is
+# axial (-7, 20), with her rifle platoon already aboard; the scout section
+# walks at [7, 17] -> (-1, 17); the armoured line's leader is at [4, 20] ->
+# (-6, 20). The crossroads objective starts at [19, 20] -> (9, 20).
+#
+# `aboard_at` in the map file is what puts the platoon in the back at the
+# bell, so the opening screenshot is already a loaded carrier: nine placements
+# a side, eight of them on the ground.
+
+at 3.0
+
+# The camera opens on the middle of a 41-hex-wide hexagon and both sides
+# deploy out of its west and east vertices, so nobody is in frame at the bell.
+# The scripted cursor addresses a hex whether it is on screen or not — that is
+# the point of naming hexes rather than pixels — but a screenshot of an empty
+# field proves nothing, so put the camera on the grenadiers first. `focus`
+# names the hex rather than holding an arrow key for a while, because panning
+# is a *rate*: how far it travels depends on the zoom and on how many seconds
+# of app time the hold happened to cover, and the framing drifted between runs
+# of this very script.
+focus -7,20
+wait 0.3
+
+log "planning phase; side 0 fields a loaded APC and a foot scout section"
+shot /tmp/inf-01-planning.png
+
+# The taxi, with her platoon in the back. The panel is the only place the
+# passenger appears at all — she is invisible to the enemy and `unit_at`
+# filters her out, so there is no hex to hover for her.
+hex -7,20
+wait 0.3
+log "hovering the APC: the panel should name her passenger"
+shot /tmp/inf-02-loaded.png
+
+click left
+wait 0.5
+log "APC selected"
+shot /tmp/inf-03-selected.png
+
+# U = unload. Selected the carrier, so it means everybody in the back.
+key U
+wait 0.5
+log "unload ordered; nothing happens until the round resolves"
+shot /tmp/inf-04-unload-ordered.png
+
+key Enter
+wait 6
+log "the platoon is on the ground beside the taxi"
+shot /tmp/inf-05-dismounted.png
+
+# She steps off onto a hex adjacent to the carrier, so the exact tile depends
+# on what was free. Hover the taxi's own hex first — if the platoon took it,
+# the panel says so; either way the two are neighbours and both are in frame.
+hex -7,20
+wait 0.3
+shot /tmp/inf-06-after-dismount.png
+
+# The foot scout section: high concealment, next to no teeth, and the sprite
+# that says "these are people, not a vehicle".
+hex -1,17
+wait 0.3
+log "hovering the scout section"
+shot /tmp/inf-07-scouts.png
+click left
+wait 0.5
+shot /tmp/inf-08-scouts-selected.png
+
+# And back on. Select the platoon where she stands, hover her ride, press M:
+# the same grammar as ordering a shot. Re-mounting is legal at any time — the
+# engine has never had a "you already got off once" rule — which is what makes
+# a taxi worth keeping alive across a battle.
+hex -8,20
+wait 0.3
+log "hovering the dismounted platoon"
+shot /tmp/inf-09-platoon.png
+click left
+wait 0.5
+hex -7,20
+wait 0.3
+key M
+wait 0.5
+log "mount ordered: she walks to the taxi and climbs in on arrival"
+shot /tmp/inf-10-mount-ordered.png
+
+key Enter
+wait 6
+hex -7,20
+wait 0.3
+log "aboard again; the panel should carry her once more"
+shot /tmp/inf-11-remounted.png
+
+# Two rounds of the fight, so the infantry are seen doing something under fire
+# rather than only standing still: casualties in a platoon read as the troops
+# module losing hits, and the log should say "takes casualties" rather than
+# reporting a broken component.
+key Enter
+wait 6
+key Enter
+wait 6
+shot /tmp/inf-12-under-fire.png
+
+quit

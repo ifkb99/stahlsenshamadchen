@@ -147,6 +147,7 @@
             ],
             "side": 0,
             "vehicle": "medium_tank",
+            "name": "Anvil 1",
             "crew": [],
             "formation": "kuhlmann_line",
             "leads": true
@@ -158,6 +159,7 @@
             ],
             "side": 0,
             "vehicle": "medium_tank",
+            "name": "Anvil 2",
             "crew": [],
             "formation": "kuhlmann_line"
         },
@@ -168,6 +170,7 @@
             ],
             "side": 0,
             "vehicle": "heavy_tank",
+            "name": "Anvil 3",
             "crew": [],
             "formation": "kuhlmann_line"
         },
@@ -178,6 +181,7 @@
             ],
             "side": 0,
             "vehicle": "tank_destroyer",
+            "name": "Hammer 1",
             "crew": [],
             "formation": "kuhlmann_guns",
             "leads": true
@@ -189,6 +193,7 @@
             ],
             "side": 0,
             "vehicle": "artillery",
+            "name": "Hammer 2",
             "crew": [],
             "formation": "kuhlmann_guns"
         },
@@ -199,6 +204,7 @@
             ],
             "side": 0,
             "vehicle": "recon_car",
+            "name": "Hammer 3",
             "crew": [],
             "formation": "kuhlmann_guns"
         },
@@ -209,6 +215,7 @@
             ],
             "side": 0,
             "vehicle": "apc",
+            "name": "Grenadier 1",
             "crew": [],
             "formation": "kuhlmann_grenadiers",
             "leads": true
@@ -224,6 +231,7 @@
             ],
             "side": 0,
             "vehicle": "rifle_platoon",
+            "name": "Grenadier 2",
             "crew": [],
             "formation": "kuhlmann_grenadiers"
         },
@@ -234,6 +242,7 @@
             ],
             "side": 0,
             "vehicle": "scout_section",
+            "name": "Spaeher",
             "crew": [],
             "formation": "kuhlmann_guns"
         },
@@ -244,6 +253,7 @@
             ],
             "side": 1,
             "vehicle": "medium_tank",
+            "name": "Wotan 1",
             "crew": [],
             "formation": "valkyrie_line",
             "leads": true
@@ -255,6 +265,7 @@
             ],
             "side": 1,
             "vehicle": "medium_tank",
+            "name": "Wotan 2",
             "crew": [],
             "formation": "valkyrie_line"
         },
@@ -265,6 +276,7 @@
             ],
             "side": 1,
             "vehicle": "heavy_tank",
+            "name": "Wotan 3",
             "crew": [],
             "formation": "valkyrie_line"
         },
@@ -275,6 +287,7 @@
             ],
             "side": 1,
             "vehicle": "tank_destroyer",
+            "name": "Raven 1",
             "crew": [],
             "formation": "valkyrie_guns",
             "leads": true
@@ -286,6 +299,7 @@
             ],
             "side": 1,
             "vehicle": "artillery",
+            "name": "Raven 2",
             "crew": [],
             "formation": "valkyrie_guns"
         },
@@ -296,6 +310,7 @@
             ],
             "side": 1,
             "vehicle": "recon_car",
+            "name": "Raven 3",
             "crew": [],
             "formation": "valkyrie_guns"
         },
@@ -306,6 +321,7 @@
             ],
             "side": 1,
             "vehicle": "apc",
+            "name": "Sturm 1",
             "crew": [],
             "formation": "valkyrie_grenadiers",
             "leads": true
@@ -321,6 +337,7 @@
             ],
             "side": 1,
             "vehicle": "rifle_platoon",
+            "name": "Sturm 2",
             "crew": [],
             "formation": "valkyrie_grenadiers"
         },
@@ -331,6 +348,7 @@
             ],
             "side": 1,
             "vehicle": "scout_section",
+            "name": "Vixen",
             "crew": [],
             "formation": "valkyrie_guns"
         }

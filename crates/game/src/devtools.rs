@@ -49,6 +49,7 @@
 //! | `at <secs>` | block until this much app time has elapsed |
 //! | `wait <secs>` | block for this long, relative to now |
 //! | `hex <q>,<r>` | put the scripted cursor over an axial hex |
+//! | `focus <q>,<r>` | centre the camera on an axial hex |
 //! | `pixel <x>,<y>` | put the scripted cursor at a window position |
 //! | `cursor off` | hand the cursor back to the real mouse |
 //! | `key <name>` | tap a key for one frame (`Enter`, `V`, `KeyV`, `Digit1`, …) |
@@ -121,10 +122,23 @@ enum Action {
     At(f32),
     Wait(f32),
     Cursor(Option<ScriptedCursor>),
-    Key { code: KeyCode, hold: Hold },
-    Click { button: MouseButton },
+    Key {
+        code: KeyCode,
+        hold: Hold,
+    },
+    Click {
+        button: MouseButton,
+    },
     Shot(String),
     Log(String),
+    /// Put the camera on a hex, in one step. Panning by holding an arrow key
+    /// also works and is what a player does, but it is a *rate* — how far it
+    /// travels depends on the zoom level and on how many seconds of app time
+    /// the script happened to spend holding it, which made framing drift
+    /// between runs of the same script on the same machine. Naming the hex
+    /// makes it exact, and matches the rest of the format: scripts address
+    /// the world, never the screen.
+    Focus(Hex),
     Quit,
 }
 
@@ -201,6 +215,7 @@ fn parse_action(line: &str) -> Option<Action> {
         "click" => parse_button(rest).map(|button| Action::Click { button }),
         "shot" if !rest.is_empty() => Some(Action::Shot(rest.to_string())),
         "log" => Some(Action::Log(rest.to_string())),
+        "focus" => parse_pair(rest).map(|(q, r)| Action::Focus(Hex::new(q as i32, r as i32))),
         "quit" => Some(Action::Quit),
         _ => None,
     }
@@ -290,6 +305,9 @@ fn run_script(
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut buttons: ResMut<ButtonInput<MouseButton>>,
     mut exit: MessageWriter<AppExit>,
+    mut focus: ResMut<crate::camera::CameraFocus>,
+    rotation: Res<crate::iso::ViewRotation>,
+    center: Res<crate::iso::ViewCenter>,
     time: Res<Time>,
 ) {
     // Release last frame's taps first, so a keystroke occupies exactly one
@@ -353,6 +371,13 @@ fn run_script(
                 );
         }
         Action::Log(text) => info!("dev script: {text}"),
+        // Elevation zero, exactly as `overworld::center_camera` does it: the
+        // camera looks at a column of world, and which tier of that column
+        // the tile happens to sit on is not worth a map lookup here.
+        Action::Focus(hex) => {
+            let (pos, _) = crate::iso::project(hex, 0, rotation.0, center.0);
+            focus.0 = pos;
+        }
     }
 
     script.cursor += 1;
@@ -395,6 +420,10 @@ mod tests {
         assert!(matches!(
             parse_action("hex 3,-1"),
             Some(Action::Cursor(Some(ScriptedCursor::Hex(h)))) if h == Hex::new(3, -1)
+        ));
+        assert!(matches!(
+            parse_action("focus -7,20"),
+            Some(Action::Focus(h)) if h == Hex::new(-7, 20)
         ));
         assert!(matches!(
             parse_action("cursor off"),

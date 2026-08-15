@@ -226,6 +226,23 @@ enum Shown {
 /// asks before letting a move animation take it over. A ghost must never
 /// walk the enemy's real route across the screen.
 fn shown_to(state: &BattleState, command_rules: bool, view_side: u8, unit: &Unit) -> Shown {
+    // A passenger is not on the field, and this has to be asked before the
+    // own-side shortcut below or your own platoon is drawn standing on top of
+    // the taxi carrying her. `pos` mirrors the carrier's, so the two sprites
+    // land on the same hex and the one on top wins — which is exactly the
+    // picture the scripted tour caught on `battle_plains`, where a mounted
+    // start means a rifle platoon is aboard from the first frame. The engine
+    // has been careful about this all along (`unit_at` filters `aboard`); the
+    // renderer simply never asked.
+    //
+    // Hidden rather than a fourth `Shown` variant: there is nothing to draw
+    // and nothing to draw it at, which is what `Hidden` already means. Where
+    // she *is* gets said in the two places that can say it in words — the
+    // carrier's panel ("Carrying: …") and the formation roll call ("riding
+    // in …") — because a sprite cannot express "inside that one".
+    if unit.aboard.is_some() {
+        return Shown::Hidden;
+    }
     if unit.side == view_side {
         return Shown::Real;
     }
