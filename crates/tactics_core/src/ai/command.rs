@@ -472,6 +472,40 @@ impl SideCommand {
                 }
                 continue;
             }
+            // Infantry next, and for the same reason as the guns: a
+            // commander who cannot tell what a formation is *made of* will
+            // send it to do somebody else's job. Round-robining the
+            // grenadiers into a ground slot ordered a rifle platoon and its
+            // taxi to march at a crossroads beside three tanks, which is how
+            // a harness run loses 22 of 24 APCs and buries most of the
+            // infantry in them.
+            //
+            // What foot troops are for is the ground itself. Their strength
+            // is exactly the thing an advance throws away: concealment that
+            // doubles in cover, an ambush tube that reaches three hexes, and
+            // an unwillingness to be shifted once they are in the timber. So
+            // a formation with anybody on foot in it is given the *covered*
+            // ground and told to hold it — not because the brain knows what
+            // a rifle platoon is, but because it can read that these people
+            // walk, and walking troops in the open are a target while
+            // walking troops in cover are a problem.
+            //
+            // Below the base-of-fire branch on purpose: a mortar section is
+            // still a base of fire even though its crews are on their feet,
+            // and shooting for the main effort is the more specific job.
+            if Self::goes_on_foot(registry, state, formation) {
+                let covered = Self::best_cover(registry, state, &ground);
+                let desired = Mission::Hold {
+                    at: Some(ground[covered].0.anchor()),
+                };
+                if ordered != Some(&desired) {
+                    orders.push(Order::SetMission {
+                        formation: FormationId(index as u32),
+                        mission: desired,
+                    });
+                }
+                continue;
+            }
             let mut pick = next % ground.len();
             next += 1;
             if doctrine.initiative >= 0.5
@@ -554,6 +588,72 @@ impl SideCommand {
             // happened to visit last.
             .max_by_key(|(other, f)| (living(f), Reverse(*other)))
             .map(|(_, f)| f.id.clone())
+    }
+
+    /// Whether anybody still with this formation fights on their feet.
+    ///
+    /// Recognised, not declared — the same rule `lays_indirect` follows, and
+    /// for the same reasons. A formation is an infantry element because it
+    /// has infantry in it, read straight off the chassis' movement class, so
+    /// a mod that adds a paratroop platoon or a pioneer section gets the
+    /// commander's infantry judgment on the day it is written, with no new
+    /// field to fill in and nothing in Rust naming a vehicle.
+    ///
+    /// Passengers count. A platoon in the back of her taxi is the reason the
+    /// taxi is anywhere, and a carrier whose element stops being infantry the
+    /// moment the doors shut would be ordered to drive at a crossroads with
+    /// the tanks — which is precisely the behaviour this exists to end.
+    fn goes_on_foot(registry: &DataRegistry, state: &BattleState, formation: &Formation) -> bool {
+        formation
+            .members
+            .iter()
+            .filter_map(|id| state.unit(*id))
+            .any(|unit| {
+                registry
+                    .vehicle(&unit.vehicle)
+                    .is_some_and(|v| v.movement.class == crate::data::MovementClass::Foot)
+            })
+    }
+
+    /// Which of the ground on offer is the best country to be infantry in:
+    /// the objective whose hexes carry the most cover, ties to the earlier
+    /// entry — which, since `ground` is sorted by value, means the more
+    /// valuable of two equally wooded places.
+    ///
+    /// Cover rather than value because the choice is about employment, not
+    /// about worth: the crossroads may be the prize, but a platoon holding a
+    /// treeline is holding something, and a platoon standing on open tarmac
+    /// is a casualty list. The armour is still sent for the prize — this
+    /// picks from the same list without removing anything from it, so two
+    /// formations converging on one objective is allowed and is usually the
+    /// right answer.
+    fn best_cover(
+        registry: &DataRegistry,
+        state: &BattleState,
+        ground: &[(&Objective, Option<u8>)],
+    ) -> usize {
+        let cover = |objective: &Objective| -> i32 {
+            let hexes: Vec<i32> = objective
+                .hexes
+                .iter()
+                .filter_map(|h| state.map.get(*h))
+                .filter_map(|t| registry.terrain(&t.terrain))
+                .map(|def| def.cover)
+                .collect();
+            if hexes.is_empty() {
+                return 0;
+            }
+            hexes.iter().sum::<i32>() / hexes.len() as i32
+        };
+        ground
+            .iter()
+            .enumerate()
+            // `Reverse` on the index so an equal-cover tie goes to the
+            // earlier — and therefore more valuable — objective rather than
+            // to whichever `max_by_key` happened to visit last.
+            .max_by_key(|(index, (objective, _))| (cover(objective), Reverse(*index)))
+            .map(|(index, _)| index)
+            .unwrap_or(0)
     }
 
     /// Whether anybody still on the field in this formation carries a weapon

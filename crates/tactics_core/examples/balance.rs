@@ -1248,15 +1248,34 @@ fn planner_with(
 /// the player is meant to rely on missions, and a delegation that costs
 /// battles is one they will rightly refuse to pay for. Zero is the target;
 /// the design doc's build order drives it there across chunks 2 through 7.
+///
+/// It also carries the infantry-employment columns, and they belong here
+/// rather than beside the flat run's infantry line because employing
+/// infantry is a *commander's* job. The flat pairing is the control: the
+/// same forces on the same ground with nobody assigning missions. If the
+/// brain has learned anything about what a grenadier section is for, it
+/// shows as fewer taxis and platoons lost in the rows below the control
+/// than in the control itself.
 fn delegation_tax(reg: &DataRegistry, games: usize) {
     let maps = battle_maps(reg);
     heading(&format!(
         "delegation tax: {games} battles per pairing across {}, opponent held constant",
         maps.join(", ")
     ));
-    let run = |p0: &str, p1: &str| -> (usize, usize, usize, f32) {
+    // Read off the chassis rather than named: a taxi is anything that lifts
+    // somebody and a foot unit is anything that walks, so a mod's own
+    // transports and its own infantry land in these columns unasked.
+    let taxi = |unit: &tactics_core::battle::Unit| {
+        reg.vehicle(&unit.vehicle).is_some_and(|v| v.capacity > 0)
+    };
+    let afoot = |unit: &tactics_core::battle::Unit| {
+        reg.vehicle(&unit.vehicle)
+            .is_some_and(|v| v.movement.class == tactics_core::data::MovementClass::Foot)
+    };
+    let run = |p0: &str, p1: &str| -> Delegation {
         let (mut wins_massed, mut wins_elastic, mut draws) = (0, 0, 0);
         let mut rounds_total = 0u32;
+        let (mut taxis_lost, mut foot_lost, mut foot_shots) = (0usize, 0usize, 0usize);
         for game in 0..games {
             let seed = 1000 + game as u64;
             let mut state = BattleState::from_map(reg, map_for(&maps, seed), seed).expect("battle");
@@ -1266,45 +1285,91 @@ fn delegation_tax(reg: &DataRegistry, games: usize) {
             let mut rounds = 0;
             while !state.is_over() && rounds < 60 {
                 ai.plan_round(reg, &mut state);
-                state.resolve_round(reg);
+                for event in &state.resolve_round(reg) {
+                    if let Event::ShotFired { attacker, .. } = event
+                        && state
+                            .units
+                            .get(attacker.index())
+                            .is_some_and(|u| u.side == 0 && afoot(u))
+                    {
+                        foot_shots += 1;
+                    }
+                }
                 rounds += 1;
             }
             rounds_total += rounds;
+            // Side 0 only, always — the side whose planner the middle row
+            // swaps. Counting both sides would average the commanded force
+            // together with its flat opponent and hide exactly the
+            // difference the table is asking about.
+            taxis_lost += state
+                .lost_units()
+                .filter(|u| u.side == 0 && taxi(u))
+                .count();
+            foot_lost += state
+                .lost_units()
+                .filter(|u| u.side == 0 && afoot(u))
+                .count();
             match state.over.and_then(|r| r.winner) {
                 Some(0) => wins_massed += 1,
                 Some(1) => wins_elastic += 1,
                 _ => draws += 1,
             }
         }
-        (
+        Delegation {
             wins_massed,
             wins_elastic,
             draws,
-            rounds_total as f32 / games.max(1) as f32,
-        )
+            rounds: rounds_total as f32 / games.max(1) as f32,
+            taxis_lost,
+            foot_lost,
+            foot_shots,
+        }
     };
     let flat = run("utility", "utility");
     let massed_cmd = run("command", "utility");
     let elastic_cmd = run("utility", "command");
 
     println!(
-        "  {:<28} {:>7} {:>8} {:>6} {:>7}",
-        "pairing", "massed", "elastic", "draws", "rounds"
+        "  {:<24} {:>6} {:>8} {:>6} {:>7} {:>7} {:>7} {:>7}",
+        "pairing", "massed", "elastic", "draws", "rounds", "taxis", "platoons", "shots"
     );
     for (name, t) in [
-        ("both flat", flat),
-        ("massed under command", massed_cmd),
-        ("elastic under command", elastic_cmd),
+        ("both flat", &flat),
+        ("massed under command", &massed_cmd),
+        ("elastic under command", &elastic_cmd),
     ] {
         println!(
-            "  {:<28} {:>7} {:>8} {:>6} {:>7.1}",
-            name, t.0, t.1, t.2, t.3
+            "  {:<24} {:>6} {:>8} {:>6} {:>7.1} {:>7} {:>7} {:>7}",
+            name,
+            t.wins_massed,
+            t.wins_elastic,
+            t.draws,
+            t.rounds,
+            t.taxis_lost,
+            t.foot_lost,
+            t.foot_shots
         );
     }
     println!(
         "\n  a side's tax is its win drop against the same flat opponent when it\n  \
-         fights through missions instead; zero is the target"
+         fights through missions instead; zero is the target.\n\n  \
+         the last three columns are always side 0's — carriers lost, foot units\n  \
+         lost, and rounds fired by anybody on their feet — so the middle row is\n  \
+         the commanded force and the two rows around it are the same force flat."
     );
+}
+
+/// One row of [`delegation_tax`]: who won, how long it took, and what the
+/// infantry made of it.
+struct Delegation {
+    wins_massed: usize,
+    wins_elastic: usize,
+    draws: usize,
+    rounds: f32,
+    taxis_lost: usize,
+    foot_lost: usize,
+    foot_shots: usize,
 }
 
 /// Does skill win cleanly? Identical forces, identical doctrine, and the only

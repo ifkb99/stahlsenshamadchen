@@ -3926,6 +3926,110 @@ fn the_command_planner_assigns_missions_once_and_units_follow_them() {
 }
 
 #[test]
+fn a_commander_sends_her_grenadiers_to_hold_the_covered_ground() {
+    // Composition-aware tasking. The brain divides the ground among its
+    // formations, and until it could tell them apart it divided it *evenly*:
+    // the grenadier section — a rifle platoon and the taxi carrying her —
+    // drew a slot in the same rotation as three medium tanks and was ordered
+    // to march at whatever objective came up next, beside armour that could
+    // survive the trip. That is how a harness run buries most of its
+    // infantry in the back of an APC.
+    //
+    // Two things are asserted, and neither of them names a chassis, because
+    // neither does the brain: the section is told to *hold* rather than to
+    // advance or assault, whatever the doctrine's appetite, and the ground
+    // it is told to hold is the ground with cover in it. Both are read off
+    // the hardware — somebody in the formation walks — the same way a base
+    // of fire is recognised by somebody in it laying an indirect weapon.
+    let reg = registry_wireless();
+    let mut state = BattleState::from_map(&reg, "battle_plains", 17).expect("battle");
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
+        make_battle_planner(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                // Aggression 0.85, so without the infantry branch the
+                // grenadiers would be ordered to *assault* — the most
+                // expensive thing a rifle platoon in a battle taxi can be
+                // told to do.
+                doctrine: Some("massed_armor".into()),
+            },
+            17,
+            &reg,
+        ),
+    );
+
+    let mut given: Vec<(String, Mission)> = Vec::new();
+    ai.plan_round_with(&reg, &mut state, |d| {
+        for event in &d.events {
+            if let BattleEvent::MissionAssigned { formation, mission } = event {
+                given.push((formation.clone(), mission.clone()));
+            }
+        }
+    });
+
+    let grenadiers = given
+        .iter()
+        .find(|(f, _)| f == "kuhlmann_grenadiers")
+        .map(|(_, m)| m.clone())
+        .expect("the grenadier section is given a mission like everybody else");
+    let armor = given
+        .iter()
+        .find(|(f, _)| f == "kuhlmann_line")
+        .map(|(_, m)| m.clone())
+        .expect("so is the armoured line");
+
+    let at = match grenadiers {
+        Mission::Hold { at: Some(at) } => at,
+        other => panic!("the grenadiers should be holding ground, not {other:?}"),
+    };
+    assert!(
+        matches!(armor, Mission::Assault { .. } | Mission::Advance { .. }),
+        "while the tanks are still sent to take it: {armor:?}"
+    );
+
+    // And the ground they were given is the covered ground. Scored the way
+    // the brain scores it — mean cover over the objective's own hexes — so
+    // a map edit that moves the trees moves this assertion with it rather
+    // than pinning an objective by name.
+    let cover = |objective: &tactics_core::map::Objective| -> i32 {
+        let hexes: Vec<i32> = objective
+            .hexes
+            .iter()
+            .filter_map(|h| state.map.get(*h))
+            .filter_map(|t| reg.terrain(&t.terrain))
+            .map(|def| def.cover)
+            .collect();
+        if hexes.is_empty() {
+            return 0;
+        }
+        hexes.iter().sum::<i32>() / hexes.len() as i32
+    };
+    let held = state
+        .map
+        .objectives()
+        .iter()
+        .find(|o| o.anchor() == at)
+        .expect("the anchor is an objective's");
+    let best = state
+        .map
+        .objectives()
+        .iter()
+        .filter(|o| o.kind == tactics_core::map::ObjectiveKind::Hold)
+        .map(cover)
+        .max()
+        .expect("the map has ground to hold");
+    assert_eq!(
+        cover(held),
+        best,
+        "the section on foot gets the ground it can hide in, not the next \
+         slot in the rotation"
+    );
+}
+
+#[test]
 fn a_beaten_formation_is_ordered_out_by_its_commander() {
     // Withdrawal as a command decision: nobody in this formation consults
     // her own damage — the commander weighs the formation against her

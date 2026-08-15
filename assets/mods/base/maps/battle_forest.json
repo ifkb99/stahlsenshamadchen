@@ -115,6 +115,11 @@
             "side": 0
         },
         {
+            "id": "kuhlmann_grenadiers",
+            "name": "1st Grenadier Section",
+            "side": 0
+        },
+        {
             "id": "kuhlmann_scouts",
             "name": "Reconnaissance Section",
             "side": 0
@@ -122,6 +127,11 @@
         {
             "id": "valkyrie_line",
             "name": "Valkyrie Armor",
+            "side": 1
+        },
+        {
+            "id": "valkyrie_grenadiers",
+            "name": "Valkyrie Grenadiers",
             "side": 1
         },
         {
@@ -201,7 +211,8 @@
             "side": 0,
             "vehicle": "halftrack",
             "crew": [],
-            "formation": "kuhlmann_line"
+            "formation": "kuhlmann_grenadiers",
+            "leads": true
         },
         {
             "at": [
@@ -215,7 +226,7 @@
             "side": 0,
             "vehicle": "rifle_platoon",
             "crew": [],
-            "formation": "kuhlmann_line"
+            "formation": "kuhlmann_grenadiers"
         },
         {
             "at": [
@@ -297,7 +308,8 @@
             "side": 1,
             "vehicle": "halftrack",
             "crew": [],
-            "formation": "valkyrie_line"
+            "formation": "valkyrie_grenadiers",
+            "leads": true
         },
         {
             "at": [
@@ -311,7 +323,7 @@
             "side": 1,
             "vehicle": "rifle_platoon",
             "crew": [],
-            "formation": "valkyrie_line"
+            "formation": "valkyrie_grenadiers"
         },
         {
             "at": [

@@ -76,7 +76,15 @@ fn every_battle_map_in_the_base_mod_is_the_regulation_hexagon() {
 }
 
 #[test]
-fn the_new_maps_field_two_formations_a_side_with_a_leader_each() {
+fn the_new_maps_field_three_formations_a_side_with_a_leader_each() {
+    // Three, and specifically these three, because the commander brain reads
+    // what a formation is *made of* and can only do that if the map wrote
+    // down an order of battle with coherent elements in it: an armoured
+    // line, a gun section she recognises as her base of fire, and a
+    // grenadier section she recognises as infantry. Mixing the taxi and her
+    // platoon into the tank formation — which is how these maps first
+    // shipped — gave the brain one order to cover three different jobs, and
+    // the job it picked was the tanks'.
     let reg = registry();
     for id in NEW_MAPS {
         let file = reg.maps.get(id).unwrap_or_else(|| panic!("map `{id}`"));
@@ -89,9 +97,9 @@ fn the_new_maps_field_two_formations_a_side_with_a_leader_each() {
                 .collect();
             assert_eq!(
                 formations.len(),
-                2,
-                "map `{id}` side {side} must field two formations for the command \
-                 planner to have any structure to work with, not {formations:?}"
+                3,
+                "map `{id}` side {side} must field three formations for the command \
+                 planner to have distinguishable elements to work with, not {formations:?}"
             );
             for formation in &formations {
                 let members: Vec<_> = file
