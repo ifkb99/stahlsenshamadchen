@@ -289,6 +289,44 @@ fn a_platoon_spawns_with_her_troops_and_her_leaders() {
 }
 
 #[test]
+fn a_platoon_lays_her_own_weapons_as_well_as_a_gunner_lays_hers() {
+    // The leadership seats were written with the skills a leader obviously has
+    // — command, fieldcraft, small arms — and gunnery was not among them,
+    // which is true of a rifle section and wrong for the platoon as a piece:
+    // *somebody* aims the RPG and the platoon MG, and in this model that is
+    // the girls, because they are the only crew the chassis has.
+    //
+    // With no seat responsible for gunnery, `crew_skill` fell through to "best
+    // aboard" and every girl aboard read gunnery through her cores at the
+    // untrained penalty, so a platoon shot at four levels below ordinary — a
+    // silent, permanent −12 percentage points of hit chance on every infantry
+    // weapon in the game. That is a data omission with an engine-sized effect,
+    // and it is what this test exists to keep from creeping back.
+    let reg = registry();
+    let state = infantry_field(&reg);
+    let platoon = &state.units[0];
+    let chassis = reg.vehicle(&platoon.vehicle).expect("chassis");
+    let gunnery = state
+        .roster
+        .crew_skill(&reg, Some(chassis), &platoon.crew, "gunnery", None);
+    assert_eq!(
+        gunnery,
+        tactics_core::data::AVERAGE,
+        "an anonymous platoon aims at the ordinary standard, exactly as an \
+         anonymous tank crew does; anything less is the untrained penalty \
+         leaking back in through a role that does not claim the skill"
+    );
+    for role in &chassis.crew_slots {
+        assert!(
+            reg.role(role)
+                .is_some_and(|r| r.skills.iter().any(|s| s == "gunnery")),
+            "{role} must claim gunnery, or no seat is responsible for it and \
+             the fallback path is what answers again"
+        );
+    }
+}
+
+#[test]
 fn the_new_maps_field_infantry_and_their_rides() {
     // The replacement for `no_map_in_the_base_mod_fields_infantry_yet`, which
     // was the inertness assertion the data chunk shipped and which N3 exists

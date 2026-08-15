@@ -237,7 +237,8 @@
             "skills": [
                 "command",
                 "fieldcraft",
-                "small_arms"
+                "small_arms",
+                "gunnery"
             ]
         },
         {
@@ -246,7 +247,8 @@
             "skills": [
                 "fieldcraft",
                 "small_arms",
-                "observation"
+                "observation",
+                "gunnery"
             ]
         }
     ],
