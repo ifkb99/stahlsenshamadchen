@@ -156,10 +156,23 @@ bite someone editing the code.
   section or a paratroop platoon gets the behaviour on the day it is written.
   Follow that pattern rather than adding a `role` field; a chassis id in an
   `if` inside `ai/` is the smell.
-- **The AI can mount nobody.** `Order::Mount` is fully supported by the
-  engine and by the player's `M` key, and re-mounting after a dismount is
-  legal, but no planner ever issues it. Tracked in TODO beside per-unit
-  tasking; the two are one mechanism.
+- **A taxi run is two halves and the AI plans both.** The fare mounts when
+  riding beats walking (rounds to cover the journey on foot against rounds
+  to reach the tailgate, be driven, and get out, plus `BOARDING_ROUNDS`);
+  the carrier drives to the pickup and holds the door while anybody has
+  `boarding == Some(her)`. Without the driver's half a platoon at one hex a
+  round never catches a carrier at six, so do not remove it as redundant.
+  `BOARDING_ROUNDS` is 4 rather than the mechanical 2 because the cheap
+  price let a delivered platoon re-board for a three-hex hop and thrash
+  against the at-the-objective dismount reflex — see the constant's comment
+  before retuning it.
+- **What still is not planned is where an emptied carrier goes.** A mission
+  belongs to a formation, so the taxi holds the ground her passengers were
+  sent to hold, and roughly 21 of 24 die doing it whether the side fights
+  flat or under command. That is per-unit tasking, tracked in TODO beside
+  the assignable postures. A drop-off *short* of the objective was tried as
+  a cheaper substitute and measurably lost platoons; the reason is in the
+  passenger branch of `ai/utility.rs`.
 
 ### Saving
 
