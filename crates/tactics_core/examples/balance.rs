@@ -45,6 +45,7 @@ use tactics_core::battle::{
     preview_attack,
 };
 use tactics_core::data::{ArmorFacing, DataRegistry, ModuleEffect, WeaponDef};
+use tactics_core::force;
 use tactics_core::map::{Facing, HexMap, MapFile, MapKind, UnitPlacement};
 use tactics_core::roster::{GirlId, Roster};
 
@@ -54,6 +55,13 @@ fn main() {
     let games: usize = flag(&args, "--games")
         .and_then(|v| v.parse().ok())
         .unwrap_or(12);
+    // Requisition points each side spends on its own army in the mustered
+    // section. 60 is about what the shipped maps field a side — three tanks,
+    // a gun section and a grenadier section — so the table starts life
+    // comparable to the scenarios beside it.
+    let budget: i32 = flag(&args, "--points")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
 
     if cfg!(debug_assertions) {
         eprintln!("note: debug build. Fine for the analytic pass, slow for --sim.");
@@ -71,6 +79,7 @@ fn main() {
     if sim {
         simulate(&registry, games);
         delegation_tax(&registry, games);
+        mustered_forces(&registry, games, budget);
         skill_gap(&registry, games);
     } else {
         println!("\n(pass --sim to fight {games} battles and see what these numbers do)");
@@ -1395,7 +1404,186 @@ struct Delegation {
 /// single held objective in the middle forces contact the way the shipped
 /// scenarios do: two campers on a featureless field would stalemate and the
 /// table would measure patience.
-fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
+/// Two commanders, one budget, and whatever each of them thinks that buys.
+///
+/// The other tables all fight a *given* order of battle — the map's, or a
+/// mirrored one written into this file — which measures how well a doctrine
+/// fights the army somebody else handed it. This one asks the question the
+/// content actually needs answered: given the same points, does what a
+/// doctrine chooses to bring beat what another one chooses to bring?
+///
+/// Every pairing is fought both ways round on the same mirrored ground, so a
+/// result cannot be about which end of the arena a force deploys on — the
+/// lesson the skill-gap table learned the hard way. Each side both picks and
+/// fights under its own doctrine, because the two halves are the same
+/// commander and separating them would measure nothing anybody can act on.
+///
+/// **Read a lopsided row as a question about `cost`, not as a verdict on a
+/// doctrine.** `force::muster` deliberately pays the asking price rather than
+/// hunting for value, so a doctrine that wins reliably here is one whose
+/// preferred hardware is underpriced — which is exactly the signal this table
+/// exists to raise, and exactly what a shopping algorithm that optimised for
+/// value-per-point would have hidden.
+fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32) {
+    heading(&format!(
+        "mustered forces: {games} battles per pairing, {budget} points a side, each doctrine buying its own army"
+    ));
+
+    let doctrines = ["massed_armor", "elastic_defense", "recon_pull"];
+    let forces: Vec<(&str, Vec<String>)> = doctrines
+        .iter()
+        .filter_map(|id| {
+            let doctrine = reg.doctrine(id)?;
+            Some((*id, force::muster(reg, doctrine, budget)))
+        })
+        .collect();
+
+    println!("  the shopping lists:");
+    for (id, army) in &forces {
+        let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+        for vehicle in army {
+            *counts.entry(vehicle.as_str()).or_default() += 1;
+        }
+        println!(
+            "    {:<16} {:>3} pts, {} units — {}",
+            id,
+            force::cost_of(reg, army),
+            army.len(),
+            counts
+                .iter()
+                .map(|(v, n)| format!("{n}x {v}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+
+    println!(
+        "\n  {:<34} {:>6} {:>6} {:>6} {:>7} {:>9}",
+        "pairing (A vs B)", "A won", "B won", "draws", "rounds", "A pts lost"
+    );
+    for (i, (a_id, a_force)) in forces.iter().enumerate() {
+        for (b_id, b_force) in forces.iter().skip(i + 1) {
+            // Both orientations, summed: the arena is mirror-symmetric but
+            // resolution order is not, and side B has held a measured edge on
+            // this ground since the plateau rule went in.
+            let (mut a_wins, mut b_wins, mut draws) = (0, 0, 0);
+            let (mut rounds_total, mut a_points_lost) = (0u32, 0i32);
+            for game in 0..games {
+                let seed = 4000 + game as u64;
+                let flip = game % 2 == 1;
+                let (west, east) = if flip {
+                    (b_force, a_force)
+                } else {
+                    (a_force, b_force)
+                };
+                let (west_doctrine, east_doctrine) =
+                    if flip { (*b_id, *a_id) } else { (*a_id, *b_id) };
+                let Some(mut state) = muster_arena(reg, seed, west, east) else {
+                    continue;
+                };
+                let mut ai = AiDriver::new();
+                ai.insert(0, planner(reg, seed, west_doctrine));
+                ai.insert(1, planner(reg, seed + 1, east_doctrine));
+                let mut rounds = 0;
+                while !state.is_over() && rounds < 60 {
+                    ai.plan_round(reg, &mut state);
+                    state.resolve_round(reg);
+                    rounds += 1;
+                }
+                rounds_total += rounds;
+                // A is whichever end she deployed on this game, so the
+                // tallies follow the flip rather than the side number.
+                let a_side = if flip { 1u8 } else { 0u8 };
+                a_points_lost += state
+                    .lost_units()
+                    .filter(|u| u.side == a_side)
+                    .filter_map(|u| reg.vehicle(&u.vehicle))
+                    .map(|v| v.cost)
+                    .sum::<i32>();
+                match state.over.and_then(|r| r.winner) {
+                    Some(s) if s == a_side => a_wins += 1,
+                    Some(_) => b_wins += 1,
+                    None => draws += 1,
+                }
+            }
+            println!(
+                "  {:<34} {:>6} {:>6} {:>6} {:>7.1} {:>9.1}",
+                format!("{a_id} vs {b_id}"),
+                a_wins,
+                b_wins,
+                draws,
+                rounds_total as f32 / games.max(1) as f32,
+                a_points_lost as f32 / games.max(1) as f32,
+            );
+        }
+    }
+    println!(
+        "\n  each pairing alternates ends game by game, so neither column is a\n  \
+         statement about deployment. `A pts lost` is the requisition value of\n  \
+         A's dead per battle — what the win cost, in the same currency the\n  \
+         army was bought with."
+    );
+}
+
+/// The skill-gap arena, filled with two bought armies instead of the mirrored
+/// four. Same ground, different orders of battle — which is the whole point,
+/// and why the placement is separate rather than a parameter: the skill-gap
+/// table's four-unit spacing is baked into numbers already recorded in the
+/// log, and must not move because this section wanted a ninth slot.
+fn muster_arena(
+    reg: &DataRegistry,
+    seed: u64,
+    west: &[String],
+    east: &[String],
+) -> Option<BattleState> {
+    let map = arena_map()?;
+    let mut placements = Vec::new();
+    for (side, army) in [(0u8, west), (1u8, east)] {
+        for (i, vehicle) in army.iter().enumerate() {
+            // A column down the deployment edge, spilling into the next
+            // column inward once eleven rows are used. Deliberately dense:
+            // these forces differ in size — that is the interesting part —
+            // and a spacing rule that scaled with the count would hand the
+            // smaller army more room as a hidden bonus.
+            let column = (i / 11) as i32;
+            let y = 1 + (i % 11) as i32;
+            let x = if side == 0 { 2 - column } else { 22 + column };
+            placements.push(UnitPlacement {
+                aboard_at: None,
+                at: [x, y],
+                side,
+                vehicle: vehicle.clone(),
+                crew: Vec::new(),
+                name: Some(format!("{vehicle} {i}")),
+                facing: None,
+                formation: None,
+                leads: false,
+            });
+        }
+    }
+    let sides = vec![
+        SideState {
+            name: "A".into(),
+            ai: None,
+        },
+        SideState {
+            name: "B".into(),
+            ai: None,
+        },
+    ];
+    let (roster, crews) = Roster::stamp_for(reg, &placements);
+    Some(BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    ))
+}
+
+fn arena_map() -> Option<HexMap> {
     let width = 25usize;
     let mut rows = Vec::new();
     for _ in 0..13 {
@@ -1421,7 +1609,11 @@ fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
         "victory_score": 30,
     }))
     .ok()?;
-    let map = HexMap::from_map_file(&file).ok()?;
+    HexMap::from_map_file(&file).ok()
+}
+
+fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
+    let map = arena_map()?;
 
     let roster_of = ["medium_tank", "medium_tank", "tank_destroyer", "light_tank"];
     let mut placements = Vec::new();

@@ -104,6 +104,17 @@ stalemate, so there is finally a baseline to measure a rewrite against.
 - **one continuous world, two zoom levels** (noted 2026-08-13, deliberately deferred until most other MVP work is sorted): vehicles "exist" on the battle layer at all times and the overworld becomes a zoomed-out view of the same space rather than a separate board that spawns battles. no map tiles to retreat from — a withdrawal is driving away on real ground, so pursuit and luring become real maneuvers instead of tile transitions. this dissolves the `from_placements` seam, `choose_battle_map`, and battle-as-event; it is a large structural change and everything above it should settle first
 - girl progression: xp, leveling, skills. fire emblem is a stated inspiration and this is the emotional engine of the genre. sketch the shape early since it lives on the girl-instance model
 - basic requisition flow: vehicle costs, side funds, and income all exist but nothing spends money until academy mode. a minimal buy/reinforce loop shouldn't wait for the 4x layer
+### Balance
+- **infantry lose badly at their asking price** (measured 2026-08-14, first
+  run of the mustered-forces table): given 60 points, elastic defence buys
+  seven mixed units — two rifle platoons, two scout sections, their rides, a
+  howitzer — and loses 34–1 to massed armour's heavy tank, medium and tank
+  destroyer, which pay 2.4 points a battle for the privilege. Recon pull's
+  spread beats elastic 33–3 and fights massed to 19–17. Read it as a question
+  about `cost` *and* about employment, in that order: the AI cannot mount
+  anybody, cannot plan a taxi run, and holds infantry short-ranged in cover,
+  so a platoon is currently paying five points for very little. Re-run the
+  table after per-unit tasking lands before touching a single price.
 ### Content gaps
 - **a random map generator** (noted 2026-08-14, deliberately not yet): real
   balance work needs terrain the numbers were not tuned on, and the designer

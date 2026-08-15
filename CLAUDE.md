@@ -23,6 +23,7 @@ cargo run -p tactics_core --example playthrough [seed]   # narrated AI battle
 cargo run --release -p tactics_core --example perf       # hot-path timings
 cargo run --release -p tactics_core --example balance    # what the data does
 cargo run --release -p tactics_core --example balance -- --sim   # ...fought out
+cargo run --release -p tactics_core --example balance -- --sim --points 100  # richer armies
 ```
 
 `balance` is the content-iteration loop, and it is built around the kill chain
@@ -35,7 +36,22 @@ expected shots to knock out, shell flight times, and a "worth a look" section
 that judges a gun on blast overmatch as well as penetration. `--sim` fights
 whole battles and adds what killed them (brewed / wrecked / abandoned / crew
 out), what it cost the girls, the ammunition economy, artillery's hit rate on
-occupied ground, the delegation tax and the skill-gap table.
+occupied ground, the delegation tax, the mustered-forces table and the
+skill-gap table.
+
+**Mustered forces is the only table that does not fight a given order of
+battle.** `tactics_core::force::muster` hands each doctrine the same
+requisition budget (`--points`, default 60) and lets it buy its own army:
+roles are recognised off the chassis — indirect weapon, on foot, carries
+somebody, sees farther than it shoots, otherwise armour — and each is wanted
+in proportion to the doctrine weight that already names that appetite, with
+`concentration` deciding how repeatable a buy is. It deliberately **pays the
+asking price rather than hunting for value per point**, because dividing
+appetite by cost makes every doctrine buy a swarm of the cheapest chassis and
+hides the thing the table is for: a doctrine that wins reliably at equal
+points is one whose preferred hardware is underpriced. Its first verdict was
+blunt — massed armour's three heavy vehicles beat elastic defence's seven
+mixed ones 34–1 while losing 2.4 points a battle.
 
 It earns its keep immediately. It reports that the 105 mm shell's blast
 overmatches even the Löwe's thinnest plate, so a direct hit wrecks a heavy tank
