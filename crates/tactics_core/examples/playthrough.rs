@@ -275,9 +275,9 @@ fn main() {
                     name(&state, *unit),
                     if *obeys { "" } else { " and will not advance" }
                 ),
-                Event::OrderRefused { unit, rung } => {
-                    println!("{} refuses to advance ({rung})", name(&state, *unit))
-                }
+                Event::Defied {
+                    unit, rung, doing, ..
+                } => println!("   ** {} is {rung} and {doing} **", name(&state, *unit)),
                 Event::UnitExited {
                     unit, objective, ..
                 } => println!(

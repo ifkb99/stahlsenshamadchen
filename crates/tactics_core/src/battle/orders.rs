@@ -7,8 +7,8 @@
 
 use super::STALEMATE_ROUNDS;
 use super::{
-    BattleResult, BattleState, EndReason, FormationId, Latitude, Mission, Phase, UnitId, combat,
-    fog, movement,
+    BattleResult, BattleState, EndReason, FormationId, Latitude, Mission, Phase, Unit, UnitId,
+    combat, fog, movement,
 };
 use crate::data::{ArmorFacing, DataRegistry};
 use crate::map::{LossTrigger, ObjectiveKind};
@@ -37,6 +37,20 @@ pub struct UnitIntent {
     /// Hexes still to be walked, excluding the tile the unit stands on.
     pub path: Vec<Hex>,
     pub fire: FireIntent,
+    /// Whether this route is the crew's own idea rather than an order.
+    ///
+    /// Only two things lay one: the battle drill breaking a crew off for
+    /// cover, and a frightened crew reversing out of contact. Both matter
+    /// here for the same reason — **a crew cannot refuse her own decision**.
+    /// Without this flag a crew who broke and ran would find her own flight
+    /// path sitting in her intent on the next tick, be selected by the
+    /// refusal check as somebody with orders she will not follow, throw the
+    /// path away and lay it again, forever.
+    ///
+    /// `#[serde(default)]` so a save written before this field loads as what
+    /// every route in it was: an order.
+    #[serde(default)]
+    pub own_idea: bool,
 }
 
 impl UnitIntent {
@@ -284,11 +298,26 @@ pub enum Event {
         /// Whether they will still do as they are told on this rung.
         obeys: bool,
     },
-    /// A crew did not do what it was told, and why. Never silent: an order
-    /// that quietly fails is indistinguishable from a bug.
-    OrderRefused {
+    /// A crew stopped doing what she was told, and what she did instead.
+    ///
+    /// Never silent, for two different reasons. An order that quietly fails
+    /// is indistinguishable from a bug — that was always true. And a vehicle
+    /// reversing out of the line with no order behind it is worse than a
+    /// silent failure: it looks like the game moving her for no reason,
+    /// which is the exact complaint the direction memo was written about.
+    ///
+    /// It was called `OrderRefused` while freezing was the only thing a
+    /// broken crew could do, and the name became a lie the moment one could
+    /// act without having been told anything.
+    Defied {
         unit: UnitId,
         rung: String,
+        /// The [`crate::data::DefianceDef::name`] she acted on — "falls
+        /// back", "fights on", "goes to ground". A fragment that reads after
+        /// her name.
+        doing: String,
+        /// Where she took herself, when her defiance was the moving kind.
+        to: Option<Hex>,
     },
     /// A formation was told what to do. Carries the formation's *string* id
     /// rather than its handle, because this exists to be read: a mission the
@@ -916,6 +945,9 @@ impl BattleState {
         let unit = self.unit_mut(id).ok_or(OrderError::NoSuchUnit)?;
         // path includes the starting tile; the intent is what remains to walk.
         unit.intent.path = path.into_iter().skip(1).collect();
+        // Somebody told her to go there, so it is refusable again — an order
+        // arriving over the top of a crew's own dash is still an order.
+        unit.intent.own_idea = false;
         unit.planned = true;
         Ok(())
     }
@@ -1194,6 +1226,68 @@ impl BattleState {
     /// strict, so equal cover never causes a pointless shuffle and each dash
     /// is to strictly better ground, which is what makes the drill settle
     /// instead of oscillate.
+    /// The ground a frightened crew reverses onto: as far from everything
+    /// she can see that can hurt her as this round's movement allows, and
+    /// under cover where the ground offers a choice.
+    ///
+    /// Distance from *threats*, not toward a lane. A retreat lane is a
+    /// destination, and a crew who has stopped listening is not navigating —
+    /// she is getting away from the thing that is shooting at her. It is
+    /// also what survives the map growing: there will not always be an edge
+    /// to run off, and "away" needs no map furniture at all.
+    ///
+    /// Ties break toward cover, then the cheapest drive, then coordinates,
+    /// so two identical crews in identical fear still bolt somewhere a
+    /// replay agrees about.
+    fn flight_destination(&self, registry: &DataRegistry, unit: UnitId) -> Option<Hex> {
+        let me = self.unit(unit)?;
+        let threats: Vec<Hex> = crate::ai::threats(registry, self, unit)
+            .into_iter()
+            .filter_map(|id| self.unit(id).map(|u| u.pos))
+            .collect();
+        if threats.is_empty() {
+            return None;
+        }
+        let clearance = |hex: Hex| {
+            threats
+                .iter()
+                .map(|t| hex.distance_to(*t))
+                .min()
+                .unwrap_or(0)
+        };
+        let cover_at = |hex: Hex| {
+            self.terrain_at(hex)
+                .and_then(|t| registry.terrain(t))
+                .map_or(0, |t| t.cover)
+        };
+        let here = clearance(me.pos);
+        movement::reachable(registry, self, unit)
+            .into_iter()
+            .filter(|&(hex, _)| hex != me.pos && clearance(hex) > here)
+            .max_by_key(|&(hex, cost)| {
+                (
+                    clearance(hex),
+                    cover_at(hex),
+                    std::cmp::Reverse(cost),
+                    std::cmp::Reverse(hex.x),
+                    std::cmp::Reverse(hex.y),
+                )
+            })
+            .map(|(hex, _)| hex)
+    }
+
+    /// How this crew's defiance reads in a log, from the mod's own wording.
+    fn defiance_name(&self, registry: &DataRegistry, unit: &Unit) -> String {
+        let response = self.defiance(registry, unit);
+        registry
+            .morale
+            .defiance
+            .iter()
+            .find(|d| d.response == response)
+            .map(|d| d.name.clone())
+            .unwrap_or_else(|| "will not advance".into())
+    }
+
     fn run_crew_drill(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
         let now = self.round as u64 * registry.scale.ticks_per_round as u64
             + self.resolving_tick().unwrap_or(0) as u64;
@@ -1208,7 +1302,36 @@ impl BattleState {
         for id in ids {
             let Some(unit) = self.unit(id) else { continue };
             let pos = unit.pos;
+            // A crew who has stopped listening does not take the ordinary
+            // drill's advice — she does what her nerve tells her. Flight is
+            // the only one of the three that moves; fight and freeze are both
+            // "stay here", for opposite reasons, and are settled elsewhere
+            // (fight in what she will shoot at, freeze in what she will not).
+            //
+            // This used to be a bare `continue` under a comment saying she is
+            // exactly as frozen as the rung says she is. That reading is what
+            // made a broken crew unable to take cover from the fire that
+            // broke her.
             if !self.obeys(registry, unit) {
+                if self.defiance(registry, unit) == crate::data::DefianceResponse::Flight
+                    && let Some(dest) = self.flight_destination(registry, id)
+                    && let Some((path, _)) = movement::path_to(registry, self, id, dest)
+                {
+                    let (rung, doing) = (
+                        registry.morale.rung(unit.pressure).name.clone(),
+                        self.defiance_name(registry, unit),
+                    );
+                    if let Some(unit) = self.unit_mut(id) {
+                        unit.intent.path = path.into_iter().skip(1).collect();
+                        unit.intent.own_idea = true;
+                    }
+                    events.push(Event::Defied {
+                        unit: id,
+                        rung,
+                        doing,
+                        to: Some(dest),
+                    });
+                }
                 continue;
             }
             let delay =
@@ -1246,6 +1369,7 @@ impl BattleState {
             };
             if let Some(unit) = self.unit_mut(id) {
                 unit.intent.path = path.into_iter().skip(1).collect();
+                unit.intent.own_idea = true;
             }
             events.push(Event::TookCover { unit: id, at: dest });
         }
@@ -1371,7 +1495,12 @@ impl BattleState {
         let refusing: Vec<UnitId> = self
             .units
             .iter()
-            .filter(|u| u.alive && !u.intent.path.is_empty() && !self.obeys(registry, u))
+            .filter(|u| {
+                u.alive
+                    && !u.intent.path.is_empty()
+                    && !u.intent.own_idea
+                    && !self.obeys(registry, u)
+            })
             .map(|u| u.id)
             .collect();
         for id in refusing {
@@ -1393,16 +1522,42 @@ impl BattleState {
             {
                 continue;
             }
-            let rung = self
-                .unit(id)
-                .map(|u| registry.morale.rung(u.pressure).name.clone())
-                .unwrap_or_default();
+            let (rung, doing, response) = match self.unit(id) {
+                Some(u) => (
+                    registry.morale.rung(u.pressure).name.clone(),
+                    self.defiance_name(registry, u),
+                    self.defiance(registry, u),
+                ),
+                None => continue,
+            };
             // Said out loud, and the order is cleared so the unit does not sit
             // silently failing the same instruction for twelve ticks.
-            events.push(Event::OrderRefused { unit: id, rung });
             if let Some(unit) = self.unit_mut(id) {
                 unit.intent.path.clear();
             }
+            // Refusing the order and choosing her own ground are one decision
+            // and happen in one place, which is why flight is laid here rather
+            // than left for the drill: the drill only visits crews with an
+            // empty intent, and hers was emptied a line ago inside a loop that
+            // has not finished. Doing it here also means she reverses in the
+            // same tick she refuses, instead of standing still for one.
+            let mut ran_to = None;
+            if response == crate::data::DefianceResponse::Flight
+                && let Some(dest) = self.flight_destination(registry, id)
+                && let Some((path, _)) = movement::path_to(registry, self, id, dest)
+            {
+                if let Some(unit) = self.unit_mut(id) {
+                    unit.intent.path = path.into_iter().skip(1).collect();
+                    unit.intent.own_idea = true;
+                }
+                ran_to = Some(dest);
+            }
+            events.push(Event::Defied {
+                unit: id,
+                rung,
+                doing,
+                to: ran_to,
+            });
         }
 
         let ids: Vec<UnitId> = self
@@ -1654,7 +1809,48 @@ impl BattleState {
                     self.terrain_at(u.pos),
                 )
             });
-            let shed = level.map(|l| registry.morale.recovered(l)).unwrap_or(0);
+            // ...and settle faster with her officer in sight. This is the
+            // half of the chain of command that had never paid anybody
+            // anything: losing a leader has cost a formation its nerve since
+            // `leader_lost` was added, and still having one bought nothing at
+            // all. It is what makes rallying something a leader *does*
+            // rather than something that happens to a crew who got far
+            // enough away — a routed platoon comes back because somebody is
+            // there to bring it back.
+            //
+            // **Sight, not the radio net**, and the first draft had it the
+            // other way round. Two reasons it moved. It is the more
+            // believable rule: a commander steadies a frightened crew by
+            // being visibly still in the fight, which is not something that
+            // travels down a wire — the wire carries orders, and this is not
+            // an order. And it is the only version that is additive. A zeroed
+            // `command` block still puts a crew with no radio out of contact
+            // while a mod with no block at all has nobody out of contact, so
+            // hanging a rule on `in_contact` makes the two configurations
+            // differ in deeds, which
+            // `a_zeroed_command_block_is_the_game_without_one...` exists to
+            // forbid. Fog is computed the same either way.
+            //
+            // It also gives the flight response a real cost that needed no
+            // inventing: a crew who reverses far enough loses sight of her
+            // officer, and rallies at the ordinary rate until somebody comes
+            // for her.
+            let rallied = self
+                .command
+                .formation_of(id)
+                .and_then(|f| f.leader.filter(|l| *l != id))
+                .and_then(|leader| self.unit(leader))
+                // Her own eyes, not her side's. The first draft asked the
+                // side's visible set, which is vacuous: that set is the union
+                // of every friendly unit's vision and every unit sees the hex
+                // she is standing on, so a side can always see its own
+                // officer and the condition was true for everybody, always.
+                // `fog::sees` is the per-unit question, answered off the
+                // cache the last recompute left warm.
+                .filter(|leader| leader.alive && fog::sees(registry, self, id, leader.pos))
+                .map(|_| registry.morale.recovery_near_leader)
+                .unwrap_or(0);
+            let shed = level.map(|l| registry.morale.recovered(l)).unwrap_or(0) + rallied;
             if let Some(unit) = self.units.get_mut(id.index()) {
                 unit.pressure = unit.pressure.saturating_sub(shed);
             }

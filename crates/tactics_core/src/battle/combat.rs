@@ -1914,12 +1914,23 @@ fn fire_at_tile(
 /// The best shot this unit could take on its own initiative: the loaded
 /// direct-fire weapon and spotted enemy promising the most damage. Indirect
 /// weapons do not snap-fire, so artillery holds unless it was given a target.
+///
+/// "On its own initiative" is load-bearing now that a crew can lose hers.
+/// Everything here is what a crew decides for herself, so it is exactly what
+/// a crew who has gone to ground stops doing — she still has a gun and she
+/// will still use it if her commander names a target, but nothing happening
+/// in front of her prompts her to. It is also where a crew who has decided
+/// to fight stops being careful.
 pub fn best_opportunity_shot(
     registry: &DataRegistry,
     state: &BattleState,
     unit: UnitId,
 ) -> Option<(usize, UnitId)> {
     let att = state.unit(unit)?;
+    let defiance = (!state.obeys(registry, att)).then(|| state.defiance(registry, att));
+    if defiance == Some(crate::data::DefianceResponse::Freeze) {
+        return None;
+    }
     // Opportunity fire is the crew reacting to something nobody told them
     // about, so it costs them their reaction time — per TARGET, from the
     // moment he was first seen, not per round from tick zero. The old gate
@@ -1988,7 +1999,14 @@ pub fn best_opportunity_shot(
             // true wait-for-the-flank reasoning is deliberately future
             // work.
             const AMBUSH_PATIENCE: f32 = 0.25;
-            let unseen = !state.fog.side(enemy.side).spotted.contains(&unit);
+            // A crew who has decided to fight has stopped weighing shots.
+            // Discipline is what patience is made of, and hers has gone —
+            // this is the same rung that will not take an order, spending
+            // her ambush on the first thing she can see rather than the
+            // right thing. It is a cost, not a bonus: the shot is worse and
+            // it gives her position away.
+            let patient = defiance != Some(crate::data::DefianceResponse::Fight);
+            let unseen = patient && !state.fog.side(enemy.side).spotted.contains(&unit);
             if unseen {
                 let decisive = state.substance(registry, enemy).0 as f32 * AMBUSH_PATIENCE;
                 if value < decisive {

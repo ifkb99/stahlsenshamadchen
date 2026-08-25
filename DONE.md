@@ -259,6 +259,76 @@ are still there and overpressure raises both from outside the plate. The rule
 is now the honest one: a gun *accomplishing* something keeps a battle alive, a
 gun merely firing does not.
 
+**A broken crew does something.** REVIEW.md's second fun tax, and the defect
+was worse than the review read: a crew who would not advance would not retreat
+*or take cover* either, because all three questions ran through one `obeys`
+gate. "A broken unit that cannot retreat is free kills for the enemy." Morale
+was narrating a death spiral and buying nothing.
+
+The designer's shape for it: *defiance, and rallying from it — fight, flight
+or freeze, depending on the cadet*. So the rung decides that she defies and
+her temperament decides how. `morale.defiance` lists the responses with a
+`core` and a `base`; the score adds trait modifiers and the highest wins, ties
+to the first listed. Cores default to `AVERAGE`, so ordering `freeze` first is
+what makes the whole feature additive — an unwritten cadet does exactly what
+every crew did before it existed. `TraitEffect` gained an optional `defiance`
+target beside its optional `skill`, because temperament under fire is not a
+competence, and spelling it as one would have meant inventing a cowardice a
+cadet could be trained in.
+
+What each does: **flight** reverses away from contact (never toward an exit —
+she is frightened, not navigating, and the map will not always have edges);
+**fight** refuses to fall back and switches ambush discipline off, which is a
+cost, not a bonus; **freeze** takes no opportunity fire either, so the third
+state is a rule rather than a label. An ordered shot still reaches a frozen
+crew: her initiative has gone, not her gun.
+
+Three things that were harder than they look:
+
+- **A crew cannot refuse her own decision.** Refusing throws away her ordered
+  path and flight lays a new one, so without `UnitIntent::own_idea` the
+  refusal check picks that up next tick, discards it, lays it again, and she
+  shakes in place forever — a livelock that looks exactly like the freeze this
+  removed.
+- **Rallying reads sight, not the radio net.** `recovery_near_leader` — the
+  twin `leader_lost` had wanted since it was added, because losing a commander
+  cost a formation its nerve and still having one bought nothing. The first
+  draft asked `in_contact` and was wrong twice: a commander steadies a crew by
+  being visibly still in the fight rather than down a wire, and a zeroed
+  `command` block puts a radioless crew out of contact where no block at all
+  does not, so the rule would have broken the additivity pin. The second draft
+  asked `fog.side(..).visible`, which is vacuous — a side always sees its own
+  units' hexes. `fog::sees` is the per-unit question and was already there.
+- **The scenario maps were anonymously crewed**, so every crew on them scored
+  every response identically and froze. Correct by design and invisible in the
+  instrument, so `battle_forest` now names 23 seats a side off the academy
+  rolls — leaving each scout section anonymous, because Kuhlmann has 24 cadets
+  against 25 seats and nobody crews two vehicles.
+
+Measured, `balance --sim --games 36` before and after:
+
+| | before | after |
+| --- | --- | --- |
+| foot units still on the field at the bell | 66 of 96 | **73 of 96** |
+| rifle platoons lost | 30 | 23 |
+| artillery lost | 34 | 25 |
+| recon cars lost | 44 | 41 |
+| hits landing on a side or rear arc | 15% | 20% |
+| delegation tax, massed under command | 6 wins | **0** |
+
+Morale buys survival now, and it buys it for exactly the vehicles that should
+be buying it — the soft ones. The flank statistic is the price, and it is
+emergent rather than designed: a crew reversing out of a fight shows somebody
+her side. The delegation tax reaching its written target of zero was not
+predicted; a commanded force whose crews may break contact loses less to the
+command layer than one whose crews may only stand there.
+
+The determinism baseline did **not** move, and it is worth knowing why rather
+than trusting it: `river_crossing` has exactly one crew reach `Breaking` over
+the four seeds — Anka's medium tank — and her temperament is `Fight`, which
+differs from the old freeze only in ambush discipline, which does not apply to
+a crew already spotted. A checkable coincidence, not a guarantee.
+
 **Saves record which mods were playing.** `SaveGame.mods` stamps id and
 version; mismatched ids are refused (the rules genuinely differ), version drift
 on the same set warns and loads (a content patch must not cost the player their

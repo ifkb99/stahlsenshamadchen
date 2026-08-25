@@ -1094,6 +1094,88 @@ impl BattleState {
         self.morale(registry, unit).obeys
     }
 
+    /// What this crew does instead of what she was told.
+    ///
+    /// Only meaningful for a crew who is not obeying; every caller checks
+    /// [`Self::obeys`] first, and asking it of a steady crew answers with
+    /// whatever her temperament would be if she broke, which is a fair
+    /// question to ask a panel.
+    ///
+    /// **The senior cadet still fighting decides.** Not the best score
+    /// aboard and not an average: somebody says "back her out" or "keep
+    /// firing" and the rest of the crew does it, and in this engine that is
+    /// whoever is left in the most forward seat — the same leaders-last
+    /// ordering the interior model already uses, so a commander going out
+    /// hands her temperament to the next woman down along with everything
+    /// else. That is a rule about people, so it is deliberately not
+    /// `crew_skill`'s "best aboard".
+    pub fn defiance(&self, registry: &DataRegistry, unit: &Unit) -> crate::data::DefianceResponse {
+        let rules = &registry.morale;
+        if rules.defiance.is_empty() {
+            return crate::data::DefianceResponse::default();
+        }
+        let speaker = unit.crew.iter().enumerate().find(|(seat, id)| {
+            unit.crew_state
+                .get(*seat)
+                .copied()
+                .unwrap_or(CrewCondition::Fine)
+                .fighting()
+                && self.roster.get(**id).is_some()
+        });
+        let vehicle = registry.vehicle(&unit.vehicle);
+        let ctx = crate::data::CheckContext {
+            terrain: self.terrain_at(unit.pos),
+            vehicle_class: vehicle.map(|v| v.class.as_str()),
+            crew_size: unit
+                .crew
+                .iter()
+                .filter(|id| self.roster.get(**id).is_some())
+                .count(),
+        };
+        // Nobody aboard the campaign knows about — an anonymously crewed
+        // vehicle, which is every scenario battle written before cadets
+        // existed — has no temperament to read, so she does what a crew has
+        // always done.
+        let Some(cadet) = speaker.and_then(|(_, id)| self.roster.get(*id)) else {
+            return rules
+                .defiance
+                .first()
+                .map(|d| d.response)
+                .unwrap_or_default();
+        };
+        rules
+            .defiance
+            .iter()
+            .map(|d| {
+                let core = d
+                    .core
+                    .as_deref()
+                    .and_then(|c| registry.core_index.get(c))
+                    .and_then(|i| cadet.cores.get(i).copied())
+                    .unwrap_or(crate::data::AVERAGE);
+                let from_traits: i32 = cadet
+                    .traits
+                    .iter()
+                    .filter_map(|id| registry.trait_def(id))
+                    .map(|t| t.defiance_modifier(&d.id, &ctx))
+                    .sum();
+                (d.base + core + from_traits, d.response)
+            })
+            // `max_by_key` on an iterator returns the LAST maximum, and the
+            // additivity argument in `DefianceDef` rests on ties going to the
+            // first. Fold explicitly rather than relying on a subtlety of the
+            // standard library that a reader would have to look up.
+            .fold(
+                None::<(i32, crate::data::DefianceResponse)>,
+                |best, next| match best {
+                    Some((score, _)) if score >= next.0 => best,
+                    _ => Some(next),
+                },
+            )
+            .map(|(_, response)| response)
+            .unwrap_or_default()
+    }
+
     /// The terrain a unit is standing on, for checks that care where they
     /// happen — a lead foot is quick on a road and bogs in a field.
     pub fn terrain_at(&self, hex: Hex) -> Option<&str> {

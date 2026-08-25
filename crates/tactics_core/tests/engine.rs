@@ -3612,9 +3612,348 @@ fn a_breaking_crew_refuses_to_advance_and_says_so() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            BattleEvent::OrderRefused { unit, .. } if *unit == UnitId(0)
+            BattleEvent::Defied { unit, .. } if *unit == UnitId(0)
         )),
         "the refusal has to be said out loud: {events:?}"
+    );
+}
+
+// --- defiance: what a crew does instead (direction step 4, tax 2) -----------
+
+/// Force one response for every crew, so a test about what flight *does* is
+/// not also a test about who reaches for it. `base` outranks the `core` term
+/// by more than any core can differ, which is the point: temperament has its
+/// own tests.
+fn always(reg: &mut DataRegistry, response: &str) {
+    reg.morale.defiance = vec![tactics_core::data::DefianceDef {
+        id: response.into(),
+        name: "does it".into(),
+        response: serde_json::from_value(serde_json::json!(response)).expect("a real response"),
+        core: None,
+        base: 100,
+    }];
+}
+
+/// Two mediums far enough apart on a long field that a frightened crew has
+/// somewhere to reverse to. `duel`'s map is five columns wide, which is a
+/// fine place to shoot at somebody and no place at all to run away.
+fn flight_stage(reg: &DataRegistry, seed: u64) -> BattleState {
+    let row = "g".repeat(20);
+    two_side_battle(
+        reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([8, 1], 0, "medium_tank", "Runner"),
+            unit_at([13, 1], 1, "medium_tank", "Gun"),
+        ],
+        seed,
+    )
+}
+
+/// The pressure that puts a crew off the end of the shipped ladder.
+fn breaking(reg: &DataRegistry) -> u32 {
+    reg.morale
+        .rungs
+        .last()
+        .expect("the shipped ladder has rungs")
+        .at_pressure
+}
+
+#[test]
+fn a_frightened_crew_reverses_out_of_contact() {
+    // The review's second fun tax, and the shape of the defect was worse than
+    // it read: a crew who would not advance would not retreat either, and
+    // would not even break for cover, because all three went through one
+    // `obeys` gate. "A broken unit that cannot retreat is free kills for the
+    // enemy" — so morale narrated a death spiral instead of buying anything.
+    //
+    // Away from what is shooting at her, note, and not toward a lane. She is
+    // not navigating.
+    let mut reg = registry_wireless();
+    always(&mut reg, "flight");
+    let mut state = flight_stage(&reg, 61);
+    state.units[0].pressure = breaking(&reg);
+
+    let before = state.unit(UnitId(0)).expect("on the field").pos;
+    let enemy = state.unit(UnitId(1)).expect("on the field").pos;
+    let events = play_round(&reg, &mut state);
+    let after = state.unit(UnitId(0)).expect("on the field").pos;
+
+    assert!(
+        after.distance_to(enemy) > before.distance_to(enemy),
+        "she should have put ground between herself and the gun: {before:?} -> {after:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            BattleEvent::Defied { unit, to: Some(_), .. } if *unit == UnitId(0)
+        )),
+        "and it has to be said out loud, with where she went: {events:?}"
+    );
+}
+
+#[test]
+fn a_crew_cannot_refuse_the_decision_she_made_herself() {
+    // The trap under the whole feature. A refusing crew has her ordered path
+    // thrown away; flight then lays a path of her own. If the refusal check
+    // cannot tell the two apart it selects her again on the next tick, throws
+    // her own route away, lays it again, and she stands in place shaking for
+    // the rest of the battle — a livelock that looks exactly like the freeze
+    // this was built to remove.
+    let mut reg = registry_wireless();
+    always(&mut reg, "flight");
+    let mut state = flight_stage(&reg, 62);
+    state.units[0].pressure = breaking(&reg);
+    let enemy = state.unit(UnitId(1)).expect("on the field").pos;
+
+    let mut range = state
+        .unit(UnitId(0))
+        .expect("on the field")
+        .pos
+        .distance_to(enemy);
+    let mut opened = 0;
+    for _ in 0..3 {
+        if state.is_over() {
+            break;
+        }
+        play_round(&reg, &mut state);
+        let Some(me) = state.unit(UnitId(0)) else {
+            break;
+        };
+        let now = me.pos.distance_to(enemy);
+        if now > range {
+            opened += 1;
+        }
+        range = now;
+    }
+    assert!(
+        opened >= 2,
+        "she has to keep going, not re-argue with herself every tick"
+    );
+}
+
+#[test]
+fn a_crew_gone_to_ground_will_not_fire_on_her_own_initiative() {
+    // Freeze had to cost something or the third response was a label rather
+    // than a rule. She is a passenger in her own vehicle: nothing in front of
+    // her prompts her to shoot. Her gun is not broken, though, and the
+    // difference is the whole of it — an order still reaches the gunner.
+    let mut reg = registry_wireless();
+    always(&mut reg, "freeze");
+    let mut state = duel(&reg, 63);
+    state.units[0].pressure = breaking(&reg);
+
+    let events = play_round(&reg, &mut state);
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            BattleEvent::ShotFired { attacker, opportunity: true, .. } if *attacker == UnitId(0)
+        )),
+        "she is not looking for a shot: {events:?}"
+    );
+
+    let mut told = duel(&reg, 63);
+    told.units[0].pressure = breaking(&reg);
+    told.apply(
+        &reg,
+        &Order::SetFire {
+            unit: UnitId(0),
+            fire: FireIntent::Target {
+                target: UnitId(1),
+                weapon: 0,
+            },
+        },
+    )
+    .expect("the order is accepted");
+    let ordered = play_round(&reg, &mut told);
+    assert!(
+        ordered.iter().any(|e| matches!(
+            e,
+            BattleEvent::ShotFired { attacker, .. } if *attacker == UnitId(0)
+        )),
+        "but a target called by her commander is still shot at: {ordered:?}"
+    );
+}
+
+#[test]
+fn a_mod_that_names_no_defiance_freezes_exactly_as_it_always_did() {
+    // Additivity, the same rule difficulty-as-a-mod and the zeroed command
+    // block are held to. Freezing was the only thing a broken crew could ever
+    // do, so a mod that declines to describe defiance must still get it —
+    // which is also why `Freeze` is the enum's `#[default]` and why ties in
+    // the score go to the first entry listed.
+    let mut reg = registry_wireless();
+    reg.morale.defiance.clear();
+    let mut state = flight_stage(&reg, 64);
+    state.units[0].pressure = breaking(&reg);
+
+    let forward = tactics_core::offset_to_hex(10, 1);
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: UnitId(0),
+                to: forward,
+            },
+        )
+        .expect("the order is accepted");
+    let events = play_round(&reg, &mut state);
+
+    // Behaviour rather than a final position, for the reason
+    // `a_breaking_crew_refuses_to_advance_and_says_so` states: the round can
+    // kill her, and a dead unit has no position to compare.
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            BattleEvent::UnitMoved { unit, .. } if *unit == UnitId(0)
+        )),
+        "she does not move a hex, in any direction, which is what she always did: {events:?}"
+    );
+}
+
+#[test]
+fn the_senior_cadet_still_fighting_decides_how_the_crew_breaks() {
+    // Not the best score aboard and not an average: somebody says "back her
+    // out" or "keep firing" and the rest do it. In this engine that is
+    // whoever is left in the most forward seat, so a commander going out
+    // hands her temperament to the next woman down along with everything
+    // else — the same leaders-last ordering the interior model already uses.
+    let mut reg = registry_wireless();
+    reg.morale.defiance = vec![
+        tactics_core::data::DefianceDef {
+            id: "fight".into(),
+            name: "fights on".into(),
+            response: tactics_core::data::DefianceResponse::Fight,
+            core: Some("will".into()),
+            base: 0,
+        },
+        tactics_core::data::DefianceDef {
+            id: "flight".into(),
+            name: "falls back".into(),
+            response: tactics_core::data::DefianceResponse::Flight,
+            core: Some("speed".into()),
+            base: 0,
+        },
+    ];
+    // Anka has will 13 and no speed of her own; Sofia has speed 12 and no
+    // will. Read off the shipped characters on purpose — a temperament rule
+    // that only works on invented cadets is not a rule about this game.
+    let (mut state, ours) = crewed_stage(&reg, &["anka", "sofia"]);
+    state.unit_mut(ours).expect("on the field").pressure = breaking(&reg);
+    assert_eq!(
+        state.defiance(&reg, state.unit(ours).expect("on the field")),
+        tactics_core::data::DefianceResponse::Fight,
+        "her commander is the steady one, so the tank is"
+    );
+
+    let unit = state.unit_mut(ours).expect("on the field");
+    unit.crew_state = vec![
+        tactics_core::battle::CrewCondition::Out,
+        tactics_core::battle::CrewCondition::Fine,
+    ];
+    assert_eq!(
+        state.defiance(&reg, state.unit(ours).expect("on the field")),
+        tactics_core::data::DefianceResponse::Flight,
+        "with the commander out it is the next cadet's nerve that answers"
+    );
+}
+
+#[test]
+fn an_officer_in_sight_settles_a_crew_faster() {
+    // The half of the chain of command that had never paid anybody anything.
+    // Losing a leader has cost a formation its nerve since `leader_lost` was
+    // added; still having one bought nothing, so there was no reason beyond
+    // succession bookkeeping to keep an officer alive.
+    //
+    // Sight rather than the radio net, and deliberately: a commander steadies
+    // a frightened crew by being visibly still in it, which does not travel
+    // down a wire. It is also the only version that leaves a zeroed `command`
+    // block behaving identically to no block at all, because a crew with no
+    // radio is out of contact under one and not the other.
+    let mut reg = registry_wireless();
+    reg.morale.recovery_near_leader = 3;
+    let settled = |reg: &DataRegistry, blind: bool| -> u32 {
+        // A map that declares a formation, because a rally is a thing a chain
+        // of command does and `two_side_battle`'s map has no chain.
+        let row = "g".repeat(50);
+        let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+            "id": "rally_stage",
+            "palette": { "g": "grass" },
+            "rows": [&row, &row, &row],
+            "formations": [{ "id": "ours", "side": 0 }],
+        }))
+        .expect("fixture map");
+        let map = HexMap::from_map_file(&file).expect("map parses");
+        let formed = |at: [i32; 2], name: &str, leads: bool| UnitPlacement {
+            aboard_at: None,
+            at,
+            side: 0,
+            vehicle: "medium_tank".into(),
+            crew: Vec::new(),
+            name: Some(name.into()),
+            facing: None,
+            formation: Some("ours".into()),
+            leads,
+        };
+        // A second side is required or the battle is over before anybody
+        // recovers anything — one living side wins immediately, and pressure
+        // sheds at the *start* of the next round. She is parked forty hexes
+        // off and blind to everyone, because a firefight would move this
+        // number for reasons that are not the officer.
+        let placements = vec![
+            formed([0, 1], "Leader", true),
+            formed([2, 1], "Follower", false),
+            unit_at([45, 1], 1, "medium_tank", "Nobody"),
+        ];
+        let sides = vec![
+            SideState {
+                name: "West".into(),
+                ai: None,
+            },
+            SideState {
+                name: "East".into(),
+                ai: None,
+            },
+        ];
+        let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+        let mut state = BattleState::from_placements(
+            reg,
+            map,
+            sides,
+            &placements,
+            &crews,
+            std::sync::Arc::new(roster),
+            71,
+        );
+        // High enough that neither branch reaches the floor: pressure
+        // saturates at zero, and a comparison against a floor measures the
+        // floor.
+        state.units[1].pressure = 60;
+        if blind {
+            // Put the officer where her crew cannot see her, by taking her
+            // sight line rather than her life: killing her would charge the
+            // formation `leader_lost` and measure that instead.
+            // Twenty-odd hexes from her crew and twenty from the enemy:
+            // vision is ten to twenty, so she is out of everybody's sight and
+            // this measures the officer and nothing else. Parking her beside
+            // the enemy instead started a firefight and moved the number.
+            state.units[0].pos = tactics_core::offset_to_hex(25, 1);
+        }
+        // Recovery is paid when a round opens, which `resolve_round` reaches
+        // at the end of the round it played.
+        play_round(reg, &mut state);
+        state.unit(UnitId(1)).expect("on the field").pressure
+    };
+    let with_her = settled(&reg, false);
+    let without = settled(&reg, true);
+    assert!(
+        with_her < without,
+        "a crew who can see her officer settles faster: {with_her} against {without}"
+    );
+    assert_eq!(
+        without - with_her,
+        reg.morale.recovery_near_leader,
+        "and by exactly what the mod said, so the number means what it says"
     );
 }
 
@@ -3694,7 +4033,7 @@ fn a_gentle_mod_has_girls_who_never_refuse() {
     assert!(
         !events
             .iter()
-            .any(|e| matches!(e, BattleEvent::OrderRefused { .. })),
+            .any(|e| matches!(e, BattleEvent::Defied { .. })),
         "nobody refuses in the gentle game: {events:?}"
     );
     assert_ne!(
@@ -9630,7 +9969,7 @@ fn a_long_battle_never_says_anything_about_a_crew_who_has_left() {
                         departed(by, "a report filed by");
                     }
                     BattleEvent::CommandPassed { to, .. } => departed(to, "CommandPassed to"),
-                    BattleEvent::OrderRefused { unit, .. } => departed(unit, "OrderRefused"),
+                    BattleEvent::Defied { unit, .. } => departed(unit, "Defied"),
                     BattleEvent::MoraleChanged { unit, .. } => departed(unit, "MoraleChanged"),
                     BattleEvent::OrdersWaiting { unit } => {
                         departed(unit, "OrdersWaiting");

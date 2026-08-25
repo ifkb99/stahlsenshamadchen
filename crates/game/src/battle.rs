@@ -1385,13 +1385,19 @@ fn pump_events(
                     format!("{who} is {rung} and will not advance.")
                 });
             }
-            BattleEvent::OrderRefused { unit, rung } => {
+            BattleEvent::Defied {
+                unit, rung, doing, ..
+            } => {
                 let who = battle
                     .state
                     .unit(*unit)
                     .map(|u| u.name.clone())
                     .unwrap_or_else(|| "A crew".into());
-                log.push(format!("{who} refuses to advance - {rung}."));
+                // Her name, her rung, and what she is doing about it. The
+                // last part is the one that matters: a tank reversing out of
+                // the line with nothing in the log to explain it is
+                // indistinguishable from the game malfunctioning.
+                log.push(format!("{who} is {rung} and {doing}."));
             }
             // The mid-round drill. Same sentence shape as the planning-table
             // drill's line, so the player learns one idiom for "she decided

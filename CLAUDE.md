@@ -139,6 +139,69 @@ consulted the thing it was about.
   `CrewHit` and those are still counted. Adding an event to that list is
   adding a way for a battle never to end; do it deliberately.
 
+### Defiance: what a crew does instead
+
+A crew on a rung whose `obeys` is false used to be frozen in every sense —
+she would not advance, would not fall back, and would not break for cover,
+because all three ran through one gate. That is what REVIEW.md's second fun
+tax was: morale narrated a death spiral instead of buying anything.
+
+`DefianceResponse` (`data/morale.rs`) is what she does instead — `Freeze`,
+`Flight`, `Fight` — and the rules around it are small and easy to unpick:
+
+- **The rung decides *that* she defies; her temperament decides *how*.** The
+  mod declares the responses in `morale.defiance`, each naming a `core` and a
+  `base`; the score is `base + core + trait modifiers` and the highest wins,
+  **ties to the earlier entry**. Cores default to `AVERAGE`, so listing
+  `freeze` first is what makes a cadet nobody has written cores for behave
+  exactly as every crew did before this existed. An empty list means freeze,
+  full stop.
+- **Traits reach it through a second effect kind.** `TraitEffect.skill` is now
+  optional and `TraitEffect.defiance` sits beside it, because temperament
+  under fire is not a competence and spelling it as a skill would have meant
+  inventing a cowardice a cadet could be trained in. `reckless`, `craven` and
+  `stolid` are content demonstrating it; the rest is character work.
+- **The senior cadet still fighting decides**, not the best score aboard and
+  not an average. A commander going out hands her temperament to the next
+  woman down along with everything else.
+- **A crew cannot refuse her own decision.** `UnitIntent::own_idea` marks a
+  route the crew laid herself — the drill's dash for cover, and flight.
+  Without it the refusal check picks up a fleeing crew's own path on the next
+  tick, throws it away, lays it again, and she shakes in place forever.
+  Anything new that lays a path from inside the engine sets it; anything that
+  lays one from an *order* clears it.
+- **`Freeze` costs something.** She takes no opportunity fire — `Fight` and
+  `Freeze` are both "stay here" and would otherwise differ in nothing
+  observable. An *ordered* shot still happens: her gun is not broken, her
+  initiative is.
+- **`Fight` turns ambush discipline off**, which is a cost and not a bonus:
+  she spends her concealment on the first shot available rather than the
+  right one.
+- **Rallying reads sight, not the radio.** `recovery_near_leader` is shed by a
+  crew who can see her formation's leader, through `fog::sees` — her own
+  eyes, not `fog.side(..).visible`, which is vacuous because a side always
+  sees its own units' hexes. Contact was the first draft and is wrong twice
+  over: a commander steadies a crew by being visibly still in the fight
+  rather than down a wire, and hanging it on `in_contact` makes a zeroed
+  `command` block differ in deeds from no block at all (a crew with no radio
+  is out of contact under one and not the other), which
+  `a_zeroed_command_block_is_the_game_without_one...` forbids.
+- **Flight goes away from contact, never toward an exit.** A frightened crew
+  reverses out of the fight; she does not navigate to a designated lane
+  twenty hexes off, and the map will not always have edges.
+- **`Event::Defied` replaced `OrderRefused`**, because the old name became a
+  lie the moment a crew could act without having been told anything. It
+  carries what she did and where she went, since a vehicle reversing out of
+  the line with nothing in the log behind it looks like the game
+  malfunctioning.
+
+Worth knowing why the determinism baseline did **not** move for this:
+`river_crossing` has exactly one crew reach `Breaking` across the four seeds,
+Anka's medium tank, and her temperament is `Fight` — which differs from the
+old freeze only in ambush discipline, and she is already spotted by then.
+That is a checkable coincidence, not a guarantee; crewing that map up (TODO)
+would break it.
+
 ### Infantry, passengers and concealment
 
 Infantry are a `VehicleDef` like everything else — `MovementClass::Foot`,

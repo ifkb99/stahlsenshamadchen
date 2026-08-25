@@ -24,6 +24,79 @@
 
 use serde::{Deserialize, Serialize};
 
+/// What a crew who has stopped obeying does instead.
+///
+/// The old model had exactly one answer and never said so out loud: she
+/// froze. A crew on a rung that does not obey would not advance, would not
+/// fall back and would not even break for cover, because all three ran
+/// through the same `obeys` gate — so the losing side's story was "everyone
+/// stands still until they are shot", which is the worst possible shape for
+/// a morale system. Fear should buy something, even if what it buys is
+/// sometimes a worse death.
+///
+/// Which of these a crew reaches for is her temperament, not the rung's:
+/// see [`DefianceDef`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DefianceResponse {
+    /// She stops, and she stops doing anything. No movement, and no fire she
+    /// was not explicitly ordered to give — she is a passenger in her own
+    /// vehicle. This is what every broken crew did before there was a
+    /// choice, which is why it is the default: a mod that declares no
+    /// [`MoraleRules::defiance`] gets exactly the old game.
+    #[default]
+    Freeze,
+    /// She breaks contact — puts distance between herself and everything she
+    /// can see that can hurt her, taking cover where the ground offers it.
+    /// Deliberately *away from contact* rather than toward an exit tile: a
+    /// frightened crew reverses out of the fight, she does not navigate to a
+    /// designated lane twenty hexes away, and the map is not going to have
+    /// edges forever.
+    Flight,
+    /// She will not be moved and she will not be careful. No falling back,
+    /// and the ambush discipline that holds an unseen crew's fire is off —
+    /// she shoots at what she can see, whether or not waiting would have
+    /// been wiser.
+    Fight,
+}
+
+/// One way of defying an order, and what predisposes a crew to it.
+///
+/// Declared by the mod, because which responses exist is content — a gentler
+/// game lists only `flight`, a grimmer one might add a rung's worth of
+/// something else. What each response *does* is engine, hence
+/// [`DefianceResponse`]; the same split [`crate::data::ModuleEffect`] makes.
+///
+/// The score is `base` plus the commanding cadet's `core` plus whatever her
+/// traits say about this response, and the highest wins with ties going to
+/// the earlier entry. Two consequences worth stating:
+///
+/// - **Cores are the floor and traits are the differentiator.** Every cadet
+///   has cores whether or not anybody wrote her a personality, so the
+///   mechanism works on the day it ships; a trait that names a response
+///   moves her off that floor. That is the growth path — `reckless` and
+///   `craven` are content, not code.
+/// - **Ties to the earlier entry is what makes this additive.** Cores
+///   default to `AVERAGE`, so a cadet nobody has written cores for scores
+///   every response identically and takes whichever is listed first. List
+///   `freeze` first and an unremarkable crew behaves exactly as she did
+///   before this existed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DefianceDef {
+    pub id: String,
+    /// How the log says it: "Ilse Brandt falls back". A sentence fragment
+    /// with the cadet's name in front of it.
+    pub name: String,
+    pub response: DefianceResponse,
+    /// The core that predisposes a crew to this. Absent means the response
+    /// rests on `base` alone — which is what a "default" response wants.
+    #[serde(default)]
+    pub core: Option<String>,
+    /// Added to every crew's score for this response, whoever she is.
+    #[serde(default)]
+    pub base: i32,
+}
+
 /// One step of the ladder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoraleRung {
@@ -95,12 +168,34 @@ pub struct MoraleRules {
     /// — the news travels the chain of command, not the line of sight.
     #[serde(default)]
     pub leader_lost: u32,
+    /// What a crew who has stopped obeying does instead, best score first
+    /// on a tie. Empty means she freezes, which is what she did before this
+    /// existed — the additivity rule, applied to the newest thing on the
+    /// oldest ladder.
+    #[serde(default)]
+    pub defiance: Vec<DefianceDef>,
     /// Pressure shed at the end of each round.
     pub recovery: u32,
     /// Skill points above average that shed one extra point of pressure. A
     /// disciplined crew does not merely resist the order to run; they settle
     /// faster afterwards.
     pub recovery_per_skill: i32,
+    /// Extra pressure shed by a crew still in contact with the officer
+    /// commanding her formation.
+    ///
+    /// The mirror of [`Self::leader_lost`], and the reason that field wanted
+    /// a twin: losing a commander already costs a formation its nerve, and
+    /// nothing had ever paid it back for still having one. This is what
+    /// makes rallying a thing leaders *do* rather than a thing that happens
+    /// to a crew who got far enough away, and what makes a leader worth
+    /// keeping alive for a reason other than succession bookkeeping.
+    ///
+    /// `#[serde(default)]`, so a mod that says nothing rallies exactly as it
+    /// did. Note a mod with no `command` block has no radios and therefore
+    /// nobody out of contact, so this would reach every crew — which is the
+    /// honest reading of a game that does not model isolation at all.
+    #[serde(default)]
+    pub recovery_near_leader: u32,
 }
 
 impl Default for MoraleRules {
@@ -137,8 +232,13 @@ impl Default for MoraleRules {
             // all; a mod that declares one and omits the field gets zero,
             // which is the field's serde default and the gentler reading.
             leader_lost: 4,
+            // The engine's stand-in ladder keeps the old silence: a mod that
+            // declares no morale block at all gets crews who freeze, because
+            // that is what they did before there was anything else to do.
+            defiance: Vec::new(),
             recovery: 2,
             recovery_per_skill: 4,
+            recovery_near_leader: 0,
         }
     }
 }

@@ -160,10 +160,23 @@ pub struct CheckContext<'a> {
     pub crew_size: usize,
 }
 
-/// One clause of a trait: a modifier to a skill, under a condition.
+/// One clause of a trait: a modifier to a skill or to a way of defying an
+/// order, under a condition.
+///
+/// Both targets are optional and a clause names one of them. `skill` was
+/// once required and is still what almost every clause says; `defiance` is
+/// how a personality reaches the fight-or-flight question, which is the
+/// thing traits were always going to be for. A crew's temperament under
+/// fire is not a competence, so it could not be spelled as a skill
+/// modifier, and pretending otherwise would have meant inventing a
+/// "cowardice skill" that a cadet could be trained in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraitEffect {
-    pub skill: String,
+    #[serde(default)]
+    pub skill: Option<String>,
+    /// The `id` of a [`crate::data::DefianceDef`] this leans her toward.
+    #[serde(default)]
+    pub defiance: Option<String>,
     #[serde(default)]
     pub when: TraitCondition,
     pub modifier: i32,
@@ -193,7 +206,19 @@ impl TraitDef {
     pub fn modifier(&self, skill: &str, ctx: &CheckContext) -> i32 {
         self.effects
             .iter()
-            .filter(|e| e.skill == skill && e.when.holds(ctx))
+            .filter(|e| e.skill.as_deref() == Some(skill) && e.when.holds(ctx))
+            .map(|e| e.modifier)
+            .sum()
+    }
+
+    /// This trait's contribution to how far she leans toward one way of
+    /// defying an order. Same shape as [`Self::modifier`], and conditional
+    /// in the same way — a crew can be steady in the trees and brittle in
+    /// the open, which is a person rather than a number.
+    pub fn defiance_modifier(&self, defiance: &str, ctx: &CheckContext) -> i32 {
+        self.effects
+            .iter()
+            .filter(|e| e.defiance.as_deref() == Some(defiance) && e.when.holds(ctx))
             .map(|e| e.modifier)
             .sum()
     }

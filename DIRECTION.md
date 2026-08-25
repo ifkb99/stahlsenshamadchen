@@ -176,7 +176,7 @@ Ordered by spark per hour, not by dependency.
 | 1 | Orders mean what they say | **parts 1–2 done**, part 3 open |
 | 2 | Say what a verb means before it is pressed | **done** |
 | 3 | Close the consequence loop | **done**, roster screen open |
-| 4 | Fix the fun taxes REVIEW.md found | **taxes 1–2 done**, 3–5 open |
+| 4 | Fix the fun taxes REVIEW.md found | **taxes 1–3 done**, the wander open |
 | 5 | Park a layer (MCTS) | not started |
 
 ### 1. Orders mean what they say
@@ -431,14 +431,19 @@ instruments, and the review only had the first.
   one draw per unit per round (a mood, not a lottery), judged against the
   skill-gap table, since that table is also what would catch it if this
   brought back the clumping `PLATEAU` was built to stop.
-- **Tax 2's other half — nobody retreats — is two defects, neither named.**
-  `resolve_movement` refuses *all* path movement from a crew that will not
-  obey, though the comment above it says "they simply will not advance"; and
-  the exit is invisible to the evaluator until `condition` falls below
-  `1 - withdraw_threshold`, which for massed armour at 0.85 means **below
-  15%**. Morale wants its own path to the lane, independent of the plate.
-  Also content: `battle_forest` declares no `exit` at all, so game 2 could
-  not have produced a withdrawal under any AI.
+- **Tax 2's other half — nobody retreats. Done, and not as an exit.** Two
+  defects, neither of them the one named: `resolve_movement` refused *all*
+  path movement from a crew that would not obey, advancing and retreating
+  alike, under a comment saying "they simply will not advance"; and the exit
+  was invisible to the evaluator until `condition` fell below
+  `1 - withdraw_threshold`, i.e. below 15% for massed armour.
+
+  **The designer settled the model rather than the bug**: a broken crew goes
+  into defiance — fight, flight or freeze, by temperament — and rallies out of
+  it, and flight means *away from contact* rather than toward a lane, because
+  the map is eventually not going to have edges. That is what shipped; see
+  DONE.md. Exits therefore stay narrow and stay what they are: an ordered
+  withdrawal, not a rout.
 - **Tax 4's A/B is confounded three ways**, not one: `playthrough.rs` gives
   side 0 both MCTS *and* `massed_armor`, on a map whose sides field different
   vehicles. Swap them independently or it says nothing — and it is the same
@@ -571,6 +576,15 @@ when somebody sweeps it, and a sweep needs an instrument.
   earlier in the session, it had by the end of it. Do not conclude from one
   degenerate capture that the harness is broken — run `battle-tour.txt` and
   check, which is what settled it in both directions.
+- **2026-08-25** — the defiance chunk landed: a broken crew now fights, runs
+  or goes to ground by temperament, and rallies faster with her officer in
+  sight. Two things worth carrying forward. The determinism baseline passed
+  *unregenerated* again, and the reason is checkable rather than lucky — the
+  one crew who breaks on `river_crossing` is temperamentally a fighter, and
+  fighting differs from the old freeze only in ambush discipline. And the
+  delegation tax hit its written target of zero as a side effect: a commanded
+  force whose crews may break contact loses less to the command layer than one
+  whose crews may only stand there and be shot.
 - **2026-08-25** — step 4's first two taxes landed: a shell is priced against
   the plate it will strike, and a bounce no longer holds a decided battle
   open. Both were one line of arithmetic that never consulted the thing it was

@@ -71,13 +71,17 @@ annotations say where. Items 1 and 2's chain reaction are fixed; see DONE.md.
    The AI just has no model of that either: it neither exploits it (softened
    target) nor stops for it (plate can't be beaten head-on).
 
-2. **Nobody ever retreats.** *(Real, and two mechanisms, neither of them the
-   one named. `resolve_movement` refuses **all** path movement from a crew who
+2. **Nobody ever retreats.** *(Fixed, and not by making the exit reachable.
+   Two mechanisms, neither of them the one named. `resolve_movement` refuses **all** path movement from a crew who
    will not obey — advancing and retreating alike — under a comment saying
    "they simply will not advance". And the exit is invisible to the evaluator
    until condition falls below `1 - withdraw_threshold`, which for massed
    armour means below 15%. Also: `battle_forest` declares no `exit` objective,
-   so game 2 could not have produced a withdrawal under any AI.)* Zero
+   so game 2 could not have produced a withdrawal under any AI. What shipped
+   is the designer's model rather than a patch to either: a broken crew defies
+   — fight, flight or freeze by temperament — and rallies out of it, and
+   flight means away from contact rather than toward a lane. Foot units
+   surviving to the bell went 66 of 96 to 73 of 96.)* Zero
    `UnitExited` events across all three
    battles. Withdrawal is a big designed feature (whole CLAUDE.md section)
    that never fires in actual play. In game 3 the heavy tank goes "Breaking
@@ -139,7 +143,7 @@ template for exactly that.
    afford to call it per candidate target. Kills the 40-round barrage.
 2. *(Done.)* **Don't let bounces reset the stalemate clock.** A barrage against a plate
    is not contact; it is the battle already being over.
-3. **Let Broken units actually withdraw** — or gate the AI's retreat on
+3. *(Done, differently — she runs from contact, not to a lane.)* **Let Broken units actually withdraw** — or gate the AI's retreat on
    morale rung, not just damage vs `withdraw_threshold`. "Refusing to
    advance" should mean "falling back", or it is a death sentence wearing a
    morale label.
