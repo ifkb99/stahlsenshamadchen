@@ -215,6 +215,62 @@ orders a formation to assault.
   that is the bargain, and it is the whole reason the flag is plumbed rather
   than inferred.
 
+### What an order promises, and what a battle costs
+
+Two chunks of the DIRECTION.md work that are easy to unpick by accident,
+because both are mostly *words* and words look like they belong in the UI.
+
+- **A mission's promise lives beside the mission, not in the panel.**
+  `Mission::promise()` / `Mission::verb()` / `Mission::vocabulary()` and
+  `Latitude::promise()` are in `battle/command.rs` because a promise is a
+  claim about the rules: whoever changes what `Advance` *does* is then looking
+  straight at the sentence claiming what it does. One `VOCABULARY` table feeds
+  all three accessors and `slot()` is an exhaustive match, so a new mission
+  without a promise fails to compile. The game crate owns the *keys* and joins
+  the two in `order_menu()`; `every_mission_key_has_a_promise` exists because
+  the failure mode of that join is silent — rename a verb in core and the
+  panel simply lists one order fewer.
+- **`CrewCondition::Absent` is "on the roll, not in the vehicle".** A girl
+  still recovering does not deploy (`BattleState::who_deploys`, read once at
+  spawn). Three things about it are load-bearing:
+  - **Her seat leaves the substance reckoning entirely** — neither numerator
+    nor denominator. Charging it as a loss would make a short-handed tank read
+    as one already shot up, and every withdraw threshold and AI kill estimate
+    in the game would price it that way.
+  - **She stays in `Unit::crew`.** The campaign takes the crew list back at
+    the end of the battle, so a girl filtered out of it here is a girl deleted
+    from her tank for good.
+  - **A vehicle nobody fit can crew goes out with the walking wounded.** The
+    campaign has no replacement pool, and a crewless vehicle is one nothing
+    inside can kill — the same invariant the anonymous-crew fallback in
+    `spawn_unit` protects. `crew_state` stays empty in that case, which is
+    also what keeps every scenario battle and every old save byte-identical.
+
+  Ask "is she aboard / is she fighting" through `CrewCondition::aboard()` /
+  `fighting()` rather than matching the variant, or the next state added will
+  be missed by one of `interior()`, `substance()` and `fighting_crew()`.
+- **A wound outlives its battle.** `CrewLoss::found` distinguishes "her
+  vehicle did not come home" (`None`, priced by what killed it through
+  `resolve_crew_fate`) from "she was found like this in a vehicle that did"
+  (`Some(condition)`, priced by `resolve_station_fate` — gentler, never
+  `Lost`, never fatal without permadeath). Before this, the entire in-battle
+  crew model evaporated at the door for every vehicle that survived.
+- **The casualty numbers are `casualties` in `mod.json`** (`data::Casualties`,
+  one-in-effect like `scale` and `balance`). A harsh campaign is a mod.
+- **One girl, one seat.** `OverworldState::from_map` enlists each character
+  once per academy; a map that names her again crews that vehicle
+  anonymously, and `MapFile::validate_into` warns with the count. `frontier`
+  spreads ten characters over eighteen vehicles and currently trips this ten
+  times — the warnings are the content problem being reported, not a
+  regression. Fixing the content is a fiction decision (see DIRECTION.md);
+  do not "fix" it by letting one girl crew three tanks again.
+- **A battle never enlists anybody into an academy.** The anonymous crew a
+  crewless vehicle gets is stamped into the *battle's* copy of the roster, so
+  its handles mean nothing to the campaign; `apply_battle_result` drops any
+  crew id the campaign roster does not know before writing the survivors
+  back. Without that an army ends up holding ids that resolve to nobody,
+  which is not a crash and therefore sits there.
+
 ### Saving
 
 `tactics_core::save` serialises a game in progress; F5/F9 on the campaign map
@@ -268,6 +324,15 @@ Two things about it are load-bearing:
   `until idle` over `wait N` for anything that waits on the simulation — a
   `wait` that guessed short photographs a half-played round and says nothing
   about it.
+- **Every screen answers for every fact.** `ScriptFacts` is one resource
+  shared by all of them, so a field a publisher leaves alone is still holding
+  the *previous* screen's answer — a script would wait on a muster prompt
+  dismissed two screens ago. The campaign map publishes too now (`turn` as the
+  day, `idle`, `waiting`, `log`); it did not until the after-action report
+  gave it something worth waiting for, and every campaign tour was a
+  stopwatch. `waiting` means "held behind something the player must answer or
+  dismiss" — a muster prompt, an after-action page — and is the complement of
+  `idle`, not a second name for its negation.
 - **`idle` is `Battle::listening`, and both must stay one predicate.** It
   means "a keystroke would be acted on this frame", which is not the same as
   "the phase is planning": sprites finishing a walk hold the keyboard, and a

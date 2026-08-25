@@ -1,0 +1,109 @@
+//! What a battle costs the girls who fought it, as data rather than as
+//! numbers scattered through `roster.rs`.
+//!
+//! The fate rolls were the last big table of bare integers left in Rust: how
+//! likely a kinetic penetration is to hurt somebody, what a point of a
+//! vehicle's `safety` is worth against that, how long a wound keeps a girl
+//! out. Every one of them is a thing a designer wants to try three values of
+//! — this is the dial between "an armoured skirmish costs nobody anything"
+//! and "half the school is in the infirmary by Tuesday" — and the repo's own
+//! rule is that a number a modder would want to change does not belong in
+//! Rust.
+//!
+//! Being data also makes the harsh version a mod. A campaign that wants
+//! attrition to bite ships a `casualties` block and changes nothing else; the
+//! base game's block *is* the gentle default, in the same shape as
+//! difficulty.
+//!
+//! All fields are integers and all day ranges are inclusive `[low, high]`
+//! pairs, so the rolls stay exact and the campaign stays reproducible from
+//! its seed.
+
+use serde::{Deserialize, Serialize};
+
+/// The casualty table: chances in 100 and recovery times in campaign days.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Casualties {
+    /// Chance in 100 that a girl is hurt at all when her vehicle is
+    /// destroyed by a kinetic penetration, before `safety` is applied. The
+    /// worst of the three: a long rod through the fighting compartment
+    /// sprays the inside of the hull with hot metal.
+    pub harm_kinetic: i32,
+    /// The same for high explosive, which is likelier to disable the vehicle
+    /// than the people in it.
+    pub harm_explosive: i32,
+    /// The same for small arms, which have barely touched the crew at all by
+    /// the time they finish off a vehicle.
+    pub harm_small_arms: i32,
+    /// The same when the battle recorded no cause — burned out, abandoned,
+    /// or a source the sim did not attribute. The middling case on purpose:
+    /// an unattributed loss should be neither a free pass nor the worst.
+    pub harm_unattributed: i32,
+    /// Points of harm chance taken off per point of the vehicle's `safety` —
+    /// hatches, layout, where the ammunition lives. At the default 8 a
+    /// safety-0 deathtrap is meaningfully worse than a safety-5 one without
+    /// either ever reaching certainty.
+    pub harm_per_safety: i32,
+    /// Floor and ceiling on the harm chance after safety, so no vehicle is
+    /// ever perfectly safe and none is ever a certain grave.
+    pub harm_floor: i32,
+    pub harm_ceiling: i32,
+    /// Chance in 100 that a girl who got out unhurt got out on the wrong
+    /// side of the fighting and has to walk back.
+    pub adrift_percent: i32,
+    /// How many days that walk takes, inclusive.
+    pub adrift_days: [u32; 2],
+    /// Chance in 100 that a wound is bad enough to be fatal where the
+    /// campaign allows it. With permadeath off this is the long-recovery
+    /// case instead — the same roll, a gentler consequence.
+    pub severe_percent: i32,
+    /// Days out for a severe wound, inclusive.
+    pub severe_days: [u32; 2],
+    /// Days out for an ordinary one.
+    pub light_days: [u32; 2],
+    /// Days out for a girl carried home out of the fight — knocked out at
+    /// her station in a vehicle that survived. Worse than an ordinary wound
+    /// and better than a severe one, and *never* fatal without permadeath,
+    /// for the reason the whole distinction exists: her tank came home and
+    /// somebody got her to a doctor.
+    pub carried_days: [u32; 2],
+    /// Days out for a girl who was hurt at her station and kept working.
+    /// The lightest case in the game, and the one that used to be thrown
+    /// away at the end of every battle.
+    pub grazed_days: [u32; 2],
+}
+
+impl Default for Casualties {
+    fn default() -> Self {
+        Self {
+            harm_kinetic: 55,
+            harm_explosive: 40,
+            harm_small_arms: 20,
+            harm_unattributed: 40,
+            harm_per_safety: 8,
+            harm_floor: 5,
+            harm_ceiling: 95,
+            adrift_percent: 25,
+            adrift_days: [1, 3],
+            severe_percent: 25,
+            severe_days: [5, 10],
+            light_days: [1, 4],
+            carried_days: [3, 8],
+            grazed_days: [1, 4],
+        }
+    }
+}
+
+impl Casualties {
+    /// An inclusive day range as a usable one, tolerating a block that names
+    /// its bounds the wrong way round rather than panicking on it. A mod
+    /// with `[4, 2]` means four to two days and gets two to four; a mod file
+    /// is content, and content should be forgiven where forgiving it cannot
+    /// be ambiguous.
+    pub fn days(range: [u32; 2]) -> std::ops::RangeInclusive<u32> {
+        let low = range[0].min(range[1]).max(1);
+        let high = range[0].max(range[1]).max(low);
+        low..=high
+    }
+}

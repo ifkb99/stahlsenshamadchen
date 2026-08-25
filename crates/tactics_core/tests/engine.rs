@@ -3347,6 +3347,7 @@ fn girls_persist_across_battles_and_recover_over_days() {
         girl,
         vehicle: state.army(attacker).unwrap().units[0].vehicle.clone(),
         killed_by: Some(tactics_core::data::DamageType::Kinetic),
+        found: None,
     };
     let events = state.apply_battle_result(&reg, attacker, defender, &[], &[loss]);
     assert!(
@@ -10197,6 +10198,7 @@ fn a_campaign_run_by_standing_orders_and_planners_plays_itself_out() {
                         girl: *girl,
                         vehicle: u.vehicle.clone(),
                         killed_by: None,
+                        found: None,
                     })
             })
             .collect();
@@ -10668,4 +10670,420 @@ fn a_mod_without_ammunition_keeps_instant_artillery() {
             )),
         "and the shot is over in the tick that fired it, exactly as it always was"
     );
+}
+
+// --- what an order promises (direction step 2) ------------------------------
+
+/// Every order the player can give says what it commits her to, and no two
+/// of them say the same thing.
+///
+/// The complaint this defends against is not hypothetical: `Advance` and
+/// `Assault` move a platoon toward the same hex and score identically, and
+/// the *only* difference between them is one the player could not read
+/// anywhere in the game. A promise that came back empty, or that read the
+/// same for both, would put the game straight back where it was — so this
+/// asserts the property rather than the wording.
+#[test]
+fn every_order_says_what_it_commits_the_platoon_to() {
+    let to = tactics_core::Hex::new(1, 1);
+    let all = [
+        Mission::Advance { to },
+        Mission::Assault { to },
+        Mission::Hold { at: Some(to) },
+        Mission::Recon { toward: to },
+        Mission::Withdraw {
+            via: "east_road".into(),
+        },
+        Mission::Support {
+            formation: "second".into(),
+        },
+    ];
+    let mut seen: Vec<&str> = Vec::new();
+    for mission in &all {
+        let promise = mission.promise();
+        assert!(
+            !promise.is_empty(),
+            "{:?} promises nothing at all",
+            mission.verb()
+        );
+        assert!(
+            !seen.contains(&promise),
+            "two orders make the same promise: {promise}"
+        );
+        seen.push(promise);
+    }
+    // The pair the whole step exists for, named explicitly: an advance stops
+    // for a fight and an assault does not, and a player choosing between the
+    // keys must be able to see that before she presses one.
+    assert_ne!(
+        Mission::Advance { to }.promise(),
+        Mission::Assault { to }.promise(),
+        "the two orders that differ only under fire must not read alike"
+    );
+    // Every verb the menu can list is in the shared table, which is what
+    // stops a UI from inventing a promise the rules never made.
+    for mission in &all {
+        assert!(
+            Mission::vocabulary()
+                .iter()
+                .any(|(verb, promise)| *verb == mission.verb() && *promise == mission.promise()),
+            "{} is missing from the shared vocabulary",
+            mission.verb()
+        );
+    }
+}
+
+/// The per-unit twin says the same kind of thing, because it is the same
+/// decision at a different scale: an ordinary march may break off for cover
+/// and a binding one may not, and both of those are promises.
+#[test]
+fn insisting_on_a_march_promises_something_an_ordinary_one_does_not() {
+    assert_ne!(
+        Latitude::Delegated.promise(),
+        Latitude::Binding.promise(),
+        "the whole value of insisting is that it means something different"
+    );
+    assert!(!Latitude::Delegated.promise().is_empty());
+    assert!(!Latitude::Binding.promise().is_empty());
+}
+
+// --- wounds with teeth (direction step 3) -----------------------------------
+
+/// One medium tank per side on open ground, crewed by name, so a wound
+/// carried in from a previous battle has somewhere to show.
+fn crewed_stage(reg: &DataRegistry, crew: &[&str]) -> (BattleState, UnitId) {
+    let rows = vec!["g".repeat(12), "g".repeat(12), "g".repeat(12)];
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "crewed_stage",
+        "palette": { "g": "grass" },
+        "rows": rows,
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let placements = vec![
+        UnitPlacement {
+            aboard_at: None,
+            at: [1, 1],
+            side: 0,
+            vehicle: "medium_tank".into(),
+            crew: crew.iter().map(|id| (*id).to_string()).collect(),
+            name: Some("Ours".into()),
+            facing: None,
+            formation: None,
+            leads: false,
+        },
+        unit_at([10, 1], 1, "medium_tank", "Theirs"),
+    ];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let state = BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        7,
+    );
+    (state, UnitId(0))
+}
+
+/// Rebuild the same stage with `hurt` marked wounded before the battle opens,
+/// which is what a girl carried out of last week's fight looks like.
+fn stage_with_a_wounded_girl(
+    reg: &DataRegistry,
+    crew: &[&str],
+    hurt: &[usize],
+) -> (BattleState, UnitId) {
+    let (state, ours) = crewed_stage(reg, crew);
+    // Mark the roster, then rebuild: `who_deploys` reads the roster at spawn,
+    // which is the only moment the question is asked.
+    let mut roster = (*state.roster).clone();
+    let ids: Vec<tactics_core::roster::GirlId> = state.unit(ours).unwrap().crew.clone();
+    for seat in hurt {
+        roster.get_mut(ids[*seat]).unwrap().status =
+            tactics_core::roster::GirlStatus::Wounded { days: 3 };
+    }
+    let rows = vec!["g".repeat(12), "g".repeat(12), "g".repeat(12)];
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "crewed_stage",
+        "palette": { "g": "grass" },
+        "rows": rows,
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let placements = vec![
+        UnitPlacement {
+            aboard_at: None,
+            at: [1, 1],
+            side: 0,
+            vehicle: "medium_tank".into(),
+            crew: crew.iter().map(|id| (*id).to_string()).collect(),
+            name: Some("Ours".into()),
+            facing: None,
+            formation: None,
+            leads: false,
+        },
+        unit_at([10, 1], 1, "medium_tank", "Theirs"),
+    ];
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let crews: Vec<Vec<tactics_core::roster::GirlId>> = vec![ids.clone(), Vec::new()];
+    let state = BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        7,
+    );
+    (state, ours)
+}
+
+/// A girl who is still recovering does not climb into the tank — and is not
+/// deleted from it either.
+///
+/// Both halves matter. Until this rule existed a wound cost a side nothing
+/// it could see: she deployed, `crew_skill` quietly ignored her, and the
+/// player was never told why her gunnery had gone off. And the campaign
+/// takes the crew list back at the end of a battle, so a girl *removed* from
+/// the list here would be a girl removed from her tank for good.
+#[test]
+fn a_girl_in_the_infirmary_does_not_climb_in() {
+    let reg = registry();
+    let crew = ["anka", "mina", "juno"];
+    let (state, ours) = stage_with_a_wounded_girl(&reg, &crew, &[1]);
+    let unit = state.unit(ours).unwrap();
+
+    assert_eq!(
+        unit.crew.len(),
+        3,
+        "she stays on the roll; the campaign hands this list back"
+    );
+    assert_eq!(
+        unit.crew_state.get(1).copied(),
+        Some(tactics_core::battle::CrewCondition::Absent),
+        "the girl who is still recovering is not aboard: {:?}",
+        unit.crew_state
+    );
+    assert_eq!(
+        state.fighting_crew(unit),
+        2,
+        "two girls in a three-seat tank"
+    );
+
+    // The seat she is not sitting in is not a wound. A vehicle that deployed
+    // short-handed must not read as one that has already been shot up, or
+    // every withdrawal threshold and every AI kill estimate in the game
+    // would price it as half dead.
+    assert_eq!(
+        state.condition(&reg, unit),
+        1.0,
+        "an empty seat is not damage"
+    );
+    let (_, whole) = state.substance(&reg, unit);
+    let (fresh, _) = crewed_stage(&reg, &crew);
+    let (_, full) = state.substance(&reg, fresh.unit(ours).unwrap());
+    assert_eq!(
+        whole + 2,
+        full,
+        "her seat leaves the reckoning entirely rather than counting as a loss"
+    );
+}
+
+/// ...but a tank whose whole crew is in the infirmary drives out anyway.
+///
+/// The campaign has no pool of replacements to draw on, and a vehicle with
+/// nobody aboard is one that nothing inside can kill — which is the invariant
+/// the anonymous-crew fallback exists to protect. The walking wounded go, and
+/// pay for it by being worth nothing at their stations.
+#[test]
+fn a_crew_with_nobody_fit_goes_out_anyway() {
+    let reg = registry();
+    let crew = ["anka", "mina", "juno"];
+    let (state, ours) = stage_with_a_wounded_girl(&reg, &crew, &[0, 1, 2]);
+    let unit = state.unit(ours).unwrap();
+    assert!(
+        unit.crew_state.is_empty(),
+        "nobody is marked absent when there is nobody else to send: {:?}",
+        unit.crew_state
+    );
+    assert_eq!(state.fighting_crew(unit), 3);
+}
+
+/// A wound taken at her station in a tank that came home is still a wound
+/// when the campaign screen draws.
+///
+/// This is the hole the consequence loop had. The battle tracked every girl's
+/// condition seat by seat all fight, and the only casualties the campaign
+/// ever heard about were the crews of *destroyed* vehicles — so a gunner
+/// knocked out in the first round of a battle her side won was fit again by
+/// the time anybody could look at her.
+#[test]
+fn a_wound_taken_at_her_station_survives_the_battle() {
+    use tactics_core::battle::CrewCondition;
+    use tactics_core::roster::CasualtyRules;
+
+    let reg = registry();
+    let mut state = OverworldState::from_map(&reg, "frontier", 11).expect("overworld");
+    state.rules = CasualtyRules { permadeath: false };
+    let attacker = state.side_armies(0).next().unwrap().id;
+    let defender = state.side_armies(1).next().unwrap().id;
+    let unit = state.army(attacker).unwrap().units[0].clone();
+    let girl = unit.crew[0];
+    assert!(state.roster.get(girl).unwrap().status.is_ready());
+
+    // Her vehicle came home. She did not come home fit.
+    let survivors = vec![(attacker, state.army(attacker).unwrap().units.clone())];
+    let hurt = tactics_core::overworld::CrewLoss {
+        girl,
+        vehicle: unit.vehicle.clone(),
+        killed_by: None,
+        found: Some(CrewCondition::Out),
+    };
+    state.apply_battle_result(&reg, attacker, defender, &survivors, &[hurt]);
+
+    let status = state.roster.get(girl).unwrap().status;
+    assert!(
+        !status.is_ready(),
+        "she was carried out of her own tank and the campaign forgot: {status:?}"
+    );
+    assert!(
+        !status.is_permanent(),
+        "permadeath is off, so a station wound is never fatal"
+    );
+    let days = status.days_out().expect("she is coming back");
+    assert!(
+        days > 0,
+        "a wound that keeps her out for no days is no wound"
+    );
+}
+
+/// A grazing hit costs her less than being carried out, and both cost less
+/// than a wreck. The ordering is the rule; the numbers live in mod data.
+#[test]
+fn how_badly_she_was_hurt_decides_how_long_she_is_out() {
+    use rand::SeedableRng;
+    use tactics_core::battle::CrewCondition;
+    use tactics_core::data::Casualties;
+    use tactics_core::roster::{CasualtyRules, CrewFate, resolve_station_fate};
+
+    let table = Casualties::default();
+    let rules = CasualtyRules { permadeath: false };
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(3);
+
+    let days = |fate: CrewFate| match fate {
+        CrewFate::Wounded { days } | CrewFate::Lost { days } => days,
+        _ => 0,
+    };
+    // Averaged over many rolls, because each is a range and a single draw
+    // proves nothing about the ordering.
+    let mean = |found: CrewCondition, rng: &mut rand_chacha::ChaCha8Rng| {
+        let total: u32 = (0..200)
+            .map(|_| days(resolve_station_fate(rules, &table, found, rng)))
+            .sum();
+        total as f64 / 200.0
+    };
+    let grazed = mean(CrewCondition::Wounded, &mut rng);
+    let carried = mean(CrewCondition::Out, &mut rng);
+    assert!(
+        grazed < carried,
+        "being carried out should cost more than being grazed: {grazed} vs {carried}"
+    );
+    // And a girl who was never in the vehicle takes nothing home from a
+    // battle she did not fight.
+    assert_eq!(
+        resolve_station_fate(rules, &table, CrewCondition::Absent, &mut rng),
+        CrewFate::Unharmed
+    );
+}
+
+/// One girl, one seat: a campaign map that names the same character in two
+/// crews gets her in the first of them and an anonymous crew in the second.
+///
+/// Found by the after-action screen rather than by reading the code, which is
+/// the point of having built it: `frontier` spreads ten characters over
+/// eighteen vehicles, so the campaign used to stamp three separate girls all
+/// called Rosa Steiner and the report listed the name three times. A roster
+/// the player cannot tell apart is a roster she cannot care about, and that
+/// is the entire premise of having one.
+#[test]
+fn nobody_crews_two_vehicles_at_once() {
+    let reg = registry();
+    let state = OverworldState::from_map(&reg, "frontier", 13).expect("overworld");
+
+    for side in 0..2u8 {
+        let mut names: Vec<&str> = state.roster.of_side(side).map(|g| g.def.as_str()).collect();
+        let before = names.len();
+        names.sort();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            before,
+            "side {side} enlisted somebody twice: {names:?}"
+        );
+    }
+
+    // ...and the vehicle whose named crew was already taken is not left
+    // crewless, because a vehicle nobody is in is one nothing inside can
+    // kill. It picks up an anonymous crew at the battle, exactly as a
+    // placement that named nobody always has.
+    let doubled = state
+        .side_armies(0)
+        .flat_map(|a| a.units.iter())
+        .any(|u| u.crew.is_empty());
+    assert!(
+        doubled,
+        "this test is meaningless unless frontier actually over-subscribes somebody"
+    );
+}
+
+/// Those anonymous crews stay in the battle they were invented for.
+///
+/// They are enlisted into the *battle's* copy of the roster, so their handles
+/// mean nothing to the campaign; handing them back with the survivors would
+/// leave an army holding ids the academy cannot resolve. Not a crash — every
+/// roster read simply returns nothing — which is exactly the kind of defect
+/// that sits there for months, so it is pinned.
+#[test]
+fn a_battle_does_not_enlist_anybody_into_the_academy() {
+    let reg = registry();
+    let mut state = OverworldState::from_map(&reg, "frontier", 17).expect("overworld");
+    let attacker = state.side_armies(0).next().unwrap().id;
+    let defender = state.side_armies(1).next().unwrap().id;
+
+    // A survivor list of the sort a battle hands back: real girls, plus a
+    // handle from beyond the end of the campaign's roster, which is what an
+    // anonymous crew member's id looks like from here.
+    let stranger = tactics_core::roster::GirlId(state.roster.len() as u32 + 5);
+    let mut units = state.army(attacker).unwrap().units.clone();
+    units[0].crew.push(stranger);
+    state.apply_battle_result(&reg, attacker, defender, &[(attacker, units)], &[]);
+
+    for unit in &state.army(attacker).unwrap().units {
+        for girl in &unit.crew {
+            assert!(
+                state.roster.get(*girl).is_some(),
+                "{girl:?} is in an army and in nobody's academy"
+            );
+        }
+    }
 }

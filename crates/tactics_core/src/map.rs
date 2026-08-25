@@ -962,6 +962,37 @@ impl MapFile {
                 check.check(a.at, Some(&u.vehicle), &u.crew, u.side);
             }
         }
+
+        // One girl, one seat. A campaign map is written by hand and it is
+        // very easy to spread ten characters over eighteen vehicles without
+        // noticing; the campaign drops the second mention and crews that
+        // vehicle anonymously, which is the right behaviour and a silent one.
+        // Said out loud here so the author finds out at `validate-mods` time
+        // rather than by reading a casualty list with the same name on it
+        // twice.
+        //
+        // Sorted before reporting: the warning text must not depend on hash
+        // order, or two runs of validation disagree about a file that has not
+        // changed.
+        let mut seen: std::collections::HashMap<(u8, &str), usize> =
+            std::collections::HashMap::new();
+        for army in &self.armies {
+            for unit in &army.units {
+                for girl in &unit.crew {
+                    *seen.entry((army.side, girl.as_str())).or_default() += 1;
+                }
+            }
+        }
+        let mut repeated: Vec<((u8, &str), usize)> =
+            seen.into_iter().filter(|(_, n)| *n > 1).collect();
+        repeated.sort();
+        for ((side, girl), times) in repeated {
+            report.warnings.push(format!(
+                "map `{}` names `{girl}` in {times} of side {side}'s crews; \
+                 she can only be in one, so the rest deploy with an anonymous crew",
+                self.id
+            ));
+        }
     }
 }
 

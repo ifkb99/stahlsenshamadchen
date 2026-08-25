@@ -1,0 +1,54 @@
+# What the order keys mean, said before they are pressed.
+#
+#   STAHL_PRESENT=immediate STAHL_DEBUG=1 STAHL_BATTLE=river_crossing \
+#     STAHL_SCRIPT=scripts/dev/orders-explained.txt cargo run -p stahlsenshamädchen
+#
+# The complaint this tour photographs: `G` and `X` both send a platoon at a
+# hex, one of them halts the moment anybody shoots, and until this the game
+# said so nowhere at all. A player who meant "attack" pressed the movement to
+# contact and watched her attack stop halfway.
+#
+# Hexes are axial. river_crossing places side 0's medium tank at offset
+# [10, 20] -> axial (0, 20).
+
+at 3.0
+
+# The unit panel first. Selecting a crew should now say what a click means
+# and what X means, because the per-crew twin of the assault order was
+# reachable by keyboard and explained in the changelog and nowhere else.
+hex 0,20
+wait 0.4
+click left
+wait 0.5
+log "crew selected: the panel offers both marches"
+shot /tmp/orders-01-crew.png
+
+# Then the formation panel, which is where the mission verbs live. F picks a
+# formation and drops the unit selection; the menu is the bottom half of the
+# page.
+key Escape
+wait 0.3
+key F
+wait 0.5
+log "formation picked: the order menu is up"
+shot /tmp/orders-02-menu.png
+
+# Give one, and read it back. The standing order now carries its own price on
+# the line under it, so a player who comes back to this platoon three rounds
+# later can still tell which of the two orders she gave.
+hex 8,24
+wait 0.4
+key X
+wait 0.6
+expect log "ordered to assault"
+shot /tmp/orders-03-assault-read-back.png
+
+# ...and the same platoon under the other verb, for the comparison. This is
+# the pair of screenshots to look at: the two pages should differ in the
+# clause under `Orders:`, not only in one word of the sentence.
+key G
+wait 0.6
+expect log "ordered to advance"
+shot /tmp/orders-04-advance-read-back.png
+
+quit

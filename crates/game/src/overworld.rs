@@ -16,8 +16,10 @@ use tactics_core::ai::AiPlanner;
 use tactics_core::battle::SideState;
 use tactics_core::map::MapKind;
 use tactics_core::overworld::{
-    ArmyId, ArmyMission, OverworldEvent, OverworldOrder, OverworldState, make_overworld_planner,
+    ArmyId, ArmyMission, ArmyUnit, OverworldEvent, OverworldOrder, OverworldState,
+    make_overworld_planner,
 };
+use tactics_core::roster::GirlId;
 use tactics_core::save::SaveGame;
 
 #[derive(Resource)]
@@ -38,6 +40,9 @@ struct Overworld {
     /// the instant it appears; a deferred `insert_resource` would let the
     /// AI slip in one more order first.
     muster: Option<Muster>,
+    /// The butcher's bill from the last battle, held until the player
+    /// dismisses it. Freezes the campaign exactly as `muster` does.
+    debrief: Option<AfterAction>,
 }
 
 impl Overworld {
@@ -107,6 +112,9 @@ struct OwPanel;
 #[derive(Component)]
 struct MusterPanel;
 
+#[derive(Component)]
+struct DebriefPanel;
+
 /// The campaign HUD's three text widgets, bundled for the same reason
 /// `battle::BattleHud` is: they are one thing conceptually, and the mutual
 /// `Without` filters exist only so Bevy can prove the `&mut Text` queries do
@@ -143,18 +151,68 @@ impl Plugin for OverworldPlugin {
                     drive_ai,
                     muster_input,
                     handle_input,
+                    // After `handle_input`, not before: dismissing the report
+                    // and ending the day are both Enter, and clearing the
+                    // report first would let the same keystroke fall straight
+                    // through into the campaign underneath it.
+                    debrief_input,
                     sync_armies,
                     update_owner_dots,
                     update_range_highlights,
                     update_ui,
                     update_muster_ui,
+                    update_debrief_ui,
                     apply_campaign_commands,
                 )
                     .chain()
                     .run_if(in_state(AppState::Overworld)),
             )
             .add_systems(OnExit(AppState::Overworld), leave_overworld);
+        // The campaign map answers the same questions the battle screen does,
+        // in its own terms. It did not, until the after-action report gave it
+        // something worth waiting for: every campaign tour was a stopwatch,
+        // which is the thing the script harness exists to stop being.
+        if crate::devtools::debug_enabled() {
+            app.init_resource::<crate::devtools::ScriptFacts>()
+                .add_systems(
+                    Update,
+                    publish_script_facts
+                        .after(apply_campaign_commands)
+                        .run_if(in_state(AppState::Overworld)),
+                );
+        }
     }
+}
+
+/// Tell the script runner what the campaign map knows about itself.
+///
+/// `turn` is the day, which is the campaign's answer to the same question a
+/// battle answers with the round. `idle` means the same thing here as there —
+/// a keystroke would be acted on and a screenshot would not lie — which on
+/// this screen means nothing is animating *and* nothing is holding the player
+/// behind a modal. `waiting` is the other half of that pair and the reason
+/// both exist: a script that photographs the after-action report has to be
+/// able to wait for it to arrive, and a script driving the campaign has to be
+/// able to wait for it to be gone.
+fn publish_script_facts(
+    overworld: Option<Res<Overworld>>,
+    log: Res<OwLogLines>,
+    mut facts: ResMut<crate::devtools::ScriptFacts>,
+) {
+    // Optional because the resource is inserted by `enter_overworld` and torn
+    // down on the way into a battle, so there are frames in this state with no
+    // campaign to ask. A required `Res` here panics on those frames.
+    let Some(overworld) = overworld else {
+        return;
+    };
+    let held = overworld.muster.is_some() || overworld.debrief.is_some();
+    facts.turn = overworld.state.turn;
+    facts.idle = overworld.anim.is_empty() && !held;
+    facts.waiting = held;
+    facts.over = overworld.state.over.is_some();
+    facts.score.clear();
+    facts.units.clear();
+    facts.log = log.0.iter().cloned().collect();
 }
 
 // Same reasoning as `battle::pump_events`: this is a setup system, and the
@@ -185,15 +243,24 @@ fn enter_overworld(
                 &outcome.survivors,
                 &outcome.losses,
             );
-            ow.anim.extend(events);
-            match (outcome.winner, outcome.stalemate) {
-                (Some(w), _) => log.push(format!(
-                    "Battle won by {}.",
-                    ow.state.sides[w as usize].name
-                )),
-                (None, true) => log.push("Neither side could find the other. Both withdrew."),
-                (None, false) => log.push("The battle ended in mutual ruin."),
+            let headline = match (outcome.winner, outcome.stalemate) {
+                (Some(w), _) => format!("Battle won by {}.", ow.state.sides[w as usize].name),
+                (None, true) => "Neither side could find the other. Both withdrew.".to_string(),
+                (None, false) => "The battle ended in mutual ruin.".to_string(),
+            };
+            log.push(headline.clone());
+            // Who paid for that, before the campaign moves on. "Human" here
+            // means a side with no planner attached, the same test the muster
+            // prompt uses and for the same reason: under `STAHL_AUTOPLAY`
+            // there is nobody to press Enter, and a modal nobody can dismiss
+            // is a hang rather than a screen.
+            let human =
+                (0..ow.state.sides.len() as u8).find(|side| !ow.planners.contains_key(side));
+            if let Some(side) = human {
+                let report = after_action(&ow.state, side, headline, &events, &outcome.survivors);
+                ow.debrief = Some(report);
             }
+            ow.anim.extend(events);
             if let Some(campaign) = campaign {
                 campaign::call_battle_end_hook(&campaign, &ow.state, outcome.winner);
             }
@@ -252,6 +319,7 @@ fn enter_overworld(
         attack_targets: Vec::new(),
         range_dirty: false,
         muster: None,
+        debrief: None,
     });
 }
 
@@ -432,6 +500,31 @@ fn spawn_ui(commands: &mut Commands) {
         MusterPanel,
         OverworldScope,
     ));
+    // After-action report, shown only on the frame after a battle until the
+    // player dismisses it. Wider and taller than the muster prompt because
+    // it lists people by name and a roll call that scrolls off is a roll
+    // call nobody reads.
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Percent(12.0),
+            left: Val::Percent(50.0),
+            margin: UiRect::left(Val::Px(-220.0)),
+            width: Val::Px(440.0),
+            padding: UiRect::all(Val::Px(16.0)),
+            display: Display::None,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.06, 0.06, 0.12, 0.96)),
+        Text::new(""),
+        TextFont {
+            font_size: 15.0.into(),
+            ..default()
+        },
+        TextColor(Color::srgb(0.95, 0.95, 0.9)),
+        DebriefPanel,
+        OverworldScope,
+    ));
 }
 
 fn pump_events(
@@ -443,7 +536,7 @@ fn pump_events(
     mut next: ResMut<NextState<AppState>>,
     campaign: Option<NonSend<Campaign>>,
 ) {
-    if overworld.muster.is_some() {
+    if overworld.muster.is_some() || overworld.debrief.is_some() {
         return;
     }
     overworld.pace.tick(time.delta());
@@ -667,6 +760,121 @@ fn place(hex: Hex) -> String {
     format!("({col}, {row})")
 }
 
+/// The butcher's bill, held on screen until the player has read it.
+///
+/// The campaign's log already narrates every casualty, one line every three
+/// tenths of a second, in among income and army movements — which is to say
+/// the game already told the player that Anka is in hospital for six days and
+/// she almost certainly did not see it. That is the whole of what "no stakes"
+/// meant: the consequences existed and nothing ever stopped to show them.
+///
+/// So this stops. It is the same freeze [`Muster`] uses, for the same reason:
+/// a decision or a cost that the campaign drives past is one the player never
+/// makes or pays.
+struct AfterAction {
+    headline: String,
+    /// Girls the battle took out of the line, worst first.
+    cost: Vec<String>,
+    /// Everyone who came home fit, with what this battle was for her.
+    home: Vec<String>,
+}
+
+/// Build the after-action report for `side` out of what the campaign just
+/// applied.
+///
+/// A free function taking plain data rather than a method on anything, so it
+/// can be tested without a window: what this screen says is exactly the sort
+/// of thing that rots silently, because nobody reviewing a diff can see it
+/// and running the game to look costs a minute a time.
+///
+/// The casualties come from the events rather than from the roster because
+/// the roster has already been written and cannot tell "hurt today" from
+/// "hurt on Tuesday and still recovering" — the difference the player is
+/// here for. Survivors come from the returned rosters for the same reason:
+/// they are who was *in this battle*, not who the academy has.
+fn after_action(
+    state: &OverworldState,
+    side: u8,
+    headline: String,
+    events: &[OverworldEvent],
+    survivors: &[(ArmyId, Vec<ArmyUnit>)],
+) -> AfterAction {
+    use tactics_core::roster::CrewFate;
+
+    let mine = |girl: &GirlId| state.roster.get(*girl).is_some_and(|g| g.owner == side);
+    let name = |girl: &GirlId| {
+        state
+            .roster
+            .get(*girl)
+            .map(|g| g.name.clone())
+            .unwrap_or_else(|| "A crew member".into())
+    };
+
+    // Worst first, so the line that matters is the one at the top of the
+    // page rather than wherever the girl-id order happened to put it.
+    let rank = |fate: &CrewFate| match fate {
+        CrewFate::Killed => 0,
+        CrewFate::Wounded { days } => 1000 - *days.min(&999) as i32,
+        CrewFate::Lost { days } => 2000 - *days.min(&999) as i32,
+        CrewFate::Unharmed => 3000,
+    };
+    let mut hurt: Vec<(i32, GirlId, CrewFate)> = events
+        .iter()
+        .filter_map(|e| match e {
+            OverworldEvent::CrewCasualty { girl, fate } if mine(girl) => {
+                Some((rank(fate), *girl, *fate))
+            }
+            _ => None,
+        })
+        .filter(|(_, _, fate)| !matches!(fate, CrewFate::Unharmed))
+        .collect();
+    hurt.sort_by_key(|(rank, girl, _)| (*rank, *girl));
+
+    let cost = hurt
+        .iter()
+        .map(|(_, girl, fate)| match fate {
+            CrewFate::Killed => format!("  {} - killed in action", name(girl)),
+            CrewFate::Wounded { days } => {
+                format!("  {} - wounded, back in {days} day(s)", name(girl))
+            }
+            CrewFate::Lost { days } => {
+                format!("  {} - walking back, {days} day(s)", name(girl))
+            }
+            CrewFate::Unharmed => format!("  {}", name(girl)),
+        })
+        .collect();
+
+    // Anyone hurt is already named above; listing her twice would make the
+    // page read as though the academy had two of her.
+    let taken: Vec<GirlId> = hurt.iter().map(|(_, girl, _)| *girl).collect();
+    let mut home: Vec<GirlId> = survivors
+        .iter()
+        .flat_map(|(_, units)| units.iter())
+        .flat_map(|unit| unit.crew.iter())
+        .filter(|girl| mine(girl) && !taken.contains(girl))
+        .copied()
+        .collect();
+    home.sort();
+    home.dedup();
+    let home = home
+        .iter()
+        .filter_map(|girl| state.roster.get(*girl))
+        // A girl who was on the roll but stayed in the infirmary did not
+        // fight this battle and has nothing to say about it.
+        .filter(|girl| girl.status.is_ready())
+        .map(|girl| match girl.battles {
+            0 | 1 => format!("  {} - her first", girl.name),
+            n => format!("  {} - {n} battles", girl.name),
+        })
+        .collect();
+
+    AfterAction {
+        headline,
+        cost,
+        home,
+    }
+}
+
 /// A triggered battle waiting for the player to pick reinforcements. While
 /// one exists the campaign is frozen: no events pump, no AI moves.
 struct Muster {
@@ -861,8 +1069,96 @@ fn update_muster_ui(
             }
         ));
     }
+    // Who is not coming, and why. The other end of the after-action report:
+    // the debrief says what a battle cost and this is where that cost is
+    // actually paid, which is the only place it can be *felt* — a name
+    // missing from a crew list is an abstraction until the moment you are
+    // about to fight without her.
+    let unavailable: Vec<&tactics_core::roster::Girl> = state
+        .roster
+        .of_side(muster.side)
+        .filter(|girl| !girl.status.is_ready())
+        .collect();
+    if !unavailable.is_empty() {
+        lines.push(String::new());
+        lines.push(format!(
+            "{} not fit to deploy:",
+            if unavailable.len() == 1 {
+                "1 girl".to_string()
+            } else {
+                format!("{} girls", unavailable.len())
+            }
+        ));
+        // Named, and capped: a page that lists twenty names is one nobody
+        // reads, and the count above is the number that matters.
+        for girl in unavailable.iter().take(4) {
+            lines.push(format!(
+                "  {}{}",
+                girl.name,
+                match girl.status.days_out() {
+                    Some(0) | None => String::new(),
+                    Some(days) => format!(" ({days} day(s))"),
+                }
+            ));
+        }
+        if unavailable.len() > 4 {
+            lines.push(format!("  ...and {} more", unavailable.len() - 4));
+        }
+    }
     lines.push(String::new());
     lines.push("1-9 toggle  M all  N none  Enter fight".into());
+    text.0 = lines.join("\n");
+}
+
+/// Enter (or Space) dismisses the after-action report and lets the campaign
+/// run on.
+///
+/// One key, and no choice on the page: this is a thing to have read, not a
+/// decision. Anything the player wants to *do* about her casualties belongs
+/// on a roster screen she can open whenever she likes, not on a modal she is
+/// being held behind.
+fn debrief_input(mut overworld: ResMut<Overworld>, keys: Res<ButtonInput<KeyCode>>) {
+    if overworld.debrief.is_none() {
+        return;
+    }
+    if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
+        overworld.debrief = None;
+    }
+}
+
+fn update_debrief_ui(
+    overworld: Res<Overworld>,
+    mut panel: Query<(&mut Node, &mut Text), With<DebriefPanel>>,
+) {
+    let Ok((mut node, mut text)) = panel.single_mut() else {
+        return;
+    };
+    let Some(debrief) = overworld.debrief.as_ref() else {
+        node.display = Display::None;
+        return;
+    };
+    node.display = Display::Flex;
+
+    let mut lines = vec![format!("Day {} - after action", overworld.state.turn)];
+    lines.push(String::new());
+    lines.push(debrief.headline.clone());
+    lines.push(String::new());
+    // The cost first and by name, because that is the whole reason the
+    // campaign is being stopped. A battle nobody was hurt in says so rather
+    // than showing an empty heading, so the page always reads as an answer.
+    if debrief.cost.is_empty() {
+        lines.push("Nobody was hurt.".into());
+    } else {
+        lines.push("Out of the line:".into());
+        lines.extend(debrief.cost.iter().cloned());
+    }
+    if !debrief.home.is_empty() {
+        lines.push(String::new());
+        lines.push("Came home:".into());
+        lines.extend(debrief.home.iter().cloned());
+    }
+    lines.push(String::new());
+    lines.push("Enter to continue.".into());
     text.0 = lines.join("\n");
 }
 
@@ -881,7 +1177,11 @@ fn choose_battle_map(registry: &tactics_core::data::DataRegistry, terrain: &str)
 }
 
 fn drive_ai(mods: Res<Mods>, mut overworld: ResMut<Overworld>) {
-    if overworld.state.over.is_some() || !overworld.anim.is_empty() || overworld.muster.is_some() {
+    if overworld.state.over.is_some()
+        || !overworld.anim.is_empty()
+        || overworld.muster.is_some()
+        || overworld.debrief.is_some()
+    {
         return;
     }
     let side = overworld.state.active_side;
@@ -924,7 +1224,11 @@ fn handle_input(
     view: map_render::View,
     scoped: Query<Entity, With<OverworldScope>>,
 ) {
-    if overworld.state.over.is_some() || !overworld.anim.is_empty() || overworld.muster.is_some() {
+    if overworld.state.over.is_some()
+        || !overworld.anim.is_empty()
+        || overworld.muster.is_some()
+        || overworld.debrief.is_some()
+    {
         return;
     }
     let side = overworld.state.active_side;
@@ -1378,4 +1682,109 @@ fn leave_overworld(mut commands: Commands, scoped: Query<Entity, With<OverworldS
         commands.entity(entity).despawn();
     }
     commands.remove_resource::<CurrentMap>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tactics_core::roster::CrewFate;
+
+    fn registry() -> tactics_core::data::DataRegistry {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
+        tactics_core::data::DataRegistry::load_dir(&root)
+            .expect("mods load")
+            .0
+    }
+
+    /// The after-action report names the player's own girls, worst first, and
+    /// says nothing about anybody else's.
+    ///
+    /// The ordering is the part worth pinning. The campaign resolves fates in
+    /// girl-id order because the rng demands it, which means without a sort
+    /// here the one line the player most needs — somebody died — turns up
+    /// wherever the roster happened to put her, under four lines about
+    /// bruises.
+    #[test]
+    fn the_debrief_names_our_own_casualties_worst_first() {
+        let reg = registry();
+        let state = OverworldState::from_map(&reg, "frontier", 5).expect("overworld");
+        let ours: Vec<GirlId> = state.roster.of_side(0).map(|g| g.id).take(3).collect();
+        let theirs = state
+            .roster
+            .of_side(1)
+            .map(|g| g.id)
+            .next()
+            .expect("side 1 has girls");
+        assert!(ours.len() >= 3, "frontier should field enough girls");
+
+        let events = vec![
+            OverworldEvent::CrewCasualty {
+                girl: ours[0],
+                fate: CrewFate::Wounded { days: 2 },
+            },
+            OverworldEvent::CrewCasualty {
+                girl: ours[1],
+                fate: CrewFate::Killed,
+            },
+            OverworldEvent::CrewCasualty {
+                girl: ours[2],
+                fate: CrewFate::Unharmed,
+            },
+            OverworldEvent::CrewCasualty {
+                girl: theirs,
+                fate: CrewFate::Killed,
+            },
+        ];
+        let report = after_action(&state, 0, "Battle won by us.".into(), &events, &[]);
+
+        assert_eq!(
+            report.cost.len(),
+            2,
+            "the unharmed girl and the enemy's dead do not belong on our bill: {:#?}",
+            report.cost
+        );
+        let dead = state.roster.get(ours[1]).unwrap().name.clone();
+        assert!(
+            report.cost[0].contains(&dead),
+            "the worst news goes first, got {:#?}",
+            report.cost
+        );
+        let enemy = state.roster.get(theirs).unwrap().name.clone();
+        assert!(
+            !report.cost.iter().any(|line| line.contains(&enemy)),
+            "the enemy's losses are not our casualty list"
+        );
+    }
+
+    /// A girl who came home fit is listed as having come home, and a girl who
+    /// was hurt is not listed twice.
+    #[test]
+    fn a_girl_is_on_one_side_of_the_ledger_or_the_other() {
+        let reg = registry();
+        let state = OverworldState::from_map(&reg, "frontier", 5).expect("overworld");
+        let army = state.side_armies(0).next().expect("side 0 has an army");
+        let units = army.units.clone();
+        let hurt = units[0].crew[0];
+
+        let events = vec![OverworldEvent::CrewCasualty {
+            girl: hurt,
+            fate: CrewFate::Wounded { days: 4 },
+        }];
+        let survivors = vec![(army.id, units.clone())];
+        let report = after_action(&state, 0, "Battle won by us.".into(), &events, &survivors);
+
+        let name = state.roster.get(hurt).unwrap().name.clone();
+        assert!(
+            report.cost.iter().any(|line| line.contains(&name)),
+            "she is on the bill"
+        );
+        assert!(
+            !report.home.iter().any(|line| line.contains(&name)),
+            "and therefore not also in the roll call of who came home fit"
+        );
+        assert!(
+            !report.home.is_empty(),
+            "everybody else in her army came home and the page should say so"
+        );
+    }
 }

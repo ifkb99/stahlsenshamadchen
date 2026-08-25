@@ -21,6 +21,22 @@
         "brewup_percent": 60,
         "brew_safety_percent": 12
     },
+    "casualties": {
+        "harm_kinetic": 55,
+        "harm_explosive": 40,
+        "harm_small_arms": 20,
+        "harm_unattributed": 40,
+        "harm_per_safety": 8,
+        "harm_floor": 5,
+        "harm_ceiling": 95,
+        "adrift_percent": 25,
+        "adrift_days": [1, 3],
+        "severe_percent": 25,
+        "severe_days": [5, 10],
+        "light_days": [1, 4],
+        "carried_days": [3, 8],
+        "grazed_days": [1, 4]
+    },
     "cores": [
         {
             "id": "strength",

@@ -1101,7 +1101,10 @@ fn interior(registry: &DataRegistry, unit: &super::Unit) -> Vec<(InteriorChoice,
             .get(seat)
             .copied()
             .unwrap_or(super::CrewCondition::Fine);
-        if condition != super::CrewCondition::Out && crew_weight > 0 {
+        // Out and absent both weigh nothing, for opposite reasons: one has
+        // already been found by a previous roll and the other was never in
+        // the vehicle to find.
+        if condition.fighting() && crew_weight > 0 {
             targets.push((InteriorChoice::Seat(seat), crew_weight));
         }
     }

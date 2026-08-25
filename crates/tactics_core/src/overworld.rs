@@ -7,7 +7,7 @@
 use crate::ai::{AiConfig, AiPlanner};
 use crate::data::{DataRegistry, MovementClass};
 use crate::map::{HexMap, MapFile, MapKind};
-use crate::roster::{CasualtyRules, GirlId, Roster, resolve_crew_fate};
+use crate::roster::{CasualtyRules, GirlId, Roster, resolve_crew_fate, resolve_station_fate};
 use hexx::Hex;
 use rand::seq::IndexedRandom;
 use rand::{RngExt, SeedableRng};
@@ -50,16 +50,35 @@ pub struct ArmyUnit {
     pub name: Option<String>,
 }
 
-/// A girl who was aboard a vehicle when it was destroyed, and what destroyed
-/// it — enough for the campaign to work out what became of her.
+/// What one battle did to one girl — enough for the campaign to work out
+/// how long it keeps her out.
+///
+/// Named for the common case rather than the whole of it: she is a loss to
+/// the order of battle for some number of days, which is exactly what the
+/// campaign does with this. Two very different things arrive as one struct
+/// because the campaign's job is the same either way, and [`Self::found`] is
+/// what tells them apart.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrewLoss {
     pub girl: GirlId,
     /// The vehicle she was in, for its [`crate::data::VehicleDef::safety`].
     pub vehicle: String,
     /// The damage type of the last hit the vehicle took, if the battle
-    /// recorded one.
+    /// recorded one. Only consulted when the vehicle did not come home.
     pub killed_by: Option<crate::data::DamageType>,
+    /// How she was found when the shooting stopped, for a vehicle that came
+    /// home to be looked in.
+    ///
+    /// `None` is the case this struct was originally written for and is
+    /// still the worst one: her vehicle did not come back, so nobody looked
+    /// in the seat and the fate rolls have to work out what became of her
+    /// from what killed it.
+    ///
+    /// `#[serde(default)]` so a campaign saved before wounds outlived their
+    /// battle opens as one where every reported girl was in a wreck, which
+    /// is what it was.
+    #[serde(default)]
+    pub found: Option<crate::battle::CrewCondition>,
 }
 
 /// What an army has been told to do, until it is told something else.
@@ -341,7 +360,21 @@ impl OverworldState {
         // Enlisting as the armies are built is what turns map data into
         // people: every crew id named by the file becomes a girl belonging to
         // that army's academy, and nothing refers to a definition again.
+        //
+        // Once per academy, though, and this is not a nicety. A campaign map
+        // is written by hand and the base game's `frontier` names its ten
+        // characters across eighteen vehicles, so stamping one girl per
+        // mention gave Kuhlmann three Rosa Steiners — which the after-action
+        // report then dutifully listed three times. One person cannot crew
+        // two vehicles, and a roster the player cannot tell apart is a roster
+        // she cannot care about, which is the whole premise of having one.
+        //
+        // The second mention is dropped rather than being an error: the
+        // vehicle gets an anonymous crew, exactly as a placement naming
+        // nobody does, and `validate_into` says so out loud where a content
+        // author will hear it.
         let mut roster = Roster::new();
+        let mut taken: std::collections::HashSet<(u8, &str)> = std::collections::HashSet::new();
         let armies = file
             .armies
             .iter()
@@ -361,6 +394,7 @@ impl OverworldState {
                         crew: u
                             .crew
                             .iter()
+                            .filter(|def_id| taken.insert((a.side, def_id.as_str())))
                             .filter_map(|def_id| {
                                 roster.enlist_from_registry(registry, a.side, def_id)
                             })
@@ -1028,7 +1062,23 @@ impl OverworldState {
                 .vehicle(&loss.vehicle)
                 .map(|v| v.safety)
                 .unwrap_or(3);
-            let fate = resolve_crew_fate(self.rules, safety, loss.killed_by, &mut self.rng);
+            // Two tables, one decision: a girl pulled out of a wreck is
+            // priced by what wrecked it, and a girl carried home in her own
+            // tank by how the crew found her. Both roll through the campaign
+            // rng in girl-id order, so a replay agrees with the day it
+            // replays.
+            let fate = match loss.found {
+                None => resolve_crew_fate(
+                    self.rules,
+                    &registry.casualties,
+                    safety,
+                    loss.killed_by,
+                    &mut self.rng,
+                ),
+                Some(found) => {
+                    resolve_station_fate(self.rules, &registry.casualties, found, &mut self.rng)
+                }
+            };
             if let Some(girl) = self.roster.get_mut(loss.girl) {
                 girl.status = fate.into();
             }
@@ -1049,8 +1099,20 @@ impl OverworldState {
 
         for (id, units) in survivors {
             let id = *id;
+            // A vehicle that marched out with no named crew is given an
+            // anonymous one at the battle — enlisted into the battle's *copy*
+            // of the roster, so her handle means nothing here. Writing those
+            // handles back would leave an army holding ids the campaign
+            // cannot resolve, which is not a crash but is a girl-shaped hole
+            // in every roster read afterwards. The academy's rolls are the
+            // academy's: a crew member the campaign never enlisted does not
+            // join it by having fought once.
+            let mut units = units.clone();
+            for unit in &mut units {
+                unit.crew.retain(|girl| self.roster.get(*girl).is_some());
+            }
             if let Some(army) = self.army_mut(id) {
-                army.units = units.clone();
+                army.units = units;
                 if army.units.is_empty() {
                     army.alive = false;
                     events.push(OverworldEvent::ArmyDestroyed { army: id });

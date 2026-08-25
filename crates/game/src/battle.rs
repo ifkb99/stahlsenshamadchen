@@ -13,8 +13,8 @@ use std::sync::Arc;
 use tactics_core::Hex;
 use tactics_core::ai::{AiConfig, AiDriver, SideCommand, make_battle_planner};
 use tactics_core::battle::{
-    BattleState, Contact, EndReason, Event as BattleEvent, FireIntent, Formation, FormationId,
-    Latitude, Mission, Order, SideState, Unit, UnitId, reachable,
+    BattleState, Contact, CrewCondition, EndReason, Event as BattleEvent, FireIntent, Formation,
+    FormationId, Latitude, Mission, Order, SideState, Unit, UnitId, reachable,
 };
 use tactics_core::map::{ObjectiveKind, UnitPlacement};
 use tactics_core::overworld::ArmyId;
@@ -545,11 +545,21 @@ impl Plugin for BattlePlugin {
 /// than in the runner because `Battle` is this module's business and the
 /// campaign map will answer the same questions in its own terms.
 fn publish_script_facts(
-    battle: Res<Battle>,
+    battle: Option<Res<Battle>>,
     log: Res<BattleLog>,
     movers: Query<&Mover>,
     mut facts: ResMut<crate::devtools::ScriptFacts>,
 ) {
+    // Optional, and not defensively: `finish_battle` removes `Battle`, and
+    // the explicit `.after(finish_battle)` ordering makes Bevy insert a sync
+    // point between the two — so on the frame a battle ends this system runs
+    // with the resource already gone. A required `Res` panics there, which is
+    // what happens to a scripted campaign tour the moment its battle is over,
+    // and it took three runs of one to find because a panic in a task pool
+    // prints no system name.
+    let Some(battle) = battle else {
+        return;
+    };
     facts.turn = battle.state.round;
     // "Idle" means the game is *waiting for the player*: the only moment a
     // script's keystroke does what a person's would, and the only moment a
@@ -562,6 +572,11 @@ fn publish_script_facts(
     // more will — or every tour that fights to a finish would hang on its
     // last `until`.
     facts.idle = battle.state.is_over() || battle.listening(movers.is_empty());
+    // Every screen answers for every fact, even the ones it has no notion of.
+    // `ScriptFacts` is one resource shared by all of them, so a field left
+    // alone here would still be holding the campaign map's last answer, and a
+    // script would wait on a prompt that was dismissed two screens ago.
+    facts.waiting = false;
     facts.over = battle.state.is_over();
     facts.score.clone_from(&battle.state.score);
     facts.log = log.0.iter().cloned().collect();
@@ -1056,7 +1071,10 @@ fn spawn_battle_ui(commands: &mut Commands) {
             position_type: PositionType::Absolute,
             top: Val::Px(8.0),
             right: Val::Px(8.0),
-            width: Val::Px(240.0),
+            // Wider than it was, because the panel now says what an order
+            // means rather than only naming it, and a promise that wraps to
+            // three lines is one nobody reads.
+            width: Val::Px(300.0),
             padding: UiRect::all(Val::Px(8.0)),
             flex_direction: FlexDirection::Column,
             row_gap: Val::Px(6.0),
@@ -2873,7 +2891,13 @@ fn update_panel(
     if let Some(unit) = shown {
         // Describe the tile under the cursor rather than the unit's own, so
         // terrain can be read without dropping the selection.
-        text.0 = format_unit(registry, state, unit, hovered_tile.unwrap_or(unit.pos));
+        text.0 = format_unit(
+            registry,
+            state,
+            unit,
+            hovered_tile.unwrap_or(unit.pos),
+            unit.side == view_side,
+        );
         set_portrait(&mut hud.portrait, &art, state, unit.id);
         return;
     }
@@ -2920,6 +2944,14 @@ fn format_formation(
         "Orders: {}",
         mission_sentence(state, formation.mission.as_ref())
     ));
+    // ...and what that order actually commits them to. The player is reading
+    // her own last decision back here, and the whole complaint that started
+    // this work was that she could not tell an advance from an assault after
+    // giving one. The promise comes from the engine so this line cannot
+    // describe an order the rules stopped implementing.
+    if let Some(mission) = formation.mission.as_ref() {
+        lines.push(format!("  ({})", mission.promise()));
+    }
     if let Some((change, ticks)) = &formation.incoming {
         // An amendment reads differently from a countermand, because the
         // player who queued a leg should not fear it will replace her plan.
@@ -2932,6 +2964,12 @@ fn format_formation(
             mission_sentence(state, Some(change.mission())),
             registry.scale.format_duration(*ticks)
         ));
+        // An order in transit is the one the player just gave, and under a
+        // signals net it is the *only* place she can read it back until it
+        // lands. Leaving the promise off this line would mean the panel
+        // explained her decision to her only after it was too late to
+        // change it.
+        lines.push(format!("  ({})", change.mission().promise()));
     }
     for leg in &formation.plan {
         lines.push(format!("Then: {}", mission_sentence(state, Some(leg))));
@@ -2989,8 +3027,14 @@ fn format_formation(
         lines.push(format!("  {}{}", unit.name, tag));
     }
     lines.push(String::new());
-    lines.push("G advance / X assault / H hold / R recon".into());
-    lines.push("on the hovered hex; W withdraw. (Shift queues)".into());
+    // The order menu, with what each verb costs, because a verb whose
+    // meaning is only discoverable by pressing it and watching is not a verb
+    // the player is really choosing between. The keys are the game's to know
+    // and the promises are the engine's, so they are joined here and written
+    // down in neither place twice.
+    lines.push("Orders, on the hovered hex:".into());
+    lines.extend(order_menu());
+    lines.push("Shift queues a leg behind the last.".into());
     lines.push("F next formation, Esc drops it.".into());
     if let Some(hex) = hovered {
         lines.push(String::new());
@@ -2998,6 +3042,39 @@ fn format_formation(
         lines.push(format_tile(registry, state, hex));
     }
     lines.join("\n")
+}
+
+/// Which key gives which order, in the order the panel lists them.
+///
+/// The keys belong to the game and the promises belong to the engine, so
+/// this is the join and the only place either is written down twice.
+/// `W` is last because it is the one order that is not aimed at the cursor.
+const MISSION_KEYS: [(&str, &str); 5] = [
+    ("G", "advance"),
+    ("X", "assault"),
+    ("H", "hold"),
+    ("R", "reconnoitre"),
+    ("W", "withdraw"),
+];
+
+/// The order menu: every mission key, its verb, and what that verb commits
+/// the platoon to.
+///
+/// A verb the engine no longer publishes a promise for is dropped rather
+/// than printed bare — a menu entry that explains nothing is worse than one
+/// line fewer — and `every_mission_key_has_a_promise` fails the build before
+/// a player ever sees the gap.
+fn order_menu() -> Vec<String> {
+    let vocabulary = Mission::vocabulary();
+    MISSION_KEYS
+        .iter()
+        .filter_map(|(key, verb)| {
+            vocabulary
+                .iter()
+                .find(|(v, _)| v == verb)
+                .map(|(_, promise)| format!("  {key} {verb} - {promise}"))
+        })
+        .collect()
 }
 
 /// The formation's net in numbers: how far the leader's radio carries, how
@@ -3211,11 +3288,17 @@ fn format_attack(
     lines.join("\n")
 }
 
+/// One crew, as the panel describes her. `own` says whether she is the
+/// viewer's to order, which is the only thing that decides whether the
+/// order hints belong on the page: telling the player which key would press
+/// an *enemy* crew on through fire is nonsense, and worse, it reads as an
+/// offer.
 fn format_unit(
     registry: &tactics_core::data::DataRegistry,
     state: &BattleState,
     unit: &tactics_core::battle::Unit,
     tile: Hex,
+    own: bool,
 ) -> String {
     let vehicle = registry.vehicle(&unit.vehicle);
     let mut lines = vec![
@@ -3288,7 +3371,7 @@ fn format_unit(
         }
     }
     lines.push("Crew:".into());
-    for c in &unit.crew {
+    for (seat, c) in unit.crew.iter().enumerate() {
         if let Some(girl) = state.roster.get(*c) {
             // Her strongest training, named. Words rather than a stat block:
             // girls read as people when described and as units when
@@ -3307,12 +3390,43 @@ fn format_unit(
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
+            // What she is doing, when it is not "her job". A seat nobody is
+            // sitting in has to be visible or the crew bonuses simply look
+            // wrong: the panel would show a full crew and the tank would
+            // drive like an empty one.
+            let state_tag = match unit.crew_state.get(seat) {
+                Some(CrewCondition::Absent) => " - in the infirmary, not aboard",
+                Some(CrewCondition::Wounded) => " - hurt, still at her station",
+                Some(CrewCondition::Out) => " - out of the fight",
+                _ => "",
+            };
             if summary.is_empty() {
-                lines.push(format!("  {}", girl.name));
+                lines.push(format!("  {}{state_tag}", girl.name));
             } else {
-                lines.push(format!("  {} ({summary})", girl.name));
+                lines.push(format!("  {} ({summary}){state_tag}", girl.name));
             }
         }
+    }
+    // What she is under, and the two ways to change it. The formation panel
+    // explains its verbs; this one had nothing at all to say about the key
+    // that presses a single crew on through fire, which meant the whole
+    // point of being able to insist was discoverable only by reading the
+    // changelog. Both promises come from the engine, so the two scales of
+    // the same decision are described in the same words.
+    if own {
+        lines.push(String::new());
+        match unit.tasking {
+            Some(to) => {
+                lines.push(format!(
+                    "Marching on {} - {}",
+                    hex_label(to),
+                    unit.latitude.promise()
+                ));
+            }
+            None => lines.push("No standing destination.".into()),
+        }
+        lines.push(format!("  click - {}", Latitude::Delegated.promise()));
+        lines.push(format!("  X - {}", Latitude::Binding.promise()));
     }
     lines.push(String::new());
     lines.push(format_tile(registry, state, tile));
@@ -3440,9 +3554,12 @@ fn finish_battle(
             });
         }
 
-        // Everyone who was aboard something that burned. The battle reports
-        // who and what killed it; the campaign decides what that cost them,
-        // because whether this game kills its characters is a campaign rule.
+        // Everyone the battle hurt, in two kinds.
+        //
+        // First, everyone who was aboard something that burned. The battle
+        // reports who and what killed it; the campaign decides what that
+        // cost them, because whether this game kills its characters is a
+        // campaign rule.
         let mut losses = Vec::new();
         for unit in battle.state.lost_units() {
             for girl in &unit.crew {
@@ -3450,6 +3567,35 @@ fn finish_battle(
                     girl: *girl,
                     vehicle: unit.vehicle.clone(),
                     killed_by: unit.last_hit_by,
+                    found: None,
+                });
+            }
+        }
+        // ...and then everyone who was hurt at her station in a vehicle that
+        // came home. This half used to be thrown away at the door: the
+        // battle tracked each girl's condition seat by seat all fight, and
+        // then the only casualties the campaign ever heard about were the
+        // crews of destroyed vehicles. A gunner knocked out on the first
+        // round of a battle her side won was fit again by the time the
+        // campaign screen drew, which is the wound system having no teeth in
+        // the most literal possible sense.
+        //
+        // `Absent` is skipped for the reason it exists: she was in the
+        // infirmary before this battle started and is not a casualty of it.
+        for unit in battle.state.surviving_units() {
+            for (seat, girl) in unit.crew.iter().enumerate() {
+                let found = unit.crew_state.get(seat).copied();
+                if !matches!(
+                    found,
+                    Some(CrewCondition::Wounded) | Some(CrewCondition::Out)
+                ) {
+                    continue;
+                }
+                losses.push(CrewLoss {
+                    girl: *girl,
+                    vehicle: unit.vehicle.clone(),
+                    killed_by: unit.last_hit_by,
+                    found,
                 });
             }
         }
@@ -3649,5 +3795,98 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The panels say what an order commits her to, at both scales.
+    ///
+    /// Screenshots are the usual way to review a panel and they cannot be
+    /// captured from a headless shell, so the wording that the whole of step
+    /// 2 consists of would otherwise be reviewable by nobody. Asserting on
+    /// the strings is not elegant; a promise silently disappearing from the
+    /// one page that explains the game is worse.
+    #[test]
+    fn the_panels_explain_the_orders_they_offer() {
+        let reg = registry();
+        let mut state = BattleState::from_map(&reg, "river_crossing", 5).expect("battle builds");
+
+        // The formation panel, under an order, offers the menu and reads the
+        // standing order back with its price attached.
+        let formation = FormationId(0);
+        let to = state
+            .formations()
+            .first()
+            .and_then(|f| f.leader)
+            .and_then(|id| state.unit(id))
+            .map(|u| u.pos)
+            .expect("a formation with somebody in it");
+        state
+            .apply(
+                &reg,
+                &Order::SetMission {
+                    formation,
+                    mission: Mission::Assault { to },
+                },
+            )
+            .expect("the order lands");
+        let panel = format_formation(&reg, &state, &state.formations()[0], None);
+        assert!(
+            panel.contains(Mission::Assault { to }.promise()),
+            "the standing order does not say what it costs:\n{panel}"
+        );
+        assert!(
+            panel.contains(Mission::Advance { to }.promise()),
+            "the menu does not offer the alternative:\n{panel}"
+        );
+
+        // ...and the unit panel does the same for the per-crew twin, but only
+        // for a crew the viewer may actually order.
+        let ours = state.units.iter().find(|u| u.side == 0).expect("our tank");
+        let theirs = state
+            .units
+            .iter()
+            .find(|u| u.side == 1)
+            .expect("their tank");
+        let mine = format_unit(&reg, &state, ours, ours.pos, true);
+        assert!(
+            mine.contains(Latitude::Binding.promise()),
+            "the key that presses her on is explained nowhere:\n{mine}"
+        );
+        let hers = format_unit(&reg, &state, theirs, theirs.pos, false);
+        assert!(
+            !hers.contains(Latitude::Binding.promise()),
+            "the panel is offering to give the enemy orders:\n{hers}"
+        );
+    }
+
+    /// Every key the order menu offers explains itself.
+    ///
+    /// The menu joins two tables that live in different crates — the keys
+    /// here, the promises in the engine beside the missions they describe —
+    /// and the failure mode of a join like that is silent: rename a verb in
+    /// core and the panel simply lists one order fewer, which nobody notices
+    /// until a player cannot find the key for it.
+    #[test]
+    fn every_mission_key_has_a_promise() {
+        let menu = order_menu();
+        assert_eq!(
+            menu.len(),
+            MISSION_KEYS.len(),
+            "an order key dropped out of the menu: {menu:#?}"
+        );
+        for (key, verb) in MISSION_KEYS {
+            assert!(
+                menu.iter().any(|line| line.contains(verb)),
+                "{key} ({verb}) is offered by the keyboard and explained nowhere"
+            );
+        }
+        // ...and the two that the whole step exists to tell apart are both
+        // there, saying different things.
+        let advance = menu.iter().find(|l| l.contains("advance")).unwrap();
+        let assault = menu.iter().find(|l| l.contains("assault")).unwrap();
+        assert_ne!(
+            advance.split(" - ").nth(1),
+            assault.split(" - ").nth(1),
+            "the menu must not describe G and X the same way"
+        );
     }
 }

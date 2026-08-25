@@ -96,6 +96,35 @@ pub enum CrewCondition {
     /// No longer part of the fight. Whether she comes home is the roster's
     /// question, not the battle's.
     Out,
+    /// She never got in. Wounded from a previous battle, or still walking
+    /// back from one, and so not fit to deploy — her seat is on the roll and
+    /// empty in the vehicle.
+    ///
+    /// Distinct from [`Self::Out`] in the one way that matters: an absent
+    /// girl is not a casualty of *this* battle. Nothing inside can hit her,
+    /// her empty seat does not make the vehicle look half-destroyed, and she
+    /// takes no fresh wound home. She is still listed in
+    /// [`Unit::crew`] rather than filtered out of it, because the campaign
+    /// hands the crew back at the end and a girl dropped from the list here
+    /// would be a girl deleted from her tank forever.
+    Absent,
+}
+
+impl CrewCondition {
+    /// Whether she is still part of the fight — still somebody a shell can
+    /// find, still somebody working a station. Wounded counts: she is at her
+    /// post and worse at it, which is the whole point of the middle state.
+    ///
+    /// Named as a question rather than left as a match on the variant
+    /// because [`Self::Out`] and [`Self::Absent`] both answer no for
+    /// completely different reasons, and every caller that wanted "not Out"
+    /// wanted this instead. [`BattleState::substance`] is deliberately the
+    /// exception: it distinguishes all four, because a seat nobody is
+    /// sitting in and a seat whose girl has been hit are opposite kinds of
+    /// nothing.
+    pub fn fighting(self) -> bool {
+        matches!(self, Self::Fine | Self::Wounded)
+    }
 }
 
 /// A crewed vehicle on the battlefield.
@@ -733,6 +762,7 @@ impl BattleState {
                     .map(|g| g.name.clone())
             })
             .unwrap_or_else(|| vehicle.name.clone());
+        let crew_state = self.who_deploys(&crew);
         self.units.push(Unit {
             id,
             side: placement.side,
@@ -768,7 +798,7 @@ impl BattleState {
                 .into_iter()
                 .map(|m| (m.id.clone(), m.toughness))
                 .collect(),
-            crew_state: Vec::new(),
+            crew_state,
             abandoned: false,
             brewed: false,
             wrecked: false,
@@ -784,6 +814,52 @@ impl BattleState {
             exited: false,
         });
         id
+    }
+
+    /// Which of this crew actually climbs in, as the seat-aligned condition
+    /// list the unit spawns with.
+    ///
+    /// This is where a wound earns its keep. Until it existed a girl carried
+    /// a [`crate::roster::GirlStatus::Wounded`] from one battle to the next
+    /// and it cost her side nothing visible: she deployed anyway, and only
+    /// `crew_skill`'s quiet "she is not ready" filter took her bonuses away.
+    /// A consequence the player cannot see is not a consequence. Now she
+    /// stays behind, her seat is empty, and whoever is left covers for her at
+    /// the substitution penalty — which is the same arithmetic a crew short
+    /// of a gunner has always used.
+    ///
+    /// Two deliberate refusals:
+    ///
+    /// - **An all-empty vehicle is never produced.** If nobody named is fit,
+    ///   the walking wounded go out anyway, because the campaign has no pool
+    ///   of replacements to draw on and a vehicle with no crew at all is one
+    ///   nothing inside can kill — see the anonymous-crew comment in
+    ///   [`Self::spawn_unit`] for why that must never happen.
+    /// - **Nobody is removed from [`Unit::crew`].** The campaign takes the
+    ///   crew list back at the end of the battle, so a girl filtered out here
+    ///   would be a girl deleted from her tank for good.
+    ///
+    /// Returns an empty vec when everyone is fit, which keeps the common case
+    /// — every scenario battle, every save written before this — byte for
+    /// byte what it was.
+    fn who_deploys(&self, crew: &[GirlId]) -> Vec<CrewCondition> {
+        let fit = |id: &GirlId| {
+            self.roster
+                .get(*id)
+                .is_none_or(|girl| girl.status.is_ready())
+        };
+        if crew.iter().all(fit) || !crew.iter().any(fit) {
+            return Vec::new();
+        }
+        crew.iter()
+            .map(|id| {
+                if fit(id) {
+                    CrewCondition::Fine
+                } else {
+                    CrewCondition::Absent
+                }
+            })
+            .collect()
     }
 
     /// Change what one vehicle is carrying, before the battle starts.
@@ -911,9 +987,9 @@ impl BattleState {
     }
 
     /// Whether this crew will still do as it is told.
-    /// Girls aboard `unit` still part of the fight — everyone whose
-    /// condition is not [`CrewCondition::Out`]. An empty `crew_state` means
-    /// nobody has been hurt, so the whole crew counts.
+    /// Girls aboard `unit` still part of the fight. An empty `crew_state`
+    /// means nobody has been hurt and nobody stayed behind, so the whole
+    /// crew counts — which is every battle written before either existed.
     pub fn fighting_crew(&self, unit: &Unit) -> usize {
         unit.crew
             .iter()
@@ -923,7 +999,7 @@ impl BattleState {
                     .get(*seat)
                     .copied()
                     .unwrap_or(CrewCondition::Fine)
-                    != CrewCondition::Out
+                    .fighting()
             })
             .count()
     }
@@ -955,17 +1031,28 @@ impl BattleState {
         let mut have = 0u32;
         let mut total = 0u32;
         for (seat, _) in unit.crew.iter().enumerate() {
-            total += 2;
-            have += match unit
+            // A seat nobody is sitting in counts for neither half. Charging
+            // an absent girl's two points to the denominator would make a
+            // vehicle that deployed short-handed read as one that had
+            // already been shot up — braver crews would flee it and the AI
+            // would price it as a kill nearly made.
+            match unit
                 .crew_state
                 .get(seat)
                 .copied()
                 .unwrap_or(CrewCondition::Fine)
             {
-                CrewCondition::Fine => 2,
-                CrewCondition::Wounded => 1,
-                CrewCondition::Out => 0,
-            };
+                CrewCondition::Fine => {
+                    total += 2;
+                    have += 2;
+                }
+                CrewCondition::Wounded => {
+                    total += 2;
+                    have += 1;
+                }
+                CrewCondition::Out => total += 2,
+                CrewCondition::Absent => {}
+            }
         }
         for (id, hits) in &unit.modules {
             let toughness = registry.module(id).map(|m| m.toughness).unwrap_or(1);

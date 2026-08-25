@@ -174,8 +174,8 @@ Ordered by spark per hour, not by dependency.
 | # | step | state |
 | --- | --- | --- |
 | 1 | Orders mean what they say | **parts 1–2 done**, part 3 open |
-| 2 | Say what a verb means before it is pressed | not started |
-| 3 | Close the consequence loop | not started |
+| 2 | Say what a verb means before it is pressed | **done** |
+| 3 | Close the consequence loop | **done**, roster screen open |
 | 4 | Fix the fun taxes REVIEW.md found | not started |
 | 5 | Park a layer (MCTS) | not started |
 
@@ -246,12 +246,95 @@ per-unit channel was the one the complaint actually named.
 `Advance` versus `Assault` is the case in point: the distinction is built, and
 free to explain. One line in the formation panel when a mission key is live.
 
+**What landed (2026-08-24).** `Mission::promise()` and `Latitude::promise()`,
+in the engine beside the enums they describe, because a promise is a claim
+about the *rules* and the person changing what an order does should be looking
+straight at the sentence claiming what it does. One shared `VOCABULARY` table
+feeds `verb()`, `promise()` and `vocabulary()`, so a listed order and a given
+one cannot say different things.
+
+Three places read them:
+
+- The formation panel lists every mission key with its price
+  (`G advance - take it, halting to fight what shoots` beside
+  `X assault - take it through fire, and pay for it`), which is the exact
+  confusion the memo diagnosed.
+- The standing order is read *back* with its promise under it, and so is an
+  order still in the air — under a signals net that is the only place the
+  player can see what she just decided before it lands.
+- The unit panel does the same for the per-crew twin, which had no explanation
+  anywhere in the game: step 1 added the `X` verb and only the changelog said
+  so. It is drawn only for a crew the viewer may actually order — offering to
+  press an enemy crew on through fire reads as an offer.
+
+The panel went 240 px → 300 px, because a promise that wraps to three lines is
+one nobody reads. Verified by `the_panels_explain_the_orders_they_offer` and
+`every_mission_key_has_a_promise` (the keys live in the game crate and the
+promises in the engine; the failure mode of that join is a menu that silently
+lists one order fewer), plus `scripts/dev/orders-explained.txt`.
+
 ### 3. Close the consequence loop
 
 Battle → named girls wounded and lost → a roster screen the player looks at →
 next battle. Wounds with teeth (`GirlStatus::is_ready` actually checked), one
 post-battle screen. Small next to what is already built, and it is the whole
 difference between a wargame and *this* wargame.
+
+**What landed (2026-08-24).** Three things, and the first was a hole rather
+than a missing feature.
+
+1. **A wound taken at her station now survives the battle.** The battle
+   tracked every girl's condition seat by seat all fight, and the only
+   casualties the campaign ever heard about were the crews of *destroyed*
+   vehicles — so a gunner knocked out in round one of a battle her side won
+   was fit again by the time the campaign screen drew. `CrewLoss` gained
+   `found: Option<CrewCondition>` and `roster::resolve_station_fate` prices
+   it: gentler than a wreck, never fatal without permadeath, and never
+   `Lost`, because her tank came home and somebody got her to a doctor.
+2. **`is_ready` is actually checked.** `CrewCondition::Absent` says a girl is
+   on the roll and not in the vehicle. Her seat leaves the substance
+   reckoning entirely (an empty seat is not damage, or every withdrawal
+   threshold in the game would price a short-handed tank as half dead),
+   nothing inside can hit her, and whoever is left covers at the substitution
+   penalty. She is *not* removed from `Unit::crew` — the campaign takes that
+   list back at the end of a battle and a girl filtered out here would be a
+   girl deleted from her tank for good. A vehicle nobody fit is left to crew
+   goes out with the walking wounded rather than empty; the campaign has no
+   replacement pool and a crewless vehicle is one nothing inside can kill.
+3. **The campaign stops to show the bill.** An after-action page, worst news
+   first, named: who was killed, who is wounded and for how long, who is
+   walking back, and who came home with how many battles behind her. It
+   freezes the campaign exactly as the muster prompt does, and for the same
+   reason — the log already narrated all of this at three lines a second in
+   among the tile income, which is to say the game already told the player and
+   she certainly did not see it. The muster prompt is the other end of the
+   same loop: it now names who is not fit to deploy, which is where the cost
+   is actually paid.
+
+The casualty numbers moved out of Rust into a `casualties` block in
+`mod.json` while this was being written — they are the dial between "an
+armoured skirmish costs nobody anything" and "half the school is in the
+infirmary by Tuesday", and the whole of the fate model was written as bare
+integers in `roster.rs`. That is a down payment on the designer's note below,
+not a discharge of it: `ai/eval.rs` is still full of them.
+
+**Found while photographing it, and half-fixed.** The first after-action page
+ever drawn listed "Rosa Steiner — her first" twice. `frontier` names the base
+mod's ten characters across eighteen vehicles, and the campaign stamped a
+separate girl per mention, so Kuhlmann fielded three Rosas. The engine half is
+fixed and is a rule rather than a nicety — **one girl, one seat**: a repeated
+name is enlisted once per academy and the other vehicles crew anonymously,
+which is exactly what a placement naming nobody has always got, and
+`validate-mods` now names every dropped mention. The content half is a
+question for the designer and is deliberately left alone: there are ten
+characters and eighteen tanks, so either 2nd Company has no named girls in it
+or the school needs more students, and which of those is right is a decision
+about the fiction rather than about the code.
+
+**Still open.** A roster screen the player can open whenever she likes. The
+after-action page is deliberately not it: it is a thing to have read, with one
+key and no choice on it, and anything the player wants to *do* about her
+casualties belongs somewhere she is not being held behind a modal.
 
 ### 4. Fix the fun taxes
 
@@ -264,6 +347,57 @@ defects rather than rules defects.
 MCTS is ~3.3 s per order and ships unused; the scenario names `utility`. It is
 maintenance surface with no role. Either it becomes the enemy brain or it goes
 on ice, deliberately and in writing.
+
+## From the designer, 2026-08-24, and not yet acted on
+
+Two notes, recorded verbatim in substance because both are about the same
+thing — that the numbers in this engine are opinions and nobody has argued
+with them yet.
+
+### `threatened` ignores fire that cannot hurt her
+
+> Threatened may still want to account for attacks that cannot damage, scaling
+> with morale and discipline. Even if your IFV is immune to 50 cal from the
+> front, getting hit by it is not a fun time.
+
+This is right and it is load-bearing in more places than it looks.
+`threatened()` requires `best_weapon_against(enemy → me)` to be `Some` — the
+enemy must be able to *meaningfully hurt* her — which after the ballistics
+rewrite means a medium tank taking machine-gun fire is, as far as every
+planner in the game is concerned, standing in a quiet field. It gates the
+battle drill, the danger term in `score_tile`, and (this is how it was found)
+it made two mediums unable to threaten each other at all, which cost three
+drafts of a test in step 1.
+
+The shape of the fix is the one this note names: being shot at is a *morale*
+event whether or not it is a *damage* event, so the threat should scale with
+what the fire does to the crew's composure rather than to the plate — which
+also gives suppression somewhere to live, and gives the machine gun on every
+tank in the game a job it currently does not have. Not attempted here because
+it changes AI behaviour everywhere at once and would move the determinism
+baseline, which is a chunk of its own with its own before-and-after numbers.
+
+### The magic numbers want iterating on
+
+> We have a lot of magic numbers here, it might be worth iterating over
+> different values to balance realism and player agency.
+
+Half-answered by step 3: the casualty table is now `casualties` in
+`mod.json`, so the fate rolls can be retuned without a recompile and a harsh
+campaign is a mod rather than a patch. That is the pattern the rest should
+follow. What is still bare Rust and shouldn't be, roughly in order of how much
+a designer would want to touch it:
+
+- `PLATEAU`, `MISSION_WEIGHT`, `contact_scale`, the `0.15` distance decay and
+  the withdraw pull in `ai/eval.rs` — the numbers that decide what an order is
+  *worth* against terrain, which is the exact knob the original complaint was
+  about.
+- `AMBUSH_PATIENCE` and `BOARDING_ROUNDS` in the battle layer.
+- The interior-effect and brew-up constants not already in `balance`.
+
+Worth doing as one chunk with the `balance --sim` tables run before and after,
+rather than piecemeal: the value of moving a number into data is only realised
+when somebody sweeps it, and a sweep needs an instrument.
 
 ## Open questions for the designer
 
@@ -288,3 +422,21 @@ on ice, deliberately and in writing.
   screenshot half of the script harness cannot run from this shell — the window
   never gets a surface and every `shot` lands 1x1, including in the pre-existing
   `battle-tour.txt`, so it is the environment and not the tours.
+- **2026-08-24** — that note is now wrong, and worth knowing why. Screenshots
+  capture correctly from this shell after all; whatever the window was missing
+  earlier in the session, it had by the end of it. Do not conclude from one
+  degenerate capture that the harness is broken — run `battle-tour.txt` and
+  check, which is what settled it in both directions.
+- **2026-08-24** — the after-action page found a defect on the first run: a
+  campaign stamped one girl per *mention* of a character, so `frontier`'s ten
+  characters became twenty-four girls with six names between them. One girl,
+  one seat now; the content half is left for the designer. Worth noting how it
+  was found — nobody would have read it out of the code, and the screen that
+  exists to make consequences visible made this one visible in its first
+  minute.
+- **2026-08-24** — steps 2 and 3 landed; see above. The designer's two notes
+  on `threatened` and on the magic numbers are recorded in their own section
+  and deliberately not acted on, because both move AI behaviour and therefore
+  the determinism baseline. The campaign map publishes `ScriptFacts` now
+  (`turn`, `idle`, `waiting`, `log`), which it never did, so a campaign tour
+  can wait on the game rather than on a stopwatch.

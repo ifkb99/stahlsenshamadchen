@@ -41,7 +41,7 @@
 //! bailed out and could not reach friendly lines before the fighting stopped,
 //! and is making her own way back. It resolves on its own after a few days.
 
-use crate::data::{CharacterDef, DamageType, DataRegistry};
+use crate::data::{Casualties, CharacterDef, DamageType, DataRegistry};
 use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -218,45 +218,86 @@ impl Girl {
 /// resolves these in girl-id order.
 pub fn resolve_crew_fate(
     rules: CasualtyRules,
+    table: &Casualties,
     safety: i32,
     killed_by: Option<DamageType>,
     rng: &mut impl Rng,
 ) -> CrewFate {
     // Chance in 100 that this girl is hurt at all, before safety is applied.
     let base_harm = match killed_by {
-        Some(DamageType::Kinetic) => 55,
-        Some(DamageType::Explosive) => 40,
-        Some(DamageType::SmallArms) => 20,
-        // Nothing recorded — burned out, abandoned, or a source the sim did
-        // not attribute. Treat it as the middling case.
-        None => 40,
+        Some(DamageType::Kinetic) => table.harm_kinetic,
+        Some(DamageType::Explosive) => table.harm_explosive,
+        Some(DamageType::SmallArms) => table.harm_small_arms,
+        None => table.harm_unattributed,
     };
-    // Each point of safety takes eight points off, so a 0-safety deathtrap is
-    // meaningfully worse than a 5-safety one without ever reaching certainty.
-    let harm = (base_harm - safety * 8).clamp(5, 95);
+    let harm = (base_harm - safety * table.harm_per_safety)
+        .clamp(table.harm_floor.min(table.harm_ceiling), table.harm_ceiling);
 
     if rng.random_range(0..100) >= harm {
         // Out clean — but possibly on the wrong side of the fighting.
-        return if rng.random_range(0..100) < 25 {
+        return if rng.random_range(0..100) < table.adrift_percent {
             CrewFate::Lost {
-                days: rng.random_range(1..=3),
+                days: rng.random_range(Casualties::days(table.adrift_days)),
             }
         } else {
             CrewFate::Unharmed
         };
     }
 
-    // Hurt. A quarter of those are bad enough to be fatal if the campaign
-    // allows it; otherwise it is a long recovery instead.
-    let severe = rng.random_range(0..100) < 25;
+    // Hurt. Some of those are bad enough to be fatal if the campaign allows
+    // it; otherwise it is a long recovery instead.
+    let severe = rng.random_range(0..100) < table.severe_percent;
     match (severe, rules.permadeath) {
         (true, true) => CrewFate::Killed,
         (true, false) => CrewFate::Wounded {
-            days: rng.random_range(5..=10),
+            days: rng.random_range(Casualties::days(table.severe_days)),
         },
         (false, _) => CrewFate::Wounded {
-            days: rng.random_range(1..=4),
+            days: rng.random_range(Casualties::days(table.light_days)),
         },
+    }
+}
+
+/// Decide what one girl takes home from a vehicle that came home with her.
+///
+/// The other half of [`resolve_crew_fate`], and the half that did not exist:
+/// until this function the only way a wound survived a battle was for the
+/// vehicle to be destroyed, so a gunner knocked out at her station in a tank
+/// that drove home was fit again by the time the campaign screen drew — the
+/// whole in-battle crew model evaporated at the door. Whether a girl is hurt
+/// is the battle's question and it has already answered it in
+/// [`crate::battle::CrewCondition`]; all that is left is how long it keeps
+/// her out.
+///
+/// Deliberately much gentler than the destroyed case, and never fatal on its
+/// own without permadeath: her tank came home, so somebody got her to a
+/// doctor within the hour. There is no [`CrewFate::Lost`] here at all — she
+/// did not have to walk back.
+pub fn resolve_station_fate(
+    rules: CasualtyRules,
+    table: &Casualties,
+    found: crate::battle::CrewCondition,
+    rng: &mut impl Rng,
+) -> CrewFate {
+    use crate::battle::CrewCondition;
+    match found {
+        // Untouched, or never in the vehicle: nothing to record. Callers are
+        // expected not to report these at all, and answering rather than
+        // panicking keeps the report a filter rather than a contract.
+        CrewCondition::Fine | CrewCondition::Absent => CrewFate::Unharmed,
+        CrewCondition::Wounded => CrewFate::Wounded {
+            days: rng.random_range(Casualties::days(table.grazed_days)),
+        },
+        CrewCondition::Out => {
+            let fatal = rules.permadeath && rng.random_range(0..100) < table.severe_percent;
+            if fatal {
+                CrewFate::Killed
+            } else {
+                CrewFate::Wounded {
+                    days: rng.random_range(Casualties::days(table.carried_days)),
+                }
+            }
+        }
     }
 }
 

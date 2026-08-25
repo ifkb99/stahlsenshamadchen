@@ -87,6 +87,7 @@
 //! | Predicate | True when |
 //! | --- | --- |
 //! | `idle` | not resolving, not animating: the frame is settled |
+//! | `waiting` | the screen is holding for an answer: a prompt or a report |
 //! | `over` | the battle has been decided |
 //! | `turn >= <n>` | the round (or campaign day) has reached `n` (`>= > == <= <`) |
 //! | `score <side> >= <n>` | that side's objective points |
@@ -178,6 +179,11 @@ pub(crate) struct ScriptFacts {
     /// The battle has been decided. Always false where the question has no
     /// meaning.
     pub over: bool,
+    /// The screen is holding the player behind something she has to answer or
+    /// dismiss — a muster prompt, an after-action report. The complement of
+    /// [`Self::idle`] rather than a second name for its negation: a screen can
+    /// be neither (mid-animation) but never both.
+    pub waiting: bool,
     /// Objective points by side.
     pub score: Vec<u32>,
     pub units: Vec<UnitFact>,
@@ -249,6 +255,7 @@ const DEFAULT_TIMEOUT: f32 = 30.0;
 #[derive(Debug, Clone, PartialEq)]
 enum Predicate {
     Idle,
+    Waiting,
     Over,
     Turn { op: Cmp, n: u32 },
     Score { side: usize, op: Cmp, n: u32 },
@@ -299,6 +306,7 @@ impl Predicate {
     fn holds(&self, facts: &ScriptFacts, seen_log: &HashSet<String>) -> bool {
         match self {
             Predicate::Idle => facts.idle,
+            Predicate::Waiting => facts.waiting,
             Predicate::Over => facts.over,
             Predicate::Turn { op, n } => op.holds(facts.turn, *n),
             Predicate::Score { side, op, n } => {
@@ -443,6 +451,7 @@ fn parse_predicate(text: &str) -> Option<Predicate> {
     };
     match head {
         "idle" if rest.is_empty() => Some(Predicate::Idle),
+        "waiting" if rest.is_empty() => Some(Predicate::Waiting),
         "over" if rest.is_empty() => Some(Predicate::Over),
         "turn" => {
             let (op, n) = parse_comparison(rest)?;
@@ -796,6 +805,7 @@ mod tests {
         ScriptFacts {
             turn: 3,
             idle: true,
+            waiting: false,
             over: false,
             score: vec![7, 0],
             units: vec![
@@ -822,6 +832,7 @@ mod tests {
     #[test]
     fn a_predicate_parses_into_the_question_it_asks() {
         assert_eq!(parse_predicate("idle"), Some(Predicate::Idle));
+        assert_eq!(parse_predicate("waiting"), Some(Predicate::Waiting));
         assert_eq!(
             parse_predicate("turn >= 4"),
             Some(Predicate::Turn { op: Cmp::Ge, n: 4 })

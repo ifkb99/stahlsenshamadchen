@@ -2,6 +2,7 @@
 
 mod ammo;
 mod balance;
+mod casualties;
 mod command;
 mod cores;
 mod defs;
@@ -13,6 +14,7 @@ mod scale;
 
 pub use ammo::{AmmoClass, AmmoDef};
 pub use balance::{Balance, ReactionRules};
+pub use casualties::Casualties;
 pub use command::CommandRules;
 pub use cores::{
     AVERAGE, CheckContext, CoreDef, CoreIndex, RoleDef, SkillDef, TraitCondition, TraitDef,

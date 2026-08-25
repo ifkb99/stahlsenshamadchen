@@ -1,4 +1,4 @@
-use super::{Balance, Scale};
+use super::{Balance, Casualties, Scale};
 use serde::{Deserialize, Serialize};
 
 /// `mod.json` at the root of every mod directory.
@@ -58,4 +58,9 @@ pub struct ModManifest {
     /// [`Self::scale`].
     #[serde(default)]
     pub balance: Option<Balance>,
+    /// What a battle costs the girls who fought it. Same one-in-effect rule
+    /// as [`Self::scale`]: a campaign that wants attrition to bite declares
+    /// this block and changes nothing else.
+    #[serde(default)]
+    pub casualties: Option<Casualties>,
 }

@@ -3,8 +3,8 @@
 use super::defs::*;
 use super::manifest::ModManifest;
 use super::{
-    AmmoClass, AmmoDef, Balance, CommandRules, CoreDef, CoreIndex, ModuleDef, ModuleEffect,
-    MoraleRules, ReactionRules, RoleDef, STANDARD_MODULES, Scale, SkillDef, TraitDef,
+    AmmoClass, AmmoDef, Balance, Casualties, CommandRules, CoreDef, CoreIndex, ModuleDef,
+    ModuleEffect, MoraleRules, ReactionRules, RoleDef, STANDARD_MODULES, Scale, SkillDef, TraitDef,
 };
 use crate::map::MapFile;
 use serde::Deserialize;
@@ -62,6 +62,9 @@ pub struct DataRegistry {
     pub scale: Scale,
     /// What a point of crew skill is worth. Single value, as [`Self::scale`].
     pub balance: Balance,
+    /// What a battle costs the girls who fought it. Single value, as
+    /// [`Self::scale`].
+    pub casualties: Casualties,
     /// How long crews take to act on orders.
     pub reaction: ReactionRules,
     /// What a crew can take before it stops doing as it is told.
@@ -141,6 +144,9 @@ impl DataRegistry {
             }
             if let Some(balance) = manifest.balance {
                 registry.balance = balance;
+            }
+            if let Some(casualties) = manifest.casualties {
+                registry.casualties = casualties;
             }
             if let Some(reaction) = &manifest.reaction {
                 registry.reaction = reaction.clone();
@@ -650,6 +656,52 @@ impl DataRegistry {
                 ));
             }
         }
+
+        // The casualty table is the dial between "an armoured skirmish costs
+        // nobody anything" and "half the school is in the infirmary by
+        // Tuesday", which is exactly why it wants checking: a percentage
+        // typed as a fraction reads as a mod that never hurts anybody, and
+        // does so silently.
+        let c = &self.casualties;
+        for (field, value) in [
+            ("harm_kinetic", c.harm_kinetic),
+            ("harm_explosive", c.harm_explosive),
+            ("harm_small_arms", c.harm_small_arms),
+            ("harm_unattributed", c.harm_unattributed),
+            ("harm_floor", c.harm_floor),
+            ("harm_ceiling", c.harm_ceiling),
+            ("adrift_percent", c.adrift_percent),
+            ("severe_percent", c.severe_percent),
+        ] {
+            if !(0..=100).contains(&value) {
+                report.error(format!(
+                    "casualties {field} is {value}; it is a chance in 100"
+                ));
+            }
+        }
+        if c.harm_floor > c.harm_ceiling {
+            report.error(format!(
+                "casualties harm_floor ({}) is above harm_ceiling ({})",
+                c.harm_floor, c.harm_ceiling
+            ));
+        }
+        for (field, range) in [
+            ("adrift_days", c.adrift_days),
+            ("severe_days", c.severe_days),
+            ("light_days", c.light_days),
+            ("carried_days", c.carried_days),
+            ("grazed_days", c.grazed_days),
+        ] {
+            // A range typed backwards is forgiven by `Casualties::days` and
+            // said out loud here, because content should be readable and a
+            // mod author should still hear about it.
+            if range[0] > range[1] {
+                report.warn(format!(
+                    "casualties {field} is [{}, {}], which reads backwards; it will be used as [{}, {}]",
+                    range[0], range[1], range[1], range[0]
+                ));
+            }
+        }
     }
 
     /// Convenience wrapper producing a fresh report.
@@ -813,6 +865,7 @@ mod tests {
                     dependencies: deps.iter().map(|s| s.to_string()).collect(),
                     scale: None,
                     balance: None,
+                    casualties: None,
                 },
             )
         };

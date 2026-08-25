@@ -144,6 +144,18 @@ impl Latitude {
     pub fn yields_to_drill(self) -> bool {
         self == Self::Delegated
     }
+
+    /// What marching at this latitude commits a crew to, in one clause —
+    /// the per-unit twin of [`Mission::promise`], and there for exactly the
+    /// same reason. A player choosing between clicking ground and insisting
+    /// on it is making the advance-versus-assault decision one crew at a
+    /// time, and is entitled to read the price of each before she pays it.
+    pub fn promise(self) -> &'static str {
+        match self {
+            Self::Delegated => "she may break off for cover on the way",
+            Self::Binding => "she drives on, and does not stop for cover",
+        }
+    }
 }
 
 /// What a formation has been told to do, until it is told something else.
@@ -229,7 +241,73 @@ impl Mission {
             Self::Hold { .. } | Self::Withdraw { .. } | Self::Support { .. }
         )
     }
+
+    /// The verb a person would use for this order, one word.
+    pub fn verb(&self) -> &'static str {
+        VOCABULARY[self.slot()].0
+    }
+
+    /// What ordering this commits a formation to, in one clause.
+    ///
+    /// It lives here rather than in the UI because it is a claim about the
+    /// *rules*, and the rules are here. The distinction between an advance
+    /// and an assault is the sharpest example in the game and was, until
+    /// this existed, invisible from the keyboard: both keys move a platoon
+    /// toward ground, one of them stops when somebody shoots, and the player
+    /// who meant the second and pressed the first watched her attack die
+    /// halfway for reasons the game never stated. A promise beside the enum
+    /// is the cheapest possible fix and the one that cannot drift, because
+    /// whoever changes what an order *does* is looking straight at the
+    /// sentence claiming what it does.
+    ///
+    /// Deliberately about consequences rather than mechanism. "Halt and
+    /// fight whatever shoots at you" is something a player can plan around;
+    /// "damped to a quarter on contact" is the same fact written for
+    /// somebody who has read [`crate::ai::Evaluator`].
+    pub fn promise(&self) -> &'static str {
+        VOCABULARY[self.slot()].1
+    }
+
+    /// Every order a commander can give, as verb and promise, in the order a
+    /// briefing would list them.
+    ///
+    /// For a menu of orders that have not been aimed at anything yet — which
+    /// is exactly when a player needs to read what they mean. It shares its
+    /// table with [`Self::verb`] and [`Self::promise`] so a listed order and
+    /// a given one can never say different things.
+    pub fn vocabulary() -> &'static [(&'static str, &'static str)] {
+        VOCABULARY
+    }
+
+    /// Which row of [`VOCABULARY`] describes this order. Written as an
+    /// exhaustive match rather than a discriminant cast so that adding a
+    /// mission without giving it a promise fails to compile.
+    fn slot(&self) -> usize {
+        match self {
+            Self::Advance { .. } => 0,
+            Self::Assault { .. } => 1,
+            Self::Hold { .. } => 2,
+            Self::Recon { .. } => 3,
+            Self::Withdraw { .. } => 4,
+            Self::Support { .. } => 5,
+        }
+    }
 }
+
+/// What each mission verb promises, in the order [`Mission`] declares them.
+///
+/// One table rather than a match arm per accessor, because the two things a
+/// caller wants — "what is this order called" and "what does it commit me
+/// to" — are two columns of one fact and drift the moment they are written
+/// twice.
+const VOCABULARY: &[(&str, &str)] = &[
+    ("advance", "take it, halting to fight what shoots"),
+    ("assault", "take it through fire, and pay for it"),
+    ("hold", "stand fast and hold what you have"),
+    ("reconnoitre", "find them without getting pinned"),
+    ("withdraw", "break contact and leave the field"),
+    ("support", "shoot for them instead of going with them"),
+];
 
 /// One formation with its declaration resolved against the units on the field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
