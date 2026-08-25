@@ -1234,6 +1234,20 @@ fn pump_events(
             .cloned()
             .unwrap_or_else(|| "???".into())
     };
+    // The log is radio traffic, not an omniscient narrator. One of ours
+    // speaks with her call sign in front of her and says what she is doing;
+    // anything else is a spot report — something the net heard about, with
+    // nobody's voice on it.
+    //
+    // This is presentation and only presentation. The events carry the same
+    // ids, hexes and flags they always did, so the script harness, the
+    // replay and every consumer downstream read exactly what they read
+    // before; what changed is who is speaking. Keeping that line clean is
+    // what lets the voice be rewritten again later without anybody having to
+    // check whether the engine still works.
+    let sides: Vec<u8> = battle.state.units.iter().map(|u| u.side).collect();
+    let mine = |id: UnitId| sides.get(id.index()).is_none_or(|s| *s == view_side);
+    let traffic = |id: UnitId, said: &str| format!("{}: {said}", name(id));
     let entity_of = |id: UnitId| units.iter().find(|(_, u)| u.0 == id).map(|(e, _)| e);
 
     for event in &drained {
@@ -1276,7 +1290,11 @@ fn pump_events(
                 }
             }
             BattleEvent::UnitTrapped { unit, .. } => {
-                log.push(format!("{} ran into an ambush!", name(*unit)));
+                log.push(if mine(*unit) {
+                    traffic(*unit, "ambush! we're in it —")
+                } else {
+                    format!("{} has driven into somebody.", name(*unit))
+                });
             }
             BattleEvent::ShotFired {
                 attacker,
@@ -1287,17 +1305,21 @@ fn pump_events(
                 ..
             } => {
                 let verb = if *blind {
-                    "fires blind"
+                    "firing blind"
                 } else if *opportunity {
-                    "takes a shot of opportunity"
+                    "target of opportunity — engaging"
                 } else {
-                    "fires"
+                    "engaging"
                 };
                 let weapon_name = registry
                     .weapon(weapon)
                     .map(|w| w.name.clone())
                     .unwrap_or_default();
-                log.push(format!("{} {verb} ({weapon_name})", name(*attacker)));
+                log.push(if mine(*attacker) {
+                    traffic(*attacker, &format!("{verb}, {weapon_name}."))
+                } else {
+                    format!("{} is firing.", name(*attacker))
+                });
                 spawn_puff(
                     &mut commands,
                     *at,
@@ -1316,7 +1338,7 @@ fn pump_events(
                     .ammo(ammo)
                     .map(|a| a.name.clone())
                     .unwrap_or_else(|| ammo.clone());
-                log.push(format!("A {round} shell lands at {}.", hex_label(*at)));
+                log.push(format!("Shellfire — {round} at {}.", hex_label(*at)));
                 spawn_puff(
                     &mut commands,
                     *at,
@@ -1331,12 +1353,14 @@ fn pump_events(
                 facing,
                 ..
             } => {
-                log.push(format!(
-                    "{} penetrates {} through the {:?}.",
-                    name(*attacker),
-                    name(*target),
-                    facing
-                ));
+                log.push(if mine(*attacker) {
+                    traffic(
+                        *attacker,
+                        &format!("through {}'s {facing:?} plate.", name(*target)),
+                    )
+                } else {
+                    traffic(*target, &format!("we're hit — {facing:?}."))
+                });
                 if let Some(entity) = entity_of(*target) {
                     commands
                         .entity(entity)
@@ -1344,7 +1368,11 @@ fn pump_events(
                 }
             }
             BattleEvent::ShotMissed { attacker, at } => {
-                log.push(format!("{} misses", name(*attacker)));
+                log.push(if mine(*attacker) {
+                    traffic(*attacker, "miss.")
+                } else {
+                    format!("{} misses.", name(*attacker))
+                });
                 spawn_puff(
                     &mut commands,
                     *at,
@@ -1354,7 +1382,11 @@ fn pump_events(
                 );
             }
             BattleEvent::UnitDestroyed { unit, at } => {
-                log.push(format!("{} is destroyed!", name(*unit)));
+                log.push(if mine(*unit) {
+                    format!("{} is off the net.", name(*unit))
+                } else {
+                    format!("{} is finished.", name(*unit))
+                });
                 spawn_puff(
                     &mut commands,
                     *at,
@@ -1368,7 +1400,7 @@ fn pump_events(
             }
             BattleEvent::UnitSpotted { unit, by_side, .. } => {
                 if battle.state.sides[*by_side as usize].ai.is_none() {
-                    log.push(format!("Enemy spotted: {}", name(*unit)));
+                    log.push(format!("Contact — {}.", name(*unit)));
                 }
             }
             // Said in the log, because a cadet doing something other than what
@@ -1380,9 +1412,9 @@ fn pump_events(
                     .map(|u| u.name.clone())
                     .unwrap_or_else(|| "A crew".into());
                 log.push(if *obeys {
-                    format!("{who} is {rung}.")
+                    format!("{who}: {rung}.")
                 } else {
-                    format!("{who} is {rung} and will not advance.")
+                    format!("{who}: {rung} — not going forward.")
                 });
             }
             BattleEvent::SetOut { unit, doing, .. } => {
@@ -1394,7 +1426,7 @@ fn pump_events(
                 // The first thing this AI has ever done that can be said in a
                 // sentence. A vehicle crossing the map with nothing in the log
                 // behind it reads as the game moving her for no reason.
-                log.push(format!("{who} is {doing}."));
+                log.push(format!("{who}: {doing}."));
             }
             BattleEvent::Defied {
                 unit, rung, doing, ..
@@ -1408,16 +1440,13 @@ fn pump_events(
                 // last part is the one that matters: a tank reversing out of
                 // the line with nothing in the log to explain it is
                 // indistinguishable from the game malfunctioning.
-                log.push(format!("{who} is {rung} and {doing}."));
+                log.push(format!("{who}: {rung} — {doing}."));
             }
             // The mid-round drill. Same sentence shape as the planning-table
             // drill's line, so the player learns one idiom for "she decided
             // this herself" wherever in the round it happens.
             BattleEvent::TookCover { unit, .. } => {
-                log.push(format!(
-                    "{} is under fire and breaks for cover.",
-                    name(*unit)
-                ));
+                log.push(traffic(*unit, "under fire — breaking for cover."));
             }
             BattleEvent::CrewHit { unit, cadet, out } => {
                 let who = battle
@@ -1438,15 +1467,15 @@ fn pump_events(
                     .units
                     .get(unit.index())
                     .is_some_and(|u| u.troops(&mods.0).is_some());
-                log.push(match (*out, afoot) {
-                    (true, true) => format!("{who} goes down leading {}.", name(*unit)),
-                    (false, true) => format!("{who} is hit leading {}.", name(*unit)),
-                    (true, false) => format!(
-                        "{who} is hit aboard {} and slumps at her station.",
-                        name(*unit)
-                    ),
-                    (false, false) => format!("{who} is wounded aboard {}.", name(*unit)),
-                });
+                log.push(traffic(
+                    *unit,
+                    &match (*out, afoot) {
+                        (true, true) => format!("{who} is down."),
+                        (false, true) => format!("{who} is hit, still up."),
+                        (true, false) => format!("{who} is out at her station."),
+                        (false, false) => format!("{who} is hit."),
+                    },
+                ));
             }
             BattleEvent::ModuleHit {
                 unit,
@@ -1459,53 +1488,53 @@ fn pump_events(
                 let module_def = mods.0.module(module);
                 if module_def.is_some_and(|m| m.effect == tactics_core::data::ModuleEffect::Troops)
                 {
-                    log.push(if *destroyed {
-                        format!("{} has no sections left to lead.", name(*unit))
-                    } else {
-                        format!("{} takes casualties.", name(*unit))
-                    });
+                    log.push(traffic(
+                        *unit,
+                        if *destroyed {
+                            "no sections left."
+                        } else {
+                            "taking casualties."
+                        },
+                    ));
                 } else {
                     let what = module_def
                         .map(|m| m.name.clone())
                         .unwrap_or_else(|| module.clone());
-                    log.push(format!(
-                        "{}'s {what} is {}.",
-                        name(*unit),
-                        if *destroyed { "destroyed" } else { "damaged" }
+                    log.push(traffic(
+                        *unit,
+                        &format!("{what} {}.", if *destroyed { "gone" } else { "damaged" }),
                     ));
                 }
             }
             BattleEvent::BrewedUp { unit } => {
-                log.push(format!("{} brews up!", name(*unit)));
+                log.push(format!("{} is burning.", name(*unit)));
             }
             BattleEvent::Abandoned { unit } => {
-                log.push(format!("The crew abandons {}.", name(*unit)));
+                log.push(format!("{} — crew are out and clear.", name(*unit)));
             }
             BattleEvent::Mounted { unit, into } => {
-                log.push(format!("{} mounts up in {}.", name(*unit), name(*into)));
+                log.push(traffic(*unit, &format!("mounts up in {}.", name(*into))));
             }
             BattleEvent::Dismounted { unit, .. } => {
-                log.push(format!("{} dismounts.", name(*unit)));
+                log.push(traffic(*unit, "dismounting."));
             }
             // The armor holding is news the player must hear, or the shot
             // reads as the game eating a hit.
             BattleEvent::ShotBounced { target, facing, .. } => {
-                log.push(format!(
-                    "The round bounces off {}'s {facing:?} armor.",
-                    name(*target)
-                ));
+                log.push(if mine(*target) {
+                    traffic(*target, &format!("that one bounced — {facing:?}."))
+                } else {
+                    format!("No effect on {} — {facing:?} plate held.", name(*target))
+                });
             }
             BattleEvent::WeaponDry { unit, weapon } => {
-                log.push(format!(
-                    "{} has fired her last {weapon} round.",
-                    name(*unit)
-                ));
+                log.push(traffic(*unit, &format!("that was our last {weapon}.")));
             }
             // Withdrawing is not dying, and the screen has to say so plainly:
             // the sprite vanishes either way, and a player who reads a
             // successful withdrawal as a loss has been told a lie by the UI.
             BattleEvent::UnitExited { unit, at, .. } => {
-                log.push(format!("{} withdraws off the map.", name(*unit)));
+                log.push(traffic(*unit, "clear of the field."));
                 spawn_puff(
                     &mut commands,
                     *at,

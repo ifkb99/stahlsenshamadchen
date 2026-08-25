@@ -248,15 +248,22 @@ impl Goal {
         }
     }
 
-    /// How this reads in a log, given a map that can name its ground.
+    /// How this reads over the radio, given a map that can name its ground.
+    ///
+    /// A phrase rather than a sentence, and in the crew's own voice, because
+    /// the log is traffic rather than narration: the presentation layer puts
+    /// her call sign in front of it. Ground with a name is called by its
+    /// name — "moving to the Great Glade" is what somebody would actually
+    /// say, where a grid reference is what she falls back on when the ground
+    /// has none.
     pub fn describe(&self, map: &crate::map::HexMap) -> String {
         match self {
             Self::Hold => "holding here".to_string(),
             Self::Take(hex) => match map.objectives().iter().find(|o| o.hexes.contains(hex)) {
-                Some(objective) => format!("making for {}", objective.name),
+                Some(objective) => format!("moving to {}", objective.name),
                 None => {
                     let [col, row] = crate::hex_to_offset(*hex);
-                    format!("making for ({col}, {row})")
+                    format!("moving to ({col}, {row})")
                 }
             },
         }

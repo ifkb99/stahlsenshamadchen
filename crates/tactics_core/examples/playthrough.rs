@@ -128,7 +128,7 @@ fn main() {
                     // Goals are chosen during planning, not resolution, so
                     // they are announced here or not at all.
                     Event::SetOut { unit, doing, .. } => {
-                        println!("   -> {} is {doing}", crews[unit.index()])
+                        println!("   -> {}: {doing}", crews[unit.index()])
                     }
                     _ => {}
                 }
@@ -295,7 +295,7 @@ fn main() {
                 ),
                 Event::Defied {
                     unit, rung, doing, ..
-                } => println!("   ** {} is {rung} and {doing} **", name(&state, *unit)),
+                } => println!("   ** {}: {rung} — {doing} **", name(&state, *unit)),
                 Event::UnitExited {
                     unit, objective, ..
                 } => println!(
