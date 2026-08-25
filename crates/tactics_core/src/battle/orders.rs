@@ -1111,16 +1111,30 @@ impl BattleState {
         // other in sight forever — the loader happily harassing tracks
         // with high explosive — and a battle that will never produce
         // another loss never ends. Now only fighting that changes
-        // something resets it: hits, bounces (the guns are still trying),
-        // anything breaking or burning, anyone dying or leaving. Crews
-        // staring at each other across a field with dry racks or hopeless
-        // guns wind the clock down exactly like crews that lost contact,
-        // and the score decides what the staring was worth.
+        // something resets it: hits, anything breaking or burning, anyone
+        // dying or leaving. Crews staring at each other across a field
+        // with dry racks or hopeless guns wind the clock down exactly like
+        // crews that lost contact, and the score decides what the staring
+        // was worth.
+        //
+        // A bounce is deliberately NOT on that list, and it used to be, on
+        // the reading that the guns are still trying. Trying is not
+        // progress. The playthrough review caught what that costs: a
+        // howitzer lobbing at a plate it cannot beat reset this clock every
+        // round for twenty-three rounds after the last thing its bursts
+        // could reach was already broken, so one AI mispricing bought eight
+        // extra rounds of wandering on top of the barrage itself. Note the
+        // livelock this list was written against is still shut out, because
+        // a bounce that achieves anything announces the achievement
+        // separately — `ModuleHit` and `CrewHit` are both still here, and
+        // overpressure raises them from outside the plate. The rule this
+        // now states is the honest one: a gun that is *accomplishing*
+        // something keeps the battle alive, a gun that is merely firing
+        // does not.
         let progress = events.iter().any(|e| {
             matches!(
                 e,
                 Event::ShotHit { .. }
-                    | Event::ShotBounced { .. }
                     | Event::CrewHit { .. }
                     | Event::ModuleHit { .. }
                     | Event::BrewedUp { .. }

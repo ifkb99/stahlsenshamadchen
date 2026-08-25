@@ -10794,6 +10794,225 @@ fn neighbors_of_a_shellburst_feel_half_the_blast() {
 }
 
 #[test]
+fn a_shell_is_priced_against_the_plate_it_will_strike() {
+    // The playthrough review's headline defect, stated as a rule. Blast used
+    // to be priced at a flat fraction of its rating no matter what it landed
+    // on, while `overpressure` has always read the struck plate — so the one
+    // value function behind the loader's choice and the AI's shot pricing
+    // disagreed with the resolver about the most common shell in the game.
+    //
+    // A 105 against a tank destroyer is the sharpest case there is. Her
+    // glacis is six and blast six does not overmatch it; her back plate is
+    // one, and the same shell arriving there does not need the penetration
+    // gate's permission at all. Same gun, same round, same range: only the
+    // arc differs, and the price has to differ with it.
+    //
+    // The gun is stripped of its penetration first, and that is the whole
+    // reason this test is worth anything. The penetration half of the price
+    // has ALWAYS read the plate, so a howitzer with its own numbers scores
+    // the back of a tank destroyer higher than the front no matter which
+    // version of the code is running, and a test that merely compared the
+    // two arcs would pass against the defect it was written for. With pen at
+    // zero the only term left is blast, which is the term that was flat.
+    let mut reg = registry_wireless();
+    for weapon in reg.weapons.values_mut() {
+        weapon.penetration = 0;
+    }
+    for ammo in reg.ammo.values_mut() {
+        ammo.penetration = [0, 0];
+    }
+    let mut state = battery_stage(&reg, "tank_destroyer", 811);
+    let (battery, quarry) = (UnitId(0), UnitId(1));
+    let howitzer = reg
+        .weapon(
+            &reg.vehicle("artillery")
+                .expect("she is in the base mod")
+                .weapons[0],
+        )
+        .expect("the battery has a gun")
+        .clone();
+    let from = state.unit(battery).expect("on the field").pos;
+
+    let facing_the_guns = state.unit(quarry).expect("on the field").pos;
+    state.unit_mut(quarry).expect("on the field").facing = facing_the_guns.main_direction_to(from);
+    let front = tactics_core::battle::expected_damage(
+        &reg, &state, battery, from, &howitzer, quarry, false,
+    );
+
+    state.unit_mut(quarry).expect("on the field").facing = from.main_direction_to(facing_the_guns);
+    let rear = tactics_core::battle::expected_damage(
+        &reg, &state, battery, from, &howitzer, quarry, false,
+    );
+
+    assert!(
+        rear > front * 3.0,
+        "a burst on the back plate is worth far more than the same burst on \
+         the glacis, and was worth exactly the same before: front {front}, rear {rear}"
+    );
+    let whole = state
+        .substance(&reg, state.unit(quarry).expect("on the field"))
+        .0 as f32;
+    assert!(
+        rear >= whole * 0.5,
+        "and it is priced as what it is — a wreck, not a scratch: {rear} against \
+         {whole} of tank destroyer"
+    );
+}
+
+#[test]
+fn a_gun_with_nothing_left_to_break_expects_nothing() {
+    // Game 1 of the review, in eight lines. A howitzer put thirty-six shells
+    // into one tank destroyer's front; by the seventh round her tracks and
+    // her antenna — everything a burst can reach from outside a plate it
+    // cannot beat — were already destroyed, and the remaining twenty-nine
+    // shells were spent on a vehicle the shell provably could not touch.
+    //
+    // The AI was not being stubborn. It was reading a number that never
+    // consulted the hull, so there was nothing in the arithmetic to change
+    // its mind. Now the price of that shot is zero and `best_weapon_against`
+    // — the predicate every planner in the game prices shots with — refuses
+    // to call it a weapon at all, which is what puts the gun back on a
+    // target worth having.
+    let reg = registry_wireless();
+    let mut state = battery_stage(&reg, "tank_destroyer", 812);
+    let (battery, quarry) = (UnitId(0), UnitId(1));
+    let howitzer = reg
+        .weapon(
+            &reg.vehicle("artillery")
+                .expect("she is in the base mod")
+                .weapons[0],
+        )
+        .expect("the battery has a gun")
+        .clone();
+    let from = state.unit(battery).expect("on the field").pos;
+    let hull = state.unit(quarry).expect("on the field").pos;
+    state.unit_mut(quarry).expect("on the field").facing = hull.main_direction_to(from);
+
+    assert!(
+        tactics_core::battle::expected_damage(
+            &reg, &state, battery, from, &howitzer, quarry, false
+        ) > 0.0,
+        "while her running gear and her radio are intact the harassment is worth something"
+    );
+
+    let outside: Vec<String> = reg
+        .modules
+        .iter()
+        .filter(|(_, m)| {
+            matches!(
+                m.effect,
+                tactics_core::data::ModuleEffect::Mobility
+                    | tactics_core::data::ModuleEffect::Radio
+            )
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    let u = state.unit_mut(quarry).expect("on the field");
+    for (id, hits) in u.modules.iter_mut() {
+        if outside.contains(id) {
+            *hits = 0;
+        }
+    }
+
+    assert_eq!(
+        tactics_core::battle::expected_damage(
+            &reg, &state, battery, from, &howitzer, quarry, false
+        ),
+        0.0,
+        "with both of them gone the shell has nothing left to reach"
+    );
+    assert!(
+        tactics_core::ai::best_weapon_against(
+            &reg,
+            &state,
+            battery,
+            from,
+            state.unit(quarry).expect("on the field"),
+        )
+        .is_none(),
+        "so the battery is not armed against her at all, and stops firing"
+    );
+}
+
+#[test]
+fn a_bounce_that_achieves_nothing_does_not_hold_the_battle_open() {
+    // The chain reaction behind the same barrage, and the reason one AI
+    // mispricing cost two things rather than one. A bounce used to reset the
+    // stalemate clock on the reading that the guns were still trying — so
+    // shells that could not hurt anybody kept a decided battle breathing for
+    // eight more rounds of wandering.
+    //
+    // Trying is not progress. What holds a battle open now is a gun
+    // *accomplishing* something, and a bounce that accomplishes something
+    // says so in its own event: `ModuleHit` and `CrewHit` are both still on
+    // the list, and overpressure raises them from outside the plate. So the
+    // livelock this clock was written against — two crews neither can kill,
+    // staring at each other forever — is still shut out.
+    let mut reg = registry_wireless();
+    // Guns that strike and never get through, on hulls where blast has
+    // nothing to break: every shot from here to the bell is a bare bounce.
+    for weapon in reg.weapons.values_mut() {
+        weapon.penetration = 0;
+        weapon.ammo.clear();
+    }
+    for module in reg.modules.values_mut() {
+        module.size = 0;
+    }
+    let mut state = duel(&reg, 813);
+    let (west, east) = (UnitId(0), UnitId(1));
+    for (shooter, target) in [(west, east), (east, west)] {
+        state
+            .apply(
+                &reg,
+                &Order::SetFire {
+                    unit: shooter,
+                    fire: FireIntent::Target { target, weapon: 0 },
+                },
+            )
+            .unwrap();
+    }
+
+    let mut bounces = 0;
+    for _ in 0..STALEMATE_ROUNDS * 3 {
+        if state.is_over() {
+            break;
+        }
+        for (_, event) in ticked_round(&reg, &mut state) {
+            match event {
+                BattleEvent::ShotBounced { .. } => bounces += 1,
+                BattleEvent::CrewHit { .. } | BattleEvent::ModuleHit { .. } => {
+                    panic!("this scene has to be bounces and nothing else")
+                }
+                _ => {}
+            }
+        }
+        for (shooter, target) in [(west, east), (east, west)] {
+            let _ = state.apply(
+                &reg,
+                &Order::SetFire {
+                    unit: shooter,
+                    fire: FireIntent::Target { target, weapon: 0 },
+                },
+            );
+        }
+    }
+
+    assert!(
+        bounces > 0,
+        "the guns really are firing and really are bouncing"
+    );
+    assert!(
+        state.is_over(),
+        "and the battle ends anyway: nothing either crew did changed anything"
+    );
+    assert_eq!(
+        state.over.map(|r| r.reason),
+        Some(EndReason::Stalemate),
+        "by the clock rather than by anybody winning it"
+    );
+}
+
+#[test]
 fn a_mod_without_ammunition_keeps_instant_artillery() {
     // Additivity, read as strictly as the gate reads it. Flight time is a
     // rule, but it is a rule about *rounds*, and a mod that declines to

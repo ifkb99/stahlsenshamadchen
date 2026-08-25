@@ -1,7 +1,7 @@
 //! Combat resolution: accuracy, armor facings, terrain cover, elevation
 //! advantage, blind fire, opportunity fire, and shells in the air.
 
-use super::{BattleState, Event, FireIntent, UnitId, fog, stats};
+use super::{BattleState, Event, FireIntent, Unit, UnitId, fog, stats};
 use crate::data::{
     AmmoClass, AmmoDef, ArmorFacing, DamageType, DataRegistry, Scale, TerrainDef, WeaponDef,
 };
@@ -345,19 +345,149 @@ fn mustered<'r>(
 }
 
 /// What one round is expected to accomplish against one profile: the
-/// penetration chain's value plus a modest price on blast, because a shell
-/// that cannot get through still rattles tracks and antennas from outside.
+/// penetration chain's value plus what the burst does from outside if the
+/// plate holds.
 /// The one value function behind both the loader's choice and the AI's shot
 /// pricing — if they read different formulas, the crew would load a round
 /// the planner did not price, and every number upstream would quietly lie.
-fn round_worth(profile: &ShotProfile, ammo: Option<&AmmoDef>) -> f32 {
-    /// What a point of blast is worth next to a point of expected
-    /// penetration damage. An AI pricing constant in the same family as the
-    /// evaluator's SUPPORT and DEVOLVED, not physics — the physics of blast
-    /// live in `overpressure`.
-    const BLAST_WORTH: f32 = 0.3;
-    let blast = ammo.map(|a| a.blast).unwrap_or(0).max(0) as f32;
-    profile.pen_chance * profile.damage as f32 + (1.0 - profile.pen_chance) * BLAST_WORTH * blast
+///
+/// The blast half used to be a flat `0.3 * blast`, and being flat is exactly
+/// what was wrong with it: [`overpressure`] reads the plate the burst
+/// arrives against and this did not, so every shell a howitzer fired was
+/// priced the same against a heavy tank's glacis as against an open-topped
+/// carrier's roof. The playthrough review's headline defect is that
+/// arithmetic and nothing else — a 105 put thirty-six shells into one tank
+/// destroyer's front, twenty-nine of them after the only two things blast
+/// could reach out there were already broken, because the number said 1.8
+/// every time. It now asks [`blast_worth`], which walks the same three
+/// cases `overpressure` walks.
+fn round_worth(
+    registry: &DataRegistry,
+    state: &BattleState,
+    target: UnitId,
+    profile: &ShotProfile,
+    ammo: Option<&AmmoDef>,
+) -> f32 {
+    let blast = ammo.map(|a| a.blast).unwrap_or(0).max(0);
+    profile.pen_chance * profile.damage as f32
+        + (1.0 - profile.pen_chance) * blast_worth(registry, state, target, profile.plate, blast)
+}
+
+/// What a burst of `blast` against `plate` is expected to be worth, in the
+/// same ledger points a penetration spends — the pricing twin of
+/// [`overpressure`], case for case, and the reason the two are written
+/// beside each other.
+///
+/// There is no conversion constant here and there deliberately is not one.
+/// `points_per_effect` already states what a ledger point buys, and
+/// `overpressure` already spends blast through it against a soft target, so
+/// the exchange rate between blast and damage is not an opinion anybody has
+/// to hold — it is a fact about the resolver, and this reads it off rather
+/// than guessing at it.
+fn blast_worth(
+    registry: &DataRegistry,
+    state: &BattleState,
+    target: UnitId,
+    plate: i32,
+    blast: i32,
+) -> f32 {
+    if blast <= 0 {
+        return 0.0;
+    }
+    if plate == 0 {
+        // Splash against no armour cashes straight into casualty rolls at
+        // the same rate a penetration's budget does, so a point of blast is
+        // worth exactly a point of damage.
+        //
+        // Today's only caller cannot reach this, and the line is here anyway.
+        // `round_worth` prices this term as `1 - pen_chance`, and against no
+        // armour the gate always passes, so a direct hit on a platoon is
+        // priced through the penetration half with the full budget — which is
+        // the same sentence `overpressure` carries about why direct hits
+        // never reach ITS plate-zero branch. The trap is what happens
+        // without this line: `blast_overmatches(blast, 0)` is true for any
+        // positive blast, so the next caller to price area fire or splash
+        // through here would silently get "the whole platoon is wrecked",
+        // and artillery against infantry is attrition and never a
+        // single-event erasure.
+        return blast as f32;
+    }
+    if blast_overmatches(blast, plate) {
+        // She is wrecked, gate or no gate, so the shot is worth whatever is
+        // left of her — which also means `best_weapon_against` reads it as a
+        // kill and the evaluator pays its kill bonus, without either of them
+        // learning a special case for blast.
+        return state
+            .unit(target)
+            .map(|u| state.substance(registry, u).0 as f32)
+            .unwrap_or(0.0);
+    }
+    // What is left is the harassing case: some chance of breaking one of the
+    // things a burst can reach from outside. A crew whose tracks and antenna
+    // are already gone is a crew this shell cannot touch, and saying so is
+    // the whole fix — the alternative is a gun that keeps firing at a number
+    // rather than at a tank.
+    let Some(unit) = state.unit(target) else {
+        return 0.0;
+    };
+    // Summed the way the resolver picks, not merely counted. `overpressure`
+    // draws from the weighted list and returns early when the weights come
+    // to nothing, so a hull whose exterior modules are all size zero is one
+    // blast provably cannot touch — and a pricing that counted entries
+    // instead would put high explosive up against solid shot on a plate the
+    // HE cannot beat, which is the loader making a choice on a number no
+    // resolver will honour.
+    let total: u32 = exterior_modules(registry, unit)
+        .iter()
+        .map(|(_, w)| w)
+        .sum();
+    if total == 0 {
+        return 0.0;
+    }
+    // One roll's worth of harm, at the odds of getting it: `points_per_effect`
+    // is by definition what one effect costs the ledger, so this needs no
+    // conversion of its own.
+    overpressure_chance(blast, plate) as f32 / 100.0
+        * registry.balance.points_per_effect.max(1) as f32
+}
+
+/// Blast that does not need the penetration gate's permission: twice the
+/// plate it arrives against crushes the hull. One line, shared, because
+/// [`blast_worth`] pricing it differently from [`overpressure`] resolving it
+/// is precisely the drift this chunk exists to remove. Public because the
+/// balance instrument's "worth a look" section asks the same question of a
+/// gun's heaviest round against a hull's thinnest plate, and a table that
+/// says a gun can hurt a tank while the resolver disagrees is worse than no
+/// table.
+pub fn blast_overmatches(blast: i32, plate: i32) -> bool {
+    blast >= plate * 2
+}
+
+/// The odds a burst that neither overmatches nor penetrates breaks
+/// something anyway. Shared with [`blast_worth`] for the reason above.
+fn overpressure_chance(blast: i32, plate: i32) -> i32 {
+    blast * 100 / (blast + plate).max(1)
+}
+
+/// What blast can actually reach from outside, weighted like the inside is:
+/// running gear and antennas, the things bolted to the hull rather than
+/// sheltered by it. Shared between the resolver and the pricing so that a
+/// module set a mod invents is priced by whatever it is, not by a list
+/// somebody remembered to update twice.
+fn exterior_modules(registry: &DataRegistry, unit: &Unit) -> Vec<(String, u32)> {
+    unit.modules
+        .iter()
+        .filter(|(_, hits)| **hits > 0)
+        .filter_map(|(id, _)| {
+            registry.module(id).and_then(|m| {
+                matches!(
+                    m.effect,
+                    crate::data::ModuleEffect::Mobility | crate::data::ModuleEffect::Radio
+                )
+                .then(|| (id.clone(), m.size))
+            })
+        })
+        .collect()
 }
 
 /// The round the loader picks with a target in her commander's sights: the
@@ -390,7 +520,7 @@ pub fn best_round_against<'r>(
         let Some(profile) = shot_profile(registry, state, weapon, &round, u.pos, target) else {
             continue;
         };
-        let worth = round_worth(&profile, Some(ammo));
+        let worth = round_worth(registry, state, target, &profile, Some(ammo));
         if best.as_ref().is_none_or(|(w, _)| worth > *w) {
             best = Some((worth, round));
         }
@@ -722,6 +852,11 @@ fn penetration_roll(state: &mut BattleState, pen: f32, armor: f32, scatter: i32)
 /// the ledger loses if it does.
 pub struct ShotProfile {
     pub facing: ArmorFacing,
+    /// The struck plate as the vehicle lists it, before obliquity. Blast
+    /// reads this rather than [`Self::effective_armor`], because
+    /// [`overpressure`] does: a burst crushing a hull is not defeated by the
+    /// angle a solid shot would skip off.
+    pub plate: i32,
     /// Plate value after obliquity, in the abstract armor units.
     pub effective_armor: f32,
     /// Probability the chambered round defeats it, 0..=1.
@@ -755,6 +890,7 @@ pub fn shot_profile(
     let pen = round.pen_at(attacker_pos.distance_to(tgt.pos), weapon.range);
     Some(ShotProfile {
         facing,
+        plate,
         effective_armor,
         pen_chance: penetration_chance(pen, effective_armor, registry.balance.pen_scatter),
         damage: round.damage,
@@ -787,7 +923,7 @@ pub fn expected_damage(
         return 0.0;
     };
     let p = hit_chance(registry, state, attacker, from, weapon, tgt.pos, blind) as f32 / 100.0;
-    p * round_worth(&profile, round.ammo)
+    p * round_worth(registry, state, target, &profile, round.ammo)
 }
 
 /// Everything the player should know before committing to a shot.
@@ -1461,23 +1597,7 @@ fn overpressure(
             .armor
             .value(struck_facing(unit.pos, unit.facing, from))
             .max(0);
-        // What blast can actually reach from outside, weighted like the
-        // inside is.
-        let exterior: Vec<(String, u32)> = unit
-            .modules
-            .iter()
-            .filter(|(_, hits)| **hits > 0)
-            .filter_map(|(id, _)| {
-                registry.module(id).and_then(|m| {
-                    matches!(
-                        m.effect,
-                        crate::data::ModuleEffect::Mobility | crate::data::ModuleEffect::Radio
-                    )
-                    .then(|| (id.clone(), m.size))
-                })
-            })
-            .collect();
-        (plate, exterior)
+        (plate, exterior_modules(registry, unit))
     };
     if plate == 0 {
         // Soft, dispersed things do not have a hull for overpressure to
@@ -1493,7 +1613,7 @@ fn overpressure(
         effect_rolls(registry, state, target, rolls, false, 1.0, events);
         return;
     }
-    if blast >= plate * 2 {
+    if blast_overmatches(blast, plate) {
         // Overmatch: the shell does not need the gate's permission. Reap
         // folds the flag into `alive` at the end of the tick and announces
         // the destruction, the same simultaneity bargain every other death
@@ -1507,7 +1627,7 @@ fn overpressure(
     if total == 0 {
         return;
     }
-    let chance = blast * 100 / (blast + plate).max(1);
+    let chance = overpressure_chance(blast, plate);
     if state.rng.random_range(0..100) >= chance {
         return;
     }

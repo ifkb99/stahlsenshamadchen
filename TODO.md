@@ -32,6 +32,9 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 
 ## Immediate Goals
 ### Misc
+- **a broken crew cannot retreat, and there are two reasons.** `resolve_movement` refuses *every* leg of a path from a crew who will not obey — advancing and retreating alike — under a comment that says "they simply will not advance"; the refusal wants to be directional. And the evaluator cannot see an exit until `condition` drops below `1 - withdraw_threshold`, which for massed armour at 0.85 means below 15%, i.e. already dead. Morale wants its own path to the lane, independent of the plate. Tax 2 of REVIEW.md; the chain-reaction half is done
+- **the AI's mid-game is a random walk, and movement points are not the problem.** measured over game 1: 53 hexes driven for 10 hexes of progress, a recon car that ended further from the objective than she deployed, an artillery piece oscillating between two hexes for twenty-eight rounds. `noisy_score` draws difficulty noise independently per candidate tile and the planner takes an argmax over all of them, so the winner is whichever tile drew luckiest — and the more tiles a vehicle can reach, the worse it is. try one draw per unit per round; judge on the skill-gap table, which is also what would catch a return of the clumping `PLATEAU` was built to stop. Tax 3 of REVIEW.md
+- **`battle_forest` declares no `exit` objective**, so no crew on it can withdraw whatever the AI decides. content, and it is why one of the review's three battles could not have shown a retreat
 - think about retreating. how does it work IRL?
   - the battle half exists: an `exit` objective is those tiles, leaving by one keeps the crew, and `river_crossing` has a retreat lane at each road vertex. what is missing is the **campaign half** — an army that withdrew should arrive somewhere, not merely stop existing on the battle map
   - IRL there are no tiles. maybe allow enemy to attempt to pursue?

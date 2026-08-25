@@ -412,24 +412,11 @@ order Commit { side: 0 }
 order SetFire { unit: UnitId(4), fire: Hold }
 order Commit { side: 1 }
 TickStarted { tick: 0 }
-TickStarted { tick: 1 }
-TickStarted { tick: 2 }
-TickStarted { tick: 3 }
-TickStarted { tick: 4 }
-TickStarted { tick: 5 }
-UnitMoved { unit: UnitId(3), path: [Hex { x: 3, y: 20, z: -23 }, Hex { x: 4, y: 20, z: -24 }] }
-TickStarted { tick: 6 }
-TickStarted { tick: 7 }
-TickStarted { tick: 8 }
-TickStarted { tick: 9 }
-TickStarted { tick: 10 }
-TickStarted { tick: 11 }
-UnitMoved { unit: UnitId(3), path: [Hex { x: 4, y: 20, z: -24 }, Hex { x: 5, y: 20, z: -25 }] }
-RoundStarted { round: 13 }
+BattleEnded { winner: Some(0), reason: Stalemate }
 final Anka Weiss Hex { x: 10, y: 20, z: -30 } crew [Out, Out] modules {"ammo_rack_bulk": 0, "main_gun": 0, "radio_set": 1, "tracks": 0} alive false
 final Elsa Brandt Hex { x: 9, y: 14, z: -23 } crew [Out] modules {"ammo_rack_sparse": 1, "main_gun": 0, "radio_set": 1, "tracks": 0} alive false
 final Mina Falkenrath Hex { x: 11, y: 19, z: -30 } crew [Fine, Out] modules {"ammo_rack": 0, "main_gun": 0, "radio_set": 0, "tracks": 1} alive false
-final Petra Voss Hex { x: 5, y: 20, z: -25 } crew [] modules {"ammo_rack_bulk": 1, "main_gun": 1, "radio_set": 1, "tracks": 2} alive true
+final Petra Voss Hex { x: 3, y: 20, z: -23 } crew [] modules {"ammo_rack_bulk": 1, "main_gun": 1, "radio_set": 1, "tracks": 2} alive true
 final Irma Krieger Hex { x: 18, y: 18, z: -36 } crew [] modules {"ammo_rack_bulk": 1, "main_gun": 1, "radio_set": 0, "tracks": 1} alive true
 final Sofia Ravenna Hex { x: 14, y: 20, z: -34 } crew [Out] modules {"ammo_rack": 1, "main_gun": 0, "radio_set": 0, "tracks": 2} alive false
 final Nadja Orlov Hex { x: 9, y: 27, z: -36 } crew [] modules {"ammo_rack_sparse": 1, "main_gun": 1, "radio_set": 1, "tracks": 2} alive false
@@ -1020,7 +1007,7 @@ TickStarted { tick: 11 }
 UnitMoved { unit: UnitId(3), path: [Hex { x: 2, y: 20, z: -22 }, Hex { x: 3, y: 19, z: -22 }] }
 UnitMoved { unit: UnitId(6), path: [Hex { x: 14, y: 24, z: -38 }, Hex { x: 15, y: 23, z: -38 }] }
 RoundStarted { round: 5 }
-order SetFire { unit: UnitId(3), fire: Target { target: UnitId(4), weapon: 0 } }
+order SetMove { unit: UnitId(3), to: Hex { x: 5, y: 18, z: -23 } }
 order Commit { side: 0 }
 order SetFire { unit: UnitId(4), fire: Hold }
 order SetMove { unit: UnitId(6), to: Hex { x: 15, y: 22, z: -37 } }
@@ -1028,26 +1015,50 @@ order Commit { side: 1 }
 TickStarted { tick: 0 }
 TickStarted { tick: 1 }
 TickStarted { tick: 2 }
-ShotFired { attacker: UnitId(3), from: Hex { x: 3, y: 19, z: -22 }, at: Hex { x: 17, y: 18, z: -35 }, weapon: "howitzer_105", blind: false, opportunity: false }
-UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: 3, y: 19, z: -22 } }
 TickStarted { tick: 3 }
 UnitMoved { unit: UnitId(6), path: [Hex { x: 15, y: 23, z: -38 }, Hex { x: 15, y: 22, z: -37 }] }
-ShellLanded { attacker: UnitId(3), at: Hex { x: 17, y: 18, z: -35 }, ammo: "he_105" }
-ShotBounced { attacker: UnitId(3), target: UnitId(4), facing: Front, rattled: true }
 TickStarted { tick: 4 }
-ShotFired { attacker: UnitId(6), from: Hex { x: 15, y: 22, z: -37 }, at: Hex { x: 3, y: 19, z: -22 }, weapon: "gun_88", blind: false, opportunity: true }
+TickStarted { tick: 5 }
+UnitMoved { unit: UnitId(3), path: [Hex { x: 3, y: 19, z: -22 }, Hex { x: 4, y: 19, z: -23 }] }
+TickStarted { tick: 6 }
+TickStarted { tick: 7 }
+TickStarted { tick: 8 }
+TickStarted { tick: 9 }
+TickStarted { tick: 10 }
+TickStarted { tick: 11 }
+UnitMoved { unit: UnitId(3), path: [Hex { x: 4, y: 19, z: -23 }, Hex { x: 5, y: 18, z: -23 }] }
+RoundStarted { round: 6 }
+order SetMove { unit: UnitId(3), to: Hex { x: 7, y: 18, z: -25 } }
+order Commit { side: 0 }
+order SetFire { unit: UnitId(4), fire: Hold }
+order SetFire { unit: UnitId(6), fire: Hold }
+order Commit { side: 1 }
+TickStarted { tick: 0 }
+TickStarted { tick: 1 }
+TickStarted { tick: 2 }
+TickStarted { tick: 3 }
+TickStarted { tick: 4 }
+TickStarted { tick: 5 }
+UnitMoved { unit: UnitId(3), path: [Hex { x: 5, y: 18, z: -23 }, Hex { x: 6, y: 18, z: -24 }] }
+UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: 6, y: 18, z: -24 } }
+ContactReported { unit: UnitId(3), by: UnitId(4), at: Hex { x: 6, y: 18, z: -24 } }
+TickStarted { tick: 6 }
+TickStarted { tick: 7 }
+ShotFired { attacker: UnitId(4), from: Hex { x: 17, y: 18, z: -35 }, at: Hex { x: 6, y: 18, z: -24 }, weapon: "gun_75", blind: false, opportunity: true }
+ShotMissed { attacker: UnitId(4), at: Hex { x: 6, y: 18, z: -24 } }
+ShotFired { attacker: UnitId(6), from: Hex { x: 15, y: 22, z: -37 }, at: Hex { x: 6, y: 18, z: -24 }, weapon: "gun_88", blind: false, opportunity: true }
 ShotHit { attacker: UnitId(6), target: UnitId(3), damage: 14, facing: Front }
 ModuleHit { unit: UnitId(3), module: "tracks", destroyed: false }
 ModuleHit { unit: UnitId(3), module: "main_gun", destroyed: true }
 ModuleHit { unit: UnitId(3), module: "tracks", destroyed: true }
 CrewHit { unit: UnitId(3), cadet: CadetId(5), out: true }
 UnitSpotted { unit: UnitId(6), by_side: 0, at: Hex { x: 15, y: 22, z: -37 } }
-UnitDestroyed { unit: UnitId(3), at: Hex { x: 3, y: 19, z: -22 } }
+UnitDestroyed { unit: UnitId(3), at: Hex { x: 6, y: 18, z: -24 } }
 BattleEnded { winner: Some(1), reason: Eliminated }
 final Anka Weiss Hex { x: 6, y: 20, z: -26 } crew [] modules {"ammo_rack_bulk": 0, "main_gun": 1, "radio_set": 1, "tracks": 2} alive false
 final Elsa Brandt Hex { x: 8, y: 17, z: -25 } crew [Out] modules {"ammo_rack_sparse": 0, "main_gun": 0, "radio_set": 0, "tracks": 0} alive false
 final Mina Falkenrath Hex { x: 8, y: 21, z: -29 } crew [Fine, Out] modules {"ammo_rack": 0, "main_gun": 0, "radio_set": 0, "tracks": 0} alive false
-final Petra Voss Hex { x: 3, y: 19, z: -22 } crew [Out] modules {"ammo_rack_bulk": 1, "main_gun": 0, "radio_set": 1, "tracks": 0} alive false
+final Petra Voss Hex { x: 6, y: 18, z: -24 } crew [Out] modules {"ammo_rack_bulk": 1, "main_gun": 0, "radio_set": 1, "tracks": 0} alive false
 final Irma Krieger Hex { x: 17, y: 18, z: -35 } crew [Wounded] modules {"ammo_rack_bulk": 1, "main_gun": 1, "radio_set": 0, "tracks": 0} alive true
 final Sofia Ravenna Hex { x: 22, y: 12, z: -34 } crew [Out] modules {"ammo_rack": 0, "main_gun": 1, "radio_set": 1, "tracks": 0} alive false
 final Nadja Orlov Hex { x: 15, y: 22, z: -37 } crew [] modules {"ammo_rack_sparse": 1, "main_gun": 1, "radio_set": 1, "tracks": 2} alive true
@@ -1191,7 +1202,7 @@ order SetMove { unit: UnitId(0), to: Hex { x: 11, y: 20, z: -31 } }
 order SetFire { unit: UnitId(0), fire: Target { target: UnitId(5), weapon: 0 } }
 order SetMove { unit: UnitId(2), to: Hex { x: 12, y: 20, z: -32 } }
 order SetFire { unit: UnitId(2), fire: Target { target: UnitId(5), weapon: 0 } }
-order SetMove { unit: UnitId(3), to: Hex { x: -1, y: 18, z: -17 } }
+order SetMove { unit: UnitId(3), to: Hex { x: -3, y: 21, z: -18 } }
 order SetFire { unit: UnitId(3), fire: Target { target: UnitId(5), weapon: 0 } }
 order Commit { side: 0 }
 order SetMove { unit: UnitId(4), to: Hex { x: 17, y: 19, z: -36 } }
@@ -1233,7 +1244,7 @@ UnitMoved { unit: UnitId(2), path: [Hex { x: 8, y: 22, z: -30 }, Hex { x: 9, y: 
 TickStarted { tick: 4 }
 TickStarted { tick: 5 }
 UnitMoved { unit: UnitId(2), path: [Hex { x: 9, y: 21, z: -30 }, Hex { x: 10, y: 20, z: -30 }] }
-UnitMoved { unit: UnitId(3), path: [Hex { x: -3, y: 19, z: -16 }, Hex { x: -2, y: 19, z: -17 }] }
+UnitMoved { unit: UnitId(3), path: [Hex { x: -3, y: 19, z: -16 }, Hex { x: -3, y: 20, z: -17 }] }
 UnitMoved { unit: UnitId(4), path: [Hex { x: 15, y: 21, z: -36 }, Hex { x: 16, y: 20, z: -36 }] }
 ShotFired { attacker: UnitId(2), from: Hex { x: 10, y: 20, z: -30 }, at: Hex { x: 16, y: 20, z: -36 }, weapon: "gun_37", blind: false, opportunity: true }
 ShotMissed { attacker: UnitId(2), at: Hex { x: 16, y: 20, z: -36 } }
@@ -1255,7 +1266,7 @@ MoraleChanged { unit: UnitId(4), rung: "Wavering", obeys: true }
 TickStarted { tick: 9 }
 TickStarted { tick: 10 }
 TickStarted { tick: 11 }
-UnitMoved { unit: UnitId(3), path: [Hex { x: -2, y: 19, z: -17 }, Hex { x: -1, y: 18, z: -17 }] }
+UnitMoved { unit: UnitId(3), path: [Hex { x: -3, y: 20, z: -17 }, Hex { x: -3, y: 21, z: -18 }] }
 UnitMoved { unit: UnitId(6), path: [Hex { x: 13, y: 27, z: -40 }, Hex { x: 14, y: 26, z: -40 }] }
 ShotFired { attacker: UnitId(4), from: Hex { x: 17, y: 19, z: -36 }, at: Hex { x: 11, y: 20, z: -31 }, weapon: "gun_75", blind: false, opportunity: false }
 ShotMissed { attacker: UnitId(4), at: Hex { x: 11, y: 20, z: -31 } }
@@ -1268,7 +1279,7 @@ MoraleChanged { unit: UnitId(3), rung: "Wavering", obeys: true }
 ContactReported { unit: UnitId(6), by: UnitId(2), at: Hex { x: 14, y: 26, z: -40 } }
 RoundStarted { round: 4 }
 order SetFire { unit: UnitId(2), fire: Hold }
-order SetMove { unit: UnitId(3), to: Hex { x: 0, y: 18, z: -18 } }
+order SetMove { unit: UnitId(3), to: Hex { x: -1, y: 21, z: -20 } }
 order SetFire { unit: UnitId(3), fire: Target { target: UnitId(6), weapon: 0 } }
 order Commit { side: 0 }
 order SetFire { unit: UnitId(4), fire: Target { target: UnitId(2), weapon: 0 } }
@@ -1277,8 +1288,8 @@ order Commit { side: 1 }
 TickStarted { tick: 0 }
 TookCover { unit: UnitId(2), at: Hex { x: 15, y: 22, z: -37 } }
 CommandPassed { formation: "kuhlmann_armor", from: UnitId(0), to: UnitId(2) }
-ShotFired { attacker: UnitId(3), from: Hex { x: -1, y: 18, z: -17 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
-UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: -1, y: 18, z: -17 } }
+ShotFired { attacker: UnitId(3), from: Hex { x: -3, y: 21, z: -18 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
+UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: -3, y: 21, z: -18 } }
 MoraleChanged { unit: UnitId(2), rung: "Wavering", obeys: true }
 TickStarted { tick: 1 }
 UnitMoved { unit: UnitId(2), path: [Hex { x: 10, y: 20, z: -30 }, Hex { x: 11, y: 20, z: -31 }] }
@@ -1298,8 +1309,10 @@ TickStarted { tick: 4 }
 UnitMoved { unit: UnitId(2), path: [Hex { x: 12, y: 20, z: -32 }, Hex { x: 13, y: 20, z: -33 }] }
 TickStarted { tick: 5 }
 UnitMoved { unit: UnitId(2), path: [Hex { x: 13, y: 20, z: -33 }, Hex { x: 14, y: 20, z: -34 }] }
+UnitMoved { unit: UnitId(3), path: [Hex { x: -3, y: 21, z: -18 }, Hex { x: -2, y: 21, z: -19 }] }
 TickStarted { tick: 6 }
-ShotFired { attacker: UnitId(3), from: Hex { x: -1, y: 18, z: -17 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
+ShotFired { attacker: UnitId(3), from: Hex { x: -2, y: 21, z: -19 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
+UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: -2, y: 21, z: -19 } }
 TickStarted { tick: 7 }
 UnitMoved { unit: UnitId(2), path: [Hex { x: 14, y: 20, z: -34 }, Hex { x: 14, y: 21, z: -35 }] }
 ShellLanded { attacker: UnitId(3), at: Hex { x: 14, y: 26, z: -40 }, ammo: "he_105" }
@@ -1321,237 +1334,128 @@ TickStarted { tick: 8 }
 TickStarted { tick: 9 }
 TickStarted { tick: 10 }
 TickStarted { tick: 11 }
-UnitMoved { unit: UnitId(3), path: [Hex { x: -1, y: 18, z: -17 }, Hex { x: 0, y: 18, z: -18 }] }
+UnitMoved { unit: UnitId(3), path: [Hex { x: -2, y: 21, z: -19 }, Hex { x: -1, y: 21, z: -20 }] }
 RoundStarted { round: 5 }
-order SetMove { unit: UnitId(3), to: Hex { x: -2, y: 20, z: -18 } }
-order SetFire { unit: UnitId(3), fire: Target { target: UnitId(6), weapon: 0 } }
+order SetMove { unit: UnitId(3), to: Hex { x: 1, y: 21, z: -22 } }
+order SetFire { unit: UnitId(3), fire: Target { target: UnitId(4), weapon: 0 } }
 order Commit { side: 0 }
 order SetMove { unit: UnitId(4), to: Hex { x: 17, y: 18, z: -35 } }
 order SetFire { unit: UnitId(6), fire: Hold }
 order Commit { side: 1 }
 TickStarted { tick: 0 }
-ShotFired { attacker: UnitId(3), from: Hex { x: 0, y: 18, z: -18 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
-UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: 0, y: 18, z: -18 } }
+ShotFired { attacker: UnitId(3), from: Hex { x: -1, y: 21, z: -20 }, at: Hex { x: 17, y: 19, z: -36 }, weapon: "howitzer_105", blind: false, opportunity: false }
+UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: -1, y: 21, z: -20 } }
 TickStarted { tick: 1 }
-ShellLanded { attacker: UnitId(3), at: Hex { x: 14, y: 26, z: -40 }, ammo: "he_105" }
-ShotBounced { attacker: UnitId(3), target: UnitId(6), facing: Front, rattled: true }
+ShellLanded { attacker: UnitId(3), at: Hex { x: 17, y: 19, z: -36 }, ammo: "he_105" }
+ShotBounced { attacker: UnitId(3), target: UnitId(4), facing: Front, rattled: true }
 TickStarted { tick: 2 }
 UnitMoved { unit: UnitId(4), path: [Hex { x: 17, y: 19, z: -36 }, Hex { x: 17, y: 18, z: -35 }] }
 TickStarted { tick: 3 }
 TickStarted { tick: 4 }
 TickStarted { tick: 5 }
-UnitMoved { unit: UnitId(3), path: [Hex { x: 0, y: 18, z: -18 }, Hex { x: -1, y: 19, z: -18 }] }
+UnitMoved { unit: UnitId(3), path: [Hex { x: -1, y: 21, z: -20 }, Hex { x: 0, y: 21, z: -21 }] }
 TickStarted { tick: 6 }
-ShotFired { attacker: UnitId(3), from: Hex { x: -1, y: 19, z: -18 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
-UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: -1, y: 19, z: -18 } }
 TickStarted { tick: 7 }
-ShellLanded { attacker: UnitId(3), at: Hex { x: 14, y: 26, z: -40 }, ammo: "he_105" }
-ShotBounced { attacker: UnitId(3), target: UnitId(6), facing: Front, rattled: true }
 TickStarted { tick: 8 }
 TickStarted { tick: 9 }
 TickStarted { tick: 10 }
 TickStarted { tick: 11 }
-UnitMoved { unit: UnitId(3), path: [Hex { x: -1, y: 19, z: -18 }, Hex { x: -2, y: 20, z: -18 }] }
+UnitMoved { unit: UnitId(3), path: [Hex { x: 0, y: 21, z: -21 }, Hex { x: 1, y: 21, z: -22 }] }
 RoundStarted { round: 6 }
-order SetMove { unit: UnitId(3), to: Hex { x: -2, y: 19, z: -17 } }
-order SetFire { unit: UnitId(3), fire: Target { target: UnitId(6), weapon: 0 } }
+order SetMove { unit: UnitId(3), to: Hex { x: 3, y: 21, z: -24 } }
 order Commit { side: 0 }
 order SetMove { unit: UnitId(4), to: Hex { x: 17, y: 21, z: -38 } }
 order SetFire { unit: UnitId(6), fire: Hold }
 order Commit { side: 1 }
 TickStarted { tick: 0 }
-ShotFired { attacker: UnitId(3), from: Hex { x: -2, y: 20, z: -18 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
-UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: -2, y: 20, z: -18 } }
 TickStarted { tick: 1 }
-ShellLanded { attacker: UnitId(3), at: Hex { x: 14, y: 26, z: -40 }, ammo: "he_105" }
-ShotBounced { attacker: UnitId(3), target: UnitId(6), facing: Front, rattled: true }
 TickStarted { tick: 2 }
 UnitMoved { unit: UnitId(4), path: [Hex { x: 17, y: 18, z: -35 }, Hex { x: 17, y: 19, z: -36 }] }
 TickStarted { tick: 3 }
 TickStarted { tick: 4 }
 TickStarted { tick: 5 }
-UnitMoved { unit: UnitId(3), path: [Hex { x: -2, y: 20, z: -18 }, Hex { x: -2, y: 19, z: -17 }] }
+UnitMoved { unit: UnitId(3), path: [Hex { x: 1, y: 21, z: -22 }, Hex { x: 2, y: 21, z: -23 }] }
 UnitMoved { unit: UnitId(4), path: [Hex { x: 17, y: 19, z: -36 }, Hex { x: 17, y: 20, z: -37 }] }
 TickStarted { tick: 6 }
-ShotFired { attacker: UnitId(3), from: Hex { x: -2, y: 19, z: -17 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
-UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: -2, y: 19, z: -17 } }
 TickStarted { tick: 7 }
-ShellLanded { attacker: UnitId(3), at: Hex { x: 14, y: 26, z: -40 }, ammo: "he_105" }
-ShotBounced { attacker: UnitId(3), target: UnitId(6), facing: Front, rattled: true }
 TickStarted { tick: 8 }
 UnitMoved { unit: UnitId(4), path: [Hex { x: 17, y: 20, z: -37 }, Hex { x: 17, y: 21, z: -38 }] }
 TickStarted { tick: 9 }
 TickStarted { tick: 10 }
 TickStarted { tick: 11 }
+UnitMoved { unit: UnitId(3), path: [Hex { x: 2, y: 21, z: -23 }, Hex { x: 3, y: 21, z: -24 }] }
 RoundStarted { round: 7 }
-order SetMove { unit: UnitId(3), to: Hex { x: -1, y: 20, z: -19 } }
-order SetFire { unit: UnitId(3), fire: Target { target: UnitId(6), weapon: 0 } }
+order SetMove { unit: UnitId(3), to: Hex { x: 3, y: 22, z: -25 } }
 order Commit { side: 0 }
 order SetMove { unit: UnitId(4), to: Hex { x: 16, y: 21, z: -37 } }
 order SetFire { unit: UnitId(6), fire: Hold }
 order Commit { side: 1 }
 TickStarted { tick: 0 }
-ShotFired { attacker: UnitId(3), from: Hex { x: -2, y: 19, z: -17 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
 TickStarted { tick: 1 }
-ShellLanded { attacker: UnitId(3), at: Hex { x: 14, y: 26, z: -40 }, ammo: "he_105" }
-ShotBounced { attacker: UnitId(3), target: UnitId(6), facing: Front, rattled: true }
 TickStarted { tick: 2 }
 UnitMoved { unit: UnitId(4), path: [Hex { x: 17, y: 21, z: -38 }, Hex { x: 16, y: 21, z: -37 }] }
 TickStarted { tick: 3 }
 TickStarted { tick: 4 }
 TickStarted { tick: 5 }
-UnitMoved { unit: UnitId(3), path: [Hex { x: -2, y: 19, z: -17 }, Hex { x: -1, y: 19, z: -18 }] }
+UnitMoved { unit: UnitId(3), path: [Hex { x: 3, y: 21, z: -24 }, Hex { x: 3, y: 22, z: -25 }] }
 TickStarted { tick: 6 }
-ShotFired { attacker: UnitId(3), from: Hex { x: -1, y: 19, z: -18 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
-UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: -1, y: 19, z: -18 } }
 TickStarted { tick: 7 }
-ShellLanded { attacker: UnitId(3), at: Hex { x: 14, y: 26, z: -40 }, ammo: "he_105" }
-ShotBounced { attacker: UnitId(3), target: UnitId(6), facing: Front, rattled: true }
-MoraleChanged { unit: UnitId(6), rung: "Breaking", obeys: false }
 TickStarted { tick: 8 }
 TickStarted { tick: 9 }
 TickStarted { tick: 10 }
 TickStarted { tick: 11 }
-UnitMoved { unit: UnitId(3), path: [Hex { x: -1, y: 19, z: -18 }, Hex { x: -1, y: 20, z: -19 }] }
 RoundStarted { round: 8 }
-order SetMove { unit: UnitId(3), to: Hex { x: 0, y: 20, z: -20 } }
-order SetFire { unit: UnitId(3), fire: Target { target: UnitId(6), weapon: 0 } }
+order SetMove { unit: UnitId(3), to: Hex { x: 5, y: 21, z: -26 } }
 order Commit { side: 0 }
 order SetMove { unit: UnitId(4), to: Hex { x: 17, y: 21, z: -38 } }
 order SetFire { unit: UnitId(6), fire: Hold }
 order Commit { side: 1 }
 TickStarted { tick: 0 }
-ShotFired { attacker: UnitId(3), from: Hex { x: -1, y: 20, z: -19 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
-UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: -1, y: 20, z: -19 } }
 TickStarted { tick: 1 }
-ShellLanded { attacker: UnitId(3), at: Hex { x: 14, y: 26, z: -40 }, ammo: "he_105" }
-ShotBounced { attacker: UnitId(3), target: UnitId(6), facing: Front, rattled: true }
-MoraleChanged { unit: UnitId(6), rung: "Breaking", obeys: false }
 TickStarted { tick: 2 }
 UnitMoved { unit: UnitId(4), path: [Hex { x: 16, y: 21, z: -37 }, Hex { x: 17, y: 21, z: -38 }] }
 TickStarted { tick: 3 }
 TickStarted { tick: 4 }
 TickStarted { tick: 5 }
-UnitMoved { unit: UnitId(3), path: [Hex { x: -1, y: 20, z: -19 }, Hex { x: 0, y: 20, z: -20 }] }
+UnitMoved { unit: UnitId(3), path: [Hex { x: 3, y: 22, z: -25 }, Hex { x: 4, y: 22, z: -26 }] }
 TickStarted { tick: 6 }
-ShotFired { attacker: UnitId(3), from: Hex { x: 0, y: 20, z: -20 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
-UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: 0, y: 20, z: -20 } }
 TickStarted { tick: 7 }
-ShellLanded { attacker: UnitId(3), at: Hex { x: 14, y: 26, z: -40 }, ammo: "he_105" }
-ShotBounced { attacker: UnitId(3), target: UnitId(6), facing: Front, rattled: true }
 TickStarted { tick: 8 }
 TickStarted { tick: 9 }
 TickStarted { tick: 10 }
 TickStarted { tick: 11 }
+UnitMoved { unit: UnitId(3), path: [Hex { x: 4, y: 22, z: -26 }, Hex { x: 5, y: 21, z: -26 }] }
 RoundStarted { round: 9 }
-order SetMove { unit: UnitId(3), to: Hex { x: 2, y: 20, z: -22 } }
-order SetFire { unit: UnitId(3), fire: Target { target: UnitId(6), weapon: 0 } }
+order SetMove { unit: UnitId(3), to: Hex { x: 7, y: 20, z: -27 } }
 order Commit { side: 0 }
 order SetMove { unit: UnitId(4), to: Hex { x: 16, y: 21, z: -37 } }
 order SetFire { unit: UnitId(6), fire: Hold }
 order Commit { side: 1 }
 TickStarted { tick: 0 }
-ShotFired { attacker: UnitId(3), from: Hex { x: 0, y: 20, z: -20 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
 TickStarted { tick: 1 }
-ShellLanded { attacker: UnitId(3), at: Hex { x: 14, y: 26, z: -40 }, ammo: "he_105" }
-ShotBounced { attacker: UnitId(3), target: UnitId(6), facing: Front, rattled: true }
 TickStarted { tick: 2 }
 UnitMoved { unit: UnitId(4), path: [Hex { x: 17, y: 21, z: -38 }, Hex { x: 16, y: 21, z: -37 }] }
+UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: 5, y: 21, z: -26 } }
+ContactReported { unit: UnitId(3), by: UnitId(4), at: Hex { x: 5, y: 21, z: -26 } }
 TickStarted { tick: 3 }
 TickStarted { tick: 4 }
-TickStarted { tick: 5 }
-UnitMoved { unit: UnitId(3), path: [Hex { x: 0, y: 20, z: -20 }, Hex { x: 1, y: 20, z: -21 }] }
-TickStarted { tick: 6 }
-ShotFired { attacker: UnitId(3), from: Hex { x: 1, y: 20, z: -21 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
-UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: 1, y: 20, z: -21 } }
-TickStarted { tick: 7 }
-ShellLanded { attacker: UnitId(3), at: Hex { x: 14, y: 26, z: -40 }, ammo: "he_105" }
-ShotBounced { attacker: UnitId(3), target: UnitId(6), facing: Front, rattled: true }
-TickStarted { tick: 8 }
-TickStarted { tick: 9 }
-TickStarted { tick: 10 }
-TickStarted { tick: 11 }
-UnitMoved { unit: UnitId(3), path: [Hex { x: 1, y: 20, z: -21 }, Hex { x: 2, y: 20, z: -22 }] }
-RoundStarted { round: 10 }
-order SetMove { unit: UnitId(3), to: Hex { x: 3, y: 20, z: -23 } }
-order SetFire { unit: UnitId(3), fire: Target { target: UnitId(6), weapon: 0 } }
-order Commit { side: 0 }
-order SetMove { unit: UnitId(4), to: Hex { x: 16, y: 23, z: -39 } }
-order SetFire { unit: UnitId(6), fire: Hold }
-order Commit { side: 1 }
-TickStarted { tick: 0 }
-ShotFired { attacker: UnitId(3), from: Hex { x: 2, y: 20, z: -22 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
-UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: 2, y: 20, z: -22 } }
-TickStarted { tick: 1 }
-ShellLanded { attacker: UnitId(3), at: Hex { x: 14, y: 26, z: -40 }, ammo: "he_105" }
-ShotBounced { attacker: UnitId(3), target: UnitId(6), facing: Front, rattled: true }
-TickStarted { tick: 2 }
-UnitMoved { unit: UnitId(4), path: [Hex { x: 16, y: 21, z: -37 }, Hex { x: 16, y: 22, z: -38 }] }
-TickStarted { tick: 3 }
-TickStarted { tick: 4 }
-TickStarted { tick: 5 }
-UnitMoved { unit: UnitId(3), path: [Hex { x: 2, y: 20, z: -22 }, Hex { x: 3, y: 20, z: -23 }] }
-UnitMoved { unit: UnitId(4), path: [Hex { x: 16, y: 22, z: -38 }, Hex { x: 16, y: 23, z: -39 }] }
-ContactRestored { unit: UnitId(6) }
-TickStarted { tick: 6 }
-ShotFired { attacker: UnitId(3), from: Hex { x: 3, y: 20, z: -23 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
-UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: 3, y: 20, z: -23 } }
-TickStarted { tick: 7 }
-ShellLanded { attacker: UnitId(3), at: Hex { x: 14, y: 26, z: -40 }, ammo: "he_105" }
-ShotBounced { attacker: UnitId(3), target: UnitId(6), facing: Front, rattled: true }
-TickStarted { tick: 8 }
-TickStarted { tick: 9 }
-TickStarted { tick: 10 }
-TickStarted { tick: 11 }
-RoundStarted { round: 11 }
-order SetMove { unit: UnitId(3), to: Hex { x: 3, y: 21, z: -24 } }
-order SetFire { unit: UnitId(3), fire: Target { target: UnitId(6), weapon: 0 } }
-order Commit { side: 0 }
-order SetMove { unit: UnitId(4), to: Hex { x: 14, y: 21, z: -35 } }
-order SetFire { unit: UnitId(4), fire: Target { target: UnitId(3), weapon: 0 } }
-order SetFire { unit: UnitId(6), fire: Hold }
-order Commit { side: 1 }
-TickStarted { tick: 0 }
-ShotFired { attacker: UnitId(3), from: Hex { x: 3, y: 20, z: -23 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
-TickStarted { tick: 1 }
-ShellLanded { attacker: UnitId(3), at: Hex { x: 14, y: 26, z: -40 }, ammo: "he_105" }
-ShotBounced { attacker: UnitId(3), target: UnitId(6), facing: Front, rattled: true }
-TickStarted { tick: 2 }
-UnitMoved { unit: UnitId(4), path: [Hex { x: 16, y: 23, z: -39 }, Hex { x: 15, y: 23, z: -38 }] }
-TickStarted { tick: 3 }
-TickStarted { tick: 4 }
-TickStarted { tick: 5 }
-UnitMoved { unit: UnitId(3), path: [Hex { x: 3, y: 20, z: -23 }, Hex { x: 3, y: 21, z: -24 }] }
-UnitMoved { unit: UnitId(4), path: [Hex { x: 15, y: 23, z: -38 }, Hex { x: 14, y: 23, z: -37 }] }
-TickStarted { tick: 6 }
-ShotFired { attacker: UnitId(3), from: Hex { x: 3, y: 21, z: -24 }, at: Hex { x: 14, y: 26, z: -40 }, weapon: "howitzer_105", blind: false, opportunity: false }
-UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: 3, y: 21, z: -24 } }
-TickStarted { tick: 7 }
-ShellLanded { attacker: UnitId(3), at: Hex { x: 14, y: 26, z: -40 }, ammo: "he_105" }
-ShotBounced { attacker: UnitId(3), target: UnitId(6), facing: Front, rattled: true }
-TickStarted { tick: 8 }
-UnitMoved { unit: UnitId(4), path: [Hex { x: 14, y: 23, z: -37 }, Hex { x: 14, y: 22, z: -36 }] }
-OutOfContact { unit: UnitId(6) }
-ShotFired { attacker: UnitId(4), from: Hex { x: 14, y: 22, z: -36 }, at: Hex { x: 3, y: 21, z: -24 }, weapon: "gun_75", blind: false, opportunity: false }
-ShotHit { attacker: UnitId(4), target: UnitId(3), damage: 9, facing: Front }
-ModuleHit { unit: UnitId(3), module: "main_gun", destroyed: true }
-CrewHit { unit: UnitId(3), cadet: CadetId(5), out: false }
-ModuleHit { unit: UnitId(3), module: "tracks", destroyed: false }
-UnitSpotted { unit: UnitId(4), by_side: 0, at: Hex { x: 14, y: 22, z: -36 } }
-ShotFired { attacker: UnitId(6), from: Hex { x: 14, y: 26, z: -40 }, at: Hex { x: 3, y: 21, z: -24 }, weapon: "gun_88", blind: false, opportunity: true }
+ShotFired { attacker: UnitId(4), from: Hex { x: 16, y: 21, z: -37 }, at: Hex { x: 5, y: 21, z: -26 }, weapon: "gun_75", blind: false, opportunity: true }
+ShotMissed { attacker: UnitId(4), at: Hex { x: 5, y: 21, z: -26 } }
+UnitSpotted { unit: UnitId(4), by_side: 0, at: Hex { x: 16, y: 21, z: -37 } }
+ShotFired { attacker: UnitId(6), from: Hex { x: 14, y: 26, z: -40 }, at: Hex { x: 5, y: 21, z: -26 }, weapon: "gun_88", blind: false, opportunity: true }
 ShotHit { attacker: UnitId(6), target: UnitId(3), damage: 14, facing: Front }
-ModuleHit { unit: UnitId(3), module: "radio_set", destroyed: true }
-ModuleHit { unit: UnitId(3), module: "tracks", destroyed: true }
 ModuleHit { unit: UnitId(3), module: "ammo_rack_bulk", destroyed: true }
 WeaponDry { unit: UnitId(3), weapon: "howitzer_105" }
+ModuleHit { unit: UnitId(3), module: "radio_set", destroyed: true }
 CrewHit { unit: UnitId(3), cadet: CadetId(5), out: true }
-UnitDestroyed { unit: UnitId(3), at: Hex { x: 3, y: 21, z: -24 } }
+ModuleHit { unit: UnitId(3), module: "main_gun", destroyed: true }
+UnitDestroyed { unit: UnitId(3), at: Hex { x: 5, y: 21, z: -26 } }
 BattleEnded { winner: Some(1), reason: Eliminated }
 final Anka Weiss Hex { x: 11, y: 20, z: -31 } crew [] modules {"ammo_rack_bulk": 0, "main_gun": 0, "radio_set": 0, "tracks": 0} alive false
 final Elsa Brandt Hex { x: 8, y: 16, z: -24 } crew [Out] modules {"ammo_rack_sparse": 1, "main_gun": 0, "radio_set": 1, "tracks": 0} alive false
 final Mina Falkenrath Hex { x: 14, y: 21, z: -35 } crew [Out, Fine] modules {"ammo_rack": 0, "main_gun": 0, "radio_set": 0, "tracks": 0} alive false
-final Petra Voss Hex { x: 3, y: 21, z: -24 } crew [Out] modules {"ammo_rack_bulk": 0, "main_gun": 0, "radio_set": 0, "tracks": 0} alive false
-final Irma Krieger Hex { x: 14, y: 22, z: -36 } crew [Wounded] modules {"ammo_rack_bulk": 1, "main_gun": 1, "radio_set": 1, "tracks": 2} alive true
+final Petra Voss Hex { x: 5, y: 21, z: -26 } crew [Out] modules {"ammo_rack_bulk": 0, "main_gun": 0, "radio_set": 0, "tracks": 2} alive false
+final Irma Krieger Hex { x: 16, y: 21, z: -37 } crew [Wounded] modules {"ammo_rack_bulk": 1, "main_gun": 1, "radio_set": 1, "tracks": 2} alive true
 final Sofia Ravenna Hex { x: 16, y: 19, z: -35 } crew [] modules {"ammo_rack": 1, "main_gun": 0, "radio_set": 1, "tracks": 1} alive false
 final Nadja Orlov Hex { x: 14, y: 26, z: -40 } crew [] modules {"ammo_rack_sparse": 1, "main_gun": 1, "radio_set": 0, "tracks": 0} alive true
 final Greta Müller Hex { x: 16, y: 20, z: -36 } crew [] modules {"ammo_rack_sparse": 1, "main_gun": 1, "radio_set": 1, "tracks": 2} alive false

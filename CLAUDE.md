@@ -107,6 +107,38 @@ to advance: with elimination as the only victory condition, holding the best
 cover on the map is optimal play, and the stalemate rate *rose* as difficulty
 noise fell (11/12 at zero noise). See TODO.md under Design Decisions.
 
+### What a shot is worth, and what keeps a battle open
+
+Both of these are one-line arithmetic with battle-length consequences, and
+both were wrong in the same way: a number that looked reasonable and never
+consulted the thing it was about.
+
+- **`round_worth` is the only shot price in the game, and its blast half
+  reads the struck plate.** It backs the loader's AP-or-HE choice *and* every
+  planner's shot pricing, so the two can never disagree about what a round is
+  for. Blast is priced by `blast_worth`, which is `overpressure`'s twin case
+  for case — plate zero pays its rating outright, overmatch pays the target's
+  remaining substance, and anything else pays one effect roll at
+  `overpressure_chance`, or **nothing at all when no exterior module is left
+  to break**. `blast_overmatches`, `overpressure_chance` and
+  `exterior_modules` are shared between the pricing and the resolver on
+  purpose; if a fourth case appears in one of them and not the other, the
+  gun goes back to firing at a number instead of at a tank. There is
+  deliberately **no blast-to-damage constant** — `points_per_effect` already
+  is one, and the old `BLAST_WORTH = 0.3` is what made a 105 value a heavy
+  tank's glacis exactly as highly as an open-topped carrier's roof.
+- **`ShotProfile::plate` is the listed plate and `effective_armor` is the
+  sloped one.** Blast reads the first because a burst crushing a hull is not
+  defeated by an angle solid shot would skip off. Reaching for
+  `effective_armor` in a blast calculation is the easy mistake here.
+- **The stalemate clock counts accomplishment, not effort.** Hits, breakages,
+  burnings, deaths and departures reset it; **a bounce does not**. That is
+  what stops a gun that cannot hurt anybody from holding a decided battle
+  open — and the anti-livelock intent the list was written for survives
+  anyway, because a bounce that *does* something raises `ModuleHit` or
+  `CrewHit` and those are still counted. Adding an event to that list is
+  adding a way for a battle never to end; do it deliberately.
+
 ### Infantry, passengers and concealment
 
 Infantry are a `VehicleDef` like everything else — `MovementClass::Foot`,

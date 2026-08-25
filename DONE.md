@@ -185,6 +185,80 @@ units spend several rounds closing and facing updates on move. The bias was
 real and entirely one-sided though — all 6 fell on side 1 — and after the fix
 the same four seeds produce zero rear hits.
 
+**A shell is priced against the plate it will strike.** `round_worth` — the
+one value function behind both the loader's AP-or-HE choice and every
+planner's shot pricing — added `0.3 * blast` for a round that did not
+penetrate, flat, whatever it landed on. `overpressure` has always read the
+struck plate. So the pricing and the physics disagreed about the most common
+shell in the game, and the disagreement was invisible because both numbers
+were plausible.
+
+What it cost is the playthrough review's headline defect. A 105 put
+**thirty-six shells into one tank destroyer's front**, twenty-nine of them
+after the tracks and the antenna — the only two things a burst reaches from
+outside a plate it cannot beat — were already destroyed. The AI was not being
+stubborn; it re-planned every round and got the same answer, because the
+answer never consulted the hull.
+
+The fix is a pricing twin of `overpressure`, case for case: blast against
+plate zero is worth its rating outright (splash cashes into casualty rolls at
+the same rate a penetration's budget does), blast that overmatches is worth
+the target's remaining substance (so `best_weapon_against` reads it as a kill
+and the evaluator pays its kill bonus without either learning a special case),
+and blast that does neither is worth one effect roll at the odds of getting
+one — **zero when nothing reachable is left unbroken**. `blast_overmatches`,
+`overpressure_chance` and `exterior_modules` are shared with the resolver
+rather than restated, for the reason `los_clear` and `SightGrid::clear` share
+`sight_line_clear`.
+
+Two things worth keeping:
+
+- **`BLAST_WORTH` is gone and nothing replaced it.** `points_per_effect`
+  already states what a ledger point buys and `overpressure` already spends
+  blast through it, so the exchange rate between blast and damage is a fact
+  about the resolver rather than an opinion. One fewer magic number, arrived
+  at by reading rather than by tuning.
+- **The determinism diff is the evidence.** Across four seeds the only unit
+  whose behaviour changed is the one firing the round whose price changed:
+  every kill, every crew casualty and every module is identical, and the
+  snapshot shrank by 96 lines because battles stopped running on after they
+  were decided. A change to a shot value function has no business being
+  tighter than that, and it is worth re-checking against if this is touched.
+
+What the pair measured, `balance --sim` before and after (12 battles across
+the three battle maps) plus game 1 of the review re-fought on its own seed:
+
+| | before | after |
+| --- | --- | --- |
+| shots fired | 477 | 395 |
+| of those, penetrated | 39% | 44% |
+| bounced | 111 | 89 |
+| artillery kills | 23 | 25 |
+| 105 mm rounds spent per battle | 20.5 | 14.1 |
+| cadets out per battle | 11.0 | 9.9 |
+| rounds per battle | 14.5 | 14.0 |
+| game 1: length | 30 rounds | 16 rounds |
+| game 1: howitzer shells, and at how many hexes | 40 at 5 (36 at one) | 9 at 6 |
+
+The howitzer takes **more kills from a third fewer shells**, which is the
+whole claim in one line: nothing about the gun changed, only what the crew
+believed it was worth firing. Guns across the board fire less and land more,
+and the battle costs a cadet less. Nothing regressed — the delegation tax fell
+(18.3 → 16.1 rounds for a commanded massed force, its standing complaint), the
+mustered-forces and skill-gap tables sat still, and the win split moved
+slightly toward parity, 8–4 to 7–5.
+
+**A bounce that achieves nothing does not hold a battle open.** The stalemate
+clock counted `ShotBounced` as progress, on the reading that the guns were
+still trying. Trying is not progress: the barrage above reset the clock every
+round for twenty-three rounds after its last useful shell, so one mispricing
+bought eight rounds of wandering on top of itself. Bounces are off the list.
+The livelock the list was written against is still shut out, because a bounce
+that achieves something announces it separately — `ModuleHit` and `CrewHit`
+are still there and overpressure raises both from outside the plate. The rule
+is now the honest one: a gun *accomplishing* something keeps a battle alive, a
+gun merely firing does not.
+
 **Saves record which mods were playing.** `SaveGame.mods` stamps id and
 version; mismatched ids are refused (the rules genuinely differ), version drift
 on the same set warns and loads (a content patch must not cost the player their

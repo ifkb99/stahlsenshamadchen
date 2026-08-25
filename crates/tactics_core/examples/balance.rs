@@ -41,8 +41,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{
-    AttackPreview, BattleState, EndReason, Event, Order, SideState, UnitId, flight_ticks,
-    preview_attack,
+    AttackPreview, BattleState, EndReason, Event, Order, SideState, UnitId, blast_overmatches,
+    flight_ticks, preview_attack,
 };
 use tactics_core::data::{ArmorFacing, DataRegistry, ModuleEffect, WeaponDef};
 use tactics_core::force;
@@ -628,7 +628,7 @@ fn kill_chain_table(reg: &DataRegistry, duels: &mut Duels) {
                 duels.facts(vehicle),
             ) {
                 (Some(shot), Some(facts)) => {
-                    let overmatch = ammo.blast > 0 && ammo.blast >= facts.thinnest * 2;
+                    let overmatch = ammo.blast > 0 && blast_overmatches(ammo.blast, facts.thinnest);
                     let chain = kill_chain(reg, &shot, facts, weapon, overmatch);
                     if chain.shots.is_finite() && chain.shots < 400.0 {
                         format!("{:.1} ({:.1}r)", chain.shots, chain.rounds)
@@ -746,7 +746,7 @@ fn flags(reg: &DataRegistry, duels: &mut Duels) {
                 .map(|s| s.pen_chance)
                 .max()
                 .unwrap_or(0);
-            let overmatches = best_blast > 0 && best_blast >= facts.thinnest * 2;
+            let overmatches = best_blast > 0 && blast_overmatches(best_blast, facts.thinnest);
             if best_pen == 0 && !overmatches {
                 helpless.push(vehicle.clone());
             }

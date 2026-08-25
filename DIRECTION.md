@@ -176,7 +176,7 @@ Ordered by spark per hour, not by dependency.
 | 1 | Orders mean what they say | **parts 1–2 done**, part 3 open |
 | 2 | Say what a verb means before it is pressed | **done** |
 | 3 | Close the consequence loop | **done**, roster screen open |
-| 4 | Fix the fun taxes REVIEW.md found | not started |
+| 4 | Fix the fun taxes REVIEW.md found | **taxes 1–2 done**, 3–5 open |
 | 5 | Park a layer (MCTS) | not started |
 
 ### 1. Orders mean what they say
@@ -394,8 +394,55 @@ see stats" — this is the seeing half.
 ### 4. Fix the fun taxes
 
 From REVIEW.md, in its priority order: artillery target fixation, broken units
-that cannot withdraw, the 19-round mid-game creep. Note the first two are AI
-defects rather than rules defects.
+that cannot withdraw, the 19-round mid-game creep.
+
+**Re-measured before starting, 2026-08-25, and three of the five diagnoses
+were wrong.** Game 1 reproduces exactly (30 rounds, 28–0, Stalemate), so the
+review is current — but watching a battle and measuring one are different
+instruments, and the review only had the first.
+
+- **Tax 1 was not a re-evaluation failure. Done.** The AI re-planned every
+  round and got the same answer, because `round_worth` priced blast flat and
+  never read the plate it was landing on while `overpressure` always has. The
+  pricing and the resolver disagreed. Fixed by making the blast half
+  `overpressure`'s twin, case for case; see DONE.md. It is worth knowing that
+  the *first* draft of the test for this passed against the unfixed
+  engine — the penetration half of the price has always been facing-aware, so
+  comparing a howitzer's front and rear arcs proves nothing unless the gun is
+  stripped of its penetration first.
+- **Tax 2's chain reaction. Done.** Bounces no longer reset the stalemate
+  clock. The two shipped together because they are one story: twenty-nine of
+  the thirty-six wasted shells were fired after the only things blast could
+  reach on that hull were already broken, and each of them bought another
+  round of the battle.
+- **Tax 3 is not a creep and more movement points would make it worse.**
+  Measured over game 1: the medium tank drove **53 hexes in 19 rounds to end
+  10 hexes closer** to the bridge; the recon car drove 59 and finished
+  **three hexes further away than she deployed**; the howitzer spent
+  twenty-eight rounds oscillating between two adjacent hexes. Nobody is slow.
+  A medium tank already makes 5 hexes a round, which is the 30 km/h the scale
+  contract chose on purpose. They are *aimless*, and the mechanism is
+  specific: `noisy_score` draws difficulty noise independently per candidate
+  tile and the planner then takes an argmax over every reachable one, so the
+  chosen tile is whichever got the luckiest draw. The maximum of eighty draws
+  from ±0.5 beats an objective gradient of 0.54 a hex, every round — and the
+  faster the vehicle the more candidates she has, which is why the 7 MP recon
+  car wanders hardest and the 3 MP howitzer merely twitches. The fix to try is
+  one draw per unit per round (a mood, not a lottery), judged against the
+  skill-gap table, since that table is also what would catch it if this
+  brought back the clumping `PLATEAU` was built to stop.
+- **Tax 2's other half — nobody retreats — is two defects, neither named.**
+  `resolve_movement` refuses *all* path movement from a crew that will not
+  obey, though the comment above it says "they simply will not advance"; and
+  the exit is invisible to the evaluator until `condition` falls below
+  `1 - withdraw_threshold`, which for massed armour at 0.85 means **below
+  15%**. Morale wants its own path to the lane, independent of the plate.
+  Also content: `battle_forest` declares no `exit` at all, so game 2 could
+  not have produced a withdrawal under any AI.
+- **Tax 4's A/B is confounded three ways**, not one: `playthrough.rs` gives
+  side 0 both MCTS *and* `massed_armor`, on a map whose sides field different
+  vehicles. Swap them independently or it says nothing — and it is the same
+  measurement step 5 needs.
 
 ### 5. Park a layer
 
@@ -524,6 +571,18 @@ when somebody sweeps it, and a sweep needs an instrument.
   earlier in the session, it had by the end of it. Do not conclude from one
   degenerate capture that the harness is broken — run `battle-tour.txt` and
   check, which is what settled it in both directions.
+- **2026-08-25** — step 4's first two taxes landed: a shell is priced against
+  the plate it will strike, and a bounce no longer holds a decided battle
+  open. Both were one line of arithmetic that never consulted the thing it was
+  about. The determinism baseline was regenerated deliberately and the diff is
+  the evidence for the change rather than a cost of it — across four seeds the
+  only unit whose behaviour moved is the one firing the round whose price
+  changed, every kill and every crew casualty is identical, and the snapshot
+  shrank by 96 lines because battles stopped running on after they were
+  decided. Also worth recording: the review's own diagnosis of tax 1 was
+  wrong (the AI re-planned every round), and its proposed cure for tax 3 —
+  more movement points — is backwards. Measuring the logs rather than reading
+  them is what caught both.
 - **2026-08-25** — step 1 is complete (part 3, mission latitude) and step 3's
   remainder landed (the academy roll). Determinism baseline passed
   unregenerated again; `SAVE_VERSION` is 3. What is left of the memo is steps

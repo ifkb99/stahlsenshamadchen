@@ -25,8 +25,8 @@ mod orders;
 
 pub use combat::{
     AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, MAX_HIT, MIN_HIT,
-    ShellInFlight, expected_damage, flight_ticks, hit_breakdown, hit_chance, preview_attack,
-    struck_facing, weapon_ready,
+    ShellInFlight, blast_overmatches, expected_damage, flight_ticks, hit_breakdown, hit_chance,
+    preview_attack, struck_facing, weapon_ready,
 };
 pub use command::{
     CommandState, Contact, CutOff, Formation, FormationId, Latitude, Mission, MissionChange,

@@ -43,7 +43,20 @@ through whom, and who is left to command.
 
 ## Fun — what kills it (priority order)
 
-1. **Artillery target fixation.** In game 1 the howitzer fires all 40 of its
+**Re-measured 2026-08-25 before acting on any of it.** Game 1 reproduces
+exactly, so nothing below has gone stale — but three of the five diagnoses
+turned out to be wrong once the logs were counted rather than read, and the
+annotations say where. Items 1 and 2's chain reaction are fixed; see DONE.md.
+
+1. **Artillery target fixation.** *(Fixed. The diagnosis below is wrong in one
+   important way: the AI re-evaluated every single round. `round_worth` priced
+   blast as a flat fraction of its rating and never looked at the plate it was
+   landing on, while `overpressure` always has, so there was nothing in the
+   arithmetic that could change its mind. Twenty-nine of the thirty-six shells
+   were fired after the tracks and the antenna — everything a burst reaches
+   from outside that glacis — were already destroyed, at which point the shot
+   was provably worth nothing and was still priced at 1.8. Bounces also no
+   longer reset the stalemate clock, which is the "two bad consequences" half.)* In game 1 the howitzer fires all 40 of its
    rounds at one hex — every single one bounces off the TD's front plate
    (pen 3 vs plate 6), zero structural damage. The AI never once
    re-evaluates. And there is a chain reaction: a bounce counts as
@@ -58,7 +71,14 @@ through whom, and who is left to command.
    The AI just has no model of that either: it neither exploits it (softened
    target) nor stops for it (plate can't be beaten head-on).
 
-2. **Nobody ever retreats.** Zero `UnitExited` events across all three
+2. **Nobody ever retreats.** *(Real, and two mechanisms, neither of them the
+   one named. `resolve_movement` refuses **all** path movement from a crew who
+   will not obey — advancing and retreating alike — under a comment saying
+   "they simply will not advance". And the exit is invisible to the evaluator
+   until condition falls below `1 - withdraw_threshold`, which for massed
+   armour means below 15%. Also: `battle_forest` declares no `exit` objective,
+   so game 2 could not have produced a withdrawal under any AI.)* Zero
+   `UnitExited` events across all three
    battles. Withdrawal is a big designed feature (whole CLAUDE.md section)
    that never fires in actual play. In game 3 the heavy tank goes "Breaking
    and will not advance", then "refuses to advance" for seven straight
@@ -68,7 +88,16 @@ through whom, and who is left to command.
    shape for a morale system: it should buy survival, not just narrate the
    death spiral.
 
-3. **Mid-battle dead time.** Units move 1–3 hexes/round and the AI creeps.
+3. **Mid-battle dead time.** *(Real, and the proposed cure is backwards —
+   see change 4 below. Counted over game 1: the medium tank drove 53 hexes in
+   19 rounds to finish 10 hexes closer; the recon car drove 59 and ended three
+   hexes further from the bridge than she deployed; the howitzer spent
+   twenty-eight rounds oscillating between two adjacent hexes. That is a
+   random walk, not a creep, and more movement points would widen it. The
+   cause is `noisy_score` drawing difficulty noise per candidate tile under an
+   argmax: the max of eighty draws beats the objective gradient every round,
+   and the more tiles a vehicle can reach the worse it gets.)* Units move 1–3
+   hexes/round and the AI creeps.
    Game 1: the medium tank takes 19 rounds to close a ~20-hex gap, then gets
    one-shot by opportunity fire on arrival. The recon car then patrols the
    map's edge for 25 rounds with nothing to do. If a human plays those 19
@@ -104,21 +133,25 @@ template for exactly that.
 
 ## Changes I'd want
 
-1. **Teach the evaluator about facing.** A shot at a target whose plate
+1. *(Done, differently.)* **Teach the evaluator about facing.** A shot at a target whose plate
    toward you exceeds your pen should be discounted to near zero. The P(pen)
    the balance tool already computes through `preview_attack` — the AI can
    afford to call it per candidate target. Kills the 40-round barrage.
-2. **Don't let bounces reset the stalemate clock.** A barrage against a plate
+2. *(Done.)* **Don't let bounces reset the stalemate clock.** A barrage against a plate
    is not contact; it is the battle already being over.
 3. **Let Broken units actually withdraw** — or gate the AI's retreat on
    morale rung, not just damage vs `withdraw_threshold`. "Refusing to
    advance" should mean "falling back", or it is a death sentence wearing a
    morale label.
-4. **Compress the mid-game.** More MP per tick (the scale doc says 1 MP ≈
-   1 hex ≈ 6 km/h — a real column moves faster than that), or give the AI
-   advance missions that make it commit. The current creep is the biggest fun
-   tax per round.
-5. **Run the side-swap A/B** to settle whether MCTS is actually better than
+4. **Compress the mid-game.** ~~More MP per tick~~ *(No: measured, the
+   vehicles are already fast — a medium tank makes 5 hexes a round, 30 km/h —
+   and they spend that speed wandering. Raising it multiplies the wander. The
+   thing to fix is the per-candidate noise draw under the argmax; see item 3.)*
+   Or give the AI advance missions that make it commit. The current creep is
+   the biggest fun tax per round.
+5. **Run the side-swap A/B** *(and note it is confounded three ways as
+   written: `playthrough.rs` hands side 0 both MCTS and `massed_armor`, on a
+   map whose sides field different vehicles. Swap them independently.)* to settle whether MCTS is actually better than
    utility, or side 0 is just lucky. If it is real, the difficulty system has
    a hole the parity test missed.
 6. **Narrator QoL:** print plate vs pen on a bounce
