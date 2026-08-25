@@ -156,6 +156,23 @@ impl Latitude {
             Self::Binding => "she drives on, and does not stop for cover",
         }
     }
+
+    /// The same clause for a *formation's* orders, which commit a different
+    /// thing and therefore have to say a different thing.
+    ///
+    /// What a mission's latitude buys is not the battle drill — that is the
+    /// advance-versus-assault decision and has its own verb — it is whether
+    /// the formation's doctrine may discount the order it was given. A loose
+    /// doctrine currently reads "take the ford" as a suggestion worth about
+    /// four fifths of what a tight one reads it as, which is the complaint
+    /// this chunk answers: a commander's order should not be quietly worth
+    /// less because of who she gave it to.
+    pub fn mission_promise(self) -> &'static str {
+        match self {
+            Self::Delegated => "her doctrine decides how closely to hold to it",
+            Self::Binding => "she holds to the letter of it, whatever her doctrine prefers",
+        }
+    }
 }
 
 /// What a formation has been told to do, until it is told something else.
@@ -356,6 +373,30 @@ pub struct Formation {
     /// accident what a silent map means.
     #[serde(default)]
     pub mission: Option<Mission>,
+    /// The latitude the standing orders were given with: whether the
+    /// formation's own doctrine is allowed to discount them.
+    ///
+    /// The formation-scale half of [`Latitude`], and it governs a different
+    /// thing from the per-unit half on purpose. A crew's latitude answers
+    /// *will she break off for cover*; a formation's answers *may her
+    /// doctrine bend how hard she is pulled toward the ground she was
+    /// given*. The first question already has a formation-scale verb —
+    /// [`Mission::Assault`] is "press on through fire", and giving latitude
+    /// that job too would make a binding [`Mission::Advance`] an exact
+    /// synonym for it. Two idioms for one sentence is the thing this whole
+    /// chunk exists to avoid.
+    ///
+    /// **It belongs to the orders as a whole, not to one leg.** A plan is
+    /// one intention: a commander who wants the third bound and the first
+    /// loose is a commander who countermands when it is time, which is what
+    /// she would do on the day. So an amendment sets it as a replacement
+    /// does, and a promoted leg inherits it.
+    ///
+    /// `#[serde(default)]` — and [`Latitude::Delegated`] is the default — so
+    /// a save, a scenario and an AI side that never say otherwise mean
+    /// exactly the game that was here before.
+    #[serde(default)]
+    pub latitude: Latitude,
     /// The rest of the plan: missions queued behind the standing one, in the
     /// order they will be taken up.
     ///
@@ -414,15 +455,34 @@ pub enum MissionChange {
     /// This mission becomes the standing one and everything queued behind
     /// the old one is off — a countermand replaces the plan, not a line of
     /// it.
-    Replace(Mission),
+    Replace {
+        mission: Mission,
+        /// Carried with the mission rather than applied when it was sent,
+        /// for the same reason [`WaitingOrders`] carries a unit's: an order
+        /// held on the wire has to arrive meaning what it meant when it was
+        /// given, not what the commander happens to mean by the time it
+        /// lands.
+        #[serde(default)]
+        latitude: Latitude,
+    },
     /// This mission joins the end of the plan: "…and then this."
-    Append(Mission),
+    Append {
+        mission: Mission,
+        #[serde(default)]
+        latitude: Latitude,
+    },
 }
 
 impl MissionChange {
     pub fn mission(&self) -> &Mission {
         match self {
-            Self::Replace(mission) | Self::Append(mission) => mission,
+            Self::Replace { mission, .. } | Self::Append { mission, .. } => mission,
+        }
+    }
+
+    pub fn latitude(&self) -> Latitude {
+        match self {
+            Self::Replace { latitude, .. } | Self::Append { latitude, .. } => *latitude,
         }
     }
 }
@@ -435,6 +495,12 @@ pub struct CutOff {
     /// `None`, because being cut off with no orders is its own state: she
     /// fights by her own judgment, exactly as an unmissioned unit does.
     pub orders: Option<Mission>,
+    /// And the latitude they were given with, snapshotted at the same
+    /// moment and for the same reason. `#[serde(default)]` so a save written
+    /// before missions had latitude opens as one where nobody was ever held
+    /// to the letter of anything, which is what it was.
+    #[serde(default)]
+    pub latitude: Latitude,
 }
 
 impl Formation {
@@ -461,6 +527,19 @@ impl Formation {
         match self.out_of_contact.iter().find(|c| c.unit == unit) {
             Some(cut) => cut.orders.as_ref(),
             None => self.mission.as_ref(),
+        }
+    }
+
+    /// The latitude those orders came with — the twin of [`Self::mission_for`]
+    /// and resolved the same way, because an order and how hard it was meant
+    /// travel together or they do not travel at all. A cut-off crew soldiers
+    /// on the orders she was given *as she was given them*; the formation's
+    /// latitude may have changed twice behind her back and she has heard
+    /// none of it.
+    pub fn latitude_for(&self, unit: UnitId) -> Latitude {
+        match self.out_of_contact.iter().find(|c| c.unit == unit) {
+            Some(cut) => cut.latitude,
+            None => self.latitude,
         }
     }
 
@@ -609,6 +688,7 @@ impl CommandState {
                     members: members.into_iter().map(|(id, _)| id).collect(),
                     doctrine: def.doctrine.clone(),
                     mission: None,
+                    latitude: Latitude::default(),
                     plan: std::collections::VecDeque::new(),
                     incoming: None,
                     out_of_contact: Vec::new(),
@@ -656,10 +736,16 @@ impl CommandState {
     /// news — that a mission was given at all — is the caller's
     /// [`crate::battle::Event::MissionAssigned`], because this type has no
     /// business deciding what reaches the log.
-    pub fn set_mission(&mut self, formation: FormationId, mission: Mission) -> bool {
+    pub fn set_mission(
+        &mut self,
+        formation: FormationId,
+        mission: Mission,
+        latitude: Latitude,
+    ) -> bool {
         match self.formations.get_mut(formation.index()) {
             Some(f) => {
                 f.mission = Some(mission);
+                f.latitude = latitude;
                 // Anything still travelling or still queued has been
                 // overtaken by this: a countermand replaces the plan, and
                 // letting an old leg land or begin afterwards would quietly
@@ -769,7 +855,12 @@ impl CommandState {
     /// standing one, if the formation had nothing to do: an amendment to an
     /// empty plan is simply the first order. Returns whether the formation
     /// exists.
-    pub fn queue_mission(&mut self, formation: FormationId, mission: Mission) -> bool {
+    pub fn queue_mission(
+        &mut self,
+        formation: FormationId,
+        mission: Mission,
+        latitude: Latitude,
+    ) -> bool {
         match self.formations.get_mut(formation.index()) {
             Some(f) => {
                 if f.mission.is_none() {
@@ -777,6 +868,12 @@ impl CommandState {
                 } else {
                     f.plan.push_back(mission);
                 }
+                // An amendment speaks for the whole plan — see the note on
+                // [`Formation::latitude`]. The alternative is a latitude per
+                // leg, which buys a distinction ("take the ford loosely, and
+                // then the ridge come what may") that no commander issues in
+                // one breath and that a countermand already expresses.
+                f.latitude = latitude;
                 true
             }
             None => false,
@@ -842,16 +939,18 @@ impl BattleState {
             if arrived && let Some((change, _)) = formation.incoming.take() {
                 let mission = change.mission().clone();
                 match change {
-                    MissionChange::Replace(mission) => {
+                    MissionChange::Replace { mission, latitude } => {
                         formation.mission = Some(mission);
+                        formation.latitude = latitude;
                         formation.plan.clear();
                     }
-                    MissionChange::Append(mission) => {
+                    MissionChange::Append { mission, latitude } => {
                         if formation.mission.is_none() {
                             formation.mission = Some(mission);
                         } else {
                             formation.plan.push_back(mission);
                         }
+                        formation.latitude = latitude;
                     }
                 }
                 events.push(Event::MissionReceived {
@@ -1226,14 +1325,15 @@ impl BattleState {
             let cut_off: Vec<CutOff> = living
                 .iter()
                 .filter(|id| !heard.contains(id))
-                .map(|id| CutOff {
-                    unit: *id,
-                    orders: formation
-                        .out_of_contact
-                        .iter()
-                        .find(|c| c.unit == *id)
-                        .map(|c| c.orders.clone())
-                        .unwrap_or_else(|| formation.mission.clone()),
+                .map(|id| {
+                    let already = formation.out_of_contact.iter().find(|c| c.unit == *id);
+                    CutOff {
+                        unit: *id,
+                        orders: already
+                            .map(|c| c.orders.clone())
+                            .unwrap_or_else(|| formation.mission.clone()),
+                        latitude: already.map_or(formation.latitude, |c| c.latitude),
+                    }
                 })
                 .collect();
             let was = std::mem::replace(

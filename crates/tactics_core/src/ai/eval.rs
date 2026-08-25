@@ -281,7 +281,13 @@ impl Evaluator {
         };
         let objective = match standing {
             Some((mission, formation)) => {
-                self.mission_value(state, tile, mission, formation) * contact_scale
+                self.mission_value(
+                    state,
+                    tile,
+                    mission,
+                    formation,
+                    formation.latitude_for(unit),
+                ) * contact_scale
             }
             None => self.objective_value(state, me.side, tile, condition),
         };
@@ -436,18 +442,35 @@ impl Evaluator {
     /// terms (cover, threat, a good shot) to bend the route. A withdrawal is
     /// exempt on purpose: latitude is about *how* to fight, never about
     /// whether an ordered retreat happens.
+    ///
+    /// **A binding order raises the floor and nothing else.** The complaint
+    /// this answers is that a player's order was quietly worth less because
+    /// of who she gave it to: a loose doctrine read "take the ford" at 0.8
+    /// where a tight one read it at 1.2, and no commander issues an order
+    /// meaning four fifths of it. Under [`Latitude::Binding`] the same
+    /// expression is clamped at 1.0 instead of 0.5, which says exactly the
+    /// intended thing — **`delegation` may make a subordinate more literal
+    /// than she was asked to be, never less.** Taking the doctrine out
+    /// altogether was the other candidate and is wrong: it would make a
+    /// binding order pull *less* than a delegated one for a tight doctrine,
+    /// which is not a thing "I mean it" can be allowed to do.
     fn mission_value(
         &self,
         state: &BattleState,
         tile: Hex,
         mission: &crate::battle::Mission,
         formation: &crate::battle::Formation,
+        latitude: crate::battle::Latitude,
     ) -> f32 {
         use crate::battle::Mission;
         /// Worth of a mission's ground, in objective-value units.
         const MISSION_WEIGHT: f32 = 2.0;
         let doctrine = &self.doctrine;
-        let strictness = (1.5 - doctrine.delegation).clamp(0.5, 1.5);
+        let floor = match latitude {
+            crate::battle::Latitude::Delegated => 0.5,
+            crate::battle::Latitude::Binding => 1.0,
+        };
+        let strictness = (1.5 - doctrine.delegation).clamp(floor, 1.5);
         match mission {
             // Take the ground and stand on it: reward for arriving, slope
             // for the road there — the objective shape with the commander

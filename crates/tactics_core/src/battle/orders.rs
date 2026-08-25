@@ -95,6 +95,12 @@ pub enum Order {
     SetMission {
         formation: FormationId,
         mission: Mission,
+        /// How hard the order is meant — see [`crate::battle::Latitude`] and
+        /// [`crate::battle::Formation::latitude`]. `#[serde(default)]` and
+        /// defaulting to `Delegated`, so every order stream, save and replay
+        /// written before missions had latitude means what it always meant.
+        #[serde(default)]
+        latitude: Latitude,
     },
     /// "…and then this": add a mission to the end of a formation's plan
     /// instead of replacing it. Refused behind a terminal mission — nothing
@@ -103,6 +109,8 @@ pub enum Order {
     QueueMission {
         formation: FormationId,
         mission: Mission,
+        #[serde(default)]
+        latitude: Latitude,
     },
     /// Go and board this carrier: a standing order — she marches toward it
     /// round after round and steps aboard the tick she arrives alongside.
@@ -553,12 +561,16 @@ impl BattleState {
                 }
                 Ok(Vec::new())
             }
-            Order::SetMission { formation, mission } => {
-                self.set_mission(registry, *formation, mission.clone())
-            }
-            Order::QueueMission { formation, mission } => {
-                self.push_mission(registry, *formation, mission.clone())
-            }
+            Order::SetMission {
+                formation,
+                mission,
+                latitude,
+            } => self.set_mission(registry, *formation, mission.clone(), *latitude),
+            Order::QueueMission {
+                formation,
+                mission,
+                latitude,
+            } => self.push_mission(registry, *formation, mission.clone(), *latitude),
             Order::Commit { side } => self.commit(*side),
         }
     }
@@ -725,6 +737,7 @@ impl BattleState {
         registry: &DataRegistry,
         formation: FormationId,
         mission: Mission,
+        latitude: Latitude,
     ) -> Result<Vec<Event>, OrderError> {
         let f = self
             .command
@@ -743,11 +756,15 @@ impl BattleState {
         // game is this same line rather than a branch around it.
         let delay = self.mission_delay(registry, formation);
         if delay == 0 {
-            self.command.set_mission(formation, mission.clone());
+            self.command
+                .set_mission(formation, mission.clone(), latitude);
         } else {
             self.command.set_incoming(
                 formation,
-                crate::battle::MissionChange::Replace(mission.clone()),
+                crate::battle::MissionChange::Replace {
+                    mission: mission.clone(),
+                    latitude,
+                },
                 delay,
             );
         }
@@ -781,6 +798,7 @@ impl BattleState {
         registry: &DataRegistry,
         formation: FormationId,
         mission: Mission,
+        latitude: Latitude,
     ) -> Result<Vec<Event>, OrderError> {
         let f = self
             .command
@@ -800,11 +818,15 @@ impl BattleState {
         self.check_mission_target(side, &id, &mission)?;
         let delay = self.mission_delay(registry, formation);
         if delay == 0 {
-            self.command.queue_mission(formation, mission.clone());
+            self.command
+                .queue_mission(formation, mission.clone(), latitude);
         } else {
             self.command.set_incoming(
                 formation,
-                crate::battle::MissionChange::Append(mission.clone()),
+                crate::battle::MissionChange::Append {
+                    mission: mission.clone(),
+                    latitude,
+                },
                 delay,
             );
         }

@@ -268,6 +268,7 @@ fn a_standing_mission_survives_being_saved_and_reloaded() {
             &Order::SetMission {
                 formation: recon,
                 mission: tactics_core::battle::Mission::Advance { to: bridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("the bridge is on the map");
@@ -580,6 +581,7 @@ fn a_mission_in_transit_survives_a_save() {
             &Order::SetMission {
                 formation: armor,
                 mission: tactics_core::battle::Mission::Advance { to: bridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("the bridge is on the map");
@@ -904,6 +906,7 @@ fn a_battle_carrying_everything_the_wire_knows_forks_identically() {
                 &Order::SetMission {
                     formation,
                     mission: tactics_core::battle::Mission::Advance { to: axis },
+                    latitude: tactics_core::battle::Latitude::Delegated,
                 },
             )
             .expect("the axis is on the map");
@@ -921,6 +924,7 @@ fn a_battle_carrying_everything_the_wire_knows_forks_identically() {
             &Order::QueueMission {
                 formation: alpha,
                 mission: tactics_core::battle::Mission::Hold { at: Some(anchor) },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("nothing terminal to queue behind");
@@ -954,6 +958,7 @@ fn a_battle_carrying_everything_the_wire_knows_forks_identically() {
             &Order::SetMission {
                 formation: bravo,
                 mission: tactics_core::battle::Mission::Hold { at: Some(anchor) },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("a countermand");

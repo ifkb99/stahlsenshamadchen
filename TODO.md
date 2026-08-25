@@ -46,7 +46,15 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 - `accuracy_falloff` is an integer per hex, which was fine when the longest band was 5 hexes and is coarse now that the 88 reaches 16. consider "accuracy lost per 10 hexes", or a float
 - `max_climb` means something physical now: at 10 m per elevation level, `max_climb: 1` over a 100 m hex is a 10% grade. that is conservative for tracked vehicles (real limit is nearer 30% sustained). left at 1 for now, but 2 for tracked is defensible and would open up the hills
 ### Menus
-- ability to move cadets around between tanks/reserve, and see stats
+- ability to move cadets around between tanks/reserve, ~~and see stats~~ — the
+  seeing half landed 2026-08-25: `R` on the campaign map opens the academy
+  roll (`roster_page` in `game/src/overworld.rs`), which lists the school in
+  order of battle, vehicle by vehicle and seat by seat, with each cadet's
+  availability and battles behind her. What is left is *doing* something about
+  it: reassigning seats, and a reserve to hold anyone with no vehicle. Note
+  seats are positional (crew *i* fills `crew_slots[i]`), so a reassignment UI
+  is also the thing that finally answers cadets.md's "seats are positional"
+  limitation
 - ability to move units between companies on campaign map
 - overall start menu to pick gamemode, settings menu, choose campaign submenu, activate mods, etc
 ### Units

@@ -105,6 +105,41 @@ wound model legible: from a full order of battle an empty seat means
 because it is the determinism baseline; crewing it up changes the fight and is
 its own chunk (TODO, Content gaps).
 
+**An order can be meant.** `Latitude` is `Delegated` (every order this engine
+ever had) or `Binding` ("I mean it"), and it exists at both scales for the
+same complaint: orders read as weighted opinions. On a **crew** it gates the
+battle drill — she drives on through fire instead of breaking for cover. On a
+**formation** it gates something else entirely, and the distinction is the
+part worth keeping: it raises the floor of `(1.5 - delegation)` from 0.5 to
+1.0, which says *`delegation` may make a subordinate more literal than she was
+asked to be, never less*. A loose doctrine used to read "take the ford" at
+four fifths of face value, and nobody issues an order meaning four fifths of
+it.
+
+The two things it deliberately is not:
+
+- **Not the contact damping.** That is what separates `Advance` from
+  `Assault`, and nothing else does, so a binding advance that skipped it would
+  be an exact synonym for assault. The verb answers "will she halt and fight
+  when shot at", the latitude answers "may her doctrine discount this"; they
+  are orthogonal and compose.
+- **Not "ignore the doctrine".** A tight doctrine reads an order at 1.2, so
+  removing the doctrine would make insisting pull *less* than asking.
+
+Player-side it is `X` on a crew and **Ctrl** on a mission key — Ctrl because
+`X` is already the assault and there is no free key that would not lie. The
+AI never issues `Binding`, spelled out at all four call sites, which is why
+the determinism baseline passed unregenerated through both halves of this.
+
+**The academy roll.** `R` on the campaign map: the school in order of battle,
+seat by seat, with availability and battles behind her. Derived every frame
+rather than cached (a roll that caches goes stale exactly when it is opened,
+which is after a battle), worded differently from the after-action report
+(that page reports an event, this one reports a state), and it keeps a cadet
+whose vehicle did not come home — she survives her tank far more often than
+not. The layout came from the screenshot, not the design: with the chassis on
+every line, every line wrapped.
+
 ## Battles
 
 **Battle victory conditions.** A map declares `objectives` (id, name, `at`

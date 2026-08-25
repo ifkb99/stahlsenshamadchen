@@ -185,6 +185,40 @@ to take in — and `Binding` is "I mean it", which the battle drill does not
 preempt. The player says it with `X` on a selected crew, the same key that
 orders a formation to assault.
 
+**It now qualifies a formation's orders too, and it governs a different thing
+there — read this before "unifying" them.** A crew's latitude answers *will
+she break off for cover*; a formation's answers *may her doctrine discount the
+order at all*, and that is the whole of it:
+
+- **Only the strictness term.** `Formation::latitude` reaches exactly one
+  number, the floor in `mission_value`'s `(1.5 - delegation).clamp(floor,
+  1.5)`, which goes 0.5 → 1.0 under `Binding`. The rule that expresses is
+  **`delegation` may make a subordinate more literal than she was asked to be,
+  never less** — so insisting buys the letter of the order and never more than
+  the letter, and a doctrine already at 1.2 hears nothing new.
+- **It deliberately does not lift the contact damping.** `Advance` and
+  `Assault` differ in that damping and in nothing else, so a binding `Advance`
+  that skipped it would be an exact synonym for `Assault`. The verb answers
+  "will she halt and fight when shot at"; the latitude answers "may her
+  doctrine discount this"; they are orthogonal and they compose. Anyone
+  reaching for `contact_scale` because binding "ought to press on" is about to
+  build the second idiom the whole chunk exists to avoid.
+- **It travels with the mission or it means nothing.** It is on
+  `MissionChange` (an order held on the wire arrives meaning what it meant),
+  in the `CutOff` snapshot (a crew who lost contact soldiers on the orders she
+  was given *as she was given them* — read it through
+  `Formation::latitude_for`, the twin of `mission_for`), and on
+  `Order::SetMission` / `QueueMission`.
+- **It belongs to the orders as a whole, not to one leg.** `plan` is still
+  `VecDeque<Mission>` and an amendment sets the formation's latitude exactly
+  as a replacement does. A plan is one intention; a commander who wants the
+  third leg bound and the first loose countermands when it is time, which is
+  what she would do on the day.
+- The player says it with **Ctrl** on a mission key, composing with Shift's
+  "…and then this". Ctrl rather than a key of its own because `X` is already
+  the assault — the *other* axis — and there is no free key that would not
+  lie.
+
 - **It is read in exactly one place**, the drill gate in `ai/command.rs`. If a
   second `yields_to_drill()` appears, the model has drifted: latitude buys an
   order priority over the crew's *own judgment*, never over her nerve. Morale
@@ -199,7 +233,9 @@ orders a formation to assault.
 - **`Delegated` is the default everywhere and the AI never issues `Binding`**,
   which is what keeps the determinism baseline valid across this change. If
   `event_stream.txt` moves when you touch latitude, something has leaked into
-  AI-vs-AI play; do not regenerate it.
+  AI-vs-AI play; do not regenerate it. All four of `ai/command.rs`'s
+  `Order::SetMission` sites spell `Latitude::Delegated` out rather than
+  defaulting it, so that a reader can see it is a decision.
 - **The drill can only preempt from round two.** `radio()` marches her itself
   the moment the order lands, so on the round she is ordered she is already
   planned and no planner is consulted. Any test of the drill-versus-order
@@ -279,6 +315,34 @@ because both are mostly *words* and words look like they belong in the UI.
   crew id the campaign roster does not know before writing the survivors
   back. Without that an army ends up holding ids that resolve to nobody,
   which is not a crash and therefore sits there.
+
+### The academy roll
+
+`R` on the campaign map opens the roster and `R`/`Esc` closes it —
+`roster_page` in `game/src/overworld.rs`, a free function over plain data for
+the same reason `after_action` is one: a page nobody can see in a diff is a
+page that rots.
+
+- **It is derived every frame and caches nothing.** `Overworld::roster` is a
+  `bool`. A roll holding its own copy of who is wounded is stale exactly when
+  the player opens it, which is after a battle.
+- **A page over the map stops the world.** `pump_events`, `drive_ai` and
+  `handle_input` all bail while it is open, exactly as they do for the muster
+  prompt and the after-action report, and `roster_input` runs *after*
+  `handle_input` because `Esc` also drops the map selection and one keystroke
+  must not do both.
+- **It sets `ScriptFacts::waiting`.** She opened it herself, but `waiting`
+  means "a keystroke goes to a page rather than to the map", which is exactly
+  true — and keeping it the strict complement of `idle` is what stops a tour
+  photographing the map with a panel on top of it.
+- **Availability is worded differently from the after-action report on
+  purpose.** That page reports an event (*wounded today*); this one reports a
+  state (*infirmary, 4 day(s)*). One vocabulary for both would make the roll
+  read as a report the player had already dismissed.
+- **A cadet with no vehicle is still on the roll**, under "Without a vehicle".
+  She survives her tank far more often than not, and a page that only walked
+  the order of battle would drop her from the school on the day she most needs
+  to be on it.
 
 ### Saving
 

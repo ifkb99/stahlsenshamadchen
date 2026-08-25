@@ -235,11 +235,43 @@ the enemy can *meaningfully hurt* her, so two mediums are never in danger from
 each other; and cover works for whoever stands in it, so woods beside the enemy
 let the enemy vanish instead.
 
-**Still open in step 1 — part 3.** A player-issued *mission* is still scaled by
-`1.5 - doctrine.delegation` and still damped to a quarter on contact. Latitude
-is per-unit only. Doing the same for missions means threading it through
-`MissionChange`, `Formation` and the save, which is a chunk of its own; the
-per-unit channel was the one the complaint actually named.
+**Part 3 landed (2026-08-25).** `Latitude` now rides on a formation's orders
+as well as a crew's: on `Formation`, in `MissionChange` (so an order held on
+the wire arrives meaning what it meant), in the `CutOff` snapshot (so a crew
+who lost contact soldiers on the orders she was given *as she was given
+them*), and on `Order::SetMission` / `Order::QueueMission`. The player says it
+with **Ctrl** on a mission key, composing with Shift's "…and then this".
+
+**What it governs, and what it deliberately does not.** Only the strictness
+term — `(1.5 - delegation)`, whose floor goes from 0.5 to 1.0 under `Binding`.
+That says the intended thing exactly: **`delegation` may make a subordinate
+more literal than she was asked to be, never less.** A loose doctrine read
+"take the ford" at 0.8 of face value, which is the complaint — an order quietly
+worth less because of who it was given to — and insisting now buys the letter
+of it and no more than the letter.
+
+It does **not** lift the contact damping, and that is the interesting call.
+Doing so was the obvious reading of "the same thing for missions", and it is
+wrong: `Advance` and `Assault` differ in the contact damping and in nothing
+else, so a binding `Advance` would have been an exact synonym for `Assault`.
+Two idioms for one sentence is the thing this whole step exists to avoid. The
+two axes are orthogonal and compose — the verb answers *will she halt and
+fight when shot at*, the latitude answers *may her doctrine discount the order
+at all* — and a binding assault is both.
+
+Taking the doctrine out altogether was the other candidate and is also wrong:
+a tight doctrine reads an order at 1.2, so "no doctrine" would make insisting
+pull *less* than asking. `a_binding_mission_is_not_discounted_by_a_loose_doctrine`
+pins all three claims, including that a binding order to a devolving doctrine
+is worth exactly what an ordinary order to a neutral one is worth.
+
+Verification: 205 engine tests green and the **determinism baseline passed
+unregenerated** — the brain issues every mission at `Delegated`, spelled out
+at all four call sites rather than defaulted, so AI-vs-AI play is bit-for-bit
+the old game. `SAVE_VERSION` went to 3: everything added defaults, but
+`MissionChange` went from tuple variants to struct ones, and an order caught
+in transit in an older save is a formation that would silently forget what it
+was told.
 
 ### 2. Say what a verb means before it is pressed
 
@@ -331,10 +363,33 @@ either 2nd Company has no named cadets in it or the school needs more
 students — and the answer, on 2026-08-24, was **more students**. See *The word,
 and the school roll* below.
 
-**Still open.** A roster screen the player can open whenever she likes. The
-after-action page is deliberately not it: it is a thing to have read, with one
-key and no choice on it, and anything the player wants to *do* about her
-casualties belongs somewhere she is not being held behind a modal.
+**The roster screen landed (2026-08-25).** `R` on the campaign map opens the
+academy roll and `R` or `Esc` closes it: the school's whole strength in order
+of battle, vehicle by vehicle and seat by seat, with each cadet's
+availability — *fit*, *infirmary, 4 day(s)*, *walking back*, *killed in
+action* — and how many battles she has behind her.
+
+Three decisions in it worth keeping. **It is derived every frame, not
+cached**, because a roll that kept its own copy of who is wounded goes stale
+exactly when the player opens it. **It words availability differently from the
+after-action report** — that page reports an event (*wounded today*), this one
+reports a state (*not available for six days*), and using one vocabulary for
+both would make the roll look like a report already dismissed. And **a cadet
+whose vehicle did not come home is still on it**, under "Without a vehicle":
+she survives her tank far more often than not, and a roll that only walked the
+order of battle would drop her from the school on the day she most needs to be
+on it.
+
+The layout came from the screenshot rather than from the design. With the
+chassis named on every cadet's line, every single line wrapped, and a wrapped
+list of twenty-four people is not a list anybody reads; the vehicle became a
+heading. So did dropping "0 battle(s)" — on day one that is twenty-four lines
+saying the same thing about everybody, and a number now means somebody has a
+history. `scripts/dev/the-roll.txt` is the tour, and its three `expect`s pass.
+
+**Still open**: *doing* something about it. Moving cadets between vehicles and
+a reserve is the other half of TODO's "move cadets around between tanks, and
+see stats" — this is the seeing half.
 
 ### 4. Fix the fun taxes
 
@@ -469,6 +524,10 @@ when somebody sweeps it, and a sweep needs an instrument.
   earlier in the session, it had by the end of it. Do not conclude from one
   degenerate capture that the harness is broken — run `battle-tour.txt` and
   check, which is what settled it in both directions.
+- **2026-08-25** — step 1 is complete (part 3, mission latitude) and step 3's
+  remainder landed (the academy roll). Determinism baseline passed
+  unregenerated again; `SAVE_VERSION` is 3. What is left of the memo is steps
+  4 and 5, and the designer's two notes.
 - **2026-08-24** — the word is settled and the roll is full: *cadet*, and
   forty-nine of them. See *The word, and the school roll*. The determinism
   baseline passed the rename without regeneration, which is the whole of the

@@ -32,6 +32,14 @@ use std::collections::{HashMap, VecDeque};
 
 use super::UtilityPlanner;
 
+/// The brain never insists: every [`Order::SetMission`] below is issued at
+/// [`crate::battle::Latitude::Delegated`], spelled out rather than defaulted so
+/// that a reader can see it is a decision. `Binding` is a thing a *player*
+/// says, and keeping it out of AI-vs-AI play is what makes the determinism
+/// baseline still valid across the chunk that added it — if
+/// `tests/snapshots/event_stream.txt` moves when latitude is touched, the
+/// insistence has leaked in here.
+///
 /// The delegation level at or beyond which a commander stops assigning
 /// ground and trusts her formations' own judgment — directive command in
 /// the Auftragstaktik tradition, as opposed to the detailed orders a
@@ -440,6 +448,7 @@ impl SideCommand {
                 orders.push(Order::SetMission {
                     formation: FormationId(index as u32),
                     mission: Mission::Withdraw { via },
+                    latitude: crate::battle::Latitude::Delegated,
                 });
                 continue;
             }
@@ -478,6 +487,10 @@ impl SideCommand {
                     orders.push(Order::SetMission {
                         formation: FormationId(index as u32),
                         mission: desired,
+                        // The brain never insists. Every order it issues is delegated,
+                        // which is what keeps the determinism baseline valid across
+                        // this change: AI-vs-AI play is bit-for-bit the old game.
+                        latitude: crate::battle::Latitude::Delegated,
                     });
                 }
                 continue;
@@ -512,6 +525,10 @@ impl SideCommand {
                     orders.push(Order::SetMission {
                         formation: FormationId(index as u32),
                         mission: desired,
+                        // The brain never insists. Every order it issues is delegated,
+                        // which is what keeps the determinism baseline valid across
+                        // this change: AI-vs-AI play is bit-for-bit the old game.
+                        latitude: crate::battle::Latitude::Delegated,
                     });
                 }
                 continue;
@@ -548,6 +565,7 @@ impl SideCommand {
                 orders.push(Order::SetMission {
                     formation: FormationId(index as u32),
                     mission: desired,
+                    latitude: crate::battle::Latitude::Delegated,
                 });
             }
         }

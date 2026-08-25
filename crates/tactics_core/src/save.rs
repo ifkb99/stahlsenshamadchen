@@ -55,7 +55,13 @@ use std::sync::Arc;
 /// Version 2 renamed the roster's people from *girls* to *cadets*, which is a
 /// rename of serde field names (`Roster::cadets`, `CrewLoss::cadet`) and so a
 /// break even though nothing about the format's meaning moved.
-pub const SAVE_VERSION: u32 = 2;
+///
+/// Version 3 gave a formation's orders a [`crate::battle::Latitude`].
+/// Everything it added defaults, but `MissionChange` went from tuple variants
+/// to struct ones, so an order caught in transit in an older save no longer
+/// reads — and an order that fails to read is a formation that silently
+/// forgets what it was told.
+pub const SAVE_VERSION: u32 = 3;
 
 /// Which mod, at which version, was loaded when a save was written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

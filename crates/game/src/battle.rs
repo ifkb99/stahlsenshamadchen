@@ -855,6 +855,7 @@ fn inherit_army_missions(
             let order = Order::SetMission {
                 formation: FormationId(index as u32),
                 mission: Mission::Withdraw { via },
+                latitude: Latitude::Delegated,
             };
             if state.apply(registry, &order).is_ok() {
                 lines.push(format!("{name} is under orders to break contact."));
@@ -1817,15 +1818,39 @@ fn handle_input(
     {
         match asked {
             Ok(mission) => {
-                // Shift queues instead of replacing: "…and then this." The
-                // engine refuses a leg behind a stand-fast or a retreat, and
-                // that refusal reaches the log like any other.
+                // Two modifiers, each qualifying the order rather than
+                // changing it, and they compose: Shift queues instead of
+                // replacing ("…and then this"), Ctrl means it ("and I am not
+                // asking"). The engine refuses a leg behind a stand-fast or a
+                // retreat, and that refusal reaches the log like any other.
+                //
+                // Ctrl rather than a key of its own because there is no key
+                // left that would not lie: `X` is already the assault, which
+                // is the *other* axis — press on through fire — and a player
+                // who pressed it expecting insistence would get a different
+                // order. Latitude has no verb of its own at formation scale,
+                // so it takes a modifier.
                 let queue = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+                let insist =
+                    keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+                let latitude = if insist {
+                    Latitude::Binding
+                } else {
+                    Latitude::Delegated
+                };
                 let formation = FormationId(index as u32);
                 let order = if queue {
-                    Order::QueueMission { formation, mission }
+                    Order::QueueMission {
+                        formation,
+                        mission,
+                        latitude,
+                    }
                 } else {
-                    Order::SetMission { formation, mission }
+                    Order::SetMission {
+                        formation,
+                        mission,
+                        latitude,
+                    }
                 };
                 let battle = &mut *battle;
                 match battle.state.apply(registry, &order) {
@@ -2951,13 +2976,20 @@ fn format_formation(
     // describe an order the rules stopped implementing.
     if let Some(mission) = formation.mission.as_ref() {
         lines.push(format!("  ({})", mission.promise()));
+        // And how hard it was meant, which is a second sentence because it
+        // is a second decision. The verb says what she will do about the
+        // enemy; the latitude says whether her own doctrine may discount the
+        // order at all. A player who can read one back and not the other
+        // cannot tell why two formations under the same order are behaving
+        // differently.
+        lines.push(format!("  ({})", formation.latitude.mission_promise()));
     }
     if let Some((change, ticks)) = &formation.incoming {
         // An amendment reads differently from a countermand, because the
         // player who queued a leg should not fear it will replace her plan.
         let verb = match change {
-            tactics_core::battle::MissionChange::Replace(_) => "In the air",
-            tactics_core::battle::MissionChange::Append(_) => "In the air (and then)",
+            tactics_core::battle::MissionChange::Replace { .. } => "In the air",
+            tactics_core::battle::MissionChange::Append { .. } => "In the air (and then)",
         };
         lines.push(format!(
             "{verb}: {} ({})",
@@ -2970,6 +3002,7 @@ fn format_formation(
         // explained her decision to her only after it was too late to
         // change it.
         lines.push(format!("  ({})", change.mission().promise()));
+        lines.push(format!("  ({})", change.latitude().mission_promise()));
     }
     for leg in &formation.plan {
         lines.push(format!("Then: {}", mission_sentence(state, Some(leg))));
@@ -3035,6 +3068,13 @@ fn format_formation(
     lines.push("Orders, on the hovered hex:".into());
     lines.extend(order_menu());
     lines.push("Shift queues a leg behind the last.".into());
+    // The second modifier, and it gets its promise from the engine like the
+    // verbs above rather than a sentence written here: what insisting costs
+    // is a claim about the rules, and the rules should be the ones making it.
+    lines.push(format!(
+        "Ctrl means it - {}.",
+        Latitude::Binding.mission_promise()
+    ));
     lines.push("F next formation, Esc drops it.".into());
     if let Some(hex) = hovered {
         lines.push(String::new());
@@ -3825,6 +3865,7 @@ mod tests {
                 &Order::SetMission {
                     formation,
                     mission: Mission::Assault { to },
+                    latitude: Latitude::Delegated,
                 },
             )
             .expect("the order lands");
@@ -3855,6 +3896,70 @@ mod tests {
         assert!(
             !hers.contains(Latitude::Binding.promise()),
             "the panel is offering to give the enemy orders:\n{hers}"
+        );
+    }
+
+    /// A formation's orders read back with how hard they were meant.
+    ///
+    /// The same argument as the promises above and one step further: the
+    /// verb and the latitude are two decisions, and a panel that shows one
+    /// of them leaves the player unable to tell why two formations under the
+    /// same order behave differently. Asserted on both branches — a standing
+    /// order and one still on the wire — because under a signals net the
+    /// second is the only place she can read her decision back before it is
+    /// too late to change it.
+    #[test]
+    fn a_formation_panel_says_how_hard_its_orders_were_meant() {
+        let reg = registry();
+        let to = |state: &BattleState| {
+            state
+                .formations()
+                .first()
+                .and_then(|f| f.leader)
+                .and_then(|id| state.unit(id))
+                .map(|u| u.pos)
+                .expect("a formation with somebody in it")
+        };
+        let panel = |latitude: Latitude| {
+            let mut state = BattleState::from_map(&reg, "river_crossing", 5).expect("battle");
+            let to = to(&state);
+            state
+                .apply(
+                    &reg,
+                    &Order::SetMission {
+                        formation: FormationId(0),
+                        mission: Mission::Advance { to },
+                        latitude,
+                    },
+                )
+                .expect("the order lands");
+            format_formation(&reg, &state, &state.formations()[0], None)
+        };
+
+        let insisted = panel(Latitude::Binding);
+        assert!(
+            insisted.contains(Latitude::Binding.mission_promise()),
+            "an order the player insisted on reads back as an ordinary one:\n{insisted}"
+        );
+        let asked = panel(Latitude::Delegated);
+        assert!(
+            asked.contains(Latitude::Delegated.mission_promise()),
+            "and an ordinary one says so rather than saying nothing:\n{asked}"
+        );
+        // The negative half is asserted on the *delegated* clause rather
+        // than the binding one, because the menu line below advertises what
+        // insisting buys and would satisfy a naive `contains` on every
+        // panel. What must not appear is the promise that contradicts the
+        // order actually given.
+        assert!(
+            !insisted.contains(Latitude::Delegated.mission_promise()),
+            "an insisted order still says her doctrine may bend it:\n{insisted}"
+        );
+        // The modifier that buys it is offered in the same place the verbs
+        // are, or it is a feature only a reader of the source can find.
+        assert!(
+            asked.contains("Ctrl"),
+            "nothing on the page says how to insist:\n{asked}"
         );
     }
 

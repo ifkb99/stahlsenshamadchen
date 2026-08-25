@@ -1484,6 +1484,7 @@ fn a_withdrawing_army_fights_its_battle_toward_the_exit() {
             &Order::SetMission {
                 formation: FormationId(index as u32),
                 mission: Mission::Withdraw { via: via.clone() },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("her own lane");
@@ -2257,6 +2258,7 @@ fn setting_a_mission_stores_it_on_the_formation_and_says_so_out_loud() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Advance { to: bridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("the bridge is on the map and the platoon exists");
@@ -2282,6 +2284,7 @@ fn setting_a_mission_stores_it_on_the_formation_and_says_so_out_loud() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Hold { at: None },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("countermanding is legal");
@@ -2308,6 +2311,7 @@ fn a_mission_is_a_standing_order_and_outlives_the_round_it_was_given_in() {
             &Order::SetMission {
                 formation: recon,
                 mission: Mission::Recon { toward: ford },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("the upper ford is on the map");
@@ -2335,6 +2339,7 @@ fn a_mission_for_a_formation_that_does_not_exist_is_refused() {
             &Order::SetMission {
                 formation: past_the_end,
                 mission: Mission::Hold { at: None },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         ),
         Err(tactics_core::battle::OrderError::NoSuchFormation),
@@ -2361,6 +2366,7 @@ fn a_mission_set_after_the_side_has_committed_is_refused() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Hold { at: None },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         ),
         Err(tactics_core::battle::OrderError::AlreadyCommitted),
@@ -2374,6 +2380,7 @@ fn a_mission_set_after_the_side_has_committed_is_refused() {
                 &Order::SetMission {
                     formation: line,
                     mission: Mission::Hold { at: None },
+                    latitude: tactics_core::battle::Latitude::Delegated,
                 },
             )
             .is_ok(),
@@ -2394,6 +2401,7 @@ fn a_withdrawal_must_name_an_exit_this_side_may_use() {
     let withdraw = |via: &str| Order::SetMission {
         formation: armor,
         mission: Mission::Withdraw { via: via.into() },
+        latitude: tactics_core::battle::Latitude::Delegated,
     };
     let refused = Err(tactics_core::battle::OrderError::NoSuchExit);
 
@@ -2449,6 +2457,7 @@ fn a_mission_that_names_ground_off_the_map_is_refused() {
                 &Order::SetMission {
                     formation: armor,
                     mission: mission.clone(),
+                    latitude: tactics_core::battle::Latitude::Delegated,
                 },
             ),
             not_on_map,
@@ -3791,6 +3800,7 @@ fn a_formation_advances_on_the_ground_its_mission_names() {
             &Order::SetMission {
                 formation,
                 mission: Mission::Advance { to: bridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -3840,6 +3850,7 @@ fn an_ordered_withdrawal_needs_no_wounds() {
                 mission: Mission::Withdraw {
                     via: "west_road".into(),
                 },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -4135,6 +4146,7 @@ fn an_executor_only_command_fills_gaps_without_issuing_missions() {
             &Order::SetMission {
                 formation,
                 mission: Mission::Advance { to: target },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("the player may order her own formation");
@@ -4410,6 +4422,7 @@ fn orders_take_time_to_arrive_when_the_radio_says_so() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Advance { to: bridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("the bridge is on the map");
@@ -4576,7 +4589,14 @@ fn quiet_round(
     let mut state = BattleState::from_map(reg, "river_crossing", 5).expect("battle");
     if let Some((formation, mission)) = mission {
         state
-            .apply(reg, &Order::SetMission { formation, mission })
+            .apply(
+                reg,
+                &Order::SetMission {
+                    formation,
+                    mission,
+                    latitude: tactics_core::battle::Latitude::Delegated,
+                },
+            )
             .expect("a legal mission");
     }
     commit_all(reg, &mut state);
@@ -4769,6 +4789,7 @@ fn an_order_never_heard_does_not_steer_her() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Hold { at: Some(start) },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("a legal mission");
@@ -5904,6 +5925,7 @@ fn a_plan_advances_when_its_first_leg_is_done() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Advance { to: near },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -5913,6 +5935,7 @@ fn a_plan_advances_when_its_first_leg_is_done() {
             &Order::QueueMission {
                 formation: armor,
                 mission: Mission::Hold { at: Some(hold_at) },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -5960,6 +5983,7 @@ fn nothing_follows_a_stand_fast_or_a_retreat() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Hold { at: None },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -5969,6 +5993,7 @@ fn nothing_follows_a_stand_fast_or_a_retreat() {
             &Order::QueueMission {
                 formation: armor,
                 mission: Mission::Advance { to: anywhere },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         ),
         Err(tactics_core::battle::OrderError::MissionIsTerminal),
@@ -5983,6 +6008,7 @@ fn nothing_follows_a_stand_fast_or_a_retreat() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Advance { to: anywhere },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -5994,6 +6020,7 @@ fn nothing_follows_a_stand_fast_or_a_retreat() {
                 mission: Mission::Withdraw {
                     via: "west_road".into(),
                 },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -6003,6 +6030,7 @@ fn nothing_follows_a_stand_fast_or_a_retreat() {
             &Order::QueueMission {
                 formation: armor,
                 mission: Mission::Advance { to: anywhere },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         ),
         Err(tactics_core::battle::OrderError::MissionIsTerminal),
@@ -6028,6 +6056,7 @@ fn an_amendment_travels_the_wire_like_any_order() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Advance { to: bridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -6044,6 +6073,7 @@ fn an_amendment_travels_the_wire_like_any_order() {
             &Order::QueueMission {
                 formation: armor,
                 mission: Mission::Recon { toward: bridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -6051,7 +6081,7 @@ fn an_amendment_travels_the_wire_like_any_order() {
     assert!(
         matches!(
             f.incoming,
-            Some((tactics_core::battle::MissionChange::Append(_), _))
+            Some((tactics_core::battle::MissionChange::Append { .. }, _))
         ),
         "the amendment is in the air, not in the plan"
     );
@@ -6065,6 +6095,7 @@ fn an_amendment_travels_the_wire_like_any_order() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Hold { at: None },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -6593,6 +6624,7 @@ fn a_section_in_contact_bounds_by_element() {
                 mission: Mission::Advance {
                     to: tactics_core::offset_to_hex(30, 1),
                 },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -6634,6 +6666,7 @@ fn a_section_out_of_contact_travels() {
                 mission: Mission::Advance {
                     to: tactics_core::offset_to_hex(30, 1),
                 },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -6659,6 +6692,7 @@ fn an_aggressive_doctrine_travels_in_overwatch() {
                 mission: Mission::Advance {
                     to: tactics_core::offset_to_hex(30, 1),
                 },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -6747,6 +6781,7 @@ fn contact_scores(
             &Order::SetMission {
                 formation: section,
                 mission,
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("the lane is on the map");
@@ -6762,6 +6797,138 @@ fn contact_scores(
             .score
     };
     (score(COVER), score(FORWARD))
+}
+
+/// What the forward tile is worth to a scout ordered onto it, under one
+/// doctrine at one latitude. Everything else about the calls a test makes is
+/// identical, so the difference between two of them is the mission term and
+/// nothing else.
+fn ordered_pull(
+    reg: &DataRegistry,
+    doctrine: &tactics_core::data::DoctrineDef,
+    latitude: Latitude,
+) -> f32 {
+    let (mut state, section) = contact_stage(reg, 4);
+    let forward = tactics_core::offset_to_hex(FORWARD.0, FORWARD.1);
+    state
+        .apply(
+            reg,
+            &Order::SetMission {
+                formation: section,
+                mission: Mission::Advance { to: forward },
+                latitude,
+            },
+        )
+        .expect("the lane is on the map");
+    Evaluator::new(doctrine.clone())
+        .score_tile(reg, &state, UnitId(0), forward)
+        .score
+}
+
+#[test]
+fn a_binding_mission_is_not_discounted_by_a_loose_doctrine() {
+    // Step 1 part 3 of DIRECTION.md, and the complaint it answers: a
+    // player's order was quietly worth less because of who she gave it to.
+    // Elastic defence devolves (delegation 0.7), so it read "take that
+    // ground" at four fifths of face value; massed armour does not (0.3) and
+    // read the same sentence at 1.2. Nobody issues an order meaning four
+    // fifths of it.
+    //
+    // Fought out on one doctrine with only `delegation` moved, because the
+    // score of a tile is a whole doctrine's opinion of it — cover, threat,
+    // the shot available — and comparing two *different* doctrines' totals
+    // would be comparing everything except the thing under test.
+    //
+    // Wireless on purpose: with a command block the order is still in the
+    // air when the tile is scored, and a mission nobody has heard yet has no
+    // latitude to read. What is under test is the executor, not the wire.
+    let reg = registry_wireless();
+    let base = reg
+        .doctrine("elastic_defense")
+        .cloned()
+        .expect("base doctrine");
+    let loose = tactics_core::data::DoctrineDef {
+        delegation: 0.7,
+        ..base.clone()
+    };
+    let neutral = tactics_core::data::DoctrineDef {
+        delegation: 0.5,
+        ..base.clone()
+    };
+    let tight = tactics_core::data::DoctrineDef {
+        delegation: 0.3,
+        ..base
+    };
+
+    let loose_delegated = ordered_pull(&reg, &loose, Latitude::Delegated);
+    let loose_binding = ordered_pull(&reg, &loose, Latitude::Binding);
+    assert!(
+        loose_binding > loose_delegated,
+        "insisting has to reach a formation that would otherwise have used its \
+         own judgment: delegated {loose_delegated}, binding {loose_binding}"
+    );
+
+    // How far it reaches, exactly: to the letter of the order and no
+    // further. A binding order read by a devolving doctrine is worth what an
+    // ordinary order read by a neutral one is worth — it raises a floor, it
+    // does not turn every commander into a martinet.
+    assert_eq!(
+        loose_binding,
+        ordered_pull(&reg, &neutral, Latitude::Delegated),
+        "insisting should buy the letter of the order, not more than it"
+    );
+
+    // And the other half of the rule, which is what keeps "I mean it"
+    // honest: `delegation` may make a subordinate *more* literal than she
+    // was asked to be, never less. A doctrine already holding to the letter
+    // hears nothing new in being told it twice.
+    assert_eq!(
+        ordered_pull(&reg, &tight, Latitude::Binding),
+        ordered_pull(&reg, &tight, Latitude::Delegated),
+        "a formation that was already going to follow the letter of it must \
+         not be pulled harder for being insisted on"
+    );
+}
+
+#[test]
+fn an_order_held_on_the_wire_arrives_as_hard_as_it_was_meant() {
+    // Latitude travels with the mission rather than being applied when it is
+    // sent, for the same reason `WaitingOrders` carries a unit's: an order
+    // that waits two ticks for a signaller has to land meaning what the
+    // commander meant, not what she happens to mean by the time it lands.
+    let mut reg = registry();
+    reg.command = Some(command_rules(999, true, 2));
+    let mut state = BattleState::from_map(&reg, "river_crossing", 5).expect("battle");
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let bridge = state.map.objectives()[0].anchor();
+
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: armor,
+                mission: Mission::Advance { to: bridge },
+                latitude: Latitude::Binding,
+            },
+        )
+        .expect("the bridge is on the map");
+    assert_eq!(
+        state.formations()[armor.index()]
+            .incoming
+            .as_ref()
+            .map(|(c, _)| c.latitude()),
+        Some(Latitude::Binding),
+        "the insistence is in the envelope, not left behind at headquarters"
+    );
+
+    commit_all(&reg, &mut state);
+    state.step_tick(&reg);
+    state.step_tick(&reg);
+    assert_eq!(
+        state.formations()[armor.index()].latitude,
+        Latitude::Binding,
+        "and it is still there when the order lands"
+    );
 }
 
 #[test]
@@ -7142,6 +7309,7 @@ fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Advance { to: bridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -7207,6 +7375,7 @@ fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Advance { to: ford },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -7330,6 +7499,7 @@ fn support_holds_her_at_overwatch_distance() {
                 mission: Mission::Support {
                     formation: "assault".into(),
                 },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("shooting for a friendly formation that is not your own is legal");
@@ -7389,6 +7559,7 @@ fn nobody_supports_the_enemy_or_herself() {
         mission: Mission::Support {
             formation: formation.into(),
         },
+        latitude: tactics_core::battle::Latitude::Delegated,
     };
 
     assert_eq!(
@@ -7427,6 +7598,7 @@ fn a_plan_may_end_in_support_but_not_continue_past_it() {
             &Order::SetMission {
                 formation: recon,
                 mission: Mission::Advance { to: ridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -7438,6 +7610,7 @@ fn a_plan_may_end_in_support_but_not_continue_past_it() {
                 mission: Mission::Support {
                     formation: "kuhlmann_armor".into(),
                 },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("a plan may end in support");
@@ -7447,6 +7620,7 @@ fn a_plan_may_end_in_support_but_not_continue_past_it() {
             &Order::QueueMission {
                 formation: recon,
                 mission: Mission::Hold { at: None },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         ),
         Err(tactics_core::battle::OrderError::MissionIsTerminal),
@@ -9519,6 +9693,7 @@ fn a_searching_planner_copes_with_missions_a_detachment_and_a_running_clock() {
                 &Order::SetMission {
                     formation: FormationId(index as u32),
                     mission: Mission::Advance { to: bridge },
+                    latitude: tactics_core::battle::Latitude::Delegated,
                 },
             )
             .expect("the bridge is on the map");
@@ -9955,6 +10130,7 @@ fn a_formation_of_one_can_be_given_any_mission_in_the_book() {
                 &Order::SetMission {
                     formation: FormationId(0),
                     mission: mission.clone(),
+                    latitude: tactics_core::battle::Latitude::Delegated,
                 },
             )
             .unwrap_or_else(|e| panic!("{mission:?} should be a legal order: {e}"));
