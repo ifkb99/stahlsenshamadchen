@@ -177,7 +177,7 @@ Ordered by spark per hour, not by dependency.
 | 2 | Say what a verb means before it is pressed | **done** |
 | 3 | Close the consequence loop | **done**, roster screen open |
 | 4 | Fix the fun taxes REVIEW.md found | **done**, bar the A/B |
-| 5 | Park a layer (MCTS) | not started |
+| 5 | Park a layer (MCTS) | A/B instrument built, sample too small |
 
 ### 1. Orders mean what they say
 
@@ -459,6 +459,15 @@ MCTS is ~3.3 s per order and ships unused; the scenario names `utility`. It is
 maintenance surface with no role. Either it becomes the enemy brain or it goes
 on ice, deliberately and in writing.
 
+`balance --brains` is the instrument that settles it: the mirrored arena the
+skill-gap table uses, same forces, same doctrine, same difficulty, varying
+only which planner is thinking, in both orientations. First run, 6 battles a
+pairing at difficulty 3, **says nothing** — both same-brain control rows came
+in 2–4 and both mixed rows 4–2, i.e. every row favoured whichever side it was
+rather than whichever brain. Six battles cannot resolve this; the run wants
+20+ a pairing and MCTS costs about a minute a battle, so it is an overnight
+job rather than an afternoon one.
+
 ## The word, and the school roll
 
 **Answered by the designer, 2026-08-24**, and both halves are done.
@@ -580,6 +589,18 @@ when somebody sweeps it, and a sweep needs an instrument.
   earlier in the session, it had by the end of it. Do not conclude from one
   degenerate capture that the harness is broken — run `battle-tour.txt` and
   check, which is what settled it in both directions.
+- **2026-08-25** — the planner has goals, and the goal chooser is the seam a
+  learned policy would replace: candidates are shared knowledge, choosing is
+  judgement, and the executor keeps every rule it already knows. Two things
+  to carry forward. A mission has to *replace* the candidate list rather than
+  join it — letting it compete undid step 1 without anybody noticing until a
+  test did — and that is precisely where subordinate initiative attaches, by
+  widening the list on doctrine. And the layer removed difficulty entirely on
+  its first run, which turned out to be the good news: moving the blur into
+  the chooser means a worse commander goes to the wrong place instead of
+  twitching, and it exposes that the chooser is too shallow for skill to have
+  much to be better at yet. That is the next question, and it is a better one
+  than the game had before.
 - **2026-08-25** — the wander. Half fixed and half a negative result, and the
   negative result is the more useful of the two. Difficulty noise was drawn per
   candidate tile under an argmax, which is a selection bias rather than a

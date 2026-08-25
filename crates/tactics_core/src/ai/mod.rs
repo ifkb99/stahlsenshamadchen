@@ -24,6 +24,7 @@
 mod command;
 mod driver;
 mod eval;
+pub mod goal;
 mod mcts;
 mod utility;
 

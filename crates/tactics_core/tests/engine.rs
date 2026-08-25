@@ -3195,7 +3195,10 @@ fn an_unknown_planner_falls_back_instead_of_crashing() {
     assert!(
         matches!(
             order,
-            Order::SetMove { .. } | Order::SetFire { .. } | Order::Commit { .. }
+            Order::SetMove { .. }
+                | Order::SetFire { .. }
+                | Order::SetGoal { .. }
+                | Order::Commit { .. }
         ),
         "a typo in a mod should degrade to a working planner, got {order:?}"
     );
@@ -3998,6 +4001,139 @@ fn a_side_that_sees_clearly_is_untouched_by_the_blur() {
     // because neither of them drew anything, not because the rng happened to
     // land twice the same way.
     assert_eq!(sharp, orders_from(5));
+}
+
+// --- goals: an intention that outlives a round --------------------------
+
+#[test]
+fn a_crew_keeps_the_goal_she_chose_until_it_is_finished() {
+    // The point of the whole layer. A greedy planner re-decides where it is
+    // going every round and therefore never gets anywhere; measured, that was
+    // a medium tank driving 53 hexes over 19 rounds to end 10 hexes further
+    // forward. A goal is kept, so the second round's plan is the first
+    // round's plan continued.
+    let reg = registry_wireless();
+    let mut state =
+        BattleState::from_map(&reg, "battle_plains", 101).expect("a shipped battle map");
+    let mut planner = UtilityPlanner::with_difficulty(5, 11);
+
+    let mut seen: Vec<(tactics_core::battle::Goal, tactics_core::Hex)> = Vec::new();
+    for _ in 0..6 {
+        if state.is_over() {
+            break;
+        }
+        loop {
+            let order = planner.next_order(&reg, &state, 0);
+            if matches!(order, Order::Commit { .. }) {
+                break;
+            }
+            let _ = state.apply(&reg, &order);
+        }
+        if let Some(me) = state.unit(UnitId(0))
+            && let Some(goal) = me.goal
+        {
+            seen.push((goal, me.pos));
+        }
+        play_round(&reg, &mut state);
+    }
+    assert!(
+        seen.len() >= 4,
+        "she should be planning every round: {seen:?}"
+    );
+    assert!(
+        seen.windows(2).any(|w| w[0].0 == w[1].0),
+        "she has to carry an intention across a round at all: {seen:?}"
+    );
+    // The real rule, and the one worth pinning: she only ever changes her
+    // mind by *finishing*. Anything else is the re-deciding this layer was
+    // built to stop, and it would not show up as a goal that never persists —
+    // it would show up as one that persists for a while and then wanders.
+    for pair in seen.windows(2) {
+        let ((was, _), (now, at)) = (pair[0], pair[1]);
+        if was != now {
+            assert_eq!(
+                was,
+                tactics_core::battle::Goal::Take(at),
+                "she changed her goal without having arrived at the old one: {seen:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_order_replaces_her_own_ideas_rather_than_competing_with_them() {
+    // The rule the direction memo exists to defend, restated where the goal
+    // layer could most easily have undone it. A mission that names ground is
+    // not one candidate among the objectives she likes the look of — it is
+    // the only one. Letting it compete was the first draft, and it meant a
+    // crew under orders and a crew with none chose the same ground, which is
+    // an order that has stopped being one.
+    //
+    // Note this is also the hook for subordinate initiative: that chunk
+    // widens this list by doctrine, and nothing else has to move.
+    let reg = registry_wireless();
+    let state = BattleState::from_map(&reg, "battle_plains", 102).expect("a shipped map");
+    let unit = UnitId(0);
+    let free = tactics_core::ai::goal::candidates(&reg, &state, unit, None, None);
+    assert!(
+        free.len() > 2,
+        "with no orders she has the run of the map: {free:?}"
+    );
+
+    let told = tactics_core::offset_to_hex(30, 30);
+    let under_orders = tactics_core::ai::goal::candidates(
+        &reg,
+        &state,
+        unit,
+        Some(&tactics_core::battle::Mission::Advance { to: told }),
+        None,
+    );
+    assert_eq!(
+        under_orders,
+        vec![
+            tactics_core::battle::Goal::Take(told),
+            tactics_core::battle::Goal::Hold
+        ],
+        "told where to go, that is where she is going"
+    );
+}
+
+#[test]
+fn two_crews_do_not_drive_for_the_same_hex() {
+    // A section takes a piece of ground each. Said in the candidate list so
+    // that it is said once and visibly, rather than as a tie-break buried in
+    // whatever does the scoring — which is where the equivalent problem lived
+    // before, as the plateau rule, and where it was very hard to see.
+    let reg = registry_wireless();
+    let mut state = BattleState::from_map(&reg, "battle_plains", 103).expect("a shipped map");
+    let (first, second) = (UnitId(0), UnitId(1));
+    let side = state.unit(first).expect("on the field").side;
+    assert_eq!(
+        state.unit(second).expect("on the field").side,
+        side,
+        "this test needs two crews of the same side"
+    );
+
+    let mine = tactics_core::ai::goal::candidates(&reg, &state, first, None, None);
+    let taken = mine
+        .iter()
+        .find_map(|g| match g {
+            tactics_core::battle::Goal::Take(hex) => Some(*hex),
+            tactics_core::battle::Goal::Hold => None,
+        })
+        .expect("there is ground worth having on this map");
+    state.unit_mut(first).expect("on the field").goal =
+        Some(tactics_core::battle::Goal::Take(taken));
+
+    let hers = tactics_core::ai::goal::candidates(&reg, &state, second, None, None);
+    assert!(
+        !hers.contains(&tactics_core::battle::Goal::Take(taken)),
+        "somebody is already going there: {hers:?}"
+    );
+    assert!(
+        hers.len() > 1,
+        "and she still has somewhere of her own to go"
+    );
 }
 
 /// The player has to be able to see a crew wavering *before* it costs them

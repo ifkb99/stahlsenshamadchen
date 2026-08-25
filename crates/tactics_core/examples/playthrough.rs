@@ -103,6 +103,14 @@ fn main() {
         )
     };
 
+    // Names are fixed for the battle, so they are taken once: the planning
+    // closure borrows the state mutably and cannot read it back.
+    let crews: Vec<String> = state
+        .units
+        .iter()
+        .map(|u| format!("{} ({})", u.name, u.vehicle))
+        .collect();
+
     let mut rounds = 0usize;
     while !state.is_over() && rounds < 200 {
         // Planning: every side writes orders for all of its units. Orders
@@ -113,8 +121,16 @@ fn main() {
                 println!("!! side {} illegal order {:?}: {e}", d.side, d.order);
             }
             for ev in &d.events {
-                if let Event::MissionAssigned { formation, mission } = ev {
-                    println!("[side {}] {formation} ordered to {mission:?}", d.side);
+                match ev {
+                    Event::MissionAssigned { formation, mission } => {
+                        println!("[side {}] {formation} ordered to {mission:?}", d.side)
+                    }
+                    // Goals are chosen during planning, not resolution, so
+                    // they are announced here or not at all.
+                    Event::SetOut { unit, doing, .. } => {
+                        println!("   -> {} is {doing}", crews[unit.index()])
+                    }
+                    _ => {}
                 }
             }
         });
@@ -131,6 +147,8 @@ fn main() {
                 announced = true;
             }
             match ev {
+                // Announced in the planning pass above, where it happens.
+                Event::SetOut { .. } => {}
                 Event::RoundStarted { round } => println!("--- round {round} ---"),
                 Event::TickStarted { tick: t } => {
                     tick = *t;

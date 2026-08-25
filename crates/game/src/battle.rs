@@ -1385,6 +1385,17 @@ fn pump_events(
                     format!("{who} is {rung} and will not advance.")
                 });
             }
+            BattleEvent::SetOut { unit, doing, .. } => {
+                let who = battle
+                    .state
+                    .unit(*unit)
+                    .map(|u| u.name.clone())
+                    .unwrap_or_else(|| "A crew".into());
+                // The first thing this AI has ever done that can be said in a
+                // sentence. A vehicle crossing the map with nothing in the log
+                // behind it reads as the game moving her for no reason.
+                log.push(format!("{who} is {doing}."));
+            }
             BattleEvent::Defied {
                 unit, rung, doing, ..
             } => {

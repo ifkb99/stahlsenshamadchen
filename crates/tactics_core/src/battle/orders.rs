@@ -7,8 +7,8 @@
 
 use super::STALEMATE_ROUNDS;
 use super::{
-    BattleResult, BattleState, EndReason, FormationId, Latitude, Mission, Phase, Unit, UnitId,
-    combat, fog, movement,
+    BattleResult, BattleState, EndReason, FormationId, Goal, Latitude, Mission, Phase, Unit,
+    UnitId, combat, fog, movement,
 };
 use crate::data::{ArmorFacing, DataRegistry};
 use crate::map::{LossTrigger, ObjectiveKind};
@@ -66,6 +66,16 @@ pub enum Order {
     SetMove { unit: UnitId, to: Hex },
     /// Tell a unit what to shoot at.
     SetFire { unit: UnitId, fire: FireIntent },
+    /// Record what this crew is trying to achieve.
+    ///
+    /// It moves nothing on its own — the movement toward a goal is an
+    /// ordinary [`Self::SetMove`] — and it exists so that the intention
+    /// travels the same road every other decision in this engine travels: in
+    /// through the order stream, out through the event log, into the save
+    /// file, onto the replay. A planner that kept its goals privately would
+    /// be a planner whose behaviour changed when the player saved the game,
+    /// which is what `tests/save.rs` is there to catch.
+    SetGoal { unit: UnitId, goal: Goal },
     /// The commander's own order to one crew, carried by the wire.
     ///
     /// Identical to [`Self::SetMove`] plus [`Self::SetFire`] for a cadet who
@@ -298,6 +308,24 @@ pub enum Event {
         /// Whether they will still do as they are told on this rung.
         obeys: bool,
     },
+    /// A crew set out for somewhere on her own initiative.
+    ///
+    /// Emitted when the goal *changes*, not every round she is carrying one,
+    /// because "she is still driving to the ford" is not news. Carries the
+    /// wording rather than the hex so a log can be read without a map in the
+    /// other hand: [`crate::battle::Goal::describe`] names the objective when
+    /// the ground has a name.
+    ///
+    /// This is the first thing the AI in this game has ever done that is
+    /// explainable in a sentence, which is most of the argument for having
+    /// it. A vehicle driving across the map with nothing in the log behind it
+    /// is indistinguishable from a bug — the same bargain the drill's
+    /// provenance flag was plumbed for.
+    SetOut {
+        unit: UnitId,
+        goal: Goal,
+        doing: String,
+    },
     /// A crew stopped doing what she was told, and what she did instead.
     ///
     /// Never silent, for two different reasons. An order that quietly fails
@@ -512,6 +540,22 @@ impl BattleState {
                 self.set_fire(registry, *unit, *fire)?;
                 Ok(Vec::new())
             }
+            Order::SetGoal { unit, goal } => {
+                self.planning_unit_side(*unit)?;
+                let changed = self.unit(*unit).is_some_and(|u| u.goal != Some(*goal));
+                if let Some(u) = self.unit_mut(*unit) {
+                    u.goal = Some(*goal);
+                }
+                Ok(if changed {
+                    vec![Event::SetOut {
+                        unit: *unit,
+                        goal: *goal,
+                        doing: goal.describe(&self.map),
+                    }]
+                } else {
+                    Vec::new()
+                })
+            }
             Order::Radio {
                 unit,
                 to,
@@ -632,15 +676,7 @@ impl BattleState {
     /// no closer. Deterministic tiebreak, because two equally good hexes must
     /// pick the same one in every replay.
     fn march_toward(&mut self, registry: &DataRegistry, id: UnitId, destination: Hex) {
-        let Some(pos) = self.unit(id).map(|u| u.pos) else {
-            return;
-        };
-        let step = movement::reachable(registry, self, id)
-            .into_keys()
-            .min_by_key(|h| (destination.distance_to(*h), h.x, h.y));
-        if let Some(step) = step
-            && step != pos
-        {
+        if let Some(step) = movement::step_toward(registry, self, id, destination) {
             let _ = self.set_move(registry, id, step);
         }
     }
@@ -812,6 +848,11 @@ impl BattleState {
                 unit.detached = false;
                 unit.tasking = None;
                 unit.latitude = Latitude::default();
+                // Fresh orders end her own errand too. A crew still driving
+                // to ground her *old* mission made sense of is the failure
+                // mode a committed goal introduces, and this is where it is
+                // shut.
+                unit.goal = None;
             }
         }
         Ok(vec![Event::MissionAssigned {
@@ -1892,6 +1933,22 @@ impl BattleState {
             if unit.tasking == Some(unit.pos) {
                 unit.tasking = None;
                 unit.latitude = Latitude::default();
+            }
+        }
+        // A goal that is over is cleared here rather than by whoever notices,
+        // so that the panel, the log and the planner all stop believing in it
+        // at the same moment. `finished` needs the whole state, hence the
+        // second pass.
+        let done: Vec<UnitId> = self
+            .units
+            .iter()
+            .filter(|u| u.alive)
+            .filter(|u| u.goal.is_some_and(|g| g.finished(self, u.id)))
+            .map(|u| u.id)
+            .collect();
+        for id in done {
+            if let Some(u) = self.unit_mut(id) {
+                u.goal = None;
             }
         }
         // Plans advance at the top of the round, so a promoted leg steers the

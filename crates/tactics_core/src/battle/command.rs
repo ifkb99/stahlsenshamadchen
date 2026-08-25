@@ -175,6 +175,94 @@ impl Latitude {
     }
 }
 
+/// What one crew means to do next, as opposed to what her formation was
+/// told.
+///
+/// This is the unit of decision the planners work in, and it is deliberately
+/// small: a handful of statements, each stable enough to outlive the round
+/// that produced it. The shape is borrowed from the options framework in
+/// reinforcement learning — an *option* is a temporally extended action with
+/// three parts, and a goal has all three: the set of goals worth considering
+/// is the initiation set ([`crate::ai::goal::candidates`]), the executor that
+/// walks toward one is the policy, and [`Goal::finished`] is the termination
+/// condition.
+///
+/// That is not decoration. It is the seam this codebase is meant to be
+/// replaceable at: a learned policy chooses among a handful of goals, while
+/// pathing, boarding, dismounting, opportunity fire and defiance stay in the
+/// executor where they are already written and already tested. A policy that
+/// had to emit orders directly would be choosing among every hex on a
+/// 1261-tile board and relearning rules the engine already knows.
+///
+/// Lives here rather than in `ai` for two reasons. It is a fact about a unit
+/// in the same family as [`Mission`] and `tasking` — what she is trying to do
+/// — so it belongs where those are; and the presentation layer reads it, so
+/// that a vehicle driving somewhere can say where. It rides on the unit and
+/// therefore through saves, which a planner's private memory would not: that
+/// is not a style preference, it is what `tests/save.rs` requires, since a
+/// battle that forks through a save file has to play the same afterwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Goal {
+    /// Get to this ground and be standing on it. The workhorse: an
+    /// objective, a piece of cover, a firing position, the ground her orders
+    /// named.
+    Take(Hex),
+    /// Stay here and watch. Not the absence of a goal — a crew who has
+    /// decided this piece of ground is where she should be is doing
+    /// something, and the difference matters to anyone reading the log.
+    Hold,
+}
+
+impl Goal {
+    /// Whether this goal is over — achieved, or no longer worth carrying.
+    ///
+    /// The termination condition, and a *list* rather than a threshold on
+    /// purpose. A threshold ("abandon it if something else is now much
+    /// better") re-opens the question every round and needs a number nobody
+    /// can defend; a list can be read, and each entry is a sentence about the
+    /// world rather than about the arithmetic.
+    ///
+    /// `Hold` never finishes on its own. It is ended by the things that end
+    /// every goal from outside — fresh orders, a recall — which is right: a
+    /// crew told to sit somewhere sits there until told otherwise.
+    pub fn finished(
+        &self,
+        state: &crate::battle::BattleState,
+        unit: crate::battle::UnitId,
+    ) -> bool {
+        let Some(me) = state.unit(unit) else {
+            return true;
+        };
+        match self {
+            Self::Hold => false,
+            Self::Take(hex) => {
+                // Arrived.
+                me.pos == *hex
+                    // Or somebody else got there first. Two crews driving for
+                    // one hex is the queue the plateau rule was invented to
+                    // break up, and saying it here says it once instead of
+                    // as a tie-break buried in a sweep.
+                    || state.unit_at(*hex).is_some_and(|u| u.id != unit && u.side == me.side)
+            }
+        }
+    }
+
+    /// How this reads in a log, given a map that can name its ground.
+    pub fn describe(&self, map: &crate::map::HexMap) -> String {
+        match self {
+            Self::Hold => "holding here".to_string(),
+            Self::Take(hex) => match map.objectives().iter().find(|o| o.hexes.contains(hex)) {
+                Some(objective) => format!("making for {}", objective.name),
+                None => {
+                    let [col, row] = crate::hex_to_offset(*hex);
+                    format!("making for ({col}, {row})")
+                }
+            },
+        }
+    }
+}
+
 /// What a formation has been told to do, until it is told something else.
 ///
 /// The vocabulary every commander speaks: the built-in brain, the human

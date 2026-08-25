@@ -139,6 +139,47 @@ consulted the thing it was about.
   `CrewHit` and those are still counted. Adding an event to that list is
   adding a way for a battle never to end; do it deliberately.
 
+### Goals: the seam the AI is meant to be replaced at
+
+`Goal` (`battle/command.rs`) is what one crew means to do — `Take(hex)` or
+`Hold` — kept across rounds and cleared when it finishes. The split around it
+is deliberate and is the thing to preserve:
+
+- **`ai/goal.rs::candidates` is shared knowledge; `GoalChooser` is judgement.**
+  A learned policy replaces the chooser and nothing else, so its action space
+  is five or six statements rather than 1261 hexes, and it inherits pathing,
+  boarding, dismounting, opportunity fire and defiance from an executor that
+  already works. In options-framework terms: candidates are the initiation
+  set, the chooser is the policy over options, `Goal::finished` is the
+  termination condition, and the utility planner is the intra-option policy.
+- **A goal lives on the `Unit`, not in the planner.** `tests/save.rs` forks a
+  battle through a save file and requires the same future; a planner's private
+  memory does not survive that, so a commitment held there would make saving a
+  game change how it is played.
+- **A mission replaces the candidate list; it does not join it.** Letting a
+  mission compete as one candidate among the objectives silently undid step 1
+  of DIRECTION.md — a crew under orders and a crew with none started choosing
+  the same ground, and `a_cut_off_unit_keeps_the_orders_she_had` caught it.
+  **Subordinate initiative is the widening of this list**, by doctrine, and
+  nothing else has to move for it to arrive.
+- **A long march is walked through `movement::step_toward`**, shared with a
+  commander's personal `tasking`. `SetMove` is refused past this round's
+  budget — correct for an order, and the reason the planner only ever *scored*
+  ground it could reach. Two implementations of "closest reachable" would be
+  two answers to where she is going.
+- **One crew per piece of ground**: `candidates` drops a hex a friend is on or
+  already making for. That is the dispersion job the `PLATEAU` tie-break was
+  doing, said once and visibly instead of buried in a sweep.
+- **`IMPATIENCE` prices the drive.** Without it every crew walks to whichever
+  single hex scores highest, which is the queue `PLATEAU` was invented to
+  break up, rebuilt a level higher. It belongs in `mod.json` with the rest of
+  the evaluator's numbers — see TODO.
+- **Difficulty applies to the chooser, not to the tile sweep.** That is what
+  makes it mean something: a worse commander goes to the wrong place, which a
+  player can see and punish, instead of twitching between interchangeable
+  hexes. A per-candidate draw is safe over six meaningful options and was not
+  safe over ninety interchangeable ones — the argmax is the difference.
+
 ### Difficulty is a lens, not a lottery
 
 `UtilityPlanner::lean` draws **one** blur per unit per round and applies it as

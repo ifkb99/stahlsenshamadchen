@@ -52,6 +52,17 @@ use tactics_core::roster::{CadetId, Roster};
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let sim = args.iter().any(|a| a == "--sim");
+    // Opt-in and separately sized, because MCTS costs seconds per order and
+    // would otherwise make the content-iteration loop unusable. Its default
+    // sample is deliberately small: this table answers a yes/no question
+    // about which brain is better, not a balance question about a number.
+    let brains = args.iter().any(|a| a == "--brains");
+    let brain_games: usize = flag(&args, "--brain-games")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(6);
+    let brain_difficulty: u8 = flag(&args, "--brain-difficulty")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
     let games: usize = flag(&args, "--games")
         .and_then(|v| v.parse().ok())
         .unwrap_or(12);
@@ -81,6 +92,9 @@ fn main() {
         delegation_tax(&registry, games);
         mustered_forces(&registry, games, budget);
         skill_gap(&registry, games);
+    }
+    if brains {
+        brains_table(&registry, brain_games, brain_difficulty);
     } else {
         println!("\n(pass --sim to fight {games} battles and see what these numbers do)");
     }
@@ -1653,6 +1667,87 @@ fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
         std::sync::Arc::new(roster),
         seed,
     ))
+}
+
+/// Which brain is better, controlled.
+///
+/// REVIEW.md read "Kuhlmann won 3/3" as evidence that MCTS beats the utility
+/// planner, and it cannot be: `playthrough` hands side 0 both MCTS *and*
+/// `massed_armor`, on a map whose two sides field different vehicles. Three
+/// candidate explanations, one observation. This fights the same mirrored
+/// arena the skill-gap table uses — identical forces, identical doctrine,
+/// identical difficulty — and varies nothing but which planner is thinking,
+/// in both orientations so that a side-of-the-map effect shows up as a
+/// disagreement between the two rows rather than as a result.
+///
+/// The two same-brain rows are the control and are the first thing to read:
+/// on a mirrored arena they should sit near parity, and how far they miss it
+/// is the noise floor every other row has to beat before it means anything.
+fn brains_table(reg: &DataRegistry, games: usize, difficulty: u8) {
+    heading(&format!(
+        "brains: {games} battles per pairing on the mirrored arena, difficulty {difficulty} both sides"
+    ));
+    println!(
+        "  {:<22} {:>5} {:>5} {:>6} {:>12} {:>12} {:>9}",
+        "pairing (A vs B)", "A won", "B won", "draws", "A lost/game", "B lost/game", "rounds"
+    );
+    for (a, b) in [
+        ("utility", "utility"),
+        ("mcts", "mcts"),
+        ("mcts", "utility"),
+        ("utility", "mcts"),
+    ] {
+        let (mut a_wins, mut b_wins, mut draws) = (0, 0, 0);
+        let (mut a_losses, mut b_losses, mut total_rounds) = (0usize, 0usize, 0usize);
+        for seed in 0..games as u64 {
+            let Some(mut state) = symmetric_arena(reg, 9000 + seed) else {
+                continue;
+            };
+            let mut ai = AiDriver::new();
+            for (side, planner) in [(0u8, a), (1u8, b)] {
+                ai.insert(
+                    side,
+                    make_battle_planner(
+                        &AiConfig {
+                            planner: planner.into(),
+                            difficulty,
+                            doctrine: None,
+                        },
+                        seed * 2 + side as u64,
+                        reg,
+                    ),
+                );
+            }
+            let mut rounds = 0;
+            while !state.is_over() && rounds < 60 {
+                ai.plan_round(reg, &mut state);
+                state.resolve_round(reg);
+                rounds += 1;
+            }
+            total_rounds += rounds;
+            match state.over.and_then(|r| r.winner) {
+                Some(0) => a_wins += 1,
+                Some(_) => b_wins += 1,
+                None => draws += 1,
+            }
+            a_losses += state.lost_units().filter(|u| u.side == 0).count();
+            b_losses += state.lost_units().filter(|u| u.side == 1).count();
+        }
+        let per = |l: usize| l as f32 / games.max(1) as f32;
+        println!(
+            "  {:<22} {a_wins:>5} {b_wins:>5} {draws:>6} {:>12.2} {:>12.2} {:>9.1}",
+            format!("{a} vs {b}"),
+            per(a_losses),
+            per(b_losses),
+            total_rounds as f32 / games.max(1) as f32,
+        );
+    }
+    println!(
+        "\n  the two same-brain rows are the control: read how far they miss\n  \
+         parity first, because that is the noise floor the mixed rows have to\n  \
+         beat. a real difference shows as BOTH mixed rows favouring the same\n  \
+         brain."
+    );
 }
 
 fn skill_gap(reg: &DataRegistry, games: usize) {

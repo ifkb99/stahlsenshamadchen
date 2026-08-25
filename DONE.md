@@ -401,6 +401,81 @@ design chunk of its own — and the one that overlaps with the subordinate
 initiative the designer has described wanting (`initiative` already exists as
 a doctrine weight, unread). Reverted rather than shipped.
 
+**The planner has a goal now, and the goal is the seam.** The other half of
+the wander: a greedy planner re-decides where it is going every round, so
+nothing carries an intention between them. Committing to the tile it picked
+was tried first and failed structurally (above) — that tile is never more than
+a round away. So the planner needed a destination worth committing to.
+
+`Goal` is `Take(hex)` or `Hold`, kept on the unit and cleared when it
+finishes. What it is chosen *from* is a short list of places that mean
+something — objectives, and always the tile this round's sweep would have
+picked, which is the guarantee that the layer can never leave a crew worse off
+than having none. Not a raster: scoring a three-round radius would be seven
+hundred tiles a unit a round, and more to the point "somewhere near the ford"
+is not a different intention from "the ford".
+
+The split is the deliverable, not the behaviour. `candidates` is shared
+knowledge about the map; `GoalChooser` is judgement, and is the only thing a
+learned policy replaces. That keeps a policy's action space at five or six
+statements instead of 1261 hexes and lets it inherit pathing, boarding,
+dismounting, opportunity fire and defiance from an executor that already
+works. The vocabulary is the options framework's: candidates are the
+initiation set, the chooser is the policy over options, `Goal::finished` is
+the termination condition, and the utility planner is the intra-option policy.
+Worth recording the correction that produced that shape — the original idea
+was to use `initiative` as an RL epsilon, and epsilon is *exploration* noise
+that anneals to nothing by deployment. A high-initiative crew under that
+scheme would act randomly rather than independently, and would stop once
+training converged. A disposition is a property of the policy: a feature it
+conditions on, or a weight mixing two value estimates.
+
+Four things this got wrong on the way, each worth keeping:
+
+- **A mission must replace the candidate list, not join it.** The first draft
+  made it one candidate among the objectives, and an objective could outbid
+  it — so a crew under orders and a crew with none chose the same ground,
+  which silently undid step 1 of DIRECTION.md.
+  `a_cut_off_unit_keeps_the_orders_she_had` caught it. This is also exactly
+  where subordinate initiative attaches: that chunk *widens* the list by
+  doctrine and nothing else moves.
+- **`SetMove` is refused past this round's movement budget.** That is the rule
+  that made the planner only ever score reachable ground in the first place,
+  and it means a long march is walked a leg at a time — through
+  `movement::step_toward`, shared with a commander's personal `tasking`,
+  because two implementations of "closest reachable" are two answers to where
+  she is going.
+- **The goal layer removed difficulty entirely on the first run.** Difficulty
+  4 and 5 produced byte-identical battles, because the chooser never saw the
+  blur and the sweep's noisy answer was only a candidate. Moving the blur into
+  the chooser is the fix and is a better rule than the one it replaced: a
+  worse commander now goes to the **wrong place**, which is a mistake a player
+  can see and punish, rather than twitching between interchangeable hexes. A
+  per-candidate draw is safe over six meaningful options and was not safe over
+  ninety interchangeable ones — the argmax is the whole difference.
+- **One crew per piece of ground**, said in the candidate list. That is the
+  dispersion job the `PLATEAU` tie-break was quietly doing, now visible.
+
+Measured, `--games 36`: battles 14.8 → 13.6 rounds, penetrating shots 41% →
+43%, misses 513 → 425. More decisive, less wasted. The skill-gap rows moved
+around inside their own noise floor — read the two same-brain control rows
+first, which came in at 14–22 and 20–16 where parity is 18–18, so ±4 of 36 is
+what any row has to beat before it means anything. 5v1 sits at 26–10 against
+28–8 before, and its exchange ratio fell from 1:2.1 to 1:1.4.
+
+**Difficulty still does not buy much intelligence, and now it is clear why.**
+The chooser is shallow: it prices being *there* and the drive, and nothing
+about the route, the risk on the way, or what the enemy will do about it. A
+better commander has almost nothing to be better at yet. That is the argument
+for what goes in the chooser next, and it is a much more tractable question
+than it was when difficulty was jitter on a tile sweep.
+
+**A crew says where she is going.** `Event::SetOut` fires when a goal changes
+— not every round, because "still driving to the ford" is not news — and
+carries the wording rather than the hex, so the log reads without a map in the
+other hand. This is the first thing this AI has done that is explainable in a
+sentence, which is most of the argument for the layer existing.
+
 **Saves record which mods were playing.** `SaveGame.mods` stamps id and
 version; mismatched ids are refused (the rules genuinely differ), version drift
 on the same set warns and loads (a content patch must not cost the player their

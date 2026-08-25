@@ -6,10 +6,11 @@
 //! planner buffers the pair and hands them over one call at a time, keeping
 //! [`AiPlanner::next_order`] the only entry point the callers need.
 
+use super::goal::{self, GoalChooser};
 use super::{
     AiConfig, AiPlanner, Evaluator, difficulty_noise, next_unplanned_unit, resolve_doctrine,
 };
-use crate::battle::{BattleState, FireIntent, Order, UnitId, reachable};
+use crate::battle::{BattleState, FireIntent, Order, UnitId, reachable, step_toward};
 use crate::data::DataRegistry;
 use hexx::Hex;
 use rand::{RngExt, SeedableRng};
@@ -421,12 +422,59 @@ impl UtilityPlanner {
             .min_by_key(|(tile, _, _)| (pos.distance_to(*tile), tile.x, tile.y))
             .map(|(tile, _, attack)| Choice { dest: tile, attack });
 
-        let (dest, attack) = match best {
+        let (best_dest, attack) = match best {
             Some(choice) => (choice.dest, choice.attack),
             None => (pos, None),
         };
-        let mut orders = Vec::new();
-        if dest != pos {
+
+        // The goal layer. She keeps the goal she has until it finishes, and
+        // chooses a new one from a short list of places that mean something
+        // when it does — objectives, where her orders point, and (always) the
+        // tile this round's sweep just picked, which is the guarantee that a
+        // goal can never leave her worse off than having none.
+        //
+        // The sweep above still runs, and has to: its answer is a candidate,
+        // and its `attack` is what she shoots at while driving. What changed
+        // is that its answer is no longer automatically her destination.
+        let live = state
+            .unit(unit)
+            .and_then(|u| u.goal)
+            .filter(|g| !g.finished(state, unit));
+        let goal = match live {
+            Some(goal) => goal,
+            None => {
+                let options = goal::candidates(
+                    registry,
+                    state,
+                    unit,
+                    state
+                        .command
+                        .formation_of(unit)
+                        .and_then(|f| f.mission_for(unit)),
+                    Some(best_dest),
+                );
+                let mut chooser = goal::UtilityChooser {
+                    evaluator: &self.evaluator,
+                    noise: self.noise,
+                    rng: &mut self.rng,
+                };
+                chooser.choose(registry, state, unit, &options)
+            }
+        };
+
+        // One leg toward it. A `SetMove` naming ground beyond this round's
+        // movement is refused by the engine — which is the right rule for an
+        // order and the reason this planner only ever *scored* ground it
+        // could reach — so a goal several rounds off is walked a leg at a
+        // time through the same `step_toward` a commander's personal tasking
+        // uses. Two implementations of "closest reachable" would be two
+        // answers to where she is going.
+        let dest = match goal {
+            crate::battle::Goal::Hold => None,
+            crate::battle::Goal::Take(hex) => step_toward(registry, state, unit, hex),
+        };
+        let mut orders = vec![Order::SetGoal { unit, goal }];
+        if let Some(dest) = dest {
             orders.push(Order::SetMove { unit, to: dest });
         }
         match attack {
@@ -435,8 +483,10 @@ impl UtilityPlanner {
                 fire: FireIntent::Target { target, weapon },
             }),
             // Nothing worth engaging: watch the ground instead. Said out
-            // loud so the unit counts as planned rather than forgotten.
-            None if orders.is_empty() => orders.push(Order::SetFire {
+            // loud so the unit counts as planned rather than forgotten —
+            // and `SetGoal` does not count, because stating an intention is
+            // not doing anything about it.
+            None if dest.is_none() => orders.push(Order::SetFire {
                 unit,
                 fire: FireIntent::Hold,
             }),

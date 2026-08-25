@@ -156,6 +156,33 @@ pub fn reachable(registry: &DataRegistry, state: &BattleState, id: UnitId) -> Ha
     best
 }
 
+/// One round's step toward ground that may be many rounds away: the hex she
+/// can reach this round that stands closest to `destination`.
+///
+/// The engine refuses a [`super::Order::SetMove`] naming ground beyond this
+/// round's movement — [`path_to`] returns `None` past the budget — which is
+/// the right rule for an order and is why a long march has to be walked a leg
+/// at a time. Both things that walk one are this function's callers: a
+/// commander's personal `tasking`, and a crew's own [`super::Goal`]. They
+/// share it rather than each computing "closest reachable", because two
+/// implementations of that would be two answers to *where is she going*, and
+/// the replay would only agree with one of them.
+///
+/// Deterministic tiebreak on coordinates: two equally close hexes must pick
+/// the same one on every machine.
+pub fn step_toward(
+    registry: &DataRegistry,
+    state: &BattleState,
+    id: UnitId,
+    destination: Hex,
+) -> Option<Hex> {
+    let pos = state.unit(id)?.pos;
+    reachable(registry, state, id)
+        .into_keys()
+        .min_by_key(|h| (destination.distance_to(*h), h.x, h.y))
+        .filter(|step| *step != pos)
+}
+
 /// Cheapest path for `unit` to `to`, if it exists within this turn's budget.
 /// Returns the path including the start tile, plus its total cost.
 pub fn path_to(

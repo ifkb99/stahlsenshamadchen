@@ -29,12 +29,13 @@ pub use combat::{
     preview_attack, struck_facing, weapon_ready,
 };
 pub use command::{
-    CommandState, Contact, CutOff, Formation, FormationId, Latitude, Mission, MissionChange,
+    CommandState, Contact, CutOff, Formation, FormationId, Goal, Latitude, Mission, MissionChange,
     WaitingOrders, nearest_exit,
 };
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
     destination_blocked, edge_cost as movement_edge_cost, move_points, path_to, reachable,
+    step_toward,
 };
 pub use orders::{Event, FireIntent, Order, OrderError, UnitIntent};
 
@@ -269,6 +270,16 @@ pub struct Unit {
     /// is given fresh orders.
     #[serde(default)]
     pub tasking: Option<Hex>,
+    /// What she has decided to do about it: her own goal, as opposed to her
+    /// formation's mission or her commander's [`Self::tasking`].
+    ///
+    /// Kept across rounds, which is the whole of its value — a planner that
+    /// re-decides where it is going every round is a planner that never gets
+    /// anywhere, and measuring that is what put this here. Cleared when the
+    /// goal finishes ([`Goal::finished`]) and wherever `tasking` clears,
+    /// because fresh orders end her own errand too.
+    #[serde(default)]
+    pub goal: Option<crate::battle::Goal>,
     /// How hard her commander meant [`Self::tasking`]: whether the battle
     /// drill may set the march aside to keep her alive.
     ///
@@ -809,6 +820,7 @@ impl BattleState {
             pressure: 0,
             detached: false,
             tasking: None,
+            goal: None,
             latitude: Latitude::default(),
             alive: true,
             exited: false,
