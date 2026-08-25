@@ -49,6 +49,13 @@ pub struct Decision {
     /// Why the battle refused the order, if it did. A refusal force-commits
     /// the side.
     pub rejected: Option<OrderError>,
+    /// Whether this order came from the battle drill rather than from a plan
+    /// — see [`AiPlanner::last_was_drill`]. Carried on the decision rather
+    /// than inferred by the caller, because the caller cannot tell: a drill's
+    /// dash for cover and a march's next leg are both `SetMove`, and guessing
+    /// between them from the outside is what left the interesting case
+    /// unannounced.
+    pub drill: bool,
 }
 
 /// The AI planners driving a battle, one per side it controls. Sides absent
@@ -88,6 +95,7 @@ impl AiDriver {
         }
         let planner = self.planners.get_mut(&side)?;
         let order = planner.next_order(registry, state, side);
+        let drill = planner.last_was_drill();
         let (events, rejected) = match state.apply(registry, &order) {
             Ok(events) => (events, None),
             Err(error) => {
@@ -102,6 +110,7 @@ impl AiDriver {
             order,
             events,
             rejected,
+            drill,
         })
     }
 

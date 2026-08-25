@@ -114,6 +114,15 @@ pub struct SideCommand {
     known_beaten: Vec<bool>,
     known_contacts: Vec<crate::battle::UnitId>,
     pending: VecDeque<Order>,
+    /// Whether the batch of orders currently draining out of [`Self::pending`]
+    /// came from the battle drill rather than from anything anybody said.
+    ///
+    /// Read through [`crate::ai::AiPlanner::last_was_drill`] so the caller can
+    /// say so out loud. A crew moving with no visible order behind her is
+    /// indistinguishable from a bug, and until this existed the one case that
+    /// mattered most — a personal march broken off for cover — was the one
+    /// case that went unannounced.
+    last_drill: bool,
 }
 
 impl SideCommand {
@@ -138,6 +147,7 @@ impl SideCommand {
             known_beaten: Vec::new(),
             known_contacts: Vec::new(),
             pending: VecDeque::new(),
+            last_drill: false,
         }
     }
 
@@ -731,6 +741,10 @@ impl SideCommand {
 }
 
 impl AiPlanner<BattleState, Order> for SideCommand {
+    fn last_was_drill(&self) -> bool {
+        self.last_drill
+    }
+
     fn next_order(&mut self, registry: &DataRegistry, state: &BattleState, side: u8) -> Order {
         self.ensure_built(registry, state, side);
 
@@ -750,6 +764,7 @@ impl AiPlanner<BattleState, Order> for SideCommand {
             if due || self.interrupted(registry, state, side) {
                 let interval = self.review_interval(registry, state, side);
                 self.next_review = Some(state.round + 1 + interval);
+                self.last_drill = false;
                 self.pending
                     .extend(self.mission_review(registry, state, side));
                 self.remember(registry, state, side);
@@ -792,10 +807,23 @@ impl AiPlanner<BattleState, Order> for SideCommand {
                     .and_then(|index| state.command.formations().get(index))
                     .is_some_and(|f| f.latest_mission().is_some()))
         {
-            // Survival first, always: the drill outranks even the
-            // commander's personal march, because nobody drives a parade
-            // route through effective fire to keep an appointment.
-            if threatened(registry, state, unit) {
+            // Survival first, *unless she was told otherwise*: the drill
+            // outranks an ordinary personal march, because nobody drives a
+            // parade route through effective fire to keep an appointment —
+            // but a commander who said "press on" has already answered that
+            // objection, and overriding her anyway is what made an order
+            // feel like a suggestion. See [`Latitude`]: this is the
+            // per-unit twin of the `Advance`/`Assault` distinction, and it
+            // is the only place latitude is read.
+            //
+            // A crew with no destination at all has nothing to press on
+            // *to*, so she drills whatever her latitude says — latitude
+            // qualifies a march, and there is no march to qualify.
+            let pressing_on = state
+                .unit(unit)
+                .is_some_and(|u| u.tasking.is_some() && !u.latitude.yields_to_drill());
+            if !pressing_on && threatened(registry, state, unit) {
+                self.last_drill = true;
                 self.pending = self.drill.plan_unit(registry, state, unit).into();
                 if let Some(order) = self.pending.pop_front() {
                     return order;
@@ -835,6 +863,7 @@ impl AiPlanner<BattleState, Order> for SideCommand {
         let executor = formation
             .and_then(|index| self.executors.get_mut(&index))
             .unwrap_or(&mut self.fallback);
+        self.last_drill = false;
         self.pending = executor.plan_unit(registry, state, unit).into();
         match self.pending.pop_front() {
             Some(order) => order,

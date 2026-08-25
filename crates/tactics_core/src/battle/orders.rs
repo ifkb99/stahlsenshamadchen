@@ -7,8 +7,8 @@
 
 use super::STALEMATE_ROUNDS;
 use super::{
-    BattleResult, BattleState, EndReason, FormationId, Mission, Phase, UnitId, combat, fog,
-    movement,
+    BattleResult, BattleState, EndReason, FormationId, Latitude, Mission, Phase, UnitId, combat,
+    fog, movement,
 };
 use crate::data::{ArmorFacing, DataRegistry};
 use crate::map::{LossTrigger, ObjectiveKind};
@@ -71,10 +71,17 @@ pub enum Order {
     ///
     /// Either half may be `None`: an order about the route says nothing about
     /// the target, and vice versa.
+    ///
+    /// `latitude` is how hard the commander meant the *route* — whether the
+    /// crew may break the march off for cover when she comes under fire.
+    /// [`Latitude::Delegated`] is what every order in this engine has always
+    /// been and remains the default; see [`Latitude`] for why the choice
+    /// belongs to the commander rather than to a doctrine weight.
     Radio {
         unit: UnitId,
         to: Option<Hex>,
         fire: Option<FireIntent>,
+        latitude: Latitude,
     },
     /// Forget a unit's orders; it reverts to unplanned and holds fire.
     ClearIntent { unit: UnitId },
@@ -468,7 +475,12 @@ impl BattleState {
                 self.set_fire(registry, *unit, *fire)?;
                 Ok(Vec::new())
             }
-            Order::Radio { unit, to, fire } => self.radio(registry, *unit, *to, *fire),
+            Order::Radio {
+                unit,
+                to,
+                fire,
+                latitude,
+            } => self.radio(registry, *unit, *to, *fire, *latitude),
             Order::ClearIntent { unit } => {
                 self.planning_unit_side(*unit)?;
                 // Not sending is free, so taking back what has not gone out
@@ -485,9 +497,12 @@ impl BattleState {
                 let u = self.unit_mut(*unit).ok_or(OrderError::NoSuchUnit)?;
                 u.intent = UnitIntent::default();
                 u.planned = false;
-                // The recall: she rejoins her formation's tasking.
+                // The recall: she rejoins her formation's tasking. Latitude
+                // goes with the order it belonged to — a recalled crew is
+                // under nobody's insistence.
                 u.detached = false;
                 u.tasking = None;
+                u.latitude = Latitude::default();
                 Ok(Vec::new())
             }
             Order::Mount { unit, into } => {
@@ -595,6 +610,7 @@ impl BattleState {
         id: UnitId,
         to: Option<Hex>,
         fire: Option<FireIntent>,
+        latitude: Latitude,
     ) -> Result<Vec<Event>, OrderError> {
         self.planning_unit_side(id)?;
         if let Some(fire) = fire {
@@ -612,6 +628,11 @@ impl BattleState {
                 }
                 if let Some(unit) = self.unit_mut(id) {
                     unit.tasking = Some(to);
+                    // Latitude belongs to the destination, so it is set here
+                    // and nowhere else: an order that says nothing about
+                    // where she is going has said nothing about how hard to
+                    // press, and must leave the standing one alone.
+                    unit.latitude = latitude;
                 }
                 self.march_toward(registry, id, to);
             }
@@ -628,7 +649,7 @@ impl BattleState {
             }
             return Ok(Vec::new());
         }
-        self.command.hold_orders(id, to, fire);
+        self.command.hold_orders(id, to, fire, latitude);
         Ok(vec![Event::OrdersWaiting { unit: id }])
     }
 
@@ -668,6 +689,7 @@ impl BattleState {
                 // and every round after until she arrives.
                 if let Some(u) = self.unit_mut(unit) {
                     u.tasking = Some(to);
+                    u.latitude = orders.latitude;
                 }
                 self.march_toward(registry, unit, to);
             }
@@ -743,6 +765,7 @@ impl BattleState {
             if let Some(unit) = self.unit_mut(member) {
                 unit.detached = false;
                 unit.tasking = None;
+                unit.latitude = Latitude::default();
             }
         }
         Ok(vec![Event::MissionAssigned {
@@ -1636,6 +1659,7 @@ impl BattleState {
         for unit in self.units.iter_mut().filter(|u| u.alive) {
             if unit.tasking == Some(unit.pos) {
                 unit.tasking = None;
+                unit.latitude = Latitude::default();
             }
         }
         // Plans advance at the top of the round, so a promoted leg steers the

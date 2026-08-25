@@ -96,6 +96,56 @@ impl FormationId {
     }
 }
 
+/// How much latitude a crew has in carrying out a personal order: whether
+/// she may break it off to keep herself alive.
+///
+/// This is the per-unit twin of the distinction [`Mission::Advance`] and
+/// [`Mission::Assault`] already draw for a whole formation, and it is drawn
+/// for the same reason. A commander who points at a ridge is usually saying
+/// "get there, use your judgment on the way" — and a crew who drives a parade
+/// route through effective fire to keep an appointment is not showing
+/// initiative, she is dying stupidly. But sometimes the ridge is worth the
+/// vehicle, and until now there was no way to say so to one crew. The order
+/// went out, the battle drill quietly overrode it every round, and the
+/// commander watched her tank shelter in a hedge without ever being told why.
+///
+/// So: the same sentence with two prices, and the caller says which one she
+/// is paying. It rides in the order stream rather than living in the UI
+/// because saves, replays and any future external brain have to carry it —
+/// the same argument that makes a mission an [`crate::battle::Order`].
+///
+/// **[`Self::Delegated`] is the default everywhere**, which is what keeps
+/// this additive: an AI side, a mod, a scenario and a save written before
+/// latitude existed all mean exactly the game that was here before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Latitude {
+    /// "Get there." She marches for the ground she was given, and breaks off
+    /// for cover when she is under fire she has had time to take in — the
+    /// battle drill, which every army since 1918 has trained and which this
+    /// engine has always applied. She resumes the march when the shooting
+    /// stops.
+    #[default]
+    Delegated,
+    /// "Get there. I mean it." The drill does not preempt her: she drives on
+    /// through fire and some crews do not arrive. Nothing else changes — she
+    /// still shoots on her arc, still answers her morale, and a crew whose
+    /// rung no longer obeys is exactly as frozen as the rung says. Binding
+    /// buys the order priority over the crew's own judgment, never over her
+    /// nerve.
+    Binding,
+}
+
+impl Latitude {
+    /// Whether an order at this latitude may be set aside by the battle
+    /// drill. Named as a question about the drill rather than a bare bool
+    /// match, because this is the only thing latitude decides and every
+    /// caller should read as though it says so.
+    pub fn yields_to_drill(self) -> bool {
+        self == Self::Delegated
+    }
+}
+
 /// What a formation has been told to do, until it is told something else.
 ///
 /// The vocabulary every commander speaks: the built-in brain, the human
@@ -381,6 +431,11 @@ pub struct WaitingOrders {
     /// died — an order to engage a wreck is not an order.
     #[serde(default)]
     pub fire: Option<FireIntent>,
+    /// The latitude the destination was given at, so an order that waited at
+    /// the radio arrives meaning what it meant when it was sent. A commander
+    /// who said "press on" and could not be heard has still said it.
+    #[serde(default)]
+    pub latitude: Latitude,
 }
 
 /// One entry in a side's command picture: an enemy as last *reported*, which
@@ -565,6 +620,7 @@ impl CommandState {
         unit: UnitId,
         destination: Option<Hex>,
         fire: Option<FireIntent>,
+        latitude: Latitude,
     ) {
         if !self.waiting.iter().any(|(id, _)| *id == unit) {
             self.waiting.push((unit, WaitingOrders::default()));
@@ -578,6 +634,10 @@ impl CommandState {
             .1;
         if destination.is_some() {
             slot.destination = destination;
+            // Latitude belongs to the destination and travels with it: a
+            // later order that says nothing about where she is going has
+            // said nothing about how hard she is to press either.
+            slot.latitude = latitude;
         }
         if fire.is_some() {
             slot.fire = fire;

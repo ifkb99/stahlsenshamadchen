@@ -29,8 +29,8 @@ pub use combat::{
     struck_facing, weapon_ready,
 };
 pub use command::{
-    CommandState, Contact, CutOff, Formation, FormationId, Mission, MissionChange, WaitingOrders,
-    nearest_exit,
+    CommandState, Contact, CutOff, Formation, FormationId, Latitude, Mission, MissionChange,
+    WaitingOrders, nearest_exit,
 };
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
@@ -240,6 +240,14 @@ pub struct Unit {
     /// is given fresh orders.
     #[serde(default)]
     pub tasking: Option<Hex>,
+    /// How hard her commander meant [`Self::tasking`]: whether the battle
+    /// drill may set the march aside to keep her alive.
+    ///
+    /// Travels with the destination and is cleared with it, because latitude
+    /// is a property of an order rather than of a crew — the same girl is
+    /// pressed on one ridge and given her head on the next.
+    #[serde(default)]
+    pub latitude: crate::battle::Latitude,
     pub alive: bool,
     /// This vehicle drove off the map by an exit objective.
     ///
@@ -771,6 +779,7 @@ impl BattleState {
             pressure: 0,
             detached: false,
             tasking: None,
+            latitude: Latitude::default(),
             alive: true,
             exited: false,
         });

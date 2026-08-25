@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
-use tactics_core::battle::{BattleState, Event, Order};
+use tactics_core::battle::{BattleState, Event, Latitude, Order};
 use tactics_core::data::DataRegistry;
 use tactics_core::overworld::{ArmyMission, OverworldOrder, OverworldState};
 use tactics_core::roster::GirlStatus;
@@ -701,6 +701,7 @@ fn an_order_waiting_at_the_radio_survives_a_save() {
                 unit: deaf,
                 to: Some(bridge),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("accepted, and waiting for a wire");
@@ -963,6 +964,7 @@ fn a_battle_carrying_everything_the_wire_knows_forks_identically() {
                 unit: stray,
                 to: Some(anchor),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("accepted, and waiting for a wire");
@@ -973,6 +975,7 @@ fn a_battle_carrying_everything_the_wire_knows_forks_identically() {
                 unit: mate,
                 to: Some(tactics_core::offset_to_hex(14, 0)),
                 fire: Some(tactics_core::battle::FireIntent::Hold),
+                latitude: Latitude::Delegated,
             },
         )
         .expect("she can hear it");

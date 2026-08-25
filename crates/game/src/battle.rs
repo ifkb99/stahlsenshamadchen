@@ -14,7 +14,7 @@ use tactics_core::Hex;
 use tactics_core::ai::{AiConfig, AiDriver, SideCommand, make_battle_planner};
 use tactics_core::battle::{
     BattleState, Contact, EndReason, Event as BattleEvent, FireIntent, Formation, FormationId,
-    Mission, Order, SideState, Unit, UnitId, reachable,
+    Latitude, Mission, Order, SideState, Unit, UnitId, reachable,
 };
 use tactics_core::map::{ObjectiveKind, UnitPlacement};
 use tactics_core::overworld::ArmyId;
@@ -1762,6 +1762,7 @@ fn handle_input(
                     unit,
                     to: None,
                     fire: Some(FireIntent::Hold),
+                    latitude: Latitude::Delegated,
                 },
                 &mut log,
             );
@@ -1835,6 +1836,40 @@ fn handle_input(
                 Aim::Ghost(why) => log.push(why),
                 Aim::Nothing => {}
             }
+        }
+        return;
+    }
+
+    // X = press on: march to the hovered ground and do not break off for
+    // cover on the way.
+    //
+    // Deliberately the same key that orders a *formation* to assault, because
+    // it is deliberately the same sentence: `Advance`/`Assault` and
+    // `Delegated`/`Binding` are one distinction at two scales — take that
+    // ground using your judgment, versus take that ground and I mean it. A
+    // player who has learned what X costs a platoon has already learned what
+    // it costs a crew, and there is no second idiom to teach. The two never
+    // collide: picking a formation drops the unit selection and vice versa,
+    // so only one of them can be listening.
+    //
+    // Any tile on the map is fair game rather than only this round's reach,
+    // which is what a standing destination means — she marches for it over as
+    // many rounds as the ground demands. The engine refuses one off the map.
+    if keys.just_pressed(KeyCode::KeyX) {
+        if let (Some(unit), Some(hex)) = (battle.selected, hovered) {
+            let who = unit_name(&battle.state, unit);
+            set_intent_saying(
+                registry,
+                &mut battle,
+                &Order::Radio {
+                    unit,
+                    to: Some(hex),
+                    fire: None,
+                    latitude: Latitude::Binding,
+                },
+                &mut log,
+                format!("{who} will press on to {} through fire.", hex_label(hex)),
+            );
         }
         return;
     }
@@ -1918,6 +1953,7 @@ fn handle_input(
                     unit,
                     to: None,
                     fire: Some(FireIntent::Area { at: hex, weapon }),
+                    latitude: Latitude::Delegated,
                 },
                 &mut log,
             );
@@ -1968,6 +2004,7 @@ fn handle_input(
                 unit,
                 to: Some(hex),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
             &mut log,
         );
@@ -2097,7 +2134,9 @@ fn commit_round(
         if let Some(error) = &decision.rejected {
             refused.push(error.to_string());
         }
-        if let Order::SetMove { unit, .. } = decision.order {
+        if let Order::SetMove { unit, .. } = decision.order
+            && decision.drill
+        {
             drilled.push(unit);
         }
     });
@@ -2105,27 +2144,36 @@ fn commit_round(
     for error in refused {
         log.push(format!("Your staff fumbled an order: {error}"));
     }
-    // A move for a unit outside any mission is the battle drill: she is
-    // under fire and nobody told her anything, so she is taking cover on
-    // her own. Said out loud, because a vehicle moving without a visible
-    // order behind it is indistinguishable from a bug — the same bargain
-    // every deviation in this game makes. (Filtered here rather than in the
-    // closure: the driver holds the state mutably while it runs, and an
-    // executor-only side never changes a formation's missions mid-drive, so
-    // reading them afterwards answers the same.)
-    drilled.retain(|unit| {
-        state
-            .command
-            .formation_of(*unit)
-            .is_none_or(|f| f.latest_mission().is_none())
-    });
+    // Every drill move is said out loud, because a vehicle moving without a
+    // visible order behind it is indistinguishable from a bug — the same
+    // bargain every deviation in this game makes.
+    //
+    // This used to guess at which moves were the drill by keeping only units
+    // whose formation had no mission, which silently dropped the one case
+    // that most needed saying: a crew under the commander's *personal*
+    // tasking is normally in a formation that does have a mission, so when
+    // her march was broken off for cover the line was filtered away and
+    // nothing was reported at all. The player watched a tank she had ordered
+    // to a ridge stop in a hedge, every round, for no stated reason. The
+    // planner now says which orders were its own idea (`Decision::drill`) so
+    // there is nothing left to guess.
+    //
+    // The two cases read differently on purpose. A crew nobody ordered took
+    // cover on her own initiative; a crew who *was* ordered somewhere broke
+    // off something she had been told to do, and the difference is the whole
+    // reason the player is being told.
     for unit in drilled {
-        let name = state
-            .units
-            .get(unit.index())
-            .map(|u| u.name.clone())
-            .unwrap_or_default();
-        log.push(format!("{name} is under fire and takes cover on her own."));
+        let Some(u) = state.units.get(unit.index()) else {
+            continue;
+        };
+        let name = u.name.clone();
+        log.push(match u.tasking {
+            Some(to) => format!(
+                "{name} breaks off her march to {} and takes cover.",
+                hex_label(to)
+            ),
+            None => format!("{name} is under fire and takes cover on her own."),
+        });
     }
 }
 
@@ -2314,6 +2362,7 @@ fn engage_with_best(
             unit,
             to: None,
             fire: Some(FireIntent::Target { target, weapon }),
+            latitude: Latitude::Delegated,
         },
         log,
     );
@@ -2918,8 +2967,14 @@ fn format_formation(
         // Who will go where: a standing personal march is a promise about
         // future rounds, and a promise the player cannot read is one she
         // will fight against.
+        // ...and under how much insistence, because the whole value of being
+        // able to say "I mean it" is that the player can see afterwards which
+        // of her crews she said it to.
         if let Some(tasking) = unit.tasking {
-            tags.push(format!("moving to {}", hex_label(tasking)));
+            tags.push(match unit.latitude {
+                Latitude::Binding => format!("pressing on to {}", hex_label(tasking)),
+                Latitude::Delegated => format!("moving to {}", hex_label(tasking)),
+            });
         }
         // A passenger is in the formation and not on the map, which reads as
         // a missing girl unless the roll call says where she went.

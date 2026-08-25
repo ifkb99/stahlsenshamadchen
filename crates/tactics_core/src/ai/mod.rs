@@ -43,6 +43,23 @@ use std::collections::HashMap;
 /// [`Order::Commit`] (or the overworld equivalent) yields control.
 pub trait AiPlanner<S, O>: Send + Sync {
     fn next_order(&mut self, registry: &DataRegistry, state: &S, side: u8) -> O;
+
+    /// Whether the order just returned came from the battle drill — a crew
+    /// acting to keep herself alive — rather than from anything anybody told
+    /// her to do.
+    ///
+    /// Presentation, not simulation: nothing in the engine branches on it,
+    /// and a planner that never overrides an order can ignore it, which is
+    /// why it defaults to `false` rather than becoming another thing every
+    /// planner has to implement. What it is *for* is the bargain this game
+    /// makes everywhere else and broke here: a vehicle that moves with no
+    /// visible order behind it is indistinguishable from a bug, so every
+    /// deviation says so out loud. The case that motivated it is a personal
+    /// march broken off for cover, which the game crate previously filtered
+    /// out of its own announcement and left silent.
+    fn last_was_drill(&self) -> bool {
+        false
+    }
 }
 
 /// JSON-configurable AI assignment, e.g.

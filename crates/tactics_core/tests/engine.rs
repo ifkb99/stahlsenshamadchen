@@ -5,8 +5,8 @@ use tactics_core::ai::{
     AiConfig, AiDriver, AiPlanner, Evaluator, UtilityPlanner, make_battle_planner,
 };
 use tactics_core::battle::{
-    BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Mission, Order,
-    STALEMATE_ROUNDS, SideState, UnitId, los_clear, reachable,
+    BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Latitude, Mission,
+    Order, STALEMATE_ROUNDS, SideState, UnitId, los_clear, reachable,
 };
 use tactics_core::data::DataRegistry;
 use tactics_core::map::{HexMap, UnitPlacement};
@@ -5608,6 +5608,7 @@ fn an_order_to_a_cut_off_unit_waits_at_the_radio() {
                 unit: crew,
                 to: Some(first),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("accepted, not refused");
@@ -5644,6 +5645,7 @@ fn an_order_to_a_cut_off_unit_waits_at_the_radio() {
                 unit: crew,
                 to: Some(second),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("accepted too");
@@ -5677,6 +5679,7 @@ fn waiting_orders_arrive_with_contact_and_are_repathed() {
                 unit: crew,
                 to: Some(to),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("accepted");
@@ -5749,6 +5752,7 @@ fn clearing_reaches_the_radio_but_not_the_girl() {
                 unit: crew,
                 to: Some(tactics_core::offset_to_hex(4, 0)),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("accepted, and waiting");
@@ -5783,6 +5787,7 @@ fn a_dead_girl_takes_no_delivery() {
                 unit: crew,
                 to: Some(tactics_core::offset_to_hex(13, 0)),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("accepted");
@@ -5820,6 +5825,7 @@ fn a_radioed_order_to_a_girl_on_the_net_is_just_an_order() {
                 unit: leader,
                 to: Some(to),
                 fire: Some(FireIntent::Area { at, weapon: 0 }),
+                latitude: Latitude::Delegated,
             },
         )
         .expect("her own commander, on the net");
@@ -5865,6 +5871,7 @@ fn a_radioed_order_to_a_girl_on_the_net_is_just_an_order() {
                     target: UnitId(0),
                     weapon: 0
                 }),
+                latitude: Latitude::Delegated,
             },
         ),
         Err(tactics_core::battle::OrderError::FriendlyTarget)
@@ -6205,6 +6212,217 @@ fn an_idle_crew_out_of_danger_stays_put() {
     let unit = state.unit(crew).unwrap();
     assert!(unit.planned && unit.intent.path.is_empty());
     assert_eq!(unit.pos, parked);
+}
+
+// --- latitude: an order the crew may not set aside --------------------------
+
+/// A crew with a long march east along an open road, woods flanking the
+/// western half of it, and a gun watching from the open ground beyond.
+///
+/// Both halves of that shape were paid for by a failing test. The woods are
+/// there because the drill *seeks cover*: with none in reach it has nothing
+/// to choose and both latitudes march identically, so the test proves
+/// nothing. The woods stop short of the gun because cover works for whoever
+/// stands in it — with woods beside her too, the gun's own mid-round drill
+/// bolted into them, went concealed, and stopped being a threat at all,
+/// which killed the test from the other end.
+///
+/// A medium marching and a tank destroyer watching, which also took some
+/// getting to. The gun has to be one that can actually hurt the marcher,
+/// because `threatened` — the drill's trigger — asks whether any visible
+/// enemy has a weapon that could meaningfully hurt *her*, and after the
+/// ballistics rewrite a medium's gun cannot touch another medium's front
+/// plate head-on. Two mediums are therefore never in danger from each other
+/// on this road, the drill never fires, and a test in which the drill cannot
+/// fire cannot fail. The tank destroyer's gun gets through, which is what
+/// makes the road dangerous enough to be worth an order about.
+///
+/// The seed is pinned because she has to live through the opening round to
+/// have a second one. The sim is deterministic, so "she survives at seed 62"
+/// is a fact about this stage rather than a probability.
+fn marching_under_fire(reg: &DataRegistry, latitude: Latitude, seed: u64) -> (BattleState, UnitId) {
+    // Woods flank the road as far as x = 12; the gun sits at 13 on bare
+    // ground, with nothing better within a bound of it.
+    let flank = format!("{}{}", "f".repeat(12), "g".repeat(18));
+    let road = "g".repeat(30);
+    let mut state = two_side_battle(
+        reg,
+        &[&flank, &road, &flank],
+        vec![
+            unit_at([5, 1], 0, "medium_tank", "Ordered"),
+            unit_at([13, 1], 1, "tank_destroyer", "Gun Tank"),
+        ],
+        seed,
+    );
+    let crew = UnitId(0);
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "the stage needs her to see the danger she is being asked to drive past"
+    );
+    state
+        .apply(
+            reg,
+            &Order::Radio {
+                unit: crew,
+                to: Some(MARCH_TO),
+                fire: None,
+                latitude,
+            },
+        )
+        .expect("a far destination is an order, not a refusal");
+    assert_eq!(state.unit(crew).unwrap().latitude, latitude);
+    (state, crew)
+}
+
+/// The ground she is sent to, well east of the gun watching the road.
+const MARCH_TO: tactics_core::Hex = tactics_core::Hex::new(28, 1);
+
+fn executor_only_side(reg: &DataRegistry, seed: u64) -> AiDriver {
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
+        Box::new(tactics_core::ai::SideCommand::executor_only(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: None,
+            },
+            seed,
+            reg,
+        )),
+    );
+    ai
+}
+
+/// Fight the opening round, then plan the next one and report where she
+/// stands, where she is being sent from there, and whether that is cover.
+///
+/// The second round is the one that matters and it took a failing test to
+/// see why: `radio()` marches her itself the moment the order lands, so on
+/// the round she is ordered she is already planned and no planner is
+/// consulted at all. The drill can only ever preempt a march that is
+/// *already under way* — which is exactly the case the player was
+/// complaining about, the tank that sets off and then never arrives.
+fn second_round_plan(
+    reg: &DataRegistry,
+    mut state: BattleState,
+    crew: UnitId,
+    seed: u64,
+) -> (tactics_core::Hex, tactics_core::Hex, bool) {
+    executor_only_side(reg, seed).plan_round(reg, &mut state);
+    let _ = state.apply(reg, &Order::Commit { side: 1 });
+    state.resolve_round(reg);
+    let unit = state.unit(crew).expect("she survives being shot at");
+    assert!(unit.alive, "the stage is meant to bruise, not to kill");
+    assert!(
+        state.unit(UnitId(1)).is_some_and(|e| e.alive),
+        "and the gun watching the road has to still be watching it, or there \
+         is no threat left for the drill to answer"
+    );
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "and she has to still be able to see it"
+    );
+    let from = unit.pos;
+    executor_only_side(reg, seed).plan_round(reg, &mut state);
+    let to = state.unit(crew).unwrap().planned_destination();
+    let cover = state.terrain_at(to) == Some("forest");
+    (from, to, cover)
+}
+
+#[test]
+fn a_binding_march_presses_on_where_an_ordinary_one_takes_cover() {
+    // The rule this chunk exists for, and its additivity twin, in one test
+    // because they are one comparison: same crew, same gun, same ground,
+    // same seed, and the *only* difference is whether her commander said she
+    // meant it.
+    //
+    // Stated as a comparison rather than against a named tile on purpose.
+    // What is being defended is that latitude changes what she does, and in
+    // which direction — not which particular hedge the drill happens to
+    // like, which is a tuning detail that should be free to move without
+    // failing this.
+    const SEED: u64 = 62;
+    let reg = registry_wireless();
+    let (delegated_from, delegated_to, delegated_took_cover) = {
+        let (state, crew) = marching_under_fire(&reg, Latitude::Delegated, SEED);
+        second_round_plan(&reg, state, crew, SEED)
+    };
+    let (binding_from, binding_to, _) = {
+        let (state, crew) = marching_under_fire(&reg, Latitude::Binding, SEED);
+        second_round_plan(&reg, state, crew, SEED)
+    };
+
+    // Latitude is read when the *executor* plans, and on the opening round
+    // the order plans her itself, so the two runs must be identical up to
+    // that point. If this ever fails, latitude has leaked somewhere it does
+    // not belong.
+    assert_eq!(
+        delegated_from, binding_from,
+        "the two runs are the same battle until the second round's planning"
+    );
+
+    assert!(
+        MARCH_TO.distance_to(binding_to) < MARCH_TO.distance_to(delegated_to),
+        "told she is meant, she keeps driving at ground she has been shown is \
+         dangerous; told to use her judgment, she does not: \
+         from {binding_from:?}, binding -> {binding_to:?}, delegated -> {delegated_to:?}"
+    );
+    assert!(
+        MARCH_TO.distance_to(binding_to) < MARCH_TO.distance_to(binding_from),
+        "and pressing on is progress toward the ordered ground, not merely \
+         a different tile: {binding_from:?} -> {binding_to:?}"
+    );
+    // Not merely "somewhere else": the crew who was given her judgment used
+    // it for the thing the drill is for.
+    assert!(
+        delegated_took_cover,
+        "the delegated crew breaks off into the woods: {delegated_from:?} -> {delegated_to:?}"
+    );
+}
+
+#[test]
+fn a_recall_forgets_that_she_was_pressed_on() {
+    // Latitude belongs to an order, not to a crew: take the order back and
+    // the insistence goes with it, or the next thing she is told inherits an
+    // urgency nobody attached to it.
+    let reg = registry_wireless();
+    let (mut state, crew) = marching_under_fire(&reg, Latitude::Binding, 62);
+    state
+        .apply(&reg, &Order::ClearIntent { unit: crew })
+        .expect("a recall is always sayable");
+    let unit = state.unit(crew).unwrap();
+    assert_eq!(unit.tasking, None, "the march is off");
+    assert_eq!(
+        unit.latitude,
+        Latitude::Delegated,
+        "and so is the insistence behind it"
+    );
+}
+
+#[test]
+fn an_order_about_her_gun_says_nothing_about_her_march() {
+    // The two halves of a radioed order are independent, and latitude rides
+    // with the *route*. Telling a crew who is pressing on what to shoot at
+    // must not quietly relax the march she is already under.
+    let reg = registry_wireless();
+    let (mut state, crew) = marching_under_fire(&reg, Latitude::Binding, 63);
+    state
+        .apply(
+            &reg,
+            &Order::Radio {
+                unit: crew,
+                to: None,
+                fire: Some(FireIntent::Hold),
+                latitude: Latitude::Delegated,
+            },
+        )
+        .expect("hold fire is always sayable");
+    assert_eq!(
+        state.unit(crew).unwrap().latitude,
+        Latitude::Binding,
+        "she is still pressing on"
+    );
 }
 
 // --- fighting as one (chunk 10d) -------------------------------------------
@@ -6938,6 +7156,7 @@ fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
                 unit: member,
                 to: Some(post),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .unwrap();
@@ -9314,6 +9533,7 @@ fn a_searching_planner_copes_with_missions_a_detachment_and_a_running_clock() {
                 unit: scout,
                 to: Some(aside),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("a hex she is already standing on");
@@ -9859,6 +10079,7 @@ fn a_waiting_order_arrives_as_an_order_however_far_she_has_come() {
                 unit: stray,
                 to: Some(east),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("accepted and held at the radio");
@@ -10090,6 +10311,7 @@ fn a_personal_march_carries_across_rounds_and_ends_in_a_hold() {
                 unit,
                 to: Some(far),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("a far destination is an order now, not a refusal");

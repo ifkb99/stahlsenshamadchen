@@ -1,0 +1,61 @@
+# Saying "I mean it" to one crew: the per-unit twin of ordering a formation
+# to assault, and the thing that was missing when the player's tank kept
+# stopping in a hedge on the way to the ridge.
+#
+#   STAHL_PRESENT=immediate STAHL_DEBUG=1 STAHL_BATTLE=river_crossing \
+#     STAHL_SCRIPT=scripts/dev/press-on.txt cargo run -p stahlsenshamädchen
+#
+# Hexes are axial. river_crossing places side 0's medium tank at offset
+# [10, 20] -> axial (0, 20). The ground she is sent to is well across the
+# valley, which is the point: a march of several rounds is exactly the order
+# the battle drill used to quietly unpick, one round at a time, without ever
+# saying that it had.
+
+at 3.0
+hex 0,20
+wait 0.4
+click left
+wait 0.5
+log "medium tank selected"
+
+# An ordinary move first, for the comparison. Clicking ground inside this
+# round's reach is the delegated march: she goes, and she may take cover on
+# the way. Nothing is asserted here because an ordinary move says nothing in
+# the log — it is a routine order and the panel is where it shows. That
+# asymmetry is itself worth seeing in the screenshot: insisting is the
+# unusual thing, so insisting is what gets said out loud.
+hex 3,20
+wait 0.4
+click left
+wait 0.6
+expect unit "Anka Weiss" alive
+shot /tmp/presson-01-delegated.png
+
+# Now the same crew, the same idea, said harder. X is the key that orders a
+# formation to assault; aimed at one selected crew it is her own version of
+# the same sentence, and it reaches ground far beyond this round's driving
+# because a standing destination is a march rather than a lunge.
+hex 8,24
+wait 0.4
+key X
+wait 0.6
+log "pressing on, ordered"
+expect log "will press on to"
+shot /tmp/presson-02-binding.png
+
+# The panel has to say which of the two she is under, or the whole point of
+# being able to insist is lost the moment the player looks away.
+hex 0,20
+wait 0.5
+expect log "will press on to"
+shot /tmp/presson-03-panel.png
+
+# And it survives the round: latitude rides with the destination, so she is
+# still pressing on when the next planning phase opens.
+key Enter
+until idle
+hex 0,20
+wait 0.5
+shot /tmp/presson-04-next-round.png
+
+quit

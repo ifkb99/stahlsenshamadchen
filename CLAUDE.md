@@ -1,7 +1,9 @@
 # CLAUDE.md
 
 Engineering notes for this repo: how it fits together, the invariants worth
-protecting, and the known defects. Gameplay and design work lives in
+protecting, and the known defects. [DIRECTION.md](DIRECTION.md) is the current
+design argument — why the next few chunks are being built at all — and carries
+the live state of that plan. Gameplay and design work lives in
 [TODO.md](TODO.md) — this file is for things that are wrong or fragile in the
 code rather than things not yet built. Where an item is already tracked in
 TODO.md it is cross-referenced, not repeated. Finished work and the reasoning
@@ -173,6 +175,45 @@ bite someone editing the code.
   the assignable postures. A drop-off *short* of the objective was tried as
   a cheaper substitute and measurably lost platoons; the reason is in the
   passenger branch of `ai/utility.rs`.
+
+### Latitude: an order a crew may not set aside
+
+`Latitude` (`battle/command.rs`) is the per-unit twin of the
+`Advance`/`Assault` distinction: `Delegated` is every order this engine has
+ever had — she marches, and breaks off for cover under fire she has had time
+to take in — and `Binding` is "I mean it", which the battle drill does not
+preempt. The player says it with `X` on a selected crew, the same key that
+orders a formation to assault.
+
+- **It is read in exactly one place**, the drill gate in `ai/command.rs`. If a
+  second `yields_to_drill()` appears, the model has drifted: latitude buys an
+  order priority over the crew's *own judgment*, never over her nerve. Morale
+  still refuses, `obeys()` is untouched, and a Binding order to a crew who has
+  stopped listening is still not carried out.
+- **It belongs to the destination, not to the girl.** Set only where
+  `tasking` is set, cleared everywhere `tasking` clears (recall, arrival, a
+  fresh formation mission), and carried in `WaitingOrders` so an order held at
+  the radio arrives meaning what it meant. A radioed order with `to: None` says
+  nothing about the march and must leave latitude alone —
+  `an_order_about_her_gun_says_nothing_about_her_march` pins that.
+- **`Delegated` is the default everywhere and the AI never issues `Binding`**,
+  which is what keeps the determinism baseline valid across this change. If
+  `event_stream.txt` moves when you touch latitude, something has leaked into
+  AI-vs-AI play; do not regenerate it.
+- **The drill can only preempt from round two.** `radio()` marches her itself
+  the moment the order lands, so on the round she is ordered she is already
+  planned and no planner is consulted. Any test of the drill-versus-order
+  question has to fight a round first — this cost three test drafts, and the
+  reasoning is in
+  `a_binding_march_presses_on_where_an_ordinary_one_takes_cover`.
+- **A deviation must announce itself.** `AiPlanner::last_was_drill` and
+  `Decision::drill` exist so the presentation layer knows which orders were the
+  planner's own idea. The game crate used to guess (keep only units whose
+  formation had no mission) and thereby filtered out the single most important
+  case — a personal march broken off for cover — leaving it silent. A vehicle
+  that moves with no visible order behind it is indistinguishable from a bug;
+  that is the bargain, and it is the whole reason the flag is plumbed rather
+  than inferred.
 
 ### Saving
 
