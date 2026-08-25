@@ -565,9 +565,16 @@ rule they defend (`unspotted_enemies_still_ambush`).
   wins 29–7 / 28–8 across orientations at 1:1.9–2.1 exchange (B4's
   written success metric was "most battles at visibly better than 1:2"),
   equal-skill pairings sit at parity, and the deterministic 36–0 sweep is
-  gone. Residual, tracked: side B retains a modest edge on the mirrored
-  arena (33–3 vs 23–13 in the 5-vs-3 orientations), suspected
-  resolution-order artifact worth a look in B4's remainder.
+  gone. Re-measured 2026-08-25 after the blast-pricing fix and still
+  standing: **26–10 / 28–8 at 1:1.7–1.9**. Residual, tracked: side B
+  retains a modest edge on the mirrored arena (5v3 wins 24 where 3v5 wins
+  32; symmetric play would put both near 28), suspected resolution-order
+  artifact worth a look in B4's remainder.
+
+  **Read this table at `--games 36` or not at all.** The default 12 put
+  5v1 at 6–6 and looked like a regression against the numbers above; the
+  same build at 36 gives 26–10. Twelve battles cannot resolve a 70% edge,
+  and the table is the one most often quoted at somebody.
 - **Army-contained unit placements are never validated.**
   `map.rs:962` passes `a.at` (the army's own hex) instead of `u.at` when
   checking each unit inside an `ArmyPlacement`, so a unit's own coordinates are

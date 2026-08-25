@@ -8,12 +8,24 @@
 //!   cargo run -p tactics_core --example playthrough            # seed 42
 //!   cargo run -p tactics_core --example playthrough 1234       # custom seed
 //!   cargo run -p tactics_core --example playthrough 1234 battle_forest
+//!   cargo run -p tactics_core --example playthrough 42 river_crossing \
+//!       --planner utility --difficulty 5      # both sides, same brain
+//!   cargo run -p tactics_core --example playthrough 42 river_crossing --swap
 //!
 //! The map is an argument because the narrator is the only instrument that
 //! shows a battle as a story rather than as a total, and `river_crossing` —
 //! its default, and the ground the determinism baseline is recorded on —
 //! deliberately fields no infantry. Watching a platoon ride, dismount and be
 //! shot at needs one of the maps that do.
+//!
+//! `--planner` and `--difficulty` override BOTH sides, which is what makes
+//! this an instrument rather than a demo: the shipped pairing gives side 0
+//! MCTS *and* `massed_armor` on a map whose sides field different vehicles,
+//! so a battle it wins says nothing about which of the three did it.
+//! `--swap` exchanges the two sides' planners and doctrines and leaves the
+//! map alone, which is the other half of the same question. Difficulty is
+//! the knob to reach for when asking whether a behaviour is the planner's
+//! judgement or its noise — at 5 there is none.
 
 use tactics_core::ai::{AiConfig, AiDriver, make_battle_planner};
 use tactics_core::battle::{BattleState, Event};
@@ -29,7 +41,32 @@ fn main() {
 
     let map = std::env::args()
         .nth(2)
+        .filter(|a| !a.starts_with("--"))
         .unwrap_or_else(|| "river_crossing".to_string());
+
+    let args: Vec<String> = std::env::args().collect();
+    let flag = |name: &str| -> Option<String> {
+        let i = args.iter().position(|a| a == name)?;
+        args.get(i + 1).cloned()
+    };
+    let difficulty: u8 = flag("--difficulty")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4);
+    let forced = flag("--planner");
+    let swap = args.iter().any(|a| a == "--swap");
+    let brain = |shipped: &str| forced.clone().unwrap_or_else(|| shipped.to_string());
+    let (first, second) = if swap {
+        (("utility", "elastic_defense"), ("mcts", "massed_armor"))
+    } else {
+        (("mcts", "massed_armor"), ("utility", "elastic_defense"))
+    };
+    println!(
+        "side 0: {} / {}   side 1: {} / {}   difficulty {difficulty}",
+        brain(first.0),
+        first.1,
+        brain(second.0),
+        second.1
+    );
 
     let mut state = BattleState::from_map(&registry, &map, seed).expect("battle");
     let mut ai = AiDriver::new();
@@ -37,9 +74,9 @@ fn main() {
         0,
         make_battle_planner(
             &AiConfig {
-                planner: "mcts".into(),
-                difficulty: 4,
-                doctrine: Some("massed_armor".into()),
+                planner: brain(first.0),
+                difficulty,
+                doctrine: Some(first.1.into()),
             },
             seed,
             &registry,
@@ -49,9 +86,9 @@ fn main() {
         1,
         make_battle_planner(
             &AiConfig {
-                planner: "utility".into(),
-                difficulty: 4,
-                doctrine: Some("elastic_defense".into()),
+                planner: brain(second.0),
+                difficulty,
+                doctrine: Some(second.1.into()),
             },
             seed + 1,
             &registry,
