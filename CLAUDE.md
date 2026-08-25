@@ -139,6 +139,33 @@ consulted the thing it was about.
   `CrewHit` and those are still counted. Adding an event to that list is
   adding a way for a battle never to end; do it deliberately.
 
+### Difficulty is a lens, not a lottery
+
+`UtilityPlanner::lean` draws **one** blur per unit per round and applies it as
+a smooth function of where a tile lies relative to her. It replaced an
+independent draw per candidate tile, and the difference is not cosmetic: the
+planner takes an argmax over every reachable tile, so independent draws made
+the winner whichever tile drew luckiest — the maximum of ninety draws from
+±0.5 is about +0.49, against an objective gradient of 0.54 a hex. Three things
+follow that are easy to undo by accident:
+
+- **Do not make it a flat per-unit offset.** That is the obvious reading of
+  "one draw per unit" and it is a no-op: adding the same number to every
+  candidate changes no argmax. It has to vary across tiles and be *smooth*,
+  which is what removes the selection bias while keeping the handicap.
+- **Do not reintroduce a per-tile draw anywhere in `score_tile`'s callers.**
+  The bias scaled with how many tiles a unit could reach, so it silently
+  punished fast vehicles hardest, and it is what the mirrored arena's
+  long-tracked side-B edge turned out to be.
+- **Zero at difficulty 5, exactly**, and
+  `a_side_that_sees_clearly_is_untouched_by_the_blur` pins it. The
+  determinism baseline fights at difficulty 3 and therefore moves when this
+  changes, so that test is the one that can still tell you the noise leaked
+  into a side meant to see the field as it is.
+
+`span` normalises the lean against how far she can actually get, so a
+difficulty level is worth the same to a howitzer as to a recon car.
+
 ### Defiance: what a crew does instead
 
 A crew on a rung whose `obeys` is false used to be frozen in every sense —
@@ -629,10 +656,16 @@ rule they defend (`unspotted_enemies_still_ambush`).
   written success metric was "most battles at visibly better than 1:2"),
   equal-skill pairings sit at parity, and the deterministic 36–0 sweep is
   gone. Re-measured 2026-08-25 after the blast-pricing fix and still
-  standing: **26–10 / 28–8 at 1:1.7–1.9**. Residual, tracked: side B
-  retains a modest edge on the mirrored arena (5v3 wins 24 where 3v5 wins
-  32; symmetric play would put both near 28), suspected resolution-order
-  artifact worth a look in B4's remainder.
+  standing: **26–10 / 28–8 at 1:1.7–1.9**, and again after difficulty noise
+  became a per-round lean: **28–8 / 9–27 at 1:2.1**, the best recorded.
+  ~~Residual, tracked: side B retains a modest edge on the mirrored
+  arena~~ — **it was not resolution order.** The 5-vs-3 gap paid 24 wins
+  from one end and 32 from the other; once difficulty noise stopped being
+  drawn per candidate tile it pays 20 and 20. The bias scaled with how many
+  tiles a unit could reach, which is what an argmax-over-independent-draws
+  bias does. Note the same change *lowered* how much 5v3 discriminates at
+  all (67%/89% to 56%/56%); the reading is that most of the old figure was
+  the artifact, and that reading is a hypothesis — see DONE.md.
 
   **Read this table at `--games 36` or not at all.** The default 12 put
   5v1 at 6–6 and looked like a regression against the numbers above; the

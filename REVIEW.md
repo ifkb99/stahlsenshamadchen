@@ -92,7 +92,7 @@ annotations say where. Items 1 and 2's chain reaction are fixed; see DONE.md.
    shape for a morale system: it should buy survival, not just narrate the
    death spiral.
 
-3. **Mid-battle dead time.** *(Real, and the proposed cure is backwards —
+3. **Mid-battle dead time.** *(Half fixed; the proposed cure is backwards —
    see change 4 below. Counted over game 1: the medium tank drove 53 hexes in
    19 rounds to finish 10 hexes closer; the recon car drove 59 and ended three
    hexes further from the bridge than she deployed; the howitzer spent
@@ -100,7 +100,11 @@ annotations say where. Items 1 and 2's chain reaction are fixed; see DONE.md.
    random walk, not a creep, and more movement points would widen it. The
    cause is `noisy_score` drawing difficulty noise per candidate tile under an
    argmax: the max of eighty draws beats the objective gradient every round,
-   and the more tiles a vehicle can reach the worse it gets.)* Units move 1–3
+   and the more tiles a vehicle can reach the worse it gets. One lean per unit
+   per round instead took straightness from 42% to 64%. What is left is that
+   the planner has no goal beyond the current round; committing to the tile it
+   picks was tried and fails, because that tile is never more than a round
+   away.)* Units move 1–3
    hexes/round and the AI creeps.
    Game 1: the medium tank takes 19 rounds to close a ~20-hex gap, then gets
    one-shot by opportunity fire on arrival. The recon car then patrols the

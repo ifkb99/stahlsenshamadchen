@@ -329,6 +329,78 @@ the four seeds — Anka's medium tank — and her temperament is `Fight`, which
 differs from the old freeze only in ambush discipline, which does not apply to
 a crew already spotted. A checkable coincidence, not a guarantee.
 
+**Difficulty is a blurry observer, not a blurry field.** The AI's mid-game
+read as dead time and REVIEW.md called it a creep. Measured, it is not a
+creep: on `battle_plains` a medium tank drove 53 hexes over 19 rounds to
+finish 10 hexes further forward, a recon car drove 59 and ended *further* from
+the objective than she deployed, and an artillery piece oscillated between two
+adjacent hexes for 28 rounds. Nobody was slow — a medium tank makes five hexes
+a round, which is the 30 km/h the scale contract chose. They were aimless. So
+the review's proposed cure, more movement points, was backwards: it multiplies
+the wander.
+
+One cause was a selection bias hiding in `noisy_score`. Difficulty drew
+independent noise **per candidate tile** and the planner then took an argmax
+over every tile she could reach. The maximum of ninety draws from ±0.5 is
+about +0.49 every time, against an objective gradient of 0.54 a hex — so the
+winning tile was reliably whichever drew luckiest. And it scaled the wrong
+way: more reachable tiles means more draws means a worse choice, which is why
+the 7 MP recon car wandered hardest and the 3 MP howitzer only twitched.
+
+The fix is one lean per unit per round, applied as a smooth function of where
+a tile lies relative to her. Nothing can win by drawing well because there is
+nothing to draw; what is left is a coherent misjudgement — today she favours
+the left, and favours it consistently — which is what "the same candidates
+through a blurrier lens" was always supposed to mean. Note the obvious
+reading, a flat offset per unit, is a no-op: adding the same number to every
+candidate changes no argmax.
+
+Measured on `battle_plains` seed 7, path straightness (net displacement over
+hexes driven), and `balance --sim --games 36`:
+
+| | before | after |
+| --- | --- | --- |
+| straightness, difficulty 5 | 49% | 49% — *bit-identical* |
+| straightness, difficulty 4 | 42% | **64%** |
+| hexes driven, difficulty 4 | 196 | 104 |
+| skill gap 5v1 exchange | 1:1.7 | **1:2.1** |
+| skill gap 5v3 / 3v5 | 24–12 / 4–32 | 20–16 / **16–20** |
+| engine test suite | 19.3 s | 6.7 s |
+
+Two of those want reading carefully.
+
+**The side-B artifact is largely gone.** CLAUDE.md has tracked "side B retains
+a modest edge on the mirrored arena" as a suspected resolution-order problem
+since B4. It was not resolution order: the same skill gap paid 24 wins from
+one end and 32 from the other, and after this it pays 20 and 20. The bias
+scaled with reachable-tile count, which is exactly what an argmax-over-draws
+bias does.
+
+**And the 5-vs-3 gap now discriminates less** — 67%/89% before, 56%/56%
+after. The reading that fits both rows is that most of the old 5v3
+"discrimination" *was* the artifact and the true edge at that gap is smaller;
+the alternative reading is that the lean costs a good side something real. The
+5v1 row argues for the first (it improved, and its exchange ratio reached
+B4's written target of visibly better than 1:2), but this is a hypothesis and
+it is written down here as one.
+
+**Commitment was tried first and does not work — a negative result worth
+keeping.** The other half of the wander is that a greedy planner re-decides
+its destination every round with nothing carrying an intention between them,
+and the obvious fix is to keep the destination until she arrives. It was
+built: a `heading` on the unit beside `tasking`, set by `SetMove`, cleared on
+arrival and wherever `tasking` clears. It made things *worse* — straightness
+40% to 30% at difficulty 4 — and the reason is structural rather than a wiring
+mistake. **The planner only ever scores tiles it can reach this round**, so a
+heading is never more than one round away and the engine clears it on arrival.
+Instrumented, commitment engaged 15 times in a whole battle and 12 of those
+were to a tile one hex off: it fires only for units that *failed* to arrive,
+and pins exactly the ones that were stuck. Real commitment needs the planner
+to choose a goal several rounds out, which is a goal-selection layer and a
+design chunk of its own — and the one that overlaps with the subordinate
+initiative the designer has described wanting (`initiative` already exists as
+a doctrine weight, unread). Reverted rather than shipped.
+
 **Saves record which mods were playing.** `SaveGame.mods` stamps id and
 version; mismatched ids are refused (the rules genuinely differ), version drift
 on the same set warns and loads (a content patch must not cost the player their

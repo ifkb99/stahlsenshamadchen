@@ -176,7 +176,7 @@ Ordered by spark per hour, not by dependency.
 | 1 | Orders mean what they say | **parts 1–2 done**, part 3 open |
 | 2 | Say what a verb means before it is pressed | **done** |
 | 3 | Close the consequence loop | **done**, roster screen open |
-| 4 | Fix the fun taxes REVIEW.md found | **taxes 1–3 done**, the wander open |
+| 4 | Fix the fun taxes REVIEW.md found | **done**, bar the A/B |
 | 5 | Park a layer (MCTS) | not started |
 
 ### 1. Orders mean what they say
@@ -427,10 +427,14 @@ instruments, and the review only had the first.
   chosen tile is whichever got the luckiest draw. The maximum of eighty draws
   from ±0.5 beats an objective gradient of 0.54 a hex, every round — and the
   faster the vehicle the more candidates she has, which is why the 7 MP recon
-  car wanders hardest and the 3 MP howitzer merely twitches. The fix to try is
-  one draw per unit per round (a mood, not a lottery), judged against the
-  skill-gap table, since that table is also what would catch it if this
-  brought back the clumping `PLATEAU` was built to stop.
+  car wanders hardest and the 3 MP howitzer merely twitches. **Done, half of
+  it**: difficulty is now one lean per unit per round rather than a draw per
+  tile, which took straightness at difficulty 4 from 42% to 64% and —
+  unexpectedly — closed the side-B edge the skill-gap table has carried since
+  B4, because that edge *was* this bias. The other half, carrying an intention
+  between rounds, was built and measurably failed; see DONE.md. It needs the
+  planner to have a goal several rounds out, which is a chunk of its own and
+  the one that meets the designer's subordinate-initiative idea.
 - **Tax 2's other half — nobody retreats. Done, and not as an exit.** Two
   defects, neither of them the one named: `resolve_movement` refused *all*
   path movement from a crew that would not obey, advancing and retreating
@@ -576,6 +580,17 @@ when somebody sweeps it, and a sweep needs an instrument.
   earlier in the session, it had by the end of it. Do not conclude from one
   degenerate capture that the harness is broken — run `battle-tour.txt` and
   check, which is what settled it in both directions.
+- **2026-08-25** — the wander. Half fixed and half a negative result, and the
+  negative result is the more useful of the two. Difficulty noise was drawn per
+  candidate tile under an argmax, which is a selection bias rather than a
+  handicap; one lean per unit per round fixed it and incidentally explained the
+  side-B edge on the mirrored arena, which was never resolution order.
+  Commitment — keeping a destination across rounds — was built as recommended
+  and made things *worse*, because this planner only ever scores tiles it can
+  reach this round, so there is no intention to carry: it fired 15 times in a
+  battle, 12 of them to a tile one hex away, and pinned exactly the units that
+  were already stuck. Anybody picking this up again should start from the goal
+  layer, not from the commitment.
 - **2026-08-25** — the defiance chunk landed: a broken crew now fights, runs
   or goes to ground by temperament, and rallies faster with her officer in
   sight. Two things worth carrying forward. The determinism baseline passed

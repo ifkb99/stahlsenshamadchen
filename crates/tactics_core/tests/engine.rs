@@ -3957,6 +3957,49 @@ fn an_officer_in_sight_settles_a_crew_faster() {
     );
 }
 
+#[test]
+fn a_side_that_sees_clearly_is_untouched_by_the_blur() {
+    // Difficulty noise changed shape — from an independent draw per candidate
+    // tile to one lean per unit per round — and the pin that has to survive
+    // that is the additivity rule: difficulty is content, and the top of the
+    // scale has none of it. A planner at difficulty 5 must plan exactly as it
+    // would with the whole mechanism deleted.
+    //
+    // This is the cheap half of the check. The expensive half is the
+    // determinism baseline, which fights at difficulty 3 and therefore moves
+    // when this changes; if a future edit makes THIS test fail, the noise has
+    // leaked into a side that is supposed to see the field as it is.
+    let reg = registry_wireless();
+    let orders_from = |difficulty: u8| -> Vec<String> {
+        // A shipped map, because the point is a field with enough ground on
+        // it to choose between. A twenty-hex test strip gives every planner
+        // the same answer whatever it can see, which pins nothing.
+        let mut state =
+            BattleState::from_map(&reg, "battle_plains", 93).expect("a shipped battle map");
+        let mut planner = UtilityPlanner::with_difficulty(difficulty, 5);
+        let mut log = Vec::new();
+        for _ in 0..6 {
+            if state.is_over() {
+                break;
+            }
+            log.push(format!("{:?}", planner.next_order(&reg, &state, 0)));
+            play_round(&reg, &mut state);
+        }
+        log
+    };
+    let sharp = orders_from(5);
+    assert!(!sharp.is_empty(), "the scene has to produce orders at all");
+    assert_ne!(
+        sharp,
+        orders_from(3),
+        "a blurred side must actually play differently, or this pins nothing"
+    );
+    // The real assertion: two difficulty-5 planners agree, and they agree
+    // because neither of them drew anything, not because the rng happened to
+    // land twice the same way.
+    assert_eq!(sharp, orders_from(5));
+}
+
 /// The player has to be able to see a crew wavering *before* it costs them
 /// something, or licence to disobey reads as the game cheating.
 #[test]
