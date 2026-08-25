@@ -151,8 +151,8 @@ The designer's own list — UI, art, sounds — is real but is not why it feels
 flat. **Nothing in this game costs the player anything yet.**
 
 - Permadeath is off by default and the wound system has no teeth: TODO records
-  that nothing stops a wounded girl deploying, and the game crate never checks
-  `GirlStatus::is_ready`.
+  that nothing stops a wounded cadet deploying, and the game crate never checks
+  `CadetStatus::is_ready`.
 - No XP, no progression, no roster screen, no post-battle "here is who came
   back".
 - Requisition exists; nothing spends money.
@@ -164,7 +164,7 @@ exist. The battle layer cannot carry the spark alone and no quantity of
 sprites will make it.
 
 Meanwhile the best writing in the project is the combat narration — "command
-passes from X to Y", "ammo rack destroyed", "girl #0 is OUT" — and it is
+passes from X to Y", "ammo rack destroyed", "cadet #0 is OUT" — and it is
 currently visible only to whoever runs the `playthrough` example.
 
 ## The plan
@@ -275,8 +275,8 @@ lists one order fewer), plus `scripts/dev/orders-explained.txt`.
 
 ### 3. Close the consequence loop
 
-Battle → named girls wounded and lost → a roster screen the player looks at →
-next battle. Wounds with teeth (`GirlStatus::is_ready` actually checked), one
+Battle → named cadets wounded and lost → a roster screen the player looks at →
+next battle. Wounds with teeth (`CadetStatus::is_ready` actually checked), one
 post-battle screen. Small next to what is already built, and it is the whole
 difference between a wargame and *this* wargame.
 
@@ -284,21 +284,21 @@ difference between a wargame and *this* wargame.
 than a missing feature.
 
 1. **A wound taken at her station now survives the battle.** The battle
-   tracked every girl's condition seat by seat all fight, and the only
+   tracked every cadet's condition seat by seat all fight, and the only
    casualties the campaign ever heard about were the crews of *destroyed*
    vehicles — so a gunner knocked out in round one of a battle her side won
    was fit again by the time the campaign screen drew. `CrewLoss` gained
    `found: Option<CrewCondition>` and `roster::resolve_station_fate` prices
    it: gentler than a wreck, never fatal without permadeath, and never
    `Lost`, because her tank came home and somebody got her to a doctor.
-2. **`is_ready` is actually checked.** `CrewCondition::Absent` says a girl is
+2. **`is_ready` is actually checked.** `CrewCondition::Absent` says a cadet is
    on the roll and not in the vehicle. Her seat leaves the substance
    reckoning entirely (an empty seat is not damage, or every withdrawal
    threshold in the game would price a short-handed tank as half dead),
    nothing inside can hit her, and whoever is left covers at the substitution
    penalty. She is *not* removed from `Unit::crew` — the campaign takes that
-   list back at the end of a battle and a girl filtered out here would be a
-   girl deleted from her tank for good. A vehicle nobody fit is left to crew
+   list back at the end of a battle and a cadet filtered out here would be a
+   cadet deleted from her tank for good. A vehicle nobody fit is left to crew
    goes out with the walking wounded rather than empty; the campaign has no
    replacement pool and a crewless vehicle is one nothing inside can kill.
 3. **The campaign stops to show the bill.** An after-action page, worst news
@@ -321,15 +321,15 @@ not a discharge of it: `ai/eval.rs` is still full of them.
 **Found while photographing it, and half-fixed.** The first after-action page
 ever drawn listed "Rosa Steiner — her first" twice. `frontier` names the base
 mod's ten characters across eighteen vehicles, and the campaign stamped a
-separate girl per mention, so Kuhlmann fielded three Rosas. The engine half is
-fixed and is a rule rather than a nicety — **one girl, one seat**: a repeated
+separate cadet per mention, so Kuhlmann fielded three Rosas. The engine half is
+fixed and is a rule rather than a nicety — **one cadet, one seat**: a repeated
 name is enlisted once per academy and the other vehicles crew anonymously,
 which is exactly what a placement naming nobody has always got, and
-`validate-mods` now names every dropped mention. The content half is a
-question for the designer and is deliberately left alone: there are ten
-characters and eighteen tanks, so either 2nd Company has no named girls in it
-or the school needs more students, and which of those is right is a decision
-about the fiction rather than about the code.
+`validate-mods` now names every dropped mention. The content half was put to
+the designer as a fiction question — ten characters and eighteen tanks, so
+either 2nd Company has no named cadets in it or the school needs more
+students — and the answer, on 2026-08-24, was **more students**. See *The word,
+and the school roll* below.
 
 **Still open.** A roster screen the player can open whenever she likes. The
 after-action page is deliberately not it: it is a thing to have read, with one
@@ -347,6 +347,48 @@ defects rather than rules defects.
 MCTS is ~3.3 s per order and ships unused; the scenario names `utility`. It is
 maintenance surface with no role. Either it becomes the enemy brain or it goes
 on ice, deliberately and in writing.
+
+## The word, and the school roll
+
+**Answered by the designer, 2026-08-24**, and both halves are done.
+
+**They are cadets.** The engine says so (`Cadet`, `CadetId`, `CadetStatus`),
+the UI says so, and TODO's oldest open question — *"need to find better name
+for girls"* — is closed. The objection the designer raised alongside the
+decision is worth keeping written down, because it is the one anybody will
+raise again: *cadet* sounds like a low rank, and this game runs the whole chain
+of command. It does not bite. At an academy, cadet is an **enrolment status
+rather than a rung**: everyone enrolled is a cadet and the appointments —
+gunner, platoon leader, captain of the school team — layer on top, which is how
+real academies do it. "Cadet Krieger, commanding 1st Company" is not a
+contradiction. The full argument, including the cost (it is colder than the
+academy register wants, and the warmth belongs in the names rather than in the
+collective noun), is in `assets/wiki/reference/tone.md` under *The word: cadet*.
+
+The rename was mechanical and is worth one sentence of evidence: the
+determinism baseline was substituted textually and then **passed without being
+regenerated**, which says the change touched the token and nothing else.
+`SAVE_VERSION` went to 2, because serde field names moved.
+
+**The school needed more students, and now has them.** Forty-nine characters
+where there were ten: twenty-four at Kuhlmann, twenty-five with the Iron
+Valkyries, and every seat of every vehicle in `frontier` filled by a cadet with
+her own name, in the seat her skills are for. This was not only a fiction
+decision. Substance is counted per person aboard, so a medium tank crewed by
+the two cadets a map happened to name died about twice as fast as the identical
+tank crewed by four anonymous ones — **naming your characters was a straight
+mechanical penalty**, and an invisible one. Filling the seats also makes the
+wound model legible: from a full order of battle, an empty seat means
+`CrewCondition::Absent` and nothing else, which is exactly what step 3 built.
+
+Two things deliberately not done. `river_crossing` still carries the old ten
+and its partial crews, because it is the determinism baseline and crewing it up
+means regenerating the snapshot for a content change; it is in TODO. And the
+mixed-nationality question this raised (tone.md's open question 1) is answered
+descriptively rather than settled: the expansion followed the shipped pattern
+and used the room to say something with it — Kuhlmann is a local school,
+eighteen of twenty-four German, and the Valkyries recruit, eleven of
+twenty-five.
 
 ## From the designer, 2026-08-24, and not yet acted on
 
@@ -427,9 +469,13 @@ when somebody sweeps it, and a sweep needs an instrument.
   earlier in the session, it had by the end of it. Do not conclude from one
   degenerate capture that the harness is broken — run `battle-tour.txt` and
   check, which is what settled it in both directions.
+- **2026-08-24** — the word is settled and the roll is full: *cadet*, and
+  forty-nine of them. See *The word, and the school roll*. The determinism
+  baseline passed the rename without regeneration, which is the whole of the
+  evidence that a tree-wide substitution changed no rules.
 - **2026-08-24** — the after-action page found a defect on the first run: a
-  campaign stamped one girl per *mention* of a character, so `frontier`'s ten
-  characters became twenty-four girls with six names between them. One girl,
+  campaign stamped one cadet per *mention* of a character, so `frontier`'s ten
+  characters became twenty-four cadets with six names between them. One cadet,
   one seat now; the content half is left for the designer. Worth noting how it
   was found — nobody would have read it out of the code, and the screen that
   exists to make consequences visible made this one visible in its first

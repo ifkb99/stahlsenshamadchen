@@ -7,7 +7,7 @@
 use crate::ai::{AiConfig, AiPlanner};
 use crate::data::{DataRegistry, MovementClass};
 use crate::map::{HexMap, MapFile, MapKind};
-use crate::roster::{CasualtyRules, GirlId, Roster, resolve_crew_fate, resolve_station_fate};
+use crate::roster::{CadetId, CasualtyRules, Roster, resolve_crew_fate, resolve_station_fate};
 use hexx::Hex;
 use rand::seq::IndexedRandom;
 use rand::{RngExt, SeedableRng};
@@ -39,18 +39,18 @@ pub struct OverworldSide {
 /// Distinct from [`crate::map::UnitPlacement`], which is *map file data*: a
 /// placement names crew by definition id and carries a map coordinate that a
 /// unit inside an army has no use for. This is live state — the crew are
-/// [`GirlId`]s into the world's roster, so the same girls come out of a battle
+/// [`CadetId`]s into the world's roster, so the same cadets come out of a battle
 /// as went in.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArmyUnit {
     pub vehicle: String,
     /// Who is aboard, as handles into [`OverworldState::roster`].
-    pub crew: Vec<GirlId>,
+    pub crew: Vec<CadetId>,
     /// Display name override; otherwise the commander's name is used.
     pub name: Option<String>,
 }
 
-/// What one battle did to one girl — enough for the campaign to work out
+/// What one battle did to one cadet — enough for the campaign to work out
 /// how long it keeps her out.
 ///
 /// Named for the common case rather than the whole of it: she is a loss to
@@ -60,7 +60,7 @@ pub struct ArmyUnit {
 /// what tells them apart.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrewLoss {
-    pub girl: GirlId,
+    pub cadet: CadetId,
     /// The vehicle she was in, for its [`crate::data::VehicleDef::safety`].
     pub vehicle: String,
     /// The damage type of the last hit the vehicle took, if the battle
@@ -75,7 +75,7 @@ pub struct CrewLoss {
     /// from what killed it.
     ///
     /// `#[serde(default)]` so a campaign saved before wounds outlived their
-    /// battle opens as one where every reported girl was in a wreck, which
+    /// battle opens as one where every reported cadet was in a wreck, which
     /// is what it was.
     #[serde(default)]
     pub found: Option<crate::battle::CrewCondition>,
@@ -176,10 +176,10 @@ pub enum OverworldEvent {
         at: Hex,
         side: u8,
     },
-    /// What became of a girl whose vehicle was destroyed. The campaign layer
+    /// What became of a cadet whose vehicle was destroyed. The campaign layer
     /// shows these; the roster has already been updated.
     CrewCasualty {
-        girl: GirlId,
+        cadet: CadetId,
         fate: crate::roster::CrewFate,
     },
     /// Two armies met; the game layer should run a battle and report the
@@ -252,10 +252,10 @@ pub enum OverworldError {
 pub struct OverworldState {
     pub map: Arc<HexMap>,
     pub sides: Vec<OverworldSide>,
-    /// Every girl in the world, whichever academy she belongs to.
+    /// Every cadet in the world, whichever academy she belongs to.
     ///
-    /// One roster rather than one per side, so a [`GirlId`] means the same
-    /// thing everywhere and girls can change hands without anything being
+    /// One roster rather than one per side, so a [`CadetId`] means the same
+    /// thing everywhere and cadets can change hands without anything being
     /// renumbered — which is what an academy-scale mode will want.
     pub roster: Roster,
     /// Whether this campaign is willing to kill its characters.
@@ -358,12 +358,12 @@ impl OverworldState {
             })
             .collect();
         // Enlisting as the armies are built is what turns map data into
-        // people: every crew id named by the file becomes a girl belonging to
+        // people: every crew id named by the file becomes a cadet belonging to
         // that army's academy, and nothing refers to a definition again.
         //
         // Once per academy, though, and this is not a nicety. A campaign map
         // is written by hand and the base game's `frontier` names its ten
-        // characters across eighteen vehicles, so stamping one girl per
+        // characters across eighteen vehicles, so stamping one cadet per
         // mention gave Kuhlmann three Rosa Steiners — which the after-action
         // report then dutifully listed three times. One person cannot crew
         // two vehicles, and a roster the player cannot tell apart is a roster
@@ -456,7 +456,7 @@ impl OverworldState {
     /// one, by [`ArmyId`].
     ///
     /// **A documented placeholder.** Contact ought to root at a *person* — the
-    /// side's commanding girl, sitting in a headquarters or a command vehicle
+    /// side's commanding cadet, sitting in a headquarters or a command vehicle
     /// with a radius priced on her crew's `signals`, the way a battle
     /// formation's net is priced on its leader. Neither the command unit nor
     /// the academy that would issue her exists yet (TODO.md, Chain of Command:
@@ -1001,7 +1001,7 @@ impl OverworldState {
         }
         if next <= self.active_side {
             self.turn += 1;
-            // A new day: wounds heal and girls walking back from a wreck get
+            // A new day: wounds heal and cadets walking back from a wreck get
             // one day closer. Once per day rather than once per side's phase,
             // or a two-academy campaign would heal twice as fast as a four.
             self.roster.advance_day();
@@ -1051,21 +1051,21 @@ impl OverworldState {
         let mut events = Vec::new();
         let defender_pos = self.army(defender).map(|a| a.pos);
 
-        // Casualties first, so a girl's fate is settled before the surviving
-        // rosters are written back. Resolved in girl-id order rather than the
+        // Casualties first, so a cadet's fate is settled before the surviving
+        // rosters are written back. Resolved in cadet-id order rather than the
         // order the battle happened to report them, because the rng is shared
         // and the campaign has to replay identically.
         let mut losses: Vec<&CrewLoss> = losses.iter().collect();
-        losses.sort_by_key(|loss| loss.girl);
+        losses.sort_by_key(|loss| loss.cadet);
         for loss in losses {
             let safety = registry
                 .vehicle(&loss.vehicle)
                 .map(|v| v.safety)
                 .unwrap_or(3);
-            // Two tables, one decision: a girl pulled out of a wreck is
-            // priced by what wrecked it, and a girl carried home in her own
+            // Two tables, one decision: a cadet pulled out of a wreck is
+            // priced by what wrecked it, and a cadet carried home in her own
             // tank by how the crew found her. Both roll through the campaign
-            // rng in girl-id order, so a replay agrees with the day it
+            // rng in cadet-id order, so a replay agrees with the day it
             // replays.
             let fate = match loss.found {
                 None => resolve_crew_fate(
@@ -1079,11 +1079,11 @@ impl OverworldState {
                     resolve_station_fate(self.rules, &registry.casualties, found, &mut self.rng)
                 }
             };
-            if let Some(girl) = self.roster.get_mut(loss.girl) {
-                girl.status = fate.into();
+            if let Some(cadet) = self.roster.get_mut(loss.cadet) {
+                cadet.status = fate.into();
             }
             events.push(OverworldEvent::CrewCasualty {
-                girl: loss.girl,
+                cadet: loss.cadet,
                 fate,
             });
         }
@@ -1091,8 +1091,8 @@ impl OverworldState {
         // Everyone who came through it has one more battle behind her.
         for (_, units) in survivors {
             for unit in units {
-                for girl in &unit.crew {
-                    self.roster.credit_battle(*girl);
+                for cadet in &unit.crew {
+                    self.roster.credit_battle(*cadet);
                 }
             }
         }
@@ -1103,13 +1103,13 @@ impl OverworldState {
             // anonymous one at the battle — enlisted into the battle's *copy*
             // of the roster, so her handle means nothing here. Writing those
             // handles back would leave an army holding ids the campaign
-            // cannot resolve, which is not a crash but is a girl-shaped hole
+            // cannot resolve, which is not a crash but is a cadet-shaped hole
             // in every roster read afterwards. The academy's rolls are the
             // academy's: a crew member the campaign never enlisted does not
             // join it by having fought once.
             let mut units = units.clone();
             for unit in &mut units {
-                unit.crew.retain(|girl| self.roster.get(*girl).is_some());
+                unit.crew.retain(|cadet| self.roster.get(*cadet).is_some());
             }
             if let Some(army) = self.army_mut(id) {
                 army.units = units;

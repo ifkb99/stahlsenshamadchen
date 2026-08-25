@@ -5,7 +5,7 @@
 //! that hand back into a chain of people. It prices two things and nothing
 //! else:
 //!
-//! - **Contact.** A girl answers to her formation's leader if she is close
+//! - **Contact.** A cadet answers to her formation's leader if she is close
 //!   enough to hear her — a radius in hexes, widened or narrowed by how well
 //!   the leader's crew works the radio, and optionally *relayed* through
 //!   anyone already in contact, which is what makes a signals vehicle worth
@@ -14,8 +14,8 @@
 //!   travels, and it arrives later, priced in the same tick currency the
 //!   [`ReactionRules`] already speak — which is the whole reason this block
 //!   reuses that type rather than inventing a second one. The post-mortem in
-//!   `girls.md` is emphatic about *what* may be delayed: new information, an
-//!   order the girl was not expecting. Never the execution of a plan she was
+//!   `cadets.md` is emphatic about *what* may be delayed: new information, an
+//!   order the cadet was not expecting. Never the execution of a plan she was
 //!   already given, which is what killed the first attempt at reaction
 //!   latency.
 //!
@@ -82,8 +82,8 @@ pub struct CommandRules {
     /// field.
     ///
     /// No `radius_per_signals` twin: an army is a stack of vehicles rather
-    /// than a crew, so there is no single girl whose skill the net should be
-    /// priced on until the comms units and the command girl herself exist.
+    /// than a crew, so there is no single cadet whose skill the net should be
+    /// priced on until the comms units and the command cadet herself exist.
     /// When they do, this is where their multiplier lands.
     pub overworld_radius: u32,
     /// How often the commander reviews her plan, in *rounds* between

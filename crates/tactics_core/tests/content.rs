@@ -114,7 +114,7 @@ fn the_new_maps_field_three_formations_a_side_with_a_leader_each() {
                 assert_eq!(
                     members.iter().filter(|u| u.leads).count(),
                     1,
-                    "map `{id}`: formation `{formation}` needs exactly one girl in charge"
+                    "map `{id}`: formation `{formation}` needs exactly one cadet in charge"
                 );
             }
             // Six armoured vehicles, the taxi, her platoon and a scout
@@ -218,7 +218,7 @@ fn the_infantry_chassis_load_and_validate() {
         assert_eq!(v.capacity, 0, "`{id}` walks and carries nobody");
         assert!(
             !v.crew_slots.is_empty(),
-            "`{id}` is led by named girls in ordinary crew seats"
+            "`{id}` is led by named cadets in ordinary crew seats"
         );
         // Every terrain the shipped maps use has to be somewhere a foot unit
         // can stand or refuse to enter on purpose, and the platoon's whole
@@ -254,7 +254,7 @@ fn the_infantry_chassis_load_and_validate() {
 
 #[test]
 fn a_platoon_spawns_with_her_troops_and_her_leaders() {
-    // A platoon is one piece led by named girls: two leadership seats in the
+    // A platoon is one piece led by named cadets: two leadership seats in the
     // ordinary crew model, and the rest of the platoon abstracted into a
     // module that spawns at full strength. Both halves of that have to be
     // true at spawn time before anything can wear either of them down.
@@ -265,7 +265,7 @@ fn a_platoon_spawns_with_her_troops_and_her_leaders() {
     assert_eq!(
         platoon.crew.len(),
         2,
-        "a placement naming no girls gets one anonymous girl per declared seat"
+        "a placement naming no cadets gets one anonymous cadet per declared seat"
     );
     let roles: Vec<String> = platoon
         .crew
@@ -302,10 +302,10 @@ fn a_platoon_lays_her_own_weapons_as_well_as_a_gunner_lays_hers() {
     // — command, fieldcraft, small arms — and gunnery was not among them,
     // which is true of a rifle section and wrong for the platoon as a piece:
     // *somebody* aims the RPG and the platoon MG, and in this model that is
-    // the girls, because they are the only crew the chassis has.
+    // the cadets, because they are the only crew the chassis has.
     //
     // With no seat responsible for gunnery, `crew_skill` fell through to "best
-    // aboard" and every girl aboard read gunnery through her cores at the
+    // aboard" and every cadet aboard read gunnery through her cores at the
     // untrained penalty, so a platoon shot at four levels below ordinary — a
     // silent, permanent −12 percentage points of hit chance on every infantry
     // weapon in the game. That is a data omission with an engine-sized effect,

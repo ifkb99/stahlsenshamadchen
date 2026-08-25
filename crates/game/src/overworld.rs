@@ -19,7 +19,7 @@ use tactics_core::overworld::{
     ArmyId, ArmyMission, ArmyUnit, OverworldEvent, OverworldOrder, OverworldState,
     make_overworld_planner,
 };
-use tactics_core::roster::GirlId;
+use tactics_core::roster::CadetId;
 use tactics_core::save::SaveGame;
 
 #[derive(Resource)]
@@ -563,11 +563,11 @@ fn pump_events(
             log.push(format!("{name} collects {amount} funds."));
         }
         OverworldEvent::ArmyMoved { .. } => {}
-        OverworldEvent::CrewCasualty { girl, fate } => {
+        OverworldEvent::CrewCasualty { cadet, fate } => {
             let name = overworld
                 .state
                 .roster
-                .get(*girl)
+                .get(*cadet)
                 .map(|g| g.name.clone())
                 .unwrap_or_else(|| "A crew member".into());
             use tactics_core::roster::CrewFate;
@@ -773,7 +773,7 @@ fn place(hex: Hex) -> String {
 /// makes or pays.
 struct AfterAction {
     headline: String,
-    /// Girls the battle took out of the line, worst first.
+    /// Cadets the battle took out of the line, worst first.
     cost: Vec<String>,
     /// Everyone who came home fit, with what this battle was for her.
     home: Vec<String>,
@@ -801,70 +801,70 @@ fn after_action(
 ) -> AfterAction {
     use tactics_core::roster::CrewFate;
 
-    let mine = |girl: &GirlId| state.roster.get(*girl).is_some_and(|g| g.owner == side);
-    let name = |girl: &GirlId| {
+    let mine = |cadet: &CadetId| state.roster.get(*cadet).is_some_and(|g| g.owner == side);
+    let name = |cadet: &CadetId| {
         state
             .roster
-            .get(*girl)
+            .get(*cadet)
             .map(|g| g.name.clone())
             .unwrap_or_else(|| "A crew member".into())
     };
 
     // Worst first, so the line that matters is the one at the top of the
-    // page rather than wherever the girl-id order happened to put it.
+    // page rather than wherever the cadet-id order happened to put it.
     let rank = |fate: &CrewFate| match fate {
         CrewFate::Killed => 0,
         CrewFate::Wounded { days } => 1000 - *days.min(&999) as i32,
         CrewFate::Lost { days } => 2000 - *days.min(&999) as i32,
         CrewFate::Unharmed => 3000,
     };
-    let mut hurt: Vec<(i32, GirlId, CrewFate)> = events
+    let mut hurt: Vec<(i32, CadetId, CrewFate)> = events
         .iter()
         .filter_map(|e| match e {
-            OverworldEvent::CrewCasualty { girl, fate } if mine(girl) => {
-                Some((rank(fate), *girl, *fate))
+            OverworldEvent::CrewCasualty { cadet, fate } if mine(cadet) => {
+                Some((rank(fate), *cadet, *fate))
             }
             _ => None,
         })
         .filter(|(_, _, fate)| !matches!(fate, CrewFate::Unharmed))
         .collect();
-    hurt.sort_by_key(|(rank, girl, _)| (*rank, *girl));
+    hurt.sort_by_key(|(rank, cadet, _)| (*rank, *cadet));
 
     let cost = hurt
         .iter()
-        .map(|(_, girl, fate)| match fate {
-            CrewFate::Killed => format!("  {} - killed in action", name(girl)),
+        .map(|(_, cadet, fate)| match fate {
+            CrewFate::Killed => format!("  {} - killed in action", name(cadet)),
             CrewFate::Wounded { days } => {
-                format!("  {} - wounded, back in {days} day(s)", name(girl))
+                format!("  {} - wounded, back in {days} day(s)", name(cadet))
             }
             CrewFate::Lost { days } => {
-                format!("  {} - walking back, {days} day(s)", name(girl))
+                format!("  {} - walking back, {days} day(s)", name(cadet))
             }
-            CrewFate::Unharmed => format!("  {}", name(girl)),
+            CrewFate::Unharmed => format!("  {}", name(cadet)),
         })
         .collect();
 
     // Anyone hurt is already named above; listing her twice would make the
     // page read as though the academy had two of her.
-    let taken: Vec<GirlId> = hurt.iter().map(|(_, girl, _)| *girl).collect();
-    let mut home: Vec<GirlId> = survivors
+    let taken: Vec<CadetId> = hurt.iter().map(|(_, cadet, _)| *cadet).collect();
+    let mut home: Vec<CadetId> = survivors
         .iter()
         .flat_map(|(_, units)| units.iter())
         .flat_map(|unit| unit.crew.iter())
-        .filter(|girl| mine(girl) && !taken.contains(girl))
+        .filter(|cadet| mine(cadet) && !taken.contains(cadet))
         .copied()
         .collect();
     home.sort();
     home.dedup();
     let home = home
         .iter()
-        .filter_map(|girl| state.roster.get(*girl))
-        // A girl who was on the roll but stayed in the infirmary did not
+        .filter_map(|cadet| state.roster.get(*cadet))
+        // A cadet who was on the roll but stayed in the infirmary did not
         // fight this battle and has nothing to say about it.
-        .filter(|girl| girl.status.is_ready())
-        .map(|girl| match girl.battles {
-            0 | 1 => format!("  {} - her first", girl.name),
-            n => format!("  {} - {n} battles", girl.name),
+        .filter(|cadet| cadet.status.is_ready())
+        .map(|cadet| match cadet.battles {
+            0 | 1 => format!("  {} - her first", cadet.name),
+            n => format!("  {} - {n} battles", cadet.name),
         })
         .collect();
 
@@ -932,7 +932,7 @@ fn launch_battle(
 
     commands.insert_resource(PendingBattle::Field {
         map_id,
-        // Snapshot of the campaign's girls. The battle reads it; casualties
+        // Snapshot of the campaign's cadets. The battle reads it; casualties
         // come back as events and are applied to the campaign's own copy.
         roster: std::sync::Arc::new(state.roster.clone()),
         attacker,
@@ -1074,28 +1074,28 @@ fn update_muster_ui(
     // actually paid, which is the only place it can be *felt* — a name
     // missing from a crew list is an abstraction until the moment you are
     // about to fight without her.
-    let unavailable: Vec<&tactics_core::roster::Girl> = state
+    let unavailable: Vec<&tactics_core::roster::Cadet> = state
         .roster
         .of_side(muster.side)
-        .filter(|girl| !girl.status.is_ready())
+        .filter(|cadet| !cadet.status.is_ready())
         .collect();
     if !unavailable.is_empty() {
         lines.push(String::new());
         lines.push(format!(
             "{} not fit to deploy:",
             if unavailable.len() == 1 {
-                "1 girl".to_string()
+                "1 cadet".to_string()
             } else {
-                format!("{} girls", unavailable.len())
+                format!("{} cadets", unavailable.len())
             }
         ));
         // Named, and capped: a page that lists twenty names is one nobody
         // reads, and the count above is the number that matters.
-        for girl in unavailable.iter().take(4) {
+        for cadet in unavailable.iter().take(4) {
             lines.push(format!(
                 "  {}{}",
-                girl.name,
-                match girl.status.days_out() {
+                cadet.name,
+                match cadet.status.days_out() {
                     Some(0) | None => String::new(),
                     Some(days) => format!(" ({days} day(s))"),
                 }
@@ -1590,7 +1590,7 @@ fn update_ui(
                 .crew
                 .first()
                 .and_then(|id| state.roster.get(*id))
-                .map(|girl| girl.name.clone())
+                .map(|cadet| cadet.name.clone())
                 .unwrap_or_default();
             lines.push(format!("  {vehicle} - {commander}"));
         }
@@ -1696,11 +1696,11 @@ mod tests {
             .0
     }
 
-    /// The after-action report names the player's own girls, worst first, and
+    /// The after-action report names the player's own cadets, worst first, and
     /// says nothing about anybody else's.
     ///
     /// The ordering is the part worth pinning. The campaign resolves fates in
-    /// girl-id order because the rng demands it, which means without a sort
+    /// cadet-id order because the rng demands it, which means without a sort
     /// here the one line the player most needs — somebody died — turns up
     /// wherever the roster happened to put her, under four lines about
     /// bruises.
@@ -1708,30 +1708,30 @@ mod tests {
     fn the_debrief_names_our_own_casualties_worst_first() {
         let reg = registry();
         let state = OverworldState::from_map(&reg, "frontier", 5).expect("overworld");
-        let ours: Vec<GirlId> = state.roster.of_side(0).map(|g| g.id).take(3).collect();
+        let ours: Vec<CadetId> = state.roster.of_side(0).map(|g| g.id).take(3).collect();
         let theirs = state
             .roster
             .of_side(1)
             .map(|g| g.id)
             .next()
-            .expect("side 1 has girls");
-        assert!(ours.len() >= 3, "frontier should field enough girls");
+            .expect("side 1 has cadets");
+        assert!(ours.len() >= 3, "frontier should field enough cadets");
 
         let events = vec![
             OverworldEvent::CrewCasualty {
-                girl: ours[0],
+                cadet: ours[0],
                 fate: CrewFate::Wounded { days: 2 },
             },
             OverworldEvent::CrewCasualty {
-                girl: ours[1],
+                cadet: ours[1],
                 fate: CrewFate::Killed,
             },
             OverworldEvent::CrewCasualty {
-                girl: ours[2],
+                cadet: ours[2],
                 fate: CrewFate::Unharmed,
             },
             OverworldEvent::CrewCasualty {
-                girl: theirs,
+                cadet: theirs,
                 fate: CrewFate::Killed,
             },
         ];
@@ -1740,7 +1740,7 @@ mod tests {
         assert_eq!(
             report.cost.len(),
             2,
-            "the unharmed girl and the enemy's dead do not belong on our bill: {:#?}",
+            "the unharmed cadet and the enemy's dead do not belong on our bill: {:#?}",
             report.cost
         );
         let dead = state.roster.get(ours[1]).unwrap().name.clone();
@@ -1756,7 +1756,7 @@ mod tests {
         );
     }
 
-    /// A girl who came home fit is listed as having come home, and a girl who
+    /// A cadet who came home fit is listed as having come home, and a cadet who
     /// was hurt is not listed twice.
     #[test]
     fn a_girl_is_on_one_side_of_the_ledger_or_the_other() {
@@ -1767,7 +1767,7 @@ mod tests {
         let hurt = units[0].crew[0];
 
         let events = vec![OverworldEvent::CrewCasualty {
-            girl: hurt,
+            cadet: hurt,
             fate: CrewFate::Wounded { days: 4 },
         }];
         let survivors = vec![(army.id, units.clone())];

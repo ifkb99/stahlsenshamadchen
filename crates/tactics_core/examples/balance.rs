@@ -15,7 +15,7 @@
 //! can still hurt a Löwe from the front.
 //!
 //! The **simulated** pass (`--sim`) fights whole battles and reports what
-//! actually happened — who won, what killed them, what it cost the girls, how
+//! actually happened — who won, what killed them, what it cost the cadets, how
 //! many shells went out. It is slower and noisier, and it is the check at the
 //! end, because the analytic numbers can all look reasonable while the fights
 //! they produce are terrible.
@@ -23,7 +23,7 @@
 //! Both passes are organised around the **kill chain** the ballistics rewrite
 //! installed, because that is now the shape of the game: a round is chambered,
 //! it hits or it does not, it gets through the plate or it does nothing at all,
-//! and what it finds behind the plate is girls and modules rather than a hit
+//! and what it finds behind the plate is cadets and modules rather than a hit
 //! point pool. Every number below therefore comes out of `preview_attack`,
 //! `chambered`, `flight_ticks` and `resolve_round` rather than a formula
 //! written here — the tables are forced through the engine by loading the
@@ -47,7 +47,7 @@ use tactics_core::battle::{
 use tactics_core::data::{ArmorFacing, DataRegistry, ModuleEffect, WeaponDef};
 use tactics_core::force;
 use tactics_core::map::{Facing, HexMap, MapFile, MapKind, UnitPlacement};
-use tactics_core::roster::{GirlId, Roster};
+use tactics_core::roster::{CadetId, Roster};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -213,10 +213,10 @@ struct Duels<'r> {
 /// chassis that declares none inherits.
 #[derive(Clone, Copy)]
 struct Facts {
-    /// Full substance complement: two points per girl plus every module's
+    /// Full substance complement: two points per cadet plus every module's
     /// toughness.
     substance: u32,
-    /// Girls aboard — the seats a behind-armor roll can find.
+    /// Cadets aboard — the seats a behind-armor roll can find.
     seats: u32,
     /// Total weight a behind-armor effect roll draws from.
     interior: u32,
@@ -454,7 +454,7 @@ fn roster_table(reg: &DataRegistry) {
         );
     }
     println!(
-        "\n  `substance` is what she is made of — two points per girl plus every\n  \
+        "\n  `substance` is what she is made of — two points per cadet plus every\n  \
          module's toughness — which is what a penetration spends itself against\n  \
          now that there are no hit points. `rounds` is everything in the racks."
     );
@@ -533,7 +533,7 @@ struct KillChain {
 /// The chain, in the order the engine walks it: hit chance, penetration
 /// chance, and then the behind-armor budget — the ledger damage the round
 /// carries, spent as one effect roll per `points_per_effect`, each roll
-/// picking a girl or a module weighted by size. Everything up to and
+/// picking a cadet or a module weighted by size. Everything up to and
 /// including the budget is read off `preview_attack`; what is *modeled* here
 /// is the two catastrophes, because they are rolls rather than expectations:
 /// a rack hit lighting the racks, and blast overmatching a thin skin. Both
@@ -556,13 +556,13 @@ fn kill_chain(
     let pen = shot.pen_chance as f32 / 100.0;
     let rolls = ((shot.damage.max(1) + per_effect - 1) / per_effect) as f32;
     // The same test `behind_armor_effects` makes: double the price of a roll
-    // arriving at once puts a girl straight out instead of wounding her.
+    // arriving at once puts a cadet straight out instead of wounding her.
     let savage = shot.damage >= per_effect * 2;
 
     let interior = facts.interior.max(1) as f32;
     let crew_share = (reg.balance.crew_weight.max(0) as u32 * facts.seats) as f32 / interior;
     // Each roll takes one substance point — a wound, or one module hit — and
-    // a savage roll that lands on a girl takes both of hers at once.
+    // a savage roll that lands on a cadet takes both of hers at once.
     let per_pen = rolls * (1.0 + if savage { crew_share } else { 0.0 });
     let per_shot = hit * pen * per_pen;
 
@@ -932,9 +932,9 @@ fn simulate(reg: &DataRegistry, games: usize) {
         ai.insert(1, planner(reg, seed + 1, "elastic_defense"));
         let mut rounds = 0;
         let mut last_hit: HashMap<UnitId, String> = HashMap::new();
-        // Final state per girl, so a girl wounded and then killed is counted
+        // Final state per cadet, so a cadet wounded and then killed is counted
         // once, as killed.
-        let mut girls: BTreeMap<GirlId, bool> = BTreeMap::new();
+        let mut cadets: BTreeMap<CadetId, bool> = BTreeMap::new();
         for unit in &state.units {
             for (id, count) in &unit.ammo {
                 *t.ammo_aboard.entry(id.clone()).or_default() += count;
@@ -986,8 +986,8 @@ fn simulate(reg: &DataRegistry, games: usize) {
                             t.shells_bounced += 1;
                         }
                     }
-                    Event::CrewHit { girl, out, .. } => {
-                        let entry = girls.entry(girl).or_insert(false);
+                    Event::CrewHit { cadet, out, .. } => {
+                        let entry = cadets.entry(cadet).or_insert(false);
                         *entry |= out;
                     }
                     Event::Mounted { .. } => t.mounts += 1,
@@ -1029,7 +1029,7 @@ fn simulate(reg: &DataRegistry, games: usize) {
             }
         }
         t.rounds.push(rounds);
-        for out in girls.values() {
+        for out in cadets.values() {
             if *out {
                 t.girls_out += 1;
             } else {
@@ -1143,7 +1143,7 @@ fn simulate(reg: &DataRegistry, games: usize) {
 
     // What actually killed them. The single most useful line in this report
     // after the outcome, because it says which half of the model is doing
-    // the work: fires, blast, nerve, or the girls themselves.
+    // the work: fires, blast, nerve, or the cadets themselves.
     let total_deaths: usize = t.causes.values().sum();
     if total_deaths > 0 {
         print!("  killed by:");
@@ -1156,8 +1156,8 @@ fn simulate(reg: &DataRegistry, games: usize) {
         println!();
     }
     println!(
-        "  crew cost: {:.1} girls wounded and {:.1} out per battle ({} and {} across the\n    \
-         run, by her state at the end — a girl wounded and then killed is counted\n    \
+        "  crew cost: {:.1} cadets wounded and {:.1} out per battle ({} and {} across the\n    \
+         run, by her state at the end — a cadet wounded and then killed is counted\n    \
          once, as out)",
         t.girls_wounded as f32 / games.max(1) as f32,
         t.girls_out as f32 / games.max(1) as f32,

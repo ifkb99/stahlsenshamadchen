@@ -113,7 +113,7 @@ pub struct UnitPlacement {
     /// formations existed, and is exactly today's game.
     #[serde(default)]
     pub formation: Option<String>,
-    /// Whether the girl in this vehicle commands the formation. At most one
+    /// Whether the cadet in this vehicle commands the formation. At most one
     /// placement per formation may say so; a formation whose author names
     /// nobody is led by its first-declared member, which is the authorable
     /// rule (declaration order is a chain of seniority a map writer controls)
@@ -261,7 +261,7 @@ impl FormationDef {
 /// hit, and it happens on every map — but whether a battle is *over* because
 /// of it is a question about what this battle was for, and only the scenario
 /// knows. A raid on a headquarters ends when the headquarters is gone; the
-/// same platoon losing the same girl in a meeting engagement fights on with a
+/// same platoon losing the same cadet in a meeting engagement fights on with a
 /// new commander. A map that declares none of these behaves exactly as it did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LossCondition {
@@ -278,7 +278,7 @@ pub struct LossCondition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LossTrigger {
-    /// The girl who was in command when the battle opened is dead.
+    /// The cadet who was in command when the battle opened is dead.
     ///
     /// The *founding* leader, not whoever holds the job now: succession
     /// replaces her within a tick, and a condition that tested the current
@@ -699,7 +699,7 @@ impl MapFile {
             if leaders > 1 {
                 report.errors.push(format!(
                     "map `{}`: formation `{}` has {leaders} placements marked `leads`, and only \
-                     one girl can be in command",
+                     one cadet can be in command",
                     self.id, formation.id
                 ));
             }
@@ -734,7 +734,7 @@ impl MapFile {
         // wrong, it quietly makes a scenario unwinnable or unlosable. Both
         // checks are errors for that reason: a condition naming a formation
         // that does not exist can never fire, and one naming another side's
-        // formation is a stake placed on somebody else's girls.
+        // formation is a stake placed on somebody else's cadets.
         for condition in &self.loss_conditions {
             match self.formations.iter().find(|f| f.id == condition.formation) {
                 None => report.errors.push(format!(
@@ -963,7 +963,7 @@ impl MapFile {
             }
         }
 
-        // One girl, one seat. A campaign map is written by hand and it is
+        // One cadet, one seat. A campaign map is written by hand and it is
         // very easy to spread ten characters over eighteen vehicles without
         // noticing; the campaign drops the second mention and crews that
         // vehicle anonymously, which is the right behaviour and a silent one.
@@ -978,17 +978,17 @@ impl MapFile {
             std::collections::HashMap::new();
         for army in &self.armies {
             for unit in &army.units {
-                for girl in &unit.crew {
-                    *seen.entry((army.side, girl.as_str())).or_default() += 1;
+                for cadet in &unit.crew {
+                    *seen.entry((army.side, cadet.as_str())).or_default() += 1;
                 }
             }
         }
         let mut repeated: Vec<((u8, &str), usize)> =
             seen.into_iter().filter(|(_, n)| *n > 1).collect();
         repeated.sort();
-        for ((side, girl), times) in repeated {
+        for ((side, cadet), times) in repeated {
             report.warnings.push(format!(
-                "map `{}` names `{girl}` in {times} of side {side}'s crews; \
+                "map `{}` names `{cadet}` in {times} of side {side}'s crews; \
                  she can only be in one, so the rest deploy with an anonymous crew",
                 self.id
             ));

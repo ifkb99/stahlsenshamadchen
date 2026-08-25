@@ -1,9 +1,9 @@
-//! What a battle costs the girls who fought it, as data rather than as
+//! What a battle costs the cadets who fought it, as data rather than as
 //! numbers scattered through `roster.rs`.
 //!
 //! The fate rolls were the last big table of bare integers left in Rust: how
 //! likely a kinetic penetration is to hurt somebody, what a point of a
-//! vehicle's `safety` is worth against that, how long a wound keeps a girl
+//! vehicle's `safety` is worth against that, how long a wound keeps a cadet
 //! out. Every one of them is a thing a designer wants to try three values of
 //! — this is the dial between "an armoured skirmish costs nobody anything"
 //! and "half the school is in the infirmary by Tuesday" — and the repo's own
@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Casualties {
-    /// Chance in 100 that a girl is hurt at all when her vehicle is
+    /// Chance in 100 that a cadet is hurt at all when her vehicle is
     /// destroyed by a kinetic penetration, before `safety` is applied. The
     /// worst of the three: a long rod through the fighting compartment
     /// sprays the inside of the hull with hot metal.
@@ -49,7 +49,7 @@ pub struct Casualties {
     /// ever perfectly safe and none is ever a certain grave.
     pub harm_floor: i32,
     pub harm_ceiling: i32,
-    /// Chance in 100 that a girl who got out unhurt got out on the wrong
+    /// Chance in 100 that a cadet who got out unhurt got out on the wrong
     /// side of the fighting and has to walk back.
     pub adrift_percent: i32,
     /// How many days that walk takes, inclusive.
@@ -62,13 +62,13 @@ pub struct Casualties {
     pub severe_days: [u32; 2],
     /// Days out for an ordinary one.
     pub light_days: [u32; 2],
-    /// Days out for a girl carried home out of the fight — knocked out at
+    /// Days out for a cadet carried home out of the fight — knocked out at
     /// her station in a vehicle that survived. Worse than an ordinary wound
     /// and better than a severe one, and *never* fatal without permadeath,
     /// for the reason the whole distinction exists: her tank came home and
     /// somebody got her to a doctor.
     pub carried_days: [u32; 2],
-    /// Days out for a girl who was hurt at her station and kept working.
+    /// Days out for a cadet who was hurt at her station and kept working.
     /// The lightest case in the game, and the one that used to be thrown
     /// away at the end of every battle.
     pub grazed_days: [u32; 2],

@@ -62,7 +62,7 @@ pub struct DataRegistry {
     pub scale: Scale,
     /// What a point of crew skill is worth. Single value, as [`Self::scale`].
     pub balance: Balance,
-    /// What a battle costs the girls who fought it. Single value, as
+    /// What a battle costs the cadets who fought it. Single value, as
     /// [`Self::scale`].
     pub casualties: Casualties,
     /// How long crews take to act on orders.
@@ -80,7 +80,7 @@ pub struct DataRegistry {
     /// coefficients must produce the same battle, and does; that is a pinned
     /// test rather than a hope.
     pub command: Option<CommandRules>,
-    /// The axes of temperament this game has, in the order a girl's values are
+    /// The axes of temperament this game has, in the order a cadet's values are
     /// stored. Declared by mod data, not by Rust.
     pub cores: Vec<CoreDef>,
     /// Core ids resolved to positions, so a check is an array index.
@@ -585,7 +585,7 @@ impl DataRegistry {
 
         // Troops are the one module kind that needs somebody named. A platoon
         // is one piece on one hex precisely because its leadership is two or
-        // three girls in the ordinary crew seats and the rest is abstracted
+        // three cadets in the ordinary crew seats and the rest is abstracted
         // into the module — so a chassis carrying troops and declaring no
         // crew slots is a body of soldiers with nobody to lead them, which
         // the interior roll, the casualty machinery and the chain of command

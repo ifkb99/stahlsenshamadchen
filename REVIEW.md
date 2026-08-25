@@ -21,10 +21,10 @@ commands above to regenerate them).
 
 ## Overall
 
-A seriously built engine, and the identity lands: named girls as crews,
+A seriously built engine, and the identity lands: named cadets as crews,
 morale rungs, a chain of command with radio latency, facing-dependent plate,
 a penetration gate that makes a bounce a real thing. The narration is the
-best part — "girl #0 is OUT", "ammo rack destroyed", "crew abandons",
+best part — "cadet #0 is OUT", "ammo rack destroyed", "crew abandons",
 "command passes from X to Y". Combat reads like a story with legible cause
 and effect. Most wargames tell you a tank died; this one tells you how,
 through whom, and who is left to command.

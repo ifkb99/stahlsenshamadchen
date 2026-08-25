@@ -42,17 +42,17 @@ a town on the east bank, elevation falling from 3 at the rim to 0 along the
 water. Cost 1261 tiles against 768, which took the engine suite from 9.5 s to
 26 s — since paid back several times over by the fog work.
 
-## Girls, crews and rules
+## Cadets, crews and rules
 
-**Girls are instances, not definitions.** `tactics_core::roster` owns `Girl`
+**Cadets are instances, not definitions.** `tactics_core::roster` owns `Cadet`
 (id, def, name, owner, stats, xp, status, battles) and `Roster`; `Unit.crew`
-and `ArmyUnit.crew` are `GirlId`s, and crew bonuses read the instance — so a
+and `ArmyUnit.crew` are `CadetId`s, and crew bonuses read the instance — so a
 wounded gunner already costs her vehicle its gunnery with no special case. The
-overworld owns the roster and armies carry handles into it, so the same girls
+overworld owns the roster and armies carry handles into it, so the same cadets
 come out of a battle as went in.
 
-**One roster for the whole world**, with `Girl.owner` naming her academy —
-not one per side. That keeps `GirlId` unambiguous everywhere and makes girls
+**One roster for the whole world**, with `Cadet.owner` naming her academy —
+not one per side. That keeps `CadetId` unambiguous everywhere and makes cadets
 changing hands (recruited, poached, captured) a field change rather than a
 renumbering, which is what an academy-scale mode will want. `Army.units` is
 `ArmyUnit` rather than `UnitPlacement` for the same reason: a placement is
@@ -64,11 +64,46 @@ blocked on is settled: cores are the full nine GURPS attributes centred on 10
 (8–12 ordinary), not the old 0–5, which is what makes skill defaults like
 `Hands - 4` mean anything. Thirteen skills, five seat roles, and traits that
 are declarative and conditional. Abilities are *derived*, never stored — see
-`data/cores.rs` and [the wiki](assets/wiki/reference/girls.md).
+`data/cores.rs` and [the wiki](assets/wiki/reference/cadets.md).
 
 **Every core must be named by at least one skill.** A core nothing reads is
 dead weight, which is exactly what `morale` and `leadership` were in the old
 `CrewStats`: declared for years and never once consulted.
+
+**They are cadets, and there are forty-nine of them.** The oldest open naming
+question in TODO — *"need to find better name for girls"* — closed on
+2026-08-24. The objection that *cadet* names a low rank while the game runs the
+whole chain of command does not bite: at an academy cadet is an **enrolment
+status rather than a rung**, so the appointments layer on top of it and "Cadet
+Krieger, commanding 1st Company" is not a contradiction. The cost is that it is
+colder than the academy register wants, and it is paid in the right place — the
+warmth in this game lives in the names, not in the collective noun, and nobody
+in a common room says "the cadets" anyway. The argument is in
+`assets/wiki/reference/tone.md` under *The word: cadet*.
+
+Two things about the rename are worth keeping. It moved serde field names
+(`Roster::cadets`, `CrewLoss::cadet`, `CrewHit { cadet }`), so `SAVE_VERSION`
+went to 2. And the determinism baseline was **substituted textually and then
+passed unregenerated** — which is the whole of the evidence that a tree-wide
+rename changed no rules, and is the way to check the next one.
+
+**Filling the seats was a mechanics fix wearing content's clothes.** The base
+mod shipped ten characters and `frontier` spread them over eighteen vehicles,
+so the campaign stamped three separate Rosa Steiners until *one cadet, one
+seat* landed — after which most vehicles were two-thirds crewed or crewed by
+nobody. That is not cosmetic: **substance counts people aboard**, so a medium
+tank crewed by the two cadets a map happened to name died about twice as fast
+as the identical tank crewed by four anonymous ones. Naming your characters was
+a straight penalty, and an invisible one. The roll is now twenty-four at
+Kuhlmann and twenty-five with the Iron Valkyries, every seat in `frontier`
+filled by her own cadet in the seat her skills are for, pinned by
+`every_seat_in_the_campaign_belongs_to_a_cadet_of_her_own`. It also makes the
+wound model legible: from a full order of battle an empty seat means
+`CrewCondition::Absent` and nothing else.
+
+`river_crossing` was deliberately left with the old ten and its partial crews,
+because it is the determinism baseline; crewing it up changes the fight and is
+its own chunk (TODO, Content gaps).
 
 ## Battles
 

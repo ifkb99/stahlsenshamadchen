@@ -27,7 +27,7 @@
 //! # Which mods were playing
 //!
 //! A save records the mods that produced it, because in this project the mods
-//! *are* the rules. Difficulty is a mod: whether crews bail out, whether girls
+//! *are* the rules. Difficulty is a mod: whether crews bail out, whether cadets
 //! can refuse an order, whether death is permanent. Loading a campaign under a
 //! different set would silently change what game it is — a run started gentle
 //! could come back lethal, and a permadeath run could quietly stop being one.
@@ -51,7 +51,11 @@ use std::sync::Arc;
 
 /// Save format version. Bump when a field changes meaning rather than merely
 /// being added — serde's `default` handles additions on its own.
-pub const SAVE_VERSION: u32 = 1;
+///
+/// Version 2 renamed the roster's people from *girls* to *cadets*, which is a
+/// rename of serde field names (`Roster::cadets`, `CrewLoss::cadet`) and so a
+/// break even though nothing about the format's meaning moved.
+pub const SAVE_VERSION: u32 = 2;
 
 /// Which mod, at which version, was loaded when a save was written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

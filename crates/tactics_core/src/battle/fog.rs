@@ -48,7 +48,7 @@ pub struct SideFog {
     /// opportunity-fire gate reset every round — a target watched for five
     /// rounds was paid for five times, and an ambush sprung at tick seven
     /// was answered instantly because seven beats any delay. Both are
-    /// exactly backwards, and the post-mortem in girls.md is emphatic about
+    /// exactly backwards, and the post-mortem in cadets.md is emphatic about
     /// which way the model goes: she notices at tick four and acts at tick
     /// six.
     ///

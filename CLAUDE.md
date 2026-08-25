@@ -37,7 +37,7 @@ drift from the game. It prints P(pen) per gun × round × target × range band,
 expected shots to knock out, shell flight times, and a "worth a look" section
 that judges a gun on blast overmatch as well as penetration. `--sim` fights
 whole battles and adds what killed them (brewed / wrecked / abandoned / crew
-out), what it cost the girls, the ammunition economy, artillery's hit rate on
+out), what it cost the cadets, the ammunition economy, artillery's hit rate on
 occupied ground, the delegation tax, the mustered-forces table and the
 skill-gap table.
 
@@ -125,7 +125,7 @@ bite someone editing the code.
   reverse lookup, and it is the only correct way to ask what a carrier is
   carrying.
 - **Shared fate is not optional.** A penetration into a loaded carrier rolls
-  every passenger's girls and troops into the same interior pool, and a
+  every passenger's cadets and troops into the same interior pool, and a
   brew-up burns them. `effect_rolls` is where that happens, and it is shared
   with the plate-zero splash path — change one and you have changed both.
 - **Plate zero is carved out of the overpressure overmatch rule.** Blast ≥
@@ -135,7 +135,7 @@ bite someone editing the code.
   infantry is attrition, brutal but never a single-event erasure.
 - **The troops module means three things at once** and they are easy to
   separate by accident: interior weight (casualty rolls find the sections far
-  more often than the two girls, which is the whole of the "leaders last"
+  more often than the two cadets, which is the whole of the "leaders last"
   model), firepower (`mustered` scales every weapon's damage by hits
   remaining over toughness), and combat effectiveness (at zero the platoon is
   a remnant, alive and pulled hard toward withdrawal).
@@ -190,7 +190,7 @@ orders a formation to assault.
   order priority over the crew's *own judgment*, never over her nerve. Morale
   still refuses, `obeys()` is untouched, and a Binding order to a crew who has
   stopped listening is still not carried out.
-- **It belongs to the destination, not to the girl.** Set only where
+- **It belongs to the destination, not to the cadet.** Set only where
   `tasking` is set, cleared everywhere `tasking` clears (recall, arrival, a
   fresh formation mission), and carried in `WaitingOrders` so an order held at
   the radio arrives meaning what it meant. A radioed order with `to: None` says
@@ -230,7 +230,7 @@ because both are mostly *words* and words look like they belong in the UI.
   the two in `order_menu()`; `every_mission_key_has_a_promise` exists because
   the failure mode of that join is silent — rename a verb in core and the
   panel simply lists one order fewer.
-- **`CrewCondition::Absent` is "on the roll, not in the vehicle".** A girl
+- **`CrewCondition::Absent` is "on the roll, not in the vehicle".** A cadet
   still recovering does not deploy (`BattleState::who_deploys`, read once at
   spawn). Three things about it are load-bearing:
   - **Her seat leaves the substance reckoning entirely** — neither numerator
@@ -238,7 +238,7 @@ because both are mostly *words* and words look like they belong in the UI.
     as one already shot up, and every withdraw threshold and AI kill estimate
     in the game would price it that way.
   - **She stays in `Unit::crew`.** The campaign takes the crew list back at
-    the end of the battle, so a girl filtered out of it here is a girl deleted
+    the end of the battle, so a cadet filtered out of it here is a cadet deleted
     from her tank for good.
   - **A vehicle nobody fit can crew goes out with the walking wounded.** The
     campaign has no replacement pool, and a crewless vehicle is one nothing
@@ -257,13 +257,22 @@ because both are mostly *words* and words look like they belong in the UI.
   crew model evaporated at the door for every vehicle that survived.
 - **The casualty numbers are `casualties` in `mod.json`** (`data::Casualties`,
   one-in-effect like `scale` and `balance`). A harsh campaign is a mod.
-- **One girl, one seat.** `OverworldState::from_map` enlists each character
+- **One cadet, one seat.** `OverworldState::from_map` enlists each character
   once per academy; a map that names her again crews that vehicle
   anonymously, and `MapFile::validate_into` warns with the count. `frontier`
-  spreads ten characters over eighteen vehicles and currently trips this ten
-  times — the warnings are the content problem being reported, not a
-  regression. Fixing the content is a fiction decision (see DIRECTION.md);
-  do not "fix" it by letting one girl crew three tanks again.
+  used to spread ten characters over eighteen vehicles and trip this ten
+  times; the base mod now ships forty-nine and every seat in the campaign is
+  filled, which
+  `every_seat_in_the_campaign_belongs_to_a_cadet_of_her_own` pins. Two things
+  follow. Do not "fix" a future warning by letting one cadet crew three tanks
+  again — the deduplication is a safety net, not a licence. And **a short crew
+  is not cosmetic**: substance counts people aboard, so a partly-named medium
+  tank dies about twice as fast as the identical anonymous-crewed one, which
+  is why the campaign fills its seats and why an empty one now reliably means
+  `CrewCondition::Absent`.
+  **`river_crossing` still carries the old ten and its partial crews**, on
+  purpose: it is the determinism baseline, so crewing it up means regenerating
+  the snapshot. Tracked in TODO.
 - **A battle never enlists anybody into an academy.** The anonymous crew a
   crewless vehicle gets is stamped into the *battle's* copy of the roster, so
   its handles mean nothing to the campaign; `apply_battle_result` drops any

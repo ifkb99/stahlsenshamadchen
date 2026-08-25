@@ -91,7 +91,7 @@ impl Evaluator {
         // not being asked. The sum above is in substance points, an absolute
         // quantity, so five points of expected damage read exactly the same to
         // a fresh heavy tank as to a battle taxi with a platoon in the back
-        // and one girl still on her feet. Every unit on the field weighed
+        // and one cadet still on her feet. Every unit on the field weighed
         // danger by the size of the shell rather than by what the shell would
         // take from her.
         //
@@ -152,7 +152,7 @@ impl Evaluator {
             let stake = 1.0 + riding as f32 / left;
             (fragility * stake).min(MAX_EXPOSURE)
         };
-        // Condition replaces the hit-point fraction: girls and modules
+        // Condition replaces the hit-point fraction: cadets and modules
         // remaining over the full complement. A crew that has taken wounds
         // and lost gear grows cautious by exactly the machinery that used
         // to read a shrinking pool.
@@ -367,7 +367,7 @@ impl Evaluator {
         // doctrine looks for a way out — so a high one is stubborn, which is
         // why massed armour sits at 0.85 and elastic defence at 0.45. The
         // crossing point is therefore `1 - threshold` of remaining condition
-        // (girls and modules over the full complement, now that there are no
+        // (cadets and modules over the full complement, now that there are no
         // hit points), and
         // wanting out rises from nothing there to everything at destruction.
         // Getting this the wrong way round makes the stubborn doctrine the
@@ -590,7 +590,7 @@ impl Evaluator {
         let mut ours = 0.0;
         let mut theirs = 0.0;
         for unit in state.alive_units() {
-            // Substance points — girls and module hits still aboard — are
+            // Substance points — cadets and module hits still aboard — are
             // the material currency now that hit points are gone. The
             // absolute scale differs from the old pool; only the ratio
             // below ever mattered.

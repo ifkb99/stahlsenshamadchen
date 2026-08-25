@@ -29,7 +29,7 @@ Developer and modder material. Useful in the encyclopedia later under a
 - [Architecture](reference/architecture.md) — crate layout and sim design
 - [Modding](reference/modding.md) — mods, maps, and campaign scripts
 - [Rendering](reference/rendering.md) — pixel-perfect isometric hexes
-- [Cores, Training and Traits](reference/girls.md) — how a girl's abilities
+- [Cores, Training and Traits](reference/cadets.md) — how a cadet's abilities
   are derived, and the licence she has to fail an order
 - [Tone and Art Direction](reference/tone.md) — what the look has already
   committed to, and what is still open

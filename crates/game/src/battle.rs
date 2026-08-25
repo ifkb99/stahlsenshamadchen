@@ -19,7 +19,7 @@ use tactics_core::battle::{
 use tactics_core::map::{ObjectiveKind, UnitPlacement};
 use tactics_core::overworld::ArmyId;
 use tactics_core::overworld::{ArmyMission, ArmyUnit, CrewLoss};
-use tactics_core::roster::{GirlId, Roster};
+use tactics_core::roster::{CadetId, Roster};
 
 /// One army committed to a field battle.
 #[derive(Clone)]
@@ -42,7 +42,7 @@ pub enum PendingBattle {
     /// two can take part: neighbours on either side may reinforce.
     Field {
         map_id: String,
-        /// The campaign's girls, so the crews that fight are the same people
+        /// The campaign's cadets, so the crews that fight are the same people
         /// who walk away from it.
         roster: Arc<Roster>,
         /// The army that started it, and the one that was attacked. These
@@ -65,7 +65,7 @@ pub struct BattleOutcome {
     /// Both sides withdrew intact rather than one being destroyed.
     pub stalemate: bool,
     pub survivors: Vec<(ArmyId, Vec<ArmyUnit>)>,
-    /// Girls who were aboard a vehicle that was destroyed. What became of
+    /// Cadets who were aboard a vehicle that was destroyed. What became of
     /// them is the campaign's decision, not the battle's.
     pub losses: Vec<CrewLoss>,
 }
@@ -395,10 +395,10 @@ struct FormationHighlight;
 
 /// The formation marker's colour: violet, because it belongs to neither
 /// side's palette nor to the amber of ground worth taking. It says "these are
-/// the girls you are talking to", which is not a fact about the map.
+/// the cadets you are talking to", which is not a fact about the map.
 const FORMATION_MARKER: Color = Color::srgba(0.65, 0.5, 1.0, 0.5);
 
-/// The same marker under a girl who cannot hear a word of it. Kept at the
+/// The same marker under a cadet who cannot hear a word of it. Kept at the
 /// violet's weight and swung to red rather than made a new symbol: it is the
 /// *same* fact — she is in the formation you are commanding — with the one
 /// thing that matters about her tonight said in the colour of a warning.
@@ -644,7 +644,7 @@ fn setup_battle(
             let file = registry.map(map_id).expect("field battle map exists");
             let map = tactics_core::map::HexMap::from_map_file(file).expect("map parses");
             let (placements, crews, origins) = deploy(registry, &map, forces, *attacker_side);
-            // The campaign's own roster, so these are the same girls who will
+            // The campaign's own roster, so these are the same cadets who will
             // carry whatever happens here back out again.
             let state = BattleState::from_placements(
                 registry,
@@ -873,7 +873,7 @@ fn deploy(
     map: &tactics_core::map::HexMap,
     forces: &[BattleForce],
     attacker_side: u8,
-) -> (Vec<UnitPlacement>, Vec<Vec<GirlId>>, Vec<ArmyId>) {
+) -> (Vec<UnitPlacement>, Vec<Vec<CadetId>>, Vec<ArmyId>) {
     // Tiles a vehicle can actually sit on, nearest edge first. Taking spots
     // in this order lets a side deploy as deep inland as it needs to, so
     // three armies fit where one used to.
@@ -950,7 +950,7 @@ fn deploy(
                 if leads {
                     led.push(formation.clone().expect("leads implies a formation"));
                 }
-                // The crew travels alongside as girl handles rather than in
+                // The crew travels alongside as cadet handles rather than in
                 // the placement: a `UnitPlacement` names crew by definition
                 // id, which is the thing this whole refactor is getting away
                 // from.
@@ -1007,7 +1007,7 @@ fn spawn_unit_sprite(commands: &mut Commands, art: &ArtCache, id: UnitId, side: 
                 UnitBadge(id),
             ));
             // Spawned for everybody and shown for the few, because command
-            // passes: the girl who inherits a formation mid-battle needs the
+            // passes: the cadet who inherits a formation mid-battle needs the
             // wedge to appear over her without anything spawning a sprite in
             // the middle of a round. `sync_units` reads `Formation.leader`
             // every frame, so there is no event to miss.
@@ -1370,7 +1370,7 @@ fn pump_events(
                     log.push(format!("Enemy spotted: {}", name(*unit)));
                 }
             }
-            // Said in the log, because a girl doing something other than what
+            // Said in the log, because a cadet doing something other than what
             // she was told has to be attributable or it reads as a bug.
             BattleEvent::MoraleChanged { unit, rung, obeys } => {
                 let who = battle
@@ -1401,11 +1401,11 @@ fn pump_events(
                     name(*unit)
                 ));
             }
-            BattleEvent::CrewHit { unit, girl, out } => {
+            BattleEvent::CrewHit { unit, cadet, out } => {
                 let who = battle
                     .state
                     .roster
-                    .get(*girl)
+                    .get(*cadet)
                     .map(|g| g.name.clone())
                     .unwrap_or_else(|| "somebody".into());
                 // A platoon's leaders have no station to slump at: they are on
@@ -1893,7 +1893,7 @@ fn handle_input(
     }
 
     // M = mount: the selected foot unit boards the friendly transport under
-    // the cursor. Deliberately the same grammar as `A` — pick your girl,
+    // the cursor. Deliberately the same grammar as `A` — pick your cadet,
     // point at the thing you mean, press the key — because "board that
     // halftrack" and "shoot that tank" are the same kind of sentence and the
     // player should not have to learn a second idiom for it. `Order::Mount`
@@ -1928,7 +1928,7 @@ fn handle_input(
     // U = unload, read two ways that can never be confused for each other: a
     // passenger gets off, and a loaded carrier puts everybody off. It is one
     // `Dismount` per passenger rather than an order aimed at the vehicle,
-    // because the order is about a girl deciding to be on the ground — a
+    // because the order is about a cadet deciding to be on the ground — a
     // carrier is not a thing that can be told to empty itself.
     if keys.just_pressed(KeyCode::KeyU) {
         if let Some(unit) = battle.selected {
@@ -2033,7 +2033,7 @@ fn handle_input(
 ///
 /// The player's direct orders travel as [`Order::Radio`] rather than
 /// `SetMove`/`SetFire`, because they are the *commander* speaking and a
-/// commander needs a wire. The engine decides what that costs: a girl on the
+/// commander needs a wire. The engine decides what that costs: a cadet on the
 /// net gets her orders instantly and identically to before, one who is not
 /// has them held at the radio and delivered when she can hear again. Nothing
 /// is gated here any more — the refusal this function used to print became an
@@ -2522,7 +2522,7 @@ fn sync_units(
 
     for (bar, mut sprite, mut transform) in &mut widgets.bars {
         if let Some(unit) = state.unit(bar.0) {
-            // Condition — girls and modules over the full complement — is
+            // Condition — cadets and modules over the full complement — is
             // what the bar shows now that hit points are gone. Same bar,
             // honest quantity.
             let frac = state.condition(&mods.0, unit).clamp(0.0, 1.0);
@@ -2908,7 +2908,7 @@ fn update_panel(
     text.0 = "Hover a tile for terrain\n\nLMB: select / set route\nA: engage hovered enemy\nB: blind fire a tile\nV: hold and watch\nM: mount the hovered ride\nU: unload (her, or all aboard)\nC: clear orders\nEnter: commit the round\nF: pick a formation\nQ/E: rotate view".into();
 }
 
-/// The formation panel: who these girls are, what they were told to do, what
+/// The formation panel: who these cadets are, what they were told to do, what
 /// is still on its way to them, and which of them can no longer hear it.
 ///
 /// The mission is spelled out in words rather than as an enum name, because
@@ -3015,7 +3015,7 @@ fn format_formation(
             });
         }
         // A passenger is in the formation and not on the map, which reads as
-        // a missing girl unless the roll call says where she went.
+        // a missing cadet unless the roll call says where she went.
         if let Some(carrier) = unit.aboard.and_then(|c| state.units.get(c.index())) {
             tags.push(format!("riding in {}", carrier.name));
         }
@@ -3207,7 +3207,7 @@ fn set_portrait(
         .crew
         .first()
         .and_then(|id| state.roster.get(*id))
-        .map(|girl| girl.def.as_str())
+        .map(|cadet| cadet.def.as_str())
         .unwrap_or(&unit.vehicle);
     if let Some(handle) = art.portraits.get(key) {
         image.image = handle.clone();
@@ -3336,7 +3336,7 @@ fn format_unit(
             v.armor.front, v.armor.side, v.armor.rear
         ));
         // The crewed figures, not the vehicle's paper ones: what this unit
-        // actually does with these girls aboard is the interesting number,
+        // actually does with these cadets aboard is the interesting number,
         // and it is the only place the player can see the crew bonus land.
         let speed = tactics_core::battle::move_points(
             registry,
@@ -3372,11 +3372,11 @@ fn format_unit(
     }
     lines.push("Crew:".into());
     for (seat, c) in unit.crew.iter().enumerate() {
-        if let Some(girl) = state.roster.get(*c) {
+        if let Some(cadet) = state.roster.get(*c) {
             // Her strongest training, named. Words rather than a stat block:
-            // girls read as people when described and as units when
+            // cadets read as people when described and as units when
             // tabulated, and the exact numbers belong behind a toggle.
-            let mut best: Vec<(&String, &i32)> = girl.skills.iter().collect();
+            let mut best: Vec<(&String, &i32)> = cadet.skills.iter().collect();
             best.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
             let summary = best
                 .iter()
@@ -3401,9 +3401,9 @@ fn format_unit(
                 _ => "",
             };
             if summary.is_empty() {
-                lines.push(format!("  {}{state_tag}", girl.name));
+                lines.push(format!("  {}{state_tag}", cadet.name));
             } else {
-                lines.push(format!("  {} ({summary}){state_tag}", girl.name));
+                lines.push(format!("  {} ({summary}){state_tag}", cadet.name));
             }
         }
     }
@@ -3562,9 +3562,9 @@ fn finish_battle(
         // campaign rule.
         let mut losses = Vec::new();
         for unit in battle.state.lost_units() {
-            for girl in &unit.crew {
+            for cadet in &unit.crew {
                 losses.push(CrewLoss {
-                    girl: *girl,
+                    cadet: *cadet,
                     vehicle: unit.vehicle.clone(),
                     killed_by: unit.last_hit_by,
                     found: None,
@@ -3573,7 +3573,7 @@ fn finish_battle(
         }
         // ...and then everyone who was hurt at her station in a vehicle that
         // came home. This half used to be thrown away at the door: the
-        // battle tracked each girl's condition seat by seat all fight, and
+        // battle tracked each cadet's condition seat by seat all fight, and
         // then the only casualties the campaign ever heard about were the
         // crews of destroyed vehicles. A gunner knocked out on the first
         // round of a battle her side won was fit again by the time the
@@ -3583,7 +3583,7 @@ fn finish_battle(
         // `Absent` is skipped for the reason it exists: she was in the
         // infirmary before this battle started and is not a casualty of it.
         for unit in battle.state.surviving_units() {
-            for (seat, girl) in unit.crew.iter().enumerate() {
+            for (seat, cadet) in unit.crew.iter().enumerate() {
                 let found = unit.crew_state.get(seat).copied();
                 if !matches!(
                     found,
@@ -3592,7 +3592,7 @@ fn finish_battle(
                     continue;
                 }
                 losses.push(CrewLoss {
-                    girl: *girl,
+                    cadet: *cadet,
                     vehicle: unit.vehicle.clone(),
                     killed_by: unit.last_hit_by,
                     found,

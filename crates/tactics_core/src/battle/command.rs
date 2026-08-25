@@ -317,7 +317,7 @@ pub struct Formation {
     /// Which side this formation belongs to. Every member agrees with it —
     /// map validation refuses a formation spanning two sides.
     pub side: u8,
-    /// The girl in charge: the member whose placement said `leads`, else the
+    /// The cadet in charge: the member whose placement said `leads`, else the
     /// first member in declaration order (seniority the map author controls).
     ///
     /// `Option` because a formation can be *left* leaderless — every member
@@ -325,12 +325,12 @@ pub struct Formation {
     /// because a fresh one ever is. A formation with members always starts
     /// with one, and keeps one for as long as anybody is still on the field.
     pub leader: Option<UnitId>,
-    /// The girl who was in command when the battle opened.
+    /// The cadet who was in command when the battle opened.
     ///
     /// Kept beside [`Self::leader`] rather than derived from it because
     /// succession *overwrites* the current leader within a tick of her death,
     /// and a scenario's [`crate::map::LossTrigger::LeaderLost`] is a question
-    /// about the girl the map named — "is the commanding officer dead" — not
+    /// about the cadet the map named — "is the commanding officer dead" — not
     /// about whoever holds the job now. Without this, a decapitation condition
     /// would quietly retarget itself onto the successor the moment it should
     /// have fired.
@@ -554,7 +554,7 @@ pub struct CommandState {
     /// became hardware: `out_of_contact` is the first, this is the second.
     #[serde(default)]
     voiceless: Vec<Vec<UnitId>>,
-    /// Radioed orders that have not reached the girl they were meant for,
+    /// Radioed orders that have not reached the cadet they were meant for,
     /// in unit-id order.
     ///
     /// Only [`crate::battle::Order::Radio`] ever fills this — the commander's
@@ -672,7 +672,7 @@ impl CommandState {
         }
     }
 
-    /// Every radioed order still waiting for its girl, in unit-id order.
+    /// Every radioed order still waiting for its cadet, in unit-id order.
     /// What the formation panel reads to say "orders waiting" beside her name.
     pub fn waiting(&self) -> &[(UnitId, WaitingOrders)] {
         &self.waiting
@@ -862,7 +862,7 @@ impl BattleState {
         }
     }
 
-    /// Hand command to the next girl in the order of battle wherever the
+    /// Hand command to the next cadet in the order of battle wherever the
     /// leader is off the field.
     ///
     /// **Ungated, and that is the point.** Every other rule in this module
@@ -885,7 +885,7 @@ impl BattleState {
     /// The successor is worse at the job and no code here makes her so. Every
     /// price the chain of command charges — [`BattleState::mission_delay`] and
     /// the contact radius below — is already read off *the current leader's*
-    /// crew, at the place she is standing, so promoting a girl with a weaker
+    /// crew, at the place she is standing, so promoting a cadet with a weaker
     /// `command` skill lengthens her formation's latencies and promoting one
     /// with weaker `signals` shrinks its net, for free and for the right
     /// reason. Building a separate penalty on top would be pricing the same
@@ -1085,7 +1085,7 @@ impl BattleState {
     ///
     /// A formation with nobody left to speak — every member dead or gone — is
     /// entirely out of contact. That is now the only way to reach that state:
-    /// [`Self::pass_command`] runs first and hands the net to the next girl,
+    /// [`Self::pass_command`] runs first and hands the net to the next cadet,
     /// so a leader dying costs her formation a tick of nothing rather than the
     /// rest of the battle in silence.
     ///
@@ -1115,7 +1115,7 @@ impl BattleState {
         // `out_of_contact`, and standing orders soldier on where it fails.
         // Upward, along the reversed edges, it answers "whose REPORTS can
         // reach command" — that is `voiceless`, and the picture learns
-        // nothing from a girl who cannot speak: a receiver-only scout must
+        // nothing from a cadet who cannot speak: a receiver-only scout must
         // flag her sighting to somebody with a set, or it dies with her
         // silence. Roots, queues and candidate scans are all in unit-id
         // order, so neither set nor any event can depend on a hash.

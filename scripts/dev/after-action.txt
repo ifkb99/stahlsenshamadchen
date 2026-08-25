@@ -117,7 +117,7 @@ key Enter
 until idle 90
 
 # ...and back to the campaign, where the bill is waiting. This is the shot
-# this tour exists for: named girls, what happened to each, and a campaign
+# this tour exists for: named cadets, what happened to each, and a campaign
 # that has stopped to say so instead of narrating it past in among the tile
 # income at three lines a second.
 until waiting 180

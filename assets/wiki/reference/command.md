@@ -9,7 +9,7 @@ category: Reference
 The plan for command as a system: who decides, how decisions travel, and what
 happens when they do not arrive. This is the design and build order; the
 gameplay wish list it satisfies lives in TODO.md under Chain of Command, and
-the girl-model machinery it stands on is described in [girls](girls.md).
+the cadet-model machinery it stands on is described in [cadets](cadets.md).
 
 The short version: **orders become things that exist in the world.** Today an
 order is a free action from an all-seeing side onto any of its units. After
@@ -32,7 +32,7 @@ build on them rather than hedge:
   today's game.
 - **Losing a commander degrades, with succession.** Her formation takes a
   morale hit and falls back on standing orders and initiative until the
-  next-senior girl takes over, worse at it. A scenario *may* declare the
+  next-senior cadet takes over, worse at it. A scenario *may* declare the
   command unit a loss condition in map data; the engine never hard-codes it.
 - **Formations are data.** A map or army file declares them: members, a
   leader, optionally a doctrine of their own. A side that declares none is
@@ -56,12 +56,12 @@ build on them rather than hedge:
   refuse to pay it.
 - **Permadeath is the default** (alongside delegation). `CasualtyRules`
   already models it; the default flips once the wound system has teeth —
-  today nothing stops a wounded girl deploying, and a default-on permadeath
+  today nothing stops a wounded cadet deploying, and a default-on permadeath
   before the muster screen shows the stakes would be silent cruelty. The
   gentle mod turning it off remains a first-class way to play.
 - **The enemy AI is a character.** Doctrine already makes two sides fight
   differently; the brain should go further and be *somebody* — the enemy
-  commander is a girl in the roster, and her doctrine, initiative and traits
+  commander is a cadet in the roster, and her doctrine, initiative and traits
   are the knobs her side's brain runs on. The theater rule: her preferences
   must be visible enough to learn ("Ravenna always leads with her recon"),
   because an opponent whose character shows in her maneuvers is worth ten
@@ -80,7 +80,7 @@ than rewrite:
 - **`DoctrineDef.initiative` / `delegation`** are declared, defaulted, and
   deliberately unread. They are the doctrine half of "acting without orders"
   and "devolving decisions".
-- **The girl model.** `command` (Presence, Intellect, Charm) is how an order
+- **The cadet model.** `command` (Presence, Intellect, Charm) is how an order
   lands; `signals` (Intellect, Perception) is how it travels; `discipline`
   (Will, Intellect) is whether it is followed under pressure. The `commander`
   and `radio` roles exist. Every check arrives at a place and time, which is
@@ -221,12 +221,12 @@ scores exactly as now, which is the additivity hinge and gets its own pinned
 test.
 
 The brain, meanwhile, is where the enemy becomes a person. A commander brain
-is constructed *for a girl* — the side names its commanding officer, and her
+is constructed *for a cadet* — the side names its commanding officer, and her
 doctrine, her `initiative`, and eventually her traits are the parameters the
 brain runs on. That is nearly free given the model (she is a
-[girls](girls.md) instance like any other, and checks already arrive with
+[cadets](cadets.md) instance like any other, and checks already arrive with
 context) and it is what "the AI plays into the commander's character" means
-concretely: swap the girl and the same brain fights differently, in ways a
+concretely: swap the cadet and the same brain fights differently, in ways a
 player can learn and exploit. The theater half is a legibility duty, not an
 algorithm: her signature moves have to be *visible* maneuvers.
 
@@ -335,7 +335,7 @@ When the leader's vehicle is destroyed or she is out of the fight:
   leader *is*.
 - A scenario that wants decapitation stakes declares it: `loss_conditions` in
   map data, each naming a side, one of its formations, and whether the trigger
-  is `leader_lost` (the girl who opened the battle in command is dead — dead,
+  is `leader_lost` (the cadet who opened the battle in command is dead — dead,
   not withdrawn) or `wiped` (every member dead or gone, and at least one of
   them dead, so a clean withdrawal is not a decapitation). `check_victory`
   reads them before the score, because a battle whose command is destroyed is
@@ -355,9 +355,9 @@ command event says who, why, and how long.
 
 Enemy contacts render from the command picture: live where a report is fresh,
 a ghost marker at last known position where it is not, with the reporting
-girl and the report's age a hover away. The log carries the reports
+cadet and the report's age a hover away. The log carries the reports
 themselves — "Kesselring reports armor at the bridge, two minutes ago" — which
-is where the battlefield's serious register and the girls being people meet
+is where the battlefield's serious register and the cadets being people meet
 in one line.
 
 A devtools script (`scripts/dev/command-tour.txt`) exercises the panel so the
@@ -385,13 +385,13 @@ warmth — deliberately comes after it. Three boundary decisions, so nobody
 re-litigates them mid-chunk: the first campaign ships **without the
 requisition loop** — you fight with what you start with, and the interest
 comes from the map, the missions and the commanders, not the economy; **every
-girl is a placeholder** for now, character writing waits for the systems to
+cadet is a placeholder** for now, character writing waits for the systems to
 be worth writing into; and **campaign length is deliberately unnumbered** —
 gameplay gets solidified first, then campaigns are sized around the session
 time that gameplay turns out to want, not the other way round. That deferral is safe under exactly one
 condition, so it is stated here as a rule rather than a hope: **every event
 must keep carrying the story** — who, what, why, in the event itself, never
-reconstructed after the fact. `OrderRefused` names the girl and her rung;
+reconstructed after the fact. `OrderRefused` names the cadet and her rung;
 `ContactReported` names the reporter and her state; `CommandPassed` names who
 took over. As long as that discipline holds, the recap screen and the barks
 are *formatting* deferred, not archaeology deferred — the `playthrough`
@@ -467,9 +467,9 @@ machinery** — it runs whether or not a mod declares a `command` block, because
 who leads a platoon is a fact about the platoon; only the radius and the
 latency belong to the radio. **The successor is worse at it for free**: every
 price the chain charges is already read off the *current* leader's crew, so
-promoting a weaker girl lengthens her formation's latencies and shrinks its
+promoting a weaker cadet lengthens her formation's latencies and shrinks its
 net with no second mechanism. And the founding leader is kept beside the
-current one, because a scenario's `leader_lost` condition asks about the girl
+current one, because a scenario's `leader_lost` condition asks about the cadet
 the map named, not about whoever holds the job now. This was the one
 deliberate baseline regeneration of the chunk: succession replaced the
 `OutOfContact` cascade a dead leader used to cause with a `CommandPassed` and,
@@ -916,7 +916,7 @@ OODA at the formation-and-side level: Observe is the command picture, Orient
 and Decide are the brain, Act is the mission stream — and what training buys
 is **cadence**. Today the brain reviews missions exactly once per round,
 every round, whatever her skill. After this: the review period is priced by
-the commanding girl's `command` skill and her doctrine's `initiative` (the
+the commanding cadet's `command` skill and her doctrine's `initiative` (the
 Flashpoint pulse, in this engine's currency), with **interrupts** for events
 that would wake any commander — a formation beaten past its threshold, a
 leader lost, a contact reported in a formation's path. Between reviews the
@@ -992,9 +992,9 @@ prices, concretely: how many ticks pass between an ambush springing and the
 crew doing something about it; between a new enemy appearing mid-round and
 the gun traversing to meet it; between orders delivered mid-battle and the
 vehicle acting on them. A crack crew notices at tick four and acts at tick
-six; a green one at tick nine, or not at all — girls.md's oldest sentence,
+six; a green one at tick nine, or not at all — cadets.md's oldest sentence,
 finally with an engine under it. Deviation — the hothead firing when told to
-hold, full latitude and its traits — follows on this machinery (girls.md
+hold, full latitude and its traits — follows on this machinery (cadets.md
 slice 5) rather than preceding it.
 
 Additivity: zero coefficients collapse every response to instant — today's
@@ -1052,7 +1052,7 @@ armour under command went 12–21–3 → 14–20–2. Round resolution held at
 
 What remains of 10c: the crew paying reaction time on orders *delivered*
 mid-battle (today a delivered order is acted on the tick it lands), and
-deviation — the hothead firing when told to hold — which is girls.md
+deviation — the hothead firing when told to hold — which is cadets.md
 slice 5 on top of this machinery.
 
 ## Open questions
@@ -1065,7 +1065,7 @@ Carried deliberately, none blocking chunks 1–2:
   how "quick without being worse" stays honest while the target floats.
 - **When to flip the permadeath default in code.** The decision is made
   (default on); the flip waits for the wound system to have teeth — an army
-  that refuses to field a wounded girl, or a muster screen that shows the
+  that refuses to field a wounded cadet, or a muster screen that shows the
   choice — plus a pass over `resolve_crew_fate`'s first-draft numbers, since
   those probabilities were tuned for a game where death was opt-in.
 - ~~**How a ghost contact renders.**~~ Settled in chunk 7, and cheaply: the
@@ -1086,7 +1086,7 @@ Carried deliberately, none blocking chunks 1–2:
   The radio unit will force this decision in chunk 7.
 - ~~**`leads` succession order.**~~ Settled in chunk 6: declaration order,
   full stop. It is authorable, it cannot depend on a hash, and "the senior
-  girl takes over" is a rule a player can predict — which the skill-based
+  cadet takes over" is a rule a player can predict — which the skill-based
   fallback, chosen by numbers she cannot see, would not be. A scenario that
   wants a different heir writes her formation down in a different order.
 - **What the balance target is.** After chunk 3 the doctrines fight through

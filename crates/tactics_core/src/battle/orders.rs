@@ -54,7 +54,7 @@ pub enum Order {
     SetFire { unit: UnitId, fire: FireIntent },
     /// The commander's own order to one crew, carried by the wire.
     ///
-    /// Identical to [`Self::SetMove`] plus [`Self::SetFire`] for a girl who
+    /// Identical to [`Self::SetMove`] plus [`Self::SetFire`] for a cadet who
     /// can hear it, and *held at the radio* for one who cannot: it waits in
     /// her formation's queue and is delivered at the first planning phase she
     /// is back in contact for.
@@ -63,7 +63,7 @@ pub enum Order {
     /// point of it, and it is a distinction about **who is speaking** rather
     /// than about what is said. A planner issuing `SetMove` is a crew's own
     /// judgment about her own tank — she does not need to be radioed her own
-    /// decision, and gating it on contact would make a cut-off girl freeze
+    /// decision, and gating it on contact would make a cut-off cadet freeze
     /// instead of soldiering on. This is the *commander* talking, and a
     /// commander who cannot be heard has not given an order yet. The engine
     /// cannot tell one caller from another, so the caller says which it is by
@@ -211,14 +211,14 @@ pub enum Event {
         unit: UnitId,
         weapon: String,
     },
-    /// A girl aboard was hit. Named — the who/what/why rule at its most
+    /// A cadet aboard was hit. Named — the who/what/why rule at its most
     /// important, since permadeath without a name is just a number going
     /// down. `out` false is wounded and still at her station; `out` true is
     /// the battle's whole verdict, with dead-or-unconscious resolved by the
     /// roster when the shooting stops.
     CrewHit {
         unit: UnitId,
-        girl: crate::roster::GirlId,
+        cadet: crate::roster::CadetId,
         out: bool,
     },
     /// Something inside (or, for blast against the hull, outside) broke.
@@ -235,7 +235,7 @@ pub enum Event {
         unit: UnitId,
     },
     /// The crew has had enough and left the vehicle. A wreck for scoring —
-    /// the side has lost a tank — but the girls are walking home, which is
+    /// the side has lost a tank — but the cadets are walking home, which is
     /// a different day entirely from burning in it, and the log must never
     /// let the two read alike.
     Abandoned {
@@ -329,7 +329,7 @@ pub enum Event {
     OutOfContact {
         unit: UnitId,
     },
-    /// A radioed order could not reach this girl and is waiting at the radio
+    /// A radioed order could not reach this cadet and is waiting at the radio
     /// until it can. She is still driving on her last orders in the meantime.
     ///
     /// Said out loud for exactly the reason the refusal it replaces was: an
@@ -352,7 +352,7 @@ pub enum Event {
         unit: UnitId,
     },
     /// Somebody in contact laid eyes on an enemy and the report reached the
-    /// commander: `unit` is the enemy, `by` is the girl who filed it, `at` is
+    /// commander: `unit` is the enemy, `by` is the cadet who filed it, `at` is
     /// where she says it was. This is the upward half of command friction —
     /// what the *side's* fog sees and what its commander has been *told* are
     /// different pictures, and this event is the only bridge between them. A
@@ -363,7 +363,7 @@ pub enum Event {
         by: UnitId,
         at: Hex,
     },
-    /// A formation's leader is off the field and the next girl in its order of
+    /// A formation's leader is off the field and the next cadet in its order of
     /// battle has taken over: `from` is who was lost, `to` is who now
     /// commands.
     ///
@@ -486,7 +486,7 @@ impl BattleState {
                 // Not sending is free, so taking back what has not gone out
                 // needs no contact at all: the message never leaves the radio.
                 self.command.drop_orders(*unit);
-                // What it cannot do is reach *her*. A girl off the net is
+                // What it cannot do is reach *her*. A cadet off the net is
                 // following her last orders and there is nobody to tell her to
                 // stop — clearing her intent here would be the commander
                 // countermanding an order down a wire she has just been told
@@ -563,7 +563,7 @@ impl BattleState {
         }
     }
 
-    /// Whether a girl can currently hear her chain of command.
+    /// Whether a cadet can currently hear her chain of command.
     ///
     /// True for a unit in no formation, for a unit who is not there at all,
     /// and — because `out_of_contact` is only ever filled where a mod declares
@@ -653,7 +653,7 @@ impl BattleState {
         Ok(vec![Event::OrdersWaiting { unit: id }])
     }
 
-    /// Hand out every radioed order whose girl is back on the net.
+    /// Hand out every radioed order whose cadet is back on the net.
     ///
     /// Run at the top of a round, once intents have been cleared, because
     /// **delivery is a planning-phase event**: WEGO's bargain is that
@@ -674,7 +674,7 @@ impl BattleState {
         let mut undelivered = Vec::new();
         for (unit, orders) in self.command.take_waiting() {
             // Dead or driven off the map: dropped without a word. An order to
-            // a girl who is not coming back is not news, it is an epitaph.
+            // a cadet who is not coming back is not news, it is an epitaph.
             if self.unit(unit).is_none() {
                 continue;
             }
@@ -915,7 +915,7 @@ impl BattleState {
     /// Everything about a fire order that can be judged when it is given.
     ///
     /// Split out of [`Self::set_fire`] so a radioed order can be checked
-    /// before it is queued: an order held for a girl who cannot hear it has to
+    /// before it is queued: an order held for a cadet who cannot hear it has to
     /// have been legal when it was given, or the queue becomes a way to smuggle
     /// a shot at a friendly past the rules by being out of contact at the time.
     fn check_fire(
@@ -1342,7 +1342,7 @@ impl BattleState {
             // She gets to try to hold. Discipline is the skill that resists,
             // rolled three-dice against her level, so training buys reliability
             // rather than a coin flip — and disobedience becomes something a
-            // player can train away instead of a fact about the girl.
+            // player can train away instead of a fact about the cadet.
             let level = self.unit(id).map(|u| {
                 self.roster.crew_skill(
                     registry,

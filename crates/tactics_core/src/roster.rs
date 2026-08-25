@@ -1,13 +1,13 @@
-//! Girls as instances rather than definitions.
+//! Cadets as instances rather than definitions.
 //!
 //! A [`crate::data::CharacterDef`] is mod data: a name, a portrait, a bio and
 //! the stats someone *starts* with. It is immutable and shared, which is right
 //! for content and wrong for a person. Until this module existed a unit's crew
 //! was `Vec<String>` — keys into that static table — so there was nowhere to
 //! record that Anka has been in nine battles, is carrying a wound, and has
-//! learned to shoot better than the girl she was defined as.
+//! learned to shoot better than the cadet she was defined as.
 //!
-//! [`Girl`] is that missing object and [`Roster`] owns them. The distinction
+//! [`Cadet`] is that missing object and [`Roster`] owns them. The distinction
 //! matters in three places at once, which is why it is worth doing before any
 //! of them are built:
 //!
@@ -21,23 +21,23 @@
 //!
 //! # Ownership, and why there is one roster rather than one per side
 //!
-//! Every girl in the world lives in a single [`Roster`] and carries the
-//! academy she belongs to in [`Girl::owner`]. The alternative — a roster per
-//! side — would make [`GirlId`] ambiguous without a side alongside it, which
+//! Every cadet in the world lives in a single [`Roster`] and carries the
+//! academy she belongs to in [`Cadet::owner`]. The alternative — a roster per
+//! side — would make [`CadetId`] ambiguous without a side alongside it, which
 //! would push side-indexing down into the battle layer for no gain.
 //!
 //! This shape is also the one a 4x mode wants. A campaign is a two-academy
-//! case of the same thing, so girls changing hands — recruited, poached,
+//! case of the same thing, so cadets changing hands — recruited, poached,
 //! captured, transferred between academies — is a field change here rather
 //! than a data migration later.
 //!
 //! # Death is a rule, not a fact of the model
 //!
-//! [`GirlStatus::Dead`] is only reachable when [`CasualtyRules::permadeath`]
+//! [`CadetStatus::Dead`] is only reachable when [`CasualtyRules::permadeath`]
 //! is on, which is a per-campaign option rather than something the engine
 //! decides. With it off, the worst a crew suffers is a long recovery.
 //!
-//! Note that [`GirlStatus::Lost`] is *not* death and never was: it means she
+//! Note that [`CadetStatus::Lost`] is *not* death and never was: it means she
 //! bailed out and could not reach friendly lines before the fighting stopped,
 //! and is making her own way back. It resolves on its own after a few days.
 
@@ -46,24 +46,24 @@ use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Stable handle to a girl in a [`Roster`].
+/// Stable handle to a cadet in a [`Roster`].
 ///
-/// Like [`crate::battle::UnitId`], entries are never removed — a girl who is
+/// Like [`crate::battle::UnitId`], entries are never removed — a cadet who is
 /// lost is marked, not deleted — so an id stays valid for the life of a
 /// campaign and can be stored in a save without a fixup pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct GirlId(pub u32);
+pub struct CadetId(pub u32);
 
-impl GirlId {
+impl CadetId {
     pub fn index(self) -> usize {
         self.0 as usize
     }
 }
 
-/// Whether a girl is available to crew a vehicle.
+/// Whether a cadet is available to crew a vehicle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum GirlStatus {
+pub enum CadetStatus {
     /// Fit to fight.
     Ready,
     /// Hurt, and out for `days` more campaign turns. The countdown is in
@@ -80,12 +80,12 @@ pub enum GirlStatus {
     Dead,
 }
 
-impl GirlStatus {
+impl CadetStatus {
     pub fn is_ready(self) -> bool {
         matches!(self, Self::Ready)
     }
 
-    /// Whether she will ever be available again. A wounded or lost girl is
+    /// Whether she will ever be available again. A wounded or lost cadet is
     /// coming back; a dead one is not.
     pub fn is_permanent(self) -> bool {
         matches!(self, Self::Dead)
@@ -105,14 +105,14 @@ impl GirlStatus {
 ///
 /// Deliberately a rule rather than a constant: Girls und Panzer is famously
 /// non-lethal and this game has an academy half that invests the player in
-/// specific girls, so permadeath is a decision a player (or a mode) makes,
+/// specific cadets, so permadeath is a decision a player (or a mode) makes,
 /// not one the engine makes for them.
 ///
 /// Off by default: the softer rule is the one that matches the genre, and a
 /// player who wants the stakes can opt in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct CasualtyRules {
-    /// When off, [`GirlStatus::Dead`] is unreachable and what would have been
+    /// When off, [`CadetStatus::Dead`] is unreachable and what would have been
     /// a death becomes a long recovery instead.
     pub permadeath: bool,
 }
@@ -126,14 +126,14 @@ pub enum CrewFate {
     Wounded {
         days: u32,
     },
-    /// Got out, but not back — see [`GirlStatus::Lost`].
+    /// Got out, but not back — see [`CadetStatus::Lost`].
     Lost {
         days: u32,
     },
     Killed,
 }
 
-impl From<CrewFate> for GirlStatus {
+impl From<CrewFate> for CadetStatus {
     fn from(fate: CrewFate) -> Self {
         match fate {
             CrewFate::Unharmed => Self::Ready,
@@ -144,10 +144,10 @@ impl From<CrewFate> for GirlStatus {
     }
 }
 
-/// One girl, as she is now rather than as she was defined.
+/// One cadet, as she is now rather than as she was defined.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Girl {
-    pub id: GirlId,
+pub struct Cadet {
+    pub id: CadetId,
     /// The [`CharacterDef`] she was stamped from. Portrait and bio are still
     /// read through this, since those do not change; stats are not, because
     /// they do.
@@ -157,7 +157,7 @@ pub struct Girl {
     /// thing the academy half of the game should be able to do.
     pub name: String,
     /// Which academy she belongs to, as a side index. Mutable on purpose:
-    /// girls changing hands is a thing a 4x mode does.
+    /// cadets changing hands is a thing a 4x mode does.
     pub owner: u8,
     /// Temperament, positional in the registry's core order. Slow to change.
     pub cores: Vec<i32>,
@@ -166,7 +166,7 @@ pub struct Girl {
     /// than to nothing.
     pub skills: HashMap<String, i32>,
     pub xp: u32,
-    pub status: GirlStatus,
+    pub status: CadetStatus,
     /// Battles survived. The crudest possible history, kept because it costs
     /// nothing and because "how many times have you done this" is the first
     /// question any progression or support system asks.
@@ -177,12 +177,12 @@ pub struct Girl {
     pub traits: Vec<String>,
 }
 
-impl Girl {
-    /// Stamp a new girl from a definition.
+impl Cadet {
+    /// Stamp a new cadet from a definition.
     ///
     /// Takes the registry because cores are positional and only it knows the
     /// order — which is the price of letting a mod decide what the cores are.
-    pub fn from_def(id: GirlId, owner: u8, def: &CharacterDef, registry: &DataRegistry) -> Self {
+    pub fn from_def(id: CadetId, owner: u8, def: &CharacterDef, registry: &DataRegistry) -> Self {
         Self {
             id,
             def: def.id.clone(),
@@ -192,7 +192,7 @@ impl Girl {
             skills: def.skills.clone(),
             traits: def.traits.clone(),
             xp: 0,
-            status: GirlStatus::Ready,
+            status: CadetStatus::Ready,
             battles: 0,
         }
     }
@@ -212,10 +212,10 @@ impl Girl {
 ///
 /// The bail-out case is the common one and the interesting one: most crews get
 /// out. Whether they get *back* is a separate question, which is what
-/// [`GirlStatus::Lost`] records.
+/// [`CadetStatus::Lost`] records.
 ///
 /// Takes the rng by reference so the caller owns determinism; the campaign
-/// resolves these in girl-id order.
+/// resolves these in cadet-id order.
 pub fn resolve_crew_fate(
     rules: CasualtyRules,
     table: &Casualties,
@@ -223,7 +223,7 @@ pub fn resolve_crew_fate(
     killed_by: Option<DamageType>,
     rng: &mut impl Rng,
 ) -> CrewFate {
-    // Chance in 100 that this girl is hurt at all, before safety is applied.
+    // Chance in 100 that this cadet is hurt at all, before safety is applied.
     let base_harm = match killed_by {
         Some(DamageType::Kinetic) => table.harm_kinetic,
         Some(DamageType::Explosive) => table.harm_explosive,
@@ -258,13 +258,13 @@ pub fn resolve_crew_fate(
     }
 }
 
-/// Decide what one girl takes home from a vehicle that came home with her.
+/// Decide what one cadet takes home from a vehicle that came home with her.
 ///
 /// The other half of [`resolve_crew_fate`], and the half that did not exist:
 /// until this function the only way a wound survived a battle was for the
 /// vehicle to be destroyed, so a gunner knocked out at her station in a tank
 /// that drove home was fit again by the time the campaign screen drew — the
-/// whole in-battle crew model evaporated at the door. Whether a girl is hurt
+/// whole in-battle crew model evaporated at the door. Whether a cadet is hurt
 /// is the battle's question and it has already answered it in
 /// [`crate::battle::CrewCondition`]; all that is left is how long it keeps
 /// her out.
@@ -301,10 +301,10 @@ pub fn resolve_station_fate(
     }
 }
 
-/// Every girl a side has, wounded and lost ones included.
+/// Every cadet a side has, wounded and lost ones included.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Roster {
-    girls: Vec<Girl>,
+    cadets: Vec<Cadet>,
 }
 
 impl Roster {
@@ -312,14 +312,14 @@ impl Roster {
         Self::default()
     }
 
-    /// Add a girl stamped from a definition, returning her handle.
-    pub fn enlist(&mut self, owner: u8, def: &CharacterDef, registry: &DataRegistry) -> GirlId {
-        let id = GirlId(self.girls.len() as u32);
-        self.girls.push(Girl::from_def(id, owner, def, registry));
+    /// Add a cadet stamped from a definition, returning her handle.
+    pub fn enlist(&mut self, owner: u8, def: &CharacterDef, registry: &DataRegistry) -> CadetId {
+        let id = CadetId(self.cadets.len() as u32);
+        self.cadets.push(Cadet::from_def(id, owner, def, registry));
         id
     }
 
-    /// Add a girl by definition id. `None` if the mod does not define her,
+    /// Add a cadet by definition id. `None` if the mod does not define her,
     /// which a caller building from map data should report rather than panic
     /// on — content can be removed by a mod at any time.
     pub fn enlist_from_registry(
@@ -327,46 +327,46 @@ impl Roster {
         registry: &DataRegistry,
         owner: u8,
         def_id: &str,
-    ) -> Option<GirlId> {
+    ) -> Option<CadetId> {
         registry.character(def_id).map(|def| {
             let def = def.clone();
             self.enlist(owner, &def, registry)
         })
     }
 
-    /// Every girl belonging to one academy, in id order.
-    pub fn of_side(&self, side: u8) -> impl Iterator<Item = &Girl> {
-        self.girls.iter().filter(move |g| g.owner == side)
+    /// Every cadet belonging to one academy, in id order.
+    pub fn of_side(&self, side: u8) -> impl Iterator<Item = &Cadet> {
+        self.cadets.iter().filter(move |g| g.owner == side)
     }
 
-    pub fn get(&self, id: GirlId) -> Option<&Girl> {
-        self.girls.get(id.index())
+    pub fn get(&self, id: CadetId) -> Option<&Cadet> {
+        self.cadets.get(id.index())
     }
 
-    pub fn get_mut(&mut self, id: GirlId) -> Option<&mut Girl> {
-        self.girls.get_mut(id.index())
+    pub fn get_mut(&mut self, id: CadetId) -> Option<&mut Cadet> {
+        self.cadets.get_mut(id.index())
     }
 
-    /// Every girl, in id order. Ordered because the simulation must not depend
+    /// Every cadet, in id order. Ordered because the simulation must not depend
     /// on iteration order anywhere.
-    pub fn iter(&self) -> impl Iterator<Item = &Girl> {
-        self.girls.iter()
+    pub fn iter(&self) -> impl Iterator<Item = &Cadet> {
+        self.cadets.iter()
     }
 
-    /// Girls fit to be assigned to a vehicle.
-    pub fn ready(&self) -> impl Iterator<Item = &Girl> {
-        self.girls.iter().filter(|g| g.status.is_ready())
+    /// Cadets fit to be assigned to a vehicle.
+    pub fn ready(&self) -> impl Iterator<Item = &Cadet> {
+        self.cadets.iter().filter(|g| g.status.is_ready())
     }
 
     pub fn len(&self) -> usize {
-        self.girls.len()
+        self.cadets.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.girls.is_empty()
+        self.cadets.is_empty()
     }
 
-    /// How well one girl performs a skill, trained or not.
+    /// How well one cadet performs a skill, trained or not.
     ///
     /// This is the only way to ask what someone can do. There is no stored
     /// ability to read: a trained skill is her level, and an untrained one
@@ -375,21 +375,21 @@ impl Roster {
     pub fn skill_level(
         &self,
         registry: &DataRegistry,
-        girl: GirlId,
+        cadet: CadetId,
         skill: &str,
         ctx: &crate::data::CheckContext,
     ) -> Option<i32> {
-        let girl = self.get(girl)?;
+        let cadet = self.get(cadet)?;
         let def = registry.skill(skill)?;
         let base = def.level_for(
             &registry.core_index,
-            &girl.cores,
-            girl.skills.get(skill).copied(),
+            &cadet.cores,
+            cadet.skills.get(skill).copied(),
         );
         // Traits arrive here rather than being baked into a stored number,
         // which is what lets them be conditional on where she is and who she
         // is with.
-        let from_traits: i32 = girl
+        let from_traits: i32 = cadet
             .traits
             .iter()
             .filter_map(|id| registry.trait_def(id))
@@ -400,17 +400,17 @@ impl Roster {
 
     /// How well this crew performs a skill, given who is sitting where.
     ///
-    /// The crew is positional: girl *i* fills the vehicle's *i*th crew slot,
+    /// The crew is positional: cadet *i* fills the vehicle's *i*th crew slot,
     /// so the gunner's gunnery is what lays the gun rather than the best
     /// gunnery aboard. That is the difference between a crew and a bag of
-    /// numbers, and it is what makes moving a girl between tanks a decision.
+    /// numbers, and it is what makes moving a cadet between tanks a decision.
     ///
     /// Three cases, in order:
     ///
     /// 1. **Somebody whose job this is.** If more than one seat answers for
     ///    the skill — a heavy tank has a commander *and* a radio operator —
     ///    the better of them is used.
-    /// 2. **Somebody covering.** With ten girls and four seats a tank, an
+    /// 2. **Somebody covering.** With ten cadets and four seats a tank, an
     ///    empty seat is the normal case, so the best remaining crew member
     ///    takes it at [`Balance::substitution_penalty`]. A commander can lay
     ///    a gun; she is simply not the gunner.
@@ -423,7 +423,7 @@ impl Roster {
         &self,
         registry: &DataRegistry,
         vehicle: Option<&crate::data::VehicleDef>,
-        crew: &[GirlId],
+        crew: &[CadetId],
         skill: &str,
         terrain: Option<&str>,
     ) -> i32 {
@@ -432,8 +432,8 @@ impl Roster {
             vehicle_class: vehicle.map(|v| v.class.as_str()),
             crew_size: crew.iter().filter(|id| self.get(**id).is_some()).count(),
         };
-        let ready = |id: &GirlId| self.get(*id).is_some_and(|g| g.status.is_ready());
-        let level = |id: &GirlId| self.skill_level(registry, *id, skill, &ctx);
+        let ready = |id: &CadetId| self.get(*id).is_some_and(|g| g.status.is_ready());
+        let level = |id: &CadetId| self.skill_level(registry, *id, skill, &ctx);
 
         // Which seats answer for this skill, as indices into the crew.
         let responsible: Vec<usize> = vehicle
@@ -492,7 +492,7 @@ impl Roster {
     /// vehicle quietly slower and blinder than its own definition, which is a
     /// nasty thing to debug from the outside.
     ///
-    /// Named girls then modify from there, in both directions.
+    /// Named cadets then modify from there, in both directions.
     fn unspecified(&self, _registry: &DataRegistry, _skill: &str) -> i32 {
         crate::data::AVERAGE
     }
@@ -501,9 +501,9 @@ impl Roster {
     /// alongside each placement's crew in the same order.
     ///
     /// This is what a scenario battle uses: it has no campaign behind it, so
-    /// the girls it fields exist for the length of the fight. A campaign
+    /// the cadets it fields exist for the length of the fight. A campaign
     /// battle passes its own roster instead, which is the whole point of the
-    /// distinction — the same girl carries her wounds and her experience from
+    /// distinction — the same cadet carries her wounds and her experience from
     /// one battle to the next only if somebody owns her between them.
     ///
     /// A crew id the mods do not define is skipped rather than fatal: content
@@ -512,7 +512,7 @@ impl Roster {
     pub fn stamp_for(
         registry: &DataRegistry,
         placements: &[crate::map::UnitPlacement],
-    ) -> (Self, Vec<Vec<GirlId>>) {
+    ) -> (Self, Vec<Vec<CadetId>>) {
         let mut roster = Self::new();
         let crews = placements
             .iter()
@@ -531,21 +531,23 @@ impl Roster {
 
     /// Advance every recovery and every long walk home by one campaign turn.
     pub fn advance_day(&mut self) {
-        for girl in &mut self.girls {
-            girl.status = match girl.status {
-                GirlStatus::Wounded { days } if days > 1 => GirlStatus::Wounded { days: days - 1 },
-                GirlStatus::Lost { days } if days > 1 => GirlStatus::Lost { days: days - 1 },
+        for cadet in &mut self.cadets {
+            cadet.status = match cadet.status {
+                CadetStatus::Wounded { days } if days > 1 => {
+                    CadetStatus::Wounded { days: days - 1 }
+                }
+                CadetStatus::Lost { days } if days > 1 => CadetStatus::Lost { days: days - 1 },
                 // The last day of either brings her back.
-                GirlStatus::Wounded { .. } | GirlStatus::Lost { .. } => GirlStatus::Ready,
+                CadetStatus::Wounded { .. } | CadetStatus::Lost { .. } => CadetStatus::Ready,
                 other => other,
             };
         }
     }
 
-    /// Record that a girl came through a battle.
-    pub fn credit_battle(&mut self, id: GirlId) {
-        if let Some(girl) = self.get_mut(id) {
-            girl.battles += 1;
+    /// Record that a cadet came through a battle.
+    pub fn credit_battle(&mut self, id: CadetId) {
+        if let Some(cadet) = self.get_mut(id) {
+            cadet.battles += 1;
         }
     }
 }
@@ -717,7 +719,7 @@ mod tests {
     #[test]
     fn the_gunner_lays_the_gun_not_the_best_shot_aboard() {
         // The point of roles. A brilliant commander does not make her tank
-        // shoot well if the girl in the gunner's seat cannot.
+        // shoot well if the cadet in the gunner's seat cannot.
         let reg = registry();
         let tank = tank();
         let mut roster = Roster::new();
@@ -729,8 +731,8 @@ mod tests {
             roster.crew_skill(&reg, Some(&tank), &[ace, novice], "gunnery", None),
             8
         );
-        // The same two girls, seats swapped, shoot far better — which is what
-        // makes moving a girl between jobs a decision worth making.
+        // The same two cadets, seats swapped, shoot far better — which is what
+        // makes moving a cadet between jobs a decision worth making.
         assert_eq!(
             roster.crew_skill(&reg, Some(&tank), &[novice, ace], "gunnery", None),
             15
@@ -739,7 +741,7 @@ mod tests {
 
     #[test]
     fn somebody_covers_an_empty_seat_at_a_penalty() {
-        // Short-handed crews are the normal case: ten girls, four seats a tank.
+        // Short-handed crews are the normal case: ten cadets, four seats a tank.
         let reg = registry();
         let tank = tank();
         let mut roster = Roster::new();
@@ -764,7 +766,7 @@ mod tests {
             15
         );
 
-        roster.get_mut(gunner).unwrap().status = GirlStatus::Wounded { days: 2 };
+        roster.get_mut(gunner).unwrap().status = CadetStatus::Wounded { days: 2 };
         assert_eq!(
             roster.crew_skill(&reg, Some(&tank), &crew, "gunnery", None),
             11 - reg.balance.substitution_penalty,
@@ -805,7 +807,7 @@ mod tests {
         let roster = Roster::new();
         assert_eq!(roster.crew_skill(&reg, None, &[], "gunnery", None), AVERAGE);
         assert_eq!(
-            roster.crew_skill(&reg, None, &[GirlId(99)], "gunnery", None),
+            roster.crew_skill(&reg, None, &[CadetId(99)], "gunnery", None),
             AVERAGE
         );
     }

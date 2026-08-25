@@ -1,0 +1,419 @@
+[
+    {
+        "id": "irma",
+        "name": "Irma Krieger",
+        "bio": "Captain of the Iron Valkyries. Textbook doctrine, ruthlessly applied.",
+        "cores": {
+            "presence": 14,
+            "intellect": 13,
+            "will": 13,
+            "dexterity": 11,
+            "charm": 8
+        },
+        "skills": {
+            "command": 14,
+            "gunnery": 12,
+            "signals": 11
+        }
+    },
+    {
+        "id": "astrid",
+        "name": "Astrid Lange",
+        "bio": "Drives the captain's tank, and takes care to be the only one who does.",
+        "cores": {
+            "dexterity": 13,
+            "will": 12,
+            "health": 12,
+            "charm": 9
+        },
+        "skills": {
+            "driving": 13,
+            "maintenance": 11
+        }
+    },
+    {
+        "id": "beatrix",
+        "name": "Beatrix Halle",
+        "bio": "Has never fired outside doctrine, and has never yet had to.",
+        "cores": {
+            "dexterity": 13,
+            "intellect": 12,
+            "perception": 12,
+            "charm": 8
+        },
+        "skills": {
+            "gunnery": 13,
+            "loading": 11,
+            "discipline": 12
+        }
+    },
+    {
+        "id": "franka",
+        "name": "Franka Mohr",
+        "bio": "Counts the ready rack out loud so the captain never has to ask.",
+        "cores": {
+            "strength": 13,
+            "health": 12,
+            "dexterity": 11,
+            "presence": 8
+        },
+        "skills": {
+            "loading": 13,
+            "first_aid": 11
+        }
+    },
+    {
+        "id": "sofia",
+        "name": "Sofia Ravenna",
+        "bio": "Valkyrie flanker. Fights on instinct and espresso.",
+        "cores": {
+            "speed": 14,
+            "perception": 12,
+            "dexterity": 12,
+            "charm": 12,
+            "intellect": 9
+        },
+        "skills": {
+            "driving": 13,
+            "gunnery": 10,
+            "command": 10
+        }
+    },
+    {
+        "id": "kira",
+        "name": "Kira Belova",
+        "bio": "Faster than the plan, which the plan usually survives.",
+        "cores": {
+            "speed": 14,
+            "dexterity": 13,
+            "will": 9,
+            "intellect": 9
+        },
+        "skills": {
+            "driving": 14,
+            "maintenance": 10
+        },
+        "traits": [
+            "lead_foot"
+        ]
+    },
+    {
+        "id": "rea",
+        "name": "Rea Marchetti",
+        "bio": "Shoots on the move, because standing still bores her.",
+        "cores": {
+            "dexterity": 13,
+            "speed": 12,
+            "perception": 11,
+            "will": 9
+        },
+        "skills": {
+            "gunnery": 12,
+            "observation": 10
+        }
+    },
+    {
+        "id": "greta",
+        "name": "Greta Müller",
+        "bio": "Valkyrie scout. Writes home about the scenery between contacts.",
+        "cores": {
+            "perception": 14,
+            "charm": 12,
+            "speed": 12,
+            "intellect": 11
+        },
+        "skills": {
+            "signals": 12,
+            "driving": 12,
+            "observation": 12
+        },
+        "traits": [
+            "eagle_eyed"
+        ]
+    },
+    {
+        "id": "runa",
+        "name": "Runa Eide",
+        "bio": "Tells a track from a firebreak at a kilometre, in the rain.",
+        "cores": {
+            "perception": 13,
+            "intellect": 12,
+            "dexterity": 11,
+            "presence": 9
+        },
+        "skills": {
+            "driving": 12,
+            "observation": 12,
+            "fieldcraft": 11
+        }
+    },
+    {
+        "id": "britta",
+        "name": "Britta Ehlers",
+        "bio": "Delivers her platoon on time, on the right hex, and not one metre further.",
+        "cores": {
+            "intellect": 12,
+            "presence": 12,
+            "will": 12,
+            "charm": 10
+        },
+        "skills": {
+            "command": 12,
+            "signals": 11,
+            "observation": 10,
+            "discipline": 12
+        }
+    },
+    {
+        "id": "malin",
+        "name": "Malin Roth",
+        "bio": "Treats the tailgate as a promise.",
+        "cores": {
+            "health": 13,
+            "will": 12,
+            "dexterity": 11,
+            "charm": 11
+        },
+        "skills": {
+            "driving": 12,
+            "maintenance": 11,
+            "first_aid": 10
+        }
+    },
+    {
+        "id": "zofia",
+        "name": "Zofia Nowak",
+        "bio": "Fights the platoon like a chess problem she has seen before.",
+        "cores": {
+            "intellect": 14,
+            "presence": 12,
+            "perception": 11,
+            "health": 9
+        },
+        "skills": {
+            "command": 13,
+            "fieldcraft": 12,
+            "small_arms": 11,
+            "gunnery": 10
+        }
+    },
+    {
+        "id": "marta",
+        "name": "Marta Kovač",
+        "bio": "Carries more than her share, and says less about it than anyone.",
+        "cores": {
+            "strength": 13,
+            "health": 13,
+            "will": 12,
+            "charm": 9
+        },
+        "skills": {
+            "fieldcraft": 12,
+            "small_arms": 12,
+            "athletics": 13,
+            "observation": 11,
+            "gunnery": 10
+        }
+    },
+    {
+        "id": "ingrid",
+        "name": "Ingrid Stahl",
+        "bio": "Picks the hedge, picks the range, and waits. The Valkyries' most patient cadet.",
+        "cores": {
+            "will": 14,
+            "perception": 13,
+            "intellect": 12,
+            "speed": 8
+        },
+        "skills": {
+            "command": 12,
+            "observation": 13,
+            "signals": 10,
+            "discipline": 13
+        }
+    },
+    {
+        "id": "selin",
+        "name": "Selin Aydın",
+        "bio": "Reverses off a firing position before the dust has settled.",
+        "cores": {
+            "dexterity": 13,
+            "speed": 12,
+            "will": 11,
+            "charm": 9
+        },
+        "skills": {
+            "driving": 13,
+            "maintenance": 11
+        }
+    },
+    {
+        "id": "nadja",
+        "name": "Nadja Orlov",
+        "bio": "Tank destroyer ace. Patience of a glacier, temper of an avalanche.",
+        "cores": {
+            "dexterity": 14,
+            "perception": 12,
+            "strength": 11,
+            "will": 9,
+            "charm": 7
+        },
+        "skills": {
+            "gunnery": 15,
+            "first_aid": 9
+        },
+        "traits": [
+            "deliberate",
+            "loner"
+        ]
+    },
+    {
+        "id": "hedda",
+        "name": "Hedda Ziegler",
+        "bio": "Commands sixty tonnes at walking pace and has never once been late.",
+        "cores": {
+            "will": 14,
+            "presence": 13,
+            "intellect": 12,
+            "speed": 8
+        },
+        "skills": {
+            "command": 13,
+            "observation": 11,
+            "signals": 11,
+            "discipline": 12
+        }
+    },
+    {
+        "id": "tamara",
+        "name": "Tamara Ilic",
+        "bio": "Has broken two gearboxes, and mended both.",
+        "cores": {
+            "strength": 13,
+            "health": 13,
+            "dexterity": 11,
+            "intellect": 11
+        },
+        "skills": {
+            "driving": 12,
+            "maintenance": 14
+        }
+    },
+    {
+        "id": "carmen",
+        "name": "Carmen Solano",
+        "bio": "One shot, one hull. Anything after the first she treats as an apology.",
+        "cores": {
+            "dexterity": 14,
+            "perception": 12,
+            "will": 11,
+            "charm": 8
+        },
+        "skills": {
+            "gunnery": 14,
+            "observation": 10
+        },
+        "traits": [
+            "deliberate"
+        ]
+    },
+    {
+        "id": "ludmila",
+        "name": "Ludmila Varga",
+        "bio": "Handles the big rounds like groceries, and complains about them like it.",
+        "cores": {
+            "strength": 15,
+            "health": 13,
+            "charm": 11,
+            "dexterity": 10
+        },
+        "skills": {
+            "loading": 14,
+            "athletics": 12,
+            "first_aid": 9
+        }
+    },
+    {
+        "id": "odette",
+        "name": "Odette Girard",
+        "bio": "The Valkyrie net runs on her voice, and every crew on it knows so.",
+        "cores": {
+            "intellect": 13,
+            "charm": 13,
+            "perception": 12,
+            "strength": 8
+        },
+        "skills": {
+            "signals": 14,
+            "observation": 11,
+            "first_aid": 10
+        }
+    },
+    {
+        "id": "alma",
+        "name": "Alma Reiter",
+        "bio": "Old for a cadet, calm for anyone.",
+        "cores": {
+            "will": 13,
+            "intellect": 12,
+            "presence": 11,
+            "speed": 9
+        },
+        "skills": {
+            "command": 11,
+            "signals": 11,
+            "first_aid": 12
+        }
+    },
+    {
+        "id": "cecile",
+        "name": "Cecile Aubry",
+        "bio": "Sings on the move. Nobody has yet worked up the nerve to ask her to stop.",
+        "cores": {
+            "charm": 14,
+            "dexterity": 12,
+            "health": 11,
+            "will": 9
+        },
+        "skills": {
+            "driving": 11,
+            "maintenance": 10
+        }
+    },
+    {
+        "id": "erika",
+        "name": "Erika Thal",
+        "bio": "Doctrine first, and doctrine says get in among them.",
+        "cores": {
+            "presence": 13,
+            "will": 13,
+            "health": 12,
+            "charm": 8
+        },
+        "skills": {
+            "command": 12,
+            "fieldcraft": 11,
+            "small_arms": 12,
+            "gunnery": 10,
+            "athletics": 11
+        }
+    },
+    {
+        "id": "sanna",
+        "name": "Sanna Lindholm",
+        "bio": "Moves the section by hand signal, because she dislikes the radio.",
+        "cores": {
+            "perception": 13,
+            "health": 12,
+            "strength": 12,
+            "intellect": 9
+        },
+        "skills": {
+            "fieldcraft": 13,
+            "small_arms": 12,
+            "observation": 12,
+            "gunnery": 9,
+            "signals": 8
+        }
+    }
+]

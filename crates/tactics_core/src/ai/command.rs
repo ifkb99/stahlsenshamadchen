@@ -26,7 +26,7 @@ use super::{AiConfig, AiPlanner, Evaluator, difficulty_noise, next_unplanned_uni
 use crate::battle::{BattleState, FireIntent, Formation, FormationId, Mission, Order};
 use crate::data::{DataRegistry, DoctrineDef};
 use crate::map::{Objective, ObjectiveKind};
-use crate::roster::GirlId;
+use crate::roster::CadetId;
 use std::cmp::Reverse;
 use std::collections::{HashMap, VecDeque};
 
@@ -67,13 +67,13 @@ fn drill_doctrine(data: &DataRegistry) -> DoctrineDef {
 pub struct SideCommand {
     config: AiConfig,
     seed: u64,
-    /// The girl in command of the side: the leader of its first-declared
+    /// The cadet in command of the side: the leader of its first-declared
     /// formation. Nothing reads her yet — this is the seam the design doc
-    /// promises ("the brain is constructed for the side's commanding girl
+    /// promises ("the brain is constructed for the side's commanding cadet
     /// from the start"), filled in when the state is first seen so her
     /// traits and command skill can steer the brain without a rework.
     #[allow(dead_code)]
-    commander: Option<GirlId>,
+    commander: Option<CadetId>,
     /// One executor per formation this side owns, keyed by the formation's
     /// index in [`crate::battle::CommandState`]. A map, but never iterated —
     /// units are routed through it by direct lookup, so its order can leak
@@ -699,7 +699,7 @@ impl SideCommand {
         formation: &Formation,
         doctrine: &DoctrineDef,
     ) -> bool {
-        // Substance — girls and module hits still aboard, over the full
+        // Substance — cadets and module hits still aboard, over the full
         // complement — replaces the hit-point fraction. A dead vehicle
         // still counts her full complement in the denominator, so losses
         // pull the formation toward beaten exactly as they always did.

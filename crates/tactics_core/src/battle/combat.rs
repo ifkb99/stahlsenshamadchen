@@ -279,7 +279,7 @@ impl<'r> Round<'r> {
     fn damage_type(&self) -> Option<DamageType> {
         self.ammo.map(|a| match a.class {
             // A shaped charge's jet and spall are kinetic events for the
-            // girls inside; the distinction that matters downstream is
+            // cadets inside; the distinction that matters downstream is
             // "something sharp came through" versus blast versus bullets.
             AmmoClass::Kinetic | AmmoClass::Chemical => DamageType::Kinetic,
             AmmoClass::Explosive => DamageType::Explosive,
@@ -327,7 +327,7 @@ pub fn chambered<'r>(
 /// A platoon shoots with the riflemen she still has. Any unit carrying
 /// [`ModuleEffect::Troops`] modules scales every round's effect by the
 /// fraction still standing — half the platoon is half the fire, and a
-/// remnant with the girls alone left rounds down to nearly nothing, which
+/// remnant with the cadets alone left rounds down to nearly nothing, which
 /// is what makes her want the exit rather than the fight. A unit with no
 /// troops modules (every tank there is) passes through untouched.
 fn mustered<'r>(
@@ -801,7 +801,7 @@ pub struct AttackPreview {
     pub target_vehicle: String,
     /// Display name of the side the target belongs to.
     pub target_side: String,
-    /// The target's condition — girls and modules remaining over her full
+    /// The target's condition — cadets and modules remaining over her full
     /// complement — as a percent. The health bar's successor: there are no
     /// hit points behind it, only the state of what is aboard.
     pub target_condition: i32,
@@ -1077,7 +1077,7 @@ fn resolve_impact(
         // Remembered so that, if this is the hit that kills it, the campaign
         // can ask what actually went through the crew compartment. A kinetic
         // penetration and a machine gun finishing off a burning wreck are
-        // very different days for the girls inside.
+        // very different days for the cadets inside.
         tgt.last_hit_by = Some(damage_type);
     }
     events.push(Event::ShotHit {
@@ -1089,7 +1089,7 @@ fn resolve_impact(
     behind_armor_effects(registry, state, round, &profile, target, events);
 }
 
-/// What one girl or one module weighs when a penetration rolls what it
+/// What one cadet or one module weighs when a penetration rolls what it
 /// found inside. Seats before modules, in seat order, then module id
 /// (BTreeMap) order — the walk is fixed so replays agree on who was hit.
 fn interior(registry: &DataRegistry, unit: &super::Unit) -> Vec<(InteriorChoice, u32)> {
@@ -1144,7 +1144,7 @@ fn effect_rolls(
         }
         // The pool is everything physically inside the hull: the target's
         // own crew and modules, and — the shared-fate ruling — every
-        // passenger's girls and troops too, in passenger id order. A round
+        // passenger's cadets and troops too, in passenger id order. A round
         // that comes through a loaded carrier does not check tickets.
         let mut targets: Vec<(UnitId, InteriorChoice, u32)> = interior(registry, unit)
             .into_iter()
@@ -1191,9 +1191,9 @@ enum InteriorChoice {
 ///
 /// The budget is the ledger damage the gate already computed — the weapon's
 /// weight times the round's potency — cashed as one effect roll per
-/// `points_per_effect`, rounded up. Each roll picks a girl or a module,
+/// `points_per_effect`, rounded up. Each roll picks a cadet or a module,
 /// weighted by size; a heavily overmatching round (double the budget the
-/// knob asks for, per roll) puts a girl straight out rather than wounding
+/// knob asks for, per roll) puts a cadet straight out rather than wounding
 /// her first. The ammunition rack is the special module: every hit on it
 /// rolls brew-up at `brewup_percent` scaled by how full the racks still
 /// are, and a rack destroyed without a fire leaves the remaining rounds
@@ -1221,7 +1221,7 @@ fn behind_armor_effects(
     // version, a 75 does. The threshold was double, which put every gun on
     // the field over it — B5's crew-cost table read 0.1 wounded to 3.0 out
     // per battle, meaning the dramatic middle state effectively never
-    // happened and a girl's first hit was almost always her last.
+    // happened and a cadet's first hit was almost always her last.
     let savage = profile.damage >= per_effect * 3;
     effect_rolls(
         registry,
@@ -1275,7 +1275,7 @@ fn behind_armor_effects(
     }
 }
 
-/// One effect roll found a girl.
+/// One effect roll found a cadet.
 fn crew_hit(
     state: &mut BattleState,
     target: UnitId,
@@ -1290,7 +1290,7 @@ fn crew_hit(
         unit.crew_state
             .resize(unit.crew.len(), super::CrewCondition::Fine);
     }
-    let Some(girl) = unit.crew.get(seat).copied() else {
+    let Some(cadet) = unit.crew.get(seat).copied() else {
         return;
     };
     let Some(condition) = unit.crew_state.get_mut(seat) else {
@@ -1304,7 +1304,7 @@ fn crew_hit(
     };
     events.push(Event::CrewHit {
         unit: target,
-        girl,
+        cadet,
         out,
     });
 }
@@ -1542,7 +1542,7 @@ pub fn reap(registry: &DataRegistry, state: &mut BattleState, events: &mut Vec<E
         .iter()
         .filter(|u| {
             // The crew clause only applies to a vehicle that HAS a crew
-            // list: an empty one means the girls are abstracted away (test
+            // list: an empty one means the cadets are abstracted away (test
             // scaffolding, a mod without a roster), and "everyone aboard
             // nobody is out" must read as today's game, not as a ghost
             // ship.
@@ -1807,7 +1807,7 @@ pub fn best_opportunity_shot(
     // sight across five rounds was paid for five times) and waived the tax
     // exactly when it was owed (an ambush at tick seven answered instantly,
     // because seven beat any delay). The clock is the side's
-    // `spotted_since`, and the model is girls.md's oldest sentence: she
+    // `spotted_since`, and the model is cadets.md's oldest sentence: she
     // notices at tick four and does something about it at tick six. Ordered
     // fire is untouched: they knew what they were shooting at before the
     // round began, and taxing that would model rate of fire twice over.

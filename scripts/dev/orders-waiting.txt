@@ -1,4 +1,4 @@
-# Orders that wait instead of dying: giving a direct order to a girl who has
+# Orders that wait instead of dying: giving a direct order to a cadet who has
 # driven off the net, seeing it acknowledged rather than refused, and watching
 # it arrive when her platoon closes back up.
 #
@@ -10,7 +10,7 @@
 # in a light tank at offset [11, 26] -> axial (-2, 26). Send Mina five hexes
 # southwest and she is ten from her commander, which is past the base mod's
 # eight-hex radio even with her signals bonus, and far past the three-hex
-# visual net — so from round two she is a girl who cannot be told anything.
+# visual net — so from round two she is a cadet who cannot be told anything.
 
 at 3.0
 hex -2,26
@@ -36,7 +36,7 @@ hex -6,31
 wait 0.4
 click left
 wait 0.8
-log "a direct order to a girl who cannot hear it"
+log "a direct order to a cadet who cannot hear it"
 shot /tmp/waiting-01-order.png
 
 # The panel's side of the same fact: F picks up the platoon, and it tags her

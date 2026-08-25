@@ -4,7 +4,7 @@
 //!
 //! Morale is a list of rungs declared by the mod, each with the pressure at
 //! which a crew arrives on it. The shipped game has three — steady, wavering,
-//! breaking — and a mod that ships **one** has girls who never waver,
+//! breaking — and a mod that ships **one** has cadets who never waver,
 //! never hesitate and never refuse an order. Difficulty is content in this
 //! project, and this is the system it most obviously applies to: somebody who
 //! wants Fire Emblem should get it by loading a mod, not by the engine
@@ -17,7 +17,7 @@
 //! # Why a ladder rather than a number
 //!
 //! Borrowed from Battle Brothers, and chosen for legibility rather than
-//! fidelity. Girls have licence to fail an order in this game, and a player
+//! fidelity. Cadets have licence to fail an order in this game, and a player
 //! can only accept that as fair if they could *see it coming*. "Wavering" on a
 //! panel before the order is given is a warning; a hidden morale value that
 //! silently crosses a threshold is the game cheating.
@@ -186,7 +186,7 @@ impl MoraleRules {
 /// The *shape* matters more than the numbers. Three dice cluster hard around
 /// ten, so a disciplined crew holds nearly always and a poor one nearly never,
 /// with genuine upsets at the edges. A flat roll would make good crews feel
-/// arbitrary — which is fatal in a game where girls are allowed to disobey,
+/// arbitrary — which is fatal in a game where cadets are allowed to disobey,
 /// because the player has to be able to trust that training bought them
 /// something.
 pub fn holds_together(rng: &mut impl rand::RngExt, skill_level: i32) -> bool {
@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn a_one_rung_ladder_is_a_game_where_nobody_ever_wavers() {
         // The property difficulty-as-mods rests on: no branch in Rust is
-        // needed to get girls who always do as they are told.
+        // needed to get cadets who always do as they are told.
         let rules = MoraleRules {
             rungs: vec![MoraleRung {
                 id: "steady".into(),

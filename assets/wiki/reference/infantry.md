@@ -8,11 +8,11 @@ which is the point.*
 
 ## Decisions taken (2026-08-14, with the designer)
 
-- **A platoon is one piece, led by named girls.** Managing thirty soldiers
+- **A platoon is one piece, led by named cadets.** Managing thirty soldiers
   would be tiresome (designer's word); an infantry unit is a platoon on one
-  hex, with 2–3 girls as its leadership — seats in the existing crew model —
+  hex, with 2–3 cadets as its leadership — seats in the existing crew model —
   and the rest abstracted. Splitting into squads is deferred (the design
-  leaves the door open: each girl is a squad leader in waiting).
+  leaves the door open: each cadet is a squad leader in waiting).
 - **Full mount and dismount, this arc.** The APC/IFV pairing only means
   something if troops actually ride. Passengers share the carrier's fate
   when she is penetrated — riding a halftrack under fire *should* be scary,
@@ -23,7 +23,7 @@ which is the point.*
   60s revolution and get their own pass later (the shell-flight machinery
   is waiting for them).
 - **Leaders are weighted like everything else.** Casualty rolls pick from
-  the girls and the abstracted rifles by weight, through the same interior
+  the cadets and the abstracted rifles by weight, through the same interior
   machinery as tank crews: leaders are rarely hit while the platoon is
   strong and increasingly exposed as it thins. "Leaders last" emerges from
   arithmetic; a lucky burst can still find her early, which is where the
@@ -54,13 +54,13 @@ including the abstracted troops themselves:
   troops are most of what a burst can find), `toughness` counted in
   sections-worth of casualties. Its three meanings:
   - *Interior weight*: casualty rolls find troops far more often than the
-    girls, by the same weighted roll a tank uses — this is the ruled
+    cadets, by the same weighted roll a tank uses — this is the ruled
     leader-risk model with no extra machinery.
   - *Firepower*: every weapon the unit fires scales its damage by the
     troops fraction (hits remaining over toughness). A platoon at half
-    strength shoots half as hard; the girls alone are nearly harmless.
+    strength shoots half as hard; the cadets alone are nearly harmless.
   - *Combat effectiveness*: at zero the platoon is a remnant — alive, the
-    girls still aboard the battle, pulled hard toward withdrawal by the
+    cadets still aboard the battle, pulled hard toward withdrawal by the
     condition score it already wrecks. Like a mission-killed tank, a
     shattered platoon is a story, not a deletion.
 - **`field_radio`** is a radio-effect module: the man-pack set, short send
@@ -103,7 +103,7 @@ untouched): an ambush is spent by springing it.
   thing that happens). Both travel the order stream like everything else:
   saves, replays and external brains get them for free.
 - **Shared fate**: a penetration into a loaded carrier adds every
-  passenger's girls and troops to the interior roll pool, weighted like
+  passenger's cadets and troops to the interior roll pool, weighted like
   everything else. A brew-up rolls the passengers through the same fire.
   This is the ruled decision, and it is what makes "dismount before the
   gun line" a real tactical sentence rather than flavour.
@@ -120,8 +120,8 @@ untouched): an ambush is spent by springing it.
 | `halftrack` | The 40s legacy lift: open-topped, thin, an MG, cheap. High `safety` (everyone can jump clear), zero dignity. |
 | `apc` | The M113-generation battle taxi: enclosed aluminum box, MG, amphibious pretensions left out. Taxi doctrine: arrive, unload, get out. |
 | `ifv` | The HS.30-generation argument: a 20 mm autocannon (new weapon, fast cadence, kinetic AP + HE belts), armor that stops rifle fire, and the temptation to fight mounted that the period had not yet resolved. |
-| `rifle_platoon` | 2 girls + troops module (the mass of the platoon), rifles/MG, an RPG with a handful of rounds, field radio. Concealment ~40. |
-| `scout_section` | 2 girls + a small troops module, high concealment (~55), binoculars-grade vision, next to no teeth. The recon instrument. |
+| `rifle_platoon` | 2 cadets + troops module (the mass of the platoon), rifles/MG, an RPG with a handful of rounds, field radio. Concealment ~40. |
+| `scout_section` | 2 cadets + a small troops module, high concealment (~55), binoculars-grade vision, next to no teeth. The recon instrument. |
 
 ## Build order
 
@@ -200,14 +200,14 @@ them a multiplier and none of them naming a chassis in Rust.
 - **Leaders claim gunnery** (`d525a1e`). The leadership seats were
   written with the skills a leader obviously has and gunnery was not
   among them, so no seat was responsible for it, `crew_skill` fell
-  through to "best aboard", and every girl read gunnery through her
+  through to "best aboard", and every cadet read gunnery through her
   cores at the untrained penalty. The platoon laid every weapon it owns
   four levels below ordinary — a silent −12 percentage points on every
   infantry weapon in the game. Expected shots to knock a target out:
   RPG 9.1 → 6.7, rifles 28.9 → 23.6.
 - **Danger priced as a fraction** (`4ffbfd2`). The evaluator's threat
   term was absolute, so five points of expected damage read identically
-  to a fresh heavy tank and to a loaded taxi with one girl left. It is
+  to a fresh heavy tank and to a loaded taxi with one cadet left. It is
   now divided by what she can still absorb — against
   `BattleState::typical_substance`, the field's own mean complement, so
   the reference is data rather than a constant — and multiplied by what
@@ -238,7 +238,7 @@ Chain of Command beside the assignable postures.
 ## Open questions, carried deliberately
 
 - **Squad splitting** — deferred per the designer ("unless it is easy":
-  it is not; it is mid-battle unit spawning). The girls-as-squad-leaders
+  it is not; it is mid-battle unit spawning). The cadets-as-squad-leaders
   seating means the split falls out naturally when wanted.
 - **ATGM teams** — deferred by ruling; the shell-flight machinery is
   their landing pad.

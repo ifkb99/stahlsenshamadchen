@@ -144,9 +144,9 @@ fn main() {
                 // "Aboard" is a preposition about a hull, and a platoon has
                 // none: her leaders are walking with their sections. Same
                 // event, same weight, a sentence that is not about a vehicle.
-                Event::CrewHit { unit, girl, out } => {
+                Event::CrewHit { unit, cadet, out } => {
                     // `units.get` rather than `unit()`: the narrator reads the
-                    // state after the whole round has resolved, so the girl
+                    // state after the whole round has resolved, so the cadet
                     // whose death this event is describing is already not
                     // `alive` and the accessor that filters on it would answer
                     // "not infantry" for exactly the platoon being wiped out.
@@ -156,16 +156,16 @@ fn main() {
                         .is_some_and(|u| u.troops(&registry).is_some());
                     if afoot {
                         println!(
-                            "   ** girl #{} is {} leading {} **",
-                            girl.0,
+                            "   ** cadet #{} is {} leading {} **",
+                            cadet.0,
                             if *out { "OUT" } else { "hit" },
                             name(&state, *unit)
                         )
                     } else {
                         println!(
-                            "   ** crew hit aboard {}: girl #{} is {} **",
+                            "   ** crew hit aboard {}: cadet #{} is {} **",
                             name(&state, *unit),
-                            girl.0,
+                            cadet.0,
                             if *out { "OUT" } else { "wounded" }
                         )
                     }

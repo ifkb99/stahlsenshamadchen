@@ -11,7 +11,7 @@ use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{BattleState, Event, Latitude, Order};
 use tactics_core::data::DataRegistry;
 use tactics_core::overworld::{ArmyMission, OverworldOrder, OverworldState};
-use tactics_core::roster::GirlStatus;
+use tactics_core::roster::CadetStatus;
 use tactics_core::save::{SAVE_VERSION, SaveGame};
 
 fn registry() -> DataRegistry {
@@ -314,16 +314,16 @@ fn a_standing_mission_survives_being_saved_and_reloaded() {
     );
 }
 
-/// The campaign is the half a player would actually mind losing: a girl with
+/// The campaign is the half a player would actually mind losing: a cadet with
 /// nine battles behind her and a wound that has three days left on it.
 #[test]
 fn a_campaign_keeps_its_girls_and_their_scars() {
     let reg = registry();
     let mut state = OverworldState::from_map(&reg, "frontier", 5).expect("overworld");
-    let girl = state.side_armies(0).next().unwrap().units[0].crew[0];
-    state.roster.get_mut(girl).unwrap().battles = 9;
-    state.roster.get_mut(girl).unwrap().xp = 250;
-    state.roster.get_mut(girl).unwrap().status = GirlStatus::Wounded { days: 3 };
+    let cadet = state.side_armies(0).next().unwrap().units[0].crew[0];
+    state.roster.get_mut(cadet).unwrap().battles = 9;
+    state.roster.get_mut(cadet).unwrap().xp = 250;
+    state.roster.get_mut(cadet).unwrap().status = CadetStatus::Wounded { days: 3 };
 
     let text = SaveGame::new(&reg, Some(state.clone()), None)
         .to_json()
@@ -336,24 +336,24 @@ fn a_campaign_keeps_its_girls_and_their_scars() {
 
     let back = restored
         .roster
-        .get(girl)
+        .get(cadet)
         .expect("she is still on the roster");
     assert_eq!(back.battles, 9);
     assert_eq!(back.xp, 250);
-    assert_eq!(back.status, GirlStatus::Wounded { days: 3 });
+    assert_eq!(back.status, CadetStatus::Wounded { days: 3 });
     assert_eq!(back.owner, 0, "and still belongs to her academy");
 
     // Armies still point at her, rather than at a dangling handle.
     assert_eq!(
         restored.side_armies(0).next().unwrap().units[0].crew[0],
-        girl
+        cadet
     );
 
     // The recovery clock carries on from where it was, not from the start.
     restored.roster.advance_day();
     assert_eq!(
-        restored.roster.get(girl).unwrap().status,
-        GirlStatus::Wounded { days: 2 }
+        restored.roster.get(cadet).unwrap().status,
+        CadetStatus::Wounded { days: 2 }
     );
 }
 
@@ -469,7 +469,7 @@ fn a_save_from_another_version_is_refused_rather_than_misread() {
 }
 
 /// Difficulty is a mod in this project — whether crews bail out, whether a
-/// girl can refuse an order, whether death is permanent. So a save has to
+/// cadet can refuse an order, whether death is permanent. So a save has to
 /// remember which rules it was played under, or a campaign started gentle
 /// could come back lethal without anyone being told.
 #[test]
@@ -808,7 +808,7 @@ fn commit_all(reg: &DataRegistry, state: &mut BattleState) {
 }
 
 /// An eight-hex net with nobody relaying and no flags, and three ticks of
-/// transit on every order: narrow enough that a girl can be driven off the
+/// transit on every order: narrow enough that a cadet can be driven off the
 /// wire and slow enough that an order can be caught in the air.
 fn strung_out_net() -> DataRegistry {
     let mut reg = registry();
@@ -946,7 +946,7 @@ fn a_battle_carrying_everything_the_wire_knows_forks_identically() {
     state.resolve_round(&reg);
 
     // Day three, and the fork: an order still in the air, one held at the
-    // radio for a girl who cannot hear it, and one that reached its girl and
+    // radio for a cadet who cannot hear it, and one that reached its cadet and
     // took her off her formation's tasking.
     state
         .apply(

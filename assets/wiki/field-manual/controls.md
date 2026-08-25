@@ -38,5 +38,5 @@ On the campaign map, **F5** saves and **F9** loads. There is one slot, at
 
 A save restores the campaign exactly, including the random number stream, so a
 reloaded game plays out the way the unsaved one would have — the same battles
-roll the same dice. Girls keep their history: battles fought, experience, and
+roll the same dice. Cadets keep their history: battles fought, experience, and
 any wound with the days still left on it.

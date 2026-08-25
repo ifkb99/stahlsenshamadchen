@@ -25,7 +25,7 @@ pub enum MovementClass {
 /// Characters are people; vehicles are hardware, and a unit on the battlefield
 /// is always a crew inside one. What she can *do* is not written here — see
 /// [`crate::data::SkillDef`] — only who she is and what she has been taught.
-/// `Default` is a nameless girl who is average at everything, which is what
+/// `Default` is a nameless cadet who is average at everything, which is what
 /// the battle spawns into seats a scenario left empty.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CharacterDef {
@@ -131,7 +131,7 @@ pub struct VehicleDef {
     /// and things a vehicle carries can one day be hit.
     #[serde(default)]
     pub radio: Option<String>,
-    /// How survivable this vehicle is for the girls inside it, 0-5.
+    /// How survivable this vehicle is for the cadets inside it, 0-5.
     ///
     /// Separate from armour on purpose: armour decides whether the vehicle
     /// dies, safety decides what that costs its crew. A thinly armoured car
