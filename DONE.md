@@ -384,6 +384,22 @@ the alternative reading is that the lean costs a good side something real. The
 B4's written target of visibly better than 1:2), but this is a hypothesis and
 it is written down here as one.
 
+> **Corrected 2026-08-26, once the harness could sweep the seed.** Every
+> skill-gap figure in the table above is a single draw, and the draws are much
+> wider than this entry assumed. Sixteen seeds at `--games 36` put the 5-vs-3
+> row anywhere from 16–27 wins of 36 and the 5v1 exchange from 1:1.2 to 1:1.8,
+> so neither "1:1.7 → 1:2.1" nor "24–12 → 20–16" is evidence of anything: both
+> moves are inside one seed's worth of wander. **The side-B claim above is
+> wrong.** Adding the two equal-skill pairings over those sixteen seeds gives
+> 494–652, side B on 56.6% of 1152 battles, in the same direction on 14 of
+> them. The *mechanism* argued for here is still right — a per-tile draw does
+> give a bias that scales with reachable tiles, and removing it was correct —
+> but it did not remove the arena's own asymmetry, and "20 and 20" was one
+> roll of a die that ranges 16–27. The numbers that supersede these are in
+> CLAUDE.md under "Difficulty is inverted in practice"; re-draw them with
+> `balance -- --sim --games 36 --only skill --sweep seed=0,1000,2000,3000`
+> rather than trusting either set.
+
 **Commitment was tried first and does not work — a negative result worth
 keeping.** The other half of the wander is that a greedy planner re-decides
 its destination every round with nothing carrying an intention between them,

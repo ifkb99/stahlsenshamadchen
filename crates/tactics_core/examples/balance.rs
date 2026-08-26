@@ -4,9 +4,10 @@
 //! cargo run --release -p tactics_core --example balance          # instant
 //! cargo run --release -p tactics_core --example balance -- --sim # + fought out
 //! cargo run --release -p tactics_core --example balance -- --sim --games 40
+//! cargo run --release -p tactics_core --example balance -- --help # every flag
 //! ```
 //!
-//! Two passes, deliberately, because balance iteration has two speeds.
+//! Three passes, then, because there is a third question under the first two.
 //!
 //! The **analytic** pass answers "what did that number just do" without playing
 //! anything: it stands two vehicles on an empty field and asks the real combat
@@ -36,6 +37,34 @@
 //! assembled from the real constants but not run through the resolver. The
 //! note under that table says so, and the `--sim` kill-cause table is what
 //! checks it.
+//!
+//! The **comparative** pass (`--sweep`) is the third speed, and it exists
+//! because neither of the first two answers the question actually being asked
+//! while a number is being tuned. That question is never "what does 55 do", it
+//! is "what does 55 do *that 40 did not*", and until now the way to answer it
+//! was to edit `mod.json`, run, revert, run again, and compare two screens of
+//! scrollback from memory. That method has two failure modes and the whole
+//! ballistics rewrite met both: a revert that was never made, and a difference
+//! well inside the noise of the sample read as a result anyway. A sweep runs
+//! every value at once, folds each one's battles in seed order, and prints the
+//! baseline on the row above the difference — and `--sweep seed=0,1000` in
+//! the same table is what the noise floor looks like, so a difference can be
+//! held against it instead of against an intuition.
+//!
+//! ```sh
+//! # what does the partial-penetration floor do?
+//! balance --sim --games 36 --sweep balance.partial_penetration_percent=40,55,70
+//! # ...and how much of that was the dice?
+//! balance --sim --games 36 --sweep seed=0,1000,2000
+//! # two versions of the content, rather than two numbers in one version
+//! balance --sim --sweep mods=assets/mods,../old/assets/mods
+//! ```
+//!
+//! `--set` is the same machinery for a single run, and `--jobs` caps how much
+//! of the machine one invocation takes, so several of these can be run beside
+//! each other. **No printed number moves with `--jobs`**: results are folded in
+//! seed order regardless of which core finished first, and that is checked by
+//! running the same batch at several widths, not hoped for.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
@@ -51,6 +80,10 @@ use tactics_core::roster::{CadetId, Roster};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("{USAGE}");
+        return;
+    }
     let sim = args.iter().any(|a| a == "--sim");
     // Opt-in and separately sized, because MCTS costs seconds per order and
     // would otherwise make the content-iteration loop unusable. Its default
@@ -73,32 +106,170 @@ fn main() {
     let budget: i32 = flag(&args, "--points")
         .and_then(|v| v.parse().ok())
         .unwrap_or(60);
+    // How far to shift every table's battles. An offset rather than a base,
+    // so that 0 — the default — is exactly the sample every number this
+    // project has quoted was measured on, and any other value moves all four
+    // fought-out tables together. Exposed because two runs of the same
+    // configuration at different seeds are two *samples*, and the honest way
+    // to ask whether a difference between variants is real is to re-draw it,
+    // which needs the seeds to be somebody's choice rather than a constant
+    // buried in a function.
+    let seed: u64 = flag(&args, "--seed")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    if let Some(n) = flag(&args, "--jobs").and_then(|v| v.parse::<usize>().ok()) {
+        JOBS.store(n.max(1), std::sync::atomic::Ordering::Relaxed);
+    }
+    let cfg = Run {
+        games,
+        seed,
+        budget,
+        sim,
+        verbose: args.iter().any(|a| a == "--verbose"),
+        csv: args.iter().any(|a| a == "--csv"),
+        absolute: args.iter().any(|a| a == "--absolute"),
+        only: Only::parse(flag(&args, "--only")),
+    };
 
     if cfg!(debug_assertions) {
         eprintln!("note: debug build. Fine for the analytic pass, slow for --sim.");
     }
 
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
-    let (registry, _) = DataRegistry::load_dir(&root).expect("mods load");
+    let root = match flag(&args, "--mods") {
+        Some(dir) => std::path::PathBuf::from(dir),
+        None => std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods"),
+    };
 
-    let mut duels = Duels::new(&registry);
-    roster_table(&registry);
-    hit_table(&registry);
-    penetration_table(&registry, &mut duels);
-    kill_chain_table(&registry, &mut duels);
-    flight_table(&registry);
-    flags(&registry, &mut duels);
+    let overrides: Vec<Override> = flag_all(&args, "--set")
+        .iter()
+        .map(|text| {
+            Override::parse(text).unwrap_or_else(|e| {
+                eprintln!("error: --set {text}: {e}");
+                std::process::exit(1);
+            })
+        })
+        .collect();
+    let axes: Vec<Axis> = flag_all(&args, "--sweep")
+        .iter()
+        .map(|text| {
+            let ov = Override::parse(text).unwrap_or_else(|e| {
+                eprintln!("error: --sweep {text}: {e}");
+                std::process::exit(1);
+            });
+            Axis {
+                path: ov.path,
+                values: ov.value.split(',').map(str::to_string).collect(),
+            }
+        })
+        .collect();
+
+    if !axes.is_empty() {
+        sweep(&axes, &overrides, &root, &cfg);
+        return;
+    }
+
+    let registry = configure(&root, &overrides);
+
+    analytic(&registry, &cfg);
     if sim {
-        simulate(&registry, games);
-        delegation_tax(&registry, games);
-        mustered_forces(&registry, games, budget);
-        skill_gap(&registry, games);
+        if cfg.only.wants("sim") {
+            simulate(&registry, games, seed);
+        }
+        for grid in fought_grids(&registry, &cfg, seed) {
+            print_grid(&grid);
+        }
     }
     if brains {
         brains_table(&registry, brain_games, brain_difficulty);
     } else {
         println!("\n(pass --sim to fight {games} battles and see what these numbers do)");
     }
+}
+
+/// Everything that answers without fighting anything.
+fn analytic(reg: &DataRegistry, cfg: &Run) {
+    let mut duels = Duels::new(reg);
+    if cfg.only.wants("roster") {
+        roster_table(reg);
+    }
+    if cfg.only.wants("hit") {
+        hit_table(reg);
+    }
+    if cfg.only.wants("pen") {
+        penetration_table(reg, &mut duels);
+    }
+    if cfg.only.wants("kills") {
+        kill_chain_table(reg, &mut duels);
+    }
+    if cfg.only.wants("flight") {
+        flight_table(reg);
+    }
+    if cfg.only.wants("flags") {
+        flags(reg, &mut duels);
+    }
+}
+
+const USAGE: &str = "\
+what the numbers in assets/mods actually do
+
+  cargo run --release -p tactics_core --example balance [-- FLAGS]
+
+what to run
+  --sim                  fight whole battles as well as previewing shots
+  --games N              battles in the fought-out pass (default 12; read the
+                         doctrine table at 36 or not at all)
+  --seed N               shift every table's battles by N (default 0, the
+                         sample this project's numbers were measured on). Two
+                         runs at different seeds are two samples of one game.
+  --points N             requisition budget per side in the mustered table (60)
+  --brains               which planner is better; --brain-games, --brain-difficulty
+  --only A,B             print only these tables. One of: roster, hit, pen,
+                         kills, flight, flags, sim, delegation, mustered, skill
+
+which game
+  --mods DIR             mod tree to load (default assets/mods)
+  --set PATH=VALUE       change one number before anything runs. Repeatable.
+                         Blocks: balance, scale, casualties, morale, reaction,
+                         command. Content: vehicle.<id>, weapon.<id>, ammo.<id>,
+                         module.<id>, terrain.<id>, doctrine.<id>. Nesting and
+                         list indices work: morale.rungs[2].accuracy
+  --sweep PATH=A,B,C     run once per value and put the results side by side.
+                         Repeatable; the axes multiply. Two axis names are
+                         not fields: `--sweep mods=a,b` compares two versions
+                         of the content, and `--sweep seed=1000,2000` fights
+                         the same game twice, which is how the table shows the
+                         noise floor every other difference has to clear.
+
+how, and how much of it
+  --jobs N               battles in the air at once (default: every core).
+                         The numbers do not move with this — results are
+                         folded in seed order — so it is safe to run several
+                         of these at once at a fraction of the machine each.
+  --verbose              in a sweep, print each variant's full report too
+  --absolute             in a sweep, print each variant's own numbers rather
+                         than its differences from the first. What a range
+                         wants; the differences are what a tuning question wants
+  --csv                  print the comparison digest as csv as well
+
+  A swept table with three or more variants also gets a `spread` line per row:
+  the widest gap between variants in that column. Under a `--sweep seed=` that
+  line is the noise floor, and it is what every other difference has to clear.
+
+examples
+  --sim --sweep balance.partial_penetration_percent=40,55,70 --games 36
+  --sim --sweep weapon.howitzer_105.dispersion=0,4,8 --jobs 4
+  --set balance.moving_target_per_hex=0 --set balance.firing_on_the_move_per_hex=0
+  --sim --sweep mods=assets/mods,../old/assets/mods
+  --sim --sweep seed=0,1000,2000 --games 36         # what is the noise floor?
+  --sim --only skill --absolute --sweep seed=0,1000,2000,3000   # ...for one table";
+
+/// Every occurrence of a repeatable `--flag value`.
+fn flag_all<'a>(args: &'a [String], name: &str) -> Vec<&'a str> {
+    args.iter()
+        .enumerate()
+        .filter(|(_, a)| a.as_str() == name)
+        .filter_map(|(i, _)| args.get(i + 1).map(String::as_str))
+        .collect()
 }
 
 fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
@@ -1088,171 +1259,263 @@ fn battle_maps(reg: &DataRegistry) -> Vec<&str> {
     ids
 }
 
+/// Where each table's battles start counting, before `--seed` is added.
+///
+/// Distinct blocks so that two tables in one run never fight literally the
+/// same battle and then agree with each other for that reason. The values are
+/// the constants each table was born with, kept exactly so that `--seed 0` —
+/// the default — is the run every number this project has quoted was measured
+/// on. `--seed N` shifts all four together, which is what makes sweeping the
+/// seed a sample of the whole report rather than of one table in it.
+const FOUGHT_SEED: u64 = 1000;
+const DELEGATION_SEED: u64 = 1000;
+const MUSTER_SEED: u64 = 4000;
+/// The skill-gap table's own block is zero: `arena_duel` adds its 9000 itself,
+/// and moving that would change the planner seeds rather than only the ground.
+const ARENA_SEED: u64 = 0;
+
 /// Which ground this battle is fought on. Keyed on the seed rather than the
 /// game index so the pairing of map to battle survives changing `--games`.
 fn map_for<'a>(maps: &[&'a str], seed: u64) -> &'a str {
     maps[seed as usize % maps.len()]
 }
 
-fn simulate(reg: &DataRegistry, games: usize) {
+impl Tally {
+    /// Fold one battle's accounting into a run's.
+    ///
+    /// Every field is a sum, a concatenation or a union of sums, which is not
+    /// an accident: it is the property that lets the battles be fought in any
+    /// order on any number of threads and still produce one table. A field
+    /// added here that is *not* one of those — a maximum, a ratio, a last
+    /// value — would make the printed numbers depend on which core finished
+    /// first, which is the one kind of wrong this harness must not be, because
+    /// it looks exactly like noise.
+    fn merge(&mut self, other: &Tally) {
+        for (k, v) in &other.wins {
+            *self.wins.entry(k.clone()).or_default() += v;
+        }
+        for (k, v) in &other.kills {
+            *self.kills.entry(k.clone()).or_default() += v;
+        }
+        for (k, v) in &other.deaths {
+            *self.deaths.entry(k.clone()).or_default() += v;
+        }
+        for (k, v) in &other.hits_by_arc {
+            *self.hits_by_arc.entry(k.clone()).or_default() += v;
+        }
+        for (k, v) in &other.causes {
+            *self.causes.entry(k).or_default() += v;
+        }
+        for (k, v) in &other.ammo_aboard {
+            *self.ammo_aboard.entry(k.clone()).or_default() += v;
+        }
+        for (k, v) in &other.ammo_left {
+            *self.ammo_left.entry(k.clone()).or_default() += v;
+        }
+        self.draws += other.draws;
+        self.stalemates += other.stalemates;
+        self.rounds.extend_from_slice(&other.rounds);
+        self.shots += other.shots;
+        self.shots_on_the_move += other.shots_on_the_move;
+        self.hits += other.hits;
+        self.bounces += other.bounces;
+        self.misses += other.misses;
+        self.girls_wounded += other.girls_wounded;
+        self.girls_out += other.girls_out;
+        self.racks_destroyed += other.racks_destroyed;
+        self.shells += other.shells;
+        self.shells_on_target += other.shells_on_target;
+        self.shells_bounced += other.shells_bounced;
+        self.foot_fielded += other.foot_fielded;
+        self.troops_left.extend_from_slice(&other.troops_left);
+        self.mounts += other.mounts;
+        self.dismounts += other.dismounts;
+    }
+}
+
+/// Fight a batch of battles and account for all of them together.
+fn fight_out(reg: &DataRegistry, games: usize, seed: u64) -> Tally {
+    let maps = battle_maps(reg);
+    let fought = fight_all(reg, games, |reg, game| {
+        fight_one(reg, &maps, FOUGHT_SEED + seed + game)
+    });
+    let mut t = Tally::default();
+    for one in &fought {
+        t.merge(one);
+    }
+    t
+}
+
+fn simulate(reg: &DataRegistry, games: usize, seed: u64) {
     let maps = battle_maps(reg);
     heading(&format!(
         "fought out: {games} battles across {}",
         maps.join(", ")
     ));
-    let mut t = Tally::default();
+    report(&fight_out(reg, games, seed), games);
+}
 
-    for game in 0..games {
-        let seed = 1000 + game as u64;
-        let mut state = BattleState::from_map(reg, map_for(&maps, seed), seed).expect("battle");
-        let mut ai = AiDriver::new();
-        ai.insert(0, planner(reg, seed, "massed_armor"));
-        ai.insert(1, planner(reg, seed + 1, "elastic_defense"));
-        let mut rounds = 0;
-        let mut last_hit: HashMap<UnitId, String> = HashMap::new();
-        // Final state per cadet, so a cadet wounded and then killed is counted
-        // once, as killed.
-        let mut cadets: BTreeMap<CadetId, bool> = BTreeMap::new();
-        for unit in &state.units {
-            for (id, count) in &unit.ammo {
-                *t.ammo_aboard.entry(id.clone()).or_default() += count;
-            }
-            if unit.troops(reg).is_some() {
-                t.foot_fielded += 1;
-            }
+/// Fight one battle and account for it on its own.
+///
+/// Split out of the fought-out pass so that pass can go across the cores like
+/// every other table here, and so a sweep can schedule its variants and its
+/// battles as one flat list of jobs. A tally is per battle and the tallies are
+/// folded in seed order afterwards, which is what keeps the printed numbers
+/// independent of which core finished first — see [`fight_all`].
+fn fight_one(reg: &DataRegistry, maps: &[&str], seed: u64) -> Tally {
+    let mut t = Tally::default();
+    let mut state = BattleState::from_map(reg, map_for(maps, seed), seed).expect("battle");
+    let mut ai = AiDriver::new();
+    ai.insert(0, planner(reg, seed, "massed_armor"));
+    ai.insert(1, planner(reg, seed + 1, "elastic_defense"));
+    let mut rounds = 0;
+    let mut last_hit: HashMap<UnitId, String> = HashMap::new();
+    // Final state per cadet, so a cadet wounded and then killed is counted
+    // once, as killed.
+    let mut cadets: BTreeMap<CadetId, bool> = BTreeMap::new();
+    for unit in &state.units {
+        for (id, count) in &unit.ammo {
+            *t.ammo_aboard.entry(id.clone()).or_default() += count;
         }
-        while !state.is_over() && rounds < 60 {
-            ai.plan_round(reg, &mut state);
-            rounds += 1;
-            // A shell announces itself and then, if anybody was standing on
-            // the ground it came down on, the ordinary vocabulary follows it
-            // immediately. Watching the next event is how artillery gets
-            // credited without the resolver having to say so twice.
-            let mut shell_from: Option<UnitId> = None;
-            for event in state.resolve_round(reg) {
-                let landed = std::mem::take(&mut shell_from);
-                match event {
-                    Event::ShotFired { moving, .. } => {
-                        t.shots += 1;
-                        if moving {
-                            t.shots_on_the_move += 1;
-                        }
-                    }
-                    Event::ShellLanded { attacker, .. } => {
-                        t.shells += 1;
-                        shell_from = Some(attacker);
-                    }
-                    Event::ShotHit {
-                        attacker,
-                        target,
-                        facing,
-                        ..
-                    } => {
-                        t.hits += 1;
-                        *t.hits_by_arc.entry(format!("{facing:?}")).or_default() += 1;
-                        if landed == Some(attacker) {
-                            t.shells_on_target += 1;
-                        }
-                        // Remembered so a kill can be credited: `UnitDestroyed`
-                        // says who died, not who did it, because death is
-                        // reaped at the end of a tick and may have several
-                        // contributors.
-                        if let Some(a) = state.units.get(attacker.index()) {
-                            last_hit.insert(target, a.vehicle.clone());
-                        }
-                    }
-                    Event::ShotMissed { .. } => t.misses += 1,
-                    Event::ShotBounced { attacker, .. } => {
-                        t.bounces += 1;
-                        if landed == Some(attacker) {
-                            t.shells_on_target += 1;
-                            t.shells_bounced += 1;
-                        }
-                    }
-                    Event::CrewHit { cadet, out, .. } => {
-                        let entry = cadets.entry(cadet).or_insert(false);
-                        *entry |= out;
-                    }
-                    Event::Mounted { .. } => t.mounts += 1,
-                    Event::Dismounted { .. } => t.dismounts += 1,
-                    Event::ModuleHit {
-                        module, destroyed, ..
-                    } => {
-                        if destroyed
-                            && reg
-                                .module(&module)
-                                .is_some_and(|m| m.effect == ModuleEffect::Ammo)
-                        {
-                            t.racks_destroyed += 1;
-                        }
-                    }
-                    Event::UnitDestroyed { unit, .. } => {
-                        if let Some(u) = state.units.get(unit.index()) {
-                            *t.deaths.entry(u.vehicle.clone()).or_default() += 1;
-                            // The flags are still on her: reap clears `alive`
-                            // and nothing else, so the cause of death is
-                            // readable exactly here.
-                            let cause = if u.brewed {
-                                "brewed"
-                            } else if u.wrecked {
-                                "wrecked by blast"
-                            } else if u.abandoned {
-                                "abandoned"
-                            } else {
-                                "crew out"
-                            };
-                            *t.causes.entry(cause).or_default() += 1;
-                        }
-                        if let Some(killer) = last_hit.get(&unit) {
-                            *t.kills.entry(killer.clone()).or_default() += 1;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        t.rounds.push(rounds);
-        for out in cadets.values() {
-            if *out {
-                t.girls_out += 1;
-            } else {
-                t.girls_wounded += 1;
-            }
-        }
-        // What is still in the racks when the shooting stops. Everything
-        // missing either went downrange or burned with the rack that held
-        // it, and those two are not separable from outside the engine —
-        // which is what the caveat under the table says.
-        for unit in &state.units {
-            for (id, count) in &unit.ammo {
-                *t.ammo_left.entry(id.clone()).or_default() += count;
-            }
-        }
-        // Survivors only, and `surviving_units` rather than `alive`: a
-        // platoon that drove off by an exit came home with whatever strength
-        // she had left, and counting her as a loss would be exactly the lie
-        // the engine is careful not to tell.
-        for unit in state.surviving_units() {
-            if let Some((have, total)) = unit.troops(reg)
-                && total > 0
-            {
-                t.troops_left.push(have as f32 / total as f32);
-            }
-        }
-        match state.over.map(|r| (r.winner, r.reason)) {
-            Some((Some(w), _)) => {
-                *t.wins
-                    .entry(state.sides[w as usize].name.clone())
-                    .or_default() += 1;
-            }
-            Some((None, EndReason::Stalemate)) => {
-                t.stalemates += 1;
-                t.draws += 1;
-            }
-            _ => t.draws += 1,
+        if unit.troops(reg).is_some() {
+            t.foot_fielded += 1;
         }
     }
+    while !state.is_over() && rounds < 60 {
+        ai.plan_round(reg, &mut state);
+        rounds += 1;
+        // A shell announces itself and then, if anybody was standing on
+        // the ground it came down on, the ordinary vocabulary follows it
+        // immediately. Watching the next event is how artillery gets
+        // credited without the resolver having to say so twice.
+        let mut shell_from: Option<UnitId> = None;
+        for event in state.resolve_round(reg) {
+            let landed = std::mem::take(&mut shell_from);
+            match event {
+                Event::ShotFired { moving, .. } => {
+                    t.shots += 1;
+                    if moving {
+                        t.shots_on_the_move += 1;
+                    }
+                }
+                Event::ShellLanded { attacker, .. } => {
+                    t.shells += 1;
+                    shell_from = Some(attacker);
+                }
+                Event::ShotHit {
+                    attacker,
+                    target,
+                    facing,
+                    ..
+                } => {
+                    t.hits += 1;
+                    *t.hits_by_arc.entry(format!("{facing:?}")).or_default() += 1;
+                    if landed == Some(attacker) {
+                        t.shells_on_target += 1;
+                    }
+                    // Remembered so a kill can be credited: `UnitDestroyed`
+                    // says who died, not who did it, because death is
+                    // reaped at the end of a tick and may have several
+                    // contributors.
+                    if let Some(a) = state.units.get(attacker.index()) {
+                        last_hit.insert(target, a.vehicle.clone());
+                    }
+                }
+                Event::ShotMissed { .. } => t.misses += 1,
+                Event::ShotBounced { attacker, .. } => {
+                    t.bounces += 1;
+                    if landed == Some(attacker) {
+                        t.shells_on_target += 1;
+                        t.shells_bounced += 1;
+                    }
+                }
+                Event::CrewHit { cadet, out, .. } => {
+                    let entry = cadets.entry(cadet).or_insert(false);
+                    *entry |= out;
+                }
+                Event::Mounted { .. } => t.mounts += 1,
+                Event::Dismounted { .. } => t.dismounts += 1,
+                Event::ModuleHit {
+                    module, destroyed, ..
+                } => {
+                    if destroyed
+                        && reg
+                            .module(&module)
+                            .is_some_and(|m| m.effect == ModuleEffect::Ammo)
+                    {
+                        t.racks_destroyed += 1;
+                    }
+                }
+                Event::UnitDestroyed { unit, .. } => {
+                    if let Some(u) = state.units.get(unit.index()) {
+                        *t.deaths.entry(u.vehicle.clone()).or_default() += 1;
+                        // The flags are still on her: reap clears `alive`
+                        // and nothing else, so the cause of death is
+                        // readable exactly here.
+                        let cause = if u.brewed {
+                            "brewed"
+                        } else if u.wrecked {
+                            "wrecked by blast"
+                        } else if u.abandoned {
+                            "abandoned"
+                        } else {
+                            "crew out"
+                        };
+                        *t.causes.entry(cause).or_default() += 1;
+                    }
+                    if let Some(killer) = last_hit.get(&unit) {
+                        *t.kills.entry(killer.clone()).or_default() += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    t.rounds.push(rounds);
+    for out in cadets.values() {
+        if *out {
+            t.girls_out += 1;
+        } else {
+            t.girls_wounded += 1;
+        }
+    }
+    // What is still in the racks when the shooting stops. Everything
+    // missing either went downrange or burned with the rack that held
+    // it, and those two are not separable from outside the engine —
+    // which is what the caveat under the table says.
+    for unit in &state.units {
+        for (id, count) in &unit.ammo {
+            *t.ammo_left.entry(id.clone()).or_default() += count;
+        }
+    }
+    // Survivors only, and `surviving_units` rather than `alive`: a
+    // platoon that drove off by an exit came home with whatever strength
+    // she had left, and counting her as a loss would be exactly the lie
+    // the engine is careful not to tell.
+    for unit in state.surviving_units() {
+        if let Some((have, total)) = unit.troops(reg)
+            && total > 0
+        {
+            t.troops_left.push(have as f32 / total as f32);
+        }
+    }
+    match state.over.map(|r| (r.winner, r.reason)) {
+        Some((Some(w), _)) => {
+            *t.wins
+                .entry(state.sides[w as usize].name.clone())
+                .or_default() += 1;
+        }
+        Some((None, EndReason::Stalemate)) => {
+            t.stalemates += 1;
+            t.draws += 1;
+        }
+        _ => t.draws += 1,
+    }
+    t
+}
 
+/// Everything the fought-out pass has to say, once the battles are in.
+fn report(t: &Tally, games: usize) {
     let mean = t.rounds.iter().sum::<u32>() as f32 / t.rounds.len().max(1) as f32;
     println!("  outcome:");
     let mut names: Vec<_> = t.wins.keys().cloned().collect();
@@ -1453,120 +1716,152 @@ fn planner_with(
 /// brain has learned anything about what a grenadier section is for, it
 /// shows as fewer taxis and platoons lost in the rows below the control
 /// than in the control itself.
-fn delegation_tax(reg: &DataRegistry, games: usize) {
-    let maps = battle_maps(reg);
-    heading(&format!(
-        "delegation tax: {games} battles per pairing across {}, opponent held constant",
-        maps.join(", ")
-    ));
-    // Read off the chassis rather than named: a taxi is anything that lifts
-    // somebody and a foot unit is anything that walks, so a mod's own
-    // transports and its own infantry land in these columns unasked.
-    let taxi = |unit: &tactics_core::battle::Unit| {
-        reg.vehicle(&unit.vehicle).is_some_and(|v| v.capacity > 0)
-    };
-    let afoot = |unit: &tactics_core::battle::Unit| {
-        reg.vehicle(&unit.vehicle)
-            .is_some_and(|v| v.movement.class == tactics_core::data::MovementClass::Foot)
-    };
-    let run = |p0: &str, p1: &str| -> Delegation {
-        let (mut wins_massed, mut wins_elastic, mut draws) = (0, 0, 0);
-        let mut rounds_total = 0u32;
-        let (mut taxis_lost, mut foot_lost, mut foot_shots) = (0usize, 0usize, 0usize);
-        for game in 0..games {
-            let seed = 1000 + game as u64;
-            let mut state = BattleState::from_map(reg, map_for(&maps, seed), seed).expect("battle");
-            let mut ai = AiDriver::new();
-            ai.insert(0, planner_with(reg, seed, p0, "massed_armor"));
-            ai.insert(1, planner_with(reg, seed + 1, p1, "elastic_defense"));
-            let mut rounds = 0;
-            while !state.is_over() && rounds < 60 {
-                ai.plan_round(reg, &mut state);
-                for event in &state.resolve_round(reg) {
-                    if let Event::ShotFired { attacker, .. } = event
-                        && state
-                            .units
-                            .get(attacker.index())
-                            .is_some_and(|u| u.side == 0 && afoot(u))
-                    {
-                        foot_shots += 1;
-                    }
-                }
-                rounds += 1;
-            }
-            rounds_total += rounds;
-            // Side 0 only, always — the side whose planner the middle row
-            // swaps. Counting both sides would average the commanded force
-            // together with its flat opponent and hide exactly the
-            // difference the table is asking about.
-            taxis_lost += state
-                .lost_units()
-                .filter(|u| u.side == 0 && taxi(u))
-                .count();
-            foot_lost += state
-                .lost_units()
-                .filter(|u| u.side == 0 && afoot(u))
-                .count();
-            match state.over.and_then(|r| r.winner) {
-                Some(0) => wins_massed += 1,
-                Some(1) => wins_elastic += 1,
-                _ => draws += 1,
-            }
-        }
-        Delegation {
-            wins_massed,
-            wins_elastic,
-            draws,
-            rounds: rounds_total as f32 / games.max(1) as f32,
-            taxis_lost,
-            foot_lost,
-            foot_shots,
-        }
-    };
-    let flat = run("utility", "utility");
-    let massed_cmd = run("command", "utility");
-    let elastic_cmd = run("utility", "command");
-
-    println!(
-        "  {:<24} {:>6} {:>8} {:>6} {:>7} {:>7} {:>7} {:>7}",
-        "pairing", "massed", "elastic", "draws", "rounds", "taxis", "platoons", "shots"
-    );
-    for (name, t) in [
-        ("both flat", &flat),
-        ("massed under command", &massed_cmd),
-        ("elastic under command", &elastic_cmd),
-    ] {
-        println!(
-            "  {:<24} {:>6} {:>8} {:>6} {:>7.1} {:>7} {:>7} {:>7}",
-            name,
-            t.wins_massed,
-            t.wins_elastic,
-            t.draws,
-            t.rounds,
-            t.taxis_lost,
-            t.foot_lost,
-            t.foot_shots
-        );
-    }
-    println!(
-        "\n  a side's tax is its win drop against the same flat opponent when it\n  \
-         fights through missions instead; zero is the target.\n\n  \
-         the last three columns are always side 0's — carriers lost, foot units\n  \
-         lost, and rounds fired by anybody on their feet — so the middle row is\n  \
-         the commanded force and the two rows around it are the same force flat."
-    );
-}
-
-/// One row of [`delegation_tax`]: who won, how long it took, and what the
-/// infantry made of it.
+/// What one battle contributed to the delegation table.
+///
+/// Every field is a count, including `rounds`, which is a total rather than a
+/// mean so that folding stays addition — the mean is taken once, at the end,
+/// where the number of battles is known. A mean folded into a mean would be a
+/// different number depending on how the battles were split across cores.
+#[derive(Default, Clone, Copy)]
 struct Delegation {
     wins_massed: usize,
     wins_elastic: usize,
     draws: usize,
-    rounds: f32,
+    rounds: u32,
     taxis_lost: usize,
     foot_lost: usize,
     foot_shots: usize,
+}
+
+impl Delegation {
+    fn merge(&mut self, o: &Self) {
+        self.wins_massed += o.wins_massed;
+        self.wins_elastic += o.wins_elastic;
+        self.draws += o.draws;
+        self.rounds += o.rounds;
+        self.taxis_lost += o.taxis_lost;
+        self.foot_lost += o.foot_lost;
+        self.foot_shots += o.foot_shots;
+    }
+}
+
+/// Read off the chassis rather than named: a taxi is anything that lifts
+/// somebody and a foot unit is anything that walks, so a mod's own transports
+/// and its own infantry land in these columns unasked.
+fn is_taxi(reg: &DataRegistry, unit: &tactics_core::battle::Unit) -> bool {
+    reg.vehicle(&unit.vehicle).is_some_and(|v| v.capacity > 0)
+}
+
+fn is_afoot(reg: &DataRegistry, unit: &tactics_core::battle::Unit) -> bool {
+    reg.vehicle(&unit.vehicle)
+        .is_some_and(|v| v.movement.class == tactics_core::data::MovementClass::Foot)
+}
+
+fn delegation_battle(
+    reg: &DataRegistry,
+    maps: &[&str],
+    seed: u64,
+    p0: &str,
+    p1: &str,
+) -> Delegation {
+    let mut d = Delegation::default();
+    let mut state = BattleState::from_map(reg, map_for(maps, seed), seed).expect("battle");
+    let mut ai = AiDriver::new();
+    ai.insert(0, planner_with(reg, seed, p0, "massed_armor"));
+    ai.insert(1, planner_with(reg, seed + 1, p1, "elastic_defense"));
+    let mut rounds = 0;
+    while !state.is_over() && rounds < 60 {
+        ai.plan_round(reg, &mut state);
+        for event in &state.resolve_round(reg) {
+            if let Event::ShotFired { attacker, .. } = event
+                && state
+                    .units
+                    .get(attacker.index())
+                    .is_some_and(|u| u.side == 0 && is_afoot(reg, u))
+            {
+                d.foot_shots += 1;
+            }
+        }
+        rounds += 1;
+    }
+    d.rounds = rounds;
+    // Side 0 only, always — the side whose planner the middle row swaps.
+    // Counting both sides would average the commanded force together with its
+    // flat opponent and hide exactly the difference the table is asking about.
+    d.taxis_lost = state
+        .lost_units()
+        .filter(|u| u.side == 0 && is_taxi(reg, u))
+        .count();
+    d.foot_lost = state
+        .lost_units()
+        .filter(|u| u.side == 0 && is_afoot(reg, u))
+        .count();
+    match state.over.and_then(|r| r.winner) {
+        Some(0) => d.wins_massed += 1,
+        Some(1) => d.wins_elastic += 1,
+        _ => d.draws += 1,
+    }
+    d
+}
+
+fn delegation_tax(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
+    let maps = battle_maps(reg);
+    let run = |p0: &str, p1: &str| -> Delegation {
+        let fought = fight_all(reg, games, |reg, game| {
+            delegation_battle(reg, &maps, DELEGATION_SEED + seed + game, p0, p1)
+        });
+        let mut total = Delegation::default();
+        for one in &fought {
+            total.merge(one);
+        }
+        total
+    };
+    let per = games.max(1) as f64;
+    let rows = [
+        ("both flat", run("utility", "utility")),
+        ("massed under command", run("command", "utility")),
+        ("elastic under command", run("utility", "command")),
+    ]
+    .into_iter()
+    .map(|(name, t)| {
+        (
+            name.to_string(),
+            vec![
+                t.wins_massed as f64,
+                t.wins_elastic as f64,
+                t.draws as f64,
+                t.rounds as f64 / per,
+                t.taxis_lost as f64,
+                t.foot_lost as f64,
+                t.foot_shots as f64,
+            ],
+        )
+    })
+    .collect();
+
+    Grid {
+        title: format!(
+            "delegation tax: {games} battles per pairing across {}, opponent held constant",
+            maps.join(", ")
+        ),
+        preamble: Vec::new(),
+        row_head: "pairing",
+        columns: vec![
+            col("massed", 0),
+            col("elastic", 0),
+            col("draws", 0),
+            col("rounds", 1),
+            col("taxis", 0),
+            col("platoons", 0),
+            col("shots", 0),
+        ],
+        rows,
+        note: "\n  a side's tax is its win drop against the same flat opponent when it\n  \
+               fights through missions instead; zero is the target.\n\n  \
+               the last three columns are always side 0's — carriers lost, foot units\n  \
+               lost, and rounds fired by anybody on their feet — so the middle row is\n  \
+               the commanded force and the two rows around it are the same force flat.",
+    }
 }
 
 /// Does skill win cleanly? Identical forces, identical doctrine, and the only
@@ -1612,11 +1907,58 @@ struct Delegation {
 /// preferred hardware is underpriced — which is exactly the signal this table
 /// exists to raise, and exactly what a shopping algorithm that optimised for
 /// value-per-point would have hidden.
-fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32) {
-    heading(&format!(
-        "mustered forces: {games} battles per pairing, {budget} points a side, each doctrine buying its own army"
-    ));
+/// What one mustered-arena battle contributed. Counts, so folding is addition
+/// — see [`Delegation`], which says why that matters here.
+#[derive(Default, Clone, Copy)]
+struct Muster {
+    a_wins: usize,
+    b_wins: usize,
+    draws: usize,
+    rounds: u32,
+    a_points_lost: i32,
+}
 
+fn muster_battle(
+    reg: &DataRegistry,
+    seed: u64,
+    flip: bool,
+    a: &(&str, Vec<String>),
+    b: &(&str, Vec<String>),
+) -> Muster {
+    let mut m = Muster::default();
+    let (west, east) = if flip { (&b.1, &a.1) } else { (&a.1, &b.1) };
+    let (west_doctrine, east_doctrine) = if flip { (b.0, a.0) } else { (a.0, b.0) };
+    let Some(mut state) = muster_arena(reg, seed, west, east) else {
+        return m;
+    };
+    let mut ai = AiDriver::new();
+    ai.insert(0, planner(reg, seed, west_doctrine));
+    ai.insert(1, planner(reg, seed + 1, east_doctrine));
+    let mut rounds = 0;
+    while !state.is_over() && rounds < 60 {
+        ai.plan_round(reg, &mut state);
+        state.resolve_round(reg);
+        rounds += 1;
+    }
+    m.rounds = rounds;
+    // A is whichever end she deployed on this game, so the tallies follow the
+    // flip rather than the side number.
+    let a_side = if flip { 1u8 } else { 0u8 };
+    m.a_points_lost = state
+        .lost_units()
+        .filter(|u| u.side == a_side)
+        .filter_map(|u| reg.vehicle(&u.vehicle))
+        .map(|v| v.cost)
+        .sum::<i32>();
+    match state.over.and_then(|r| r.winner) {
+        Some(s) if s == a_side => m.a_wins += 1,
+        Some(_) => m.b_wins += 1,
+        None => m.draws += 1,
+    }
+    m
+}
+
+fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32, seed: u64) -> Grid {
     let doctrines = ["massed_armor", "elastic_defense", "recon_pull"];
     let forces: Vec<(&str, Vec<String>)> = doctrines
         .iter()
@@ -1626,13 +1968,13 @@ fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32) {
         })
         .collect();
 
-    println!("  the shopping lists:");
+    let mut preamble = vec!["  the shopping lists:".to_string()];
     for (id, army) in &forces {
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
         for vehicle in army {
             *counts.entry(vehicle.as_str()).or_default() += 1;
         }
-        println!(
+        preamble.push(format!(
             "    {:<16} {:>3} pts, {} units — {}",
             id,
             force::cost_of(reg, army),
@@ -1642,75 +1984,60 @@ fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32) {
                 .map(|(v, n)| format!("{n}x {v}"))
                 .collect::<Vec<_>>()
                 .join(", ")
-        );
+        ));
     }
 
-    println!(
-        "\n  {:<34} {:>6} {:>6} {:>6} {:>7} {:>9}",
-        "pairing (A vs B)", "A won", "B won", "draws", "rounds", "A pts lost"
-    );
-    for (i, (a_id, a_force)) in forces.iter().enumerate() {
-        for (b_id, b_force) in forces.iter().skip(i + 1) {
-            // Both orientations, summed: the arena is mirror-symmetric but
-            // resolution order is not, and side B has held a measured edge on
-            // this ground since the plateau rule went in.
-            let (mut a_wins, mut b_wins, mut draws) = (0, 0, 0);
-            let (mut rounds_total, mut a_points_lost) = (0u32, 0i32);
-            for game in 0..games {
-                let seed = 4000 + game as u64;
-                let flip = game % 2 == 1;
-                let (west, east) = if flip {
-                    (b_force, a_force)
-                } else {
-                    (a_force, b_force)
-                };
-                let (west_doctrine, east_doctrine) =
-                    if flip { (*b_id, *a_id) } else { (*a_id, *b_id) };
-                let Some(mut state) = muster_arena(reg, seed, west, east) else {
-                    continue;
-                };
-                let mut ai = AiDriver::new();
-                ai.insert(0, planner(reg, seed, west_doctrine));
-                ai.insert(1, planner(reg, seed + 1, east_doctrine));
-                let mut rounds = 0;
-                while !state.is_over() && rounds < 60 {
-                    ai.plan_round(reg, &mut state);
-                    state.resolve_round(reg);
-                    rounds += 1;
-                }
-                rounds_total += rounds;
-                // A is whichever end she deployed on this game, so the
-                // tallies follow the flip rather than the side number.
-                let a_side = if flip { 1u8 } else { 0u8 };
-                a_points_lost += state
-                    .lost_units()
-                    .filter(|u| u.side == a_side)
-                    .filter_map(|u| reg.vehicle(&u.vehicle))
-                    .map(|v| v.cost)
-                    .sum::<i32>();
-                match state.over.and_then(|r| r.winner) {
-                    Some(s) if s == a_side => a_wins += 1,
-                    Some(_) => b_wins += 1,
-                    None => draws += 1,
-                }
+    let per = games.max(1) as f64;
+    let mut rows = Vec::new();
+    for (i, a) in forces.iter().enumerate() {
+        for b in forces.iter().skip(i + 1) {
+            // Both orientations, alternating game by game: the arena is
+            // mirror-symmetric but resolution order is not, and side B has
+            // held a measured edge on this ground since the plateau rule
+            // went in.
+            let fought = fight_all(reg, games, |reg, game| {
+                muster_battle(reg, MUSTER_SEED + seed + game, game % 2 == 1, a, b)
+            });
+            let mut t = Muster::default();
+            for one in &fought {
+                t.a_wins += one.a_wins;
+                t.b_wins += one.b_wins;
+                t.draws += one.draws;
+                t.rounds += one.rounds;
+                t.a_points_lost += one.a_points_lost;
             }
-            println!(
-                "  {:<34} {:>6} {:>6} {:>6} {:>7.1} {:>9.1}",
-                format!("{a_id} vs {b_id}"),
-                a_wins,
-                b_wins,
-                draws,
-                rounds_total as f32 / games.max(1) as f32,
-                a_points_lost as f32 / games.max(1) as f32,
-            );
+            rows.push((
+                format!("{} vs {}", a.0, b.0),
+                vec![
+                    t.a_wins as f64,
+                    t.b_wins as f64,
+                    t.draws as f64,
+                    t.rounds as f64 / per,
+                    t.a_points_lost as f64 / per,
+                ],
+            ));
         }
     }
-    println!(
-        "\n  each pairing alternates ends game by game, so neither column is a\n  \
-         statement about deployment. `A pts lost` is the requisition value of\n  \
-         A's dead per battle — what the win cost, in the same currency the\n  \
-         army was bought with."
-    );
+
+    Grid {
+        title: format!(
+            "mustered forces: {games} battles per pairing, {budget} points a side, each doctrine buying its own army"
+        ),
+        preamble,
+        row_head: "pairing (A vs B)",
+        columns: vec![
+            col("A won", 0),
+            col("B won", 0),
+            col("draws", 0),
+            col("rounds", 1),
+            col("A pts lost", 1),
+        ],
+        rows,
+        note: "\n  each pairing alternates ends game by game, so neither column is a\n  \
+               statement about deployment. `A pts lost` is the requisition value of\n  \
+               A's dead per battle — what the win cost, in the same currency the\n  \
+               army was bought with.",
+    }
 }
 
 /// The skill-gap arena, filled with two bought armies instead of the mirrored
@@ -1871,34 +2198,50 @@ fn fight_all<T: Send>(
     games: usize,
     each: impl Fn(&DataRegistry, u64) -> T + Sync,
 ) -> Vec<T> {
-    let mut out: Vec<Option<T>> = (0..games).map(|_| None).collect();
-    if games == 0 {
+    let seeds: Vec<u64> = (0..games as u64).collect();
+    run_all(&seeds, |seed| each(reg, *seed))
+}
+
+/// Run a known list of independent jobs across the machine, keeping the
+/// results in the order the jobs were given in.
+///
+/// The order is the whole point and is why this is not a channel: every job
+/// writes into the slot it owns, so a caller folding the results is folding
+/// them in job order however the threads interleaved. A sweep hands this one
+/// flat list holding *every* variant's battles rather than one batch per
+/// variant, because batching would idle most of the machine at the end of
+/// each batch while its slowest battle finished.
+///
+/// `std::thread::scope` rather than a work-stealing pool: the batch is known
+/// up front, the jobs are within a factor of a few of each other, and it
+/// costs no dependency. Chunked by slice rather than by index so the borrow
+/// checker proves no two threads touch the same slot.
+fn run_all<J: Sync, T: Send>(jobs: &[J], each: impl Fn(&J) -> T + Sync) -> Vec<T> {
+    if jobs.is_empty() {
         return Vec::new();
     }
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1)
-        .min(games);
-    let per = games.div_ceil(threads);
+    let mut out: Vec<Option<T>> = (0..jobs.len()).map(|_| None).collect();
+    let threads = thread_budget().min(jobs.len());
+    let per = jobs.len().div_ceil(threads);
     std::thread::scope(|scope| {
         let each = &each;
         let mut rest = out.as_mut_slice();
-        let mut base = 0usize;
+        let mut queue = jobs;
         while !rest.is_empty() {
             let take = per.min(rest.len());
             let (mine, tail) = rest.split_at_mut(take);
-            let start = base;
+            let (theirs, others) = queue.split_at(take);
             scope.spawn(move || {
-                for (i, slot) in mine.iter_mut().enumerate() {
-                    *slot = Some(each(reg, (start + i) as u64));
+                for (slot, job) in mine.iter_mut().zip(theirs) {
+                    *slot = Some(each(job));
                 }
             });
-            base += take;
+            queue = others;
             rest = tail;
         }
     });
     out.into_iter()
-        .map(|o| o.expect("every battle in the batch ran"))
+        .map(|o| o.expect("every job in the batch ran"))
         .collect()
 }
 
@@ -1990,14 +2333,24 @@ fn brains_table(reg: &DataRegistry, games: usize, difficulty: u8) {
     );
 }
 
-fn skill_gap(reg: &DataRegistry, games: usize) {
-    heading(&format!(
-        "skill gap: {games} battles per pairing on a mirrored arena — same forces, same doctrine, only execution differs"
-    ));
-    println!(
-        "  {:<12} {:>5} {:>5} {:>6} {:>12} {:>12} {:>8}",
-        "pairing", "A won", "B won", "draws", "A lost/game", "B lost/game", "ratio"
-    );
+/// A pairing's five raw figures dressed with the exchange ratio the table
+/// reports. Kept apart from the tallying so the summary rows below are built
+/// the same way as the ordinary ones and cannot disagree with them.
+fn cells(raw: &[f64; 5]) -> Vec<f64> {
+    let mut out = raw.to_vec();
+    // B's losses per A's loss, as a number rather than the `1:2.1` this used
+    // to print, so a sweep can subtract it. The note says which way it reads.
+    out.push(if raw[3] > 0.0 {
+        raw[4] / raw[3]
+    } else {
+        f64::INFINITY
+    });
+    out
+}
+
+fn skill_gap(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
+    let mut rows = Vec::new();
+    let mut raw: BTreeMap<(u8, u8), [f64; 5]> = BTreeMap::new();
     for (a, b) in [(5, 5), (1, 1), (5, 3), (3, 5), (5, 1), (1, 5)] {
         let cfg = |difficulty: u8| AiConfig {
             planner: "utility".into(),
@@ -2005,8 +2358,8 @@ fn skill_gap(reg: &DataRegistry, games: usize) {
             doctrine: None,
         };
         let (a_cfg, b_cfg) = (cfg(a), cfg(b));
-        let fought = fight_all(reg, games, |reg, seed| {
-            arena_duel(reg, seed, &a_cfg, &b_cfg)
+        let fought = fight_all(reg, games, |reg, game| {
+            arena_duel(reg, ARENA_SEED + seed + game, &a_cfg, &b_cfg)
         });
 
         let (mut a_wins, mut b_wins, mut draws) = (0, 0, 0);
@@ -2020,30 +2373,1154 @@ fn skill_gap(reg: &DataRegistry, games: usize) {
             a_losses += outcome.a_losses;
             b_losses += outcome.b_losses;
         }
-        let per = |l: usize| l as f32 / games.max(1) as f32;
-        println!(
-            "  {:<12} {:>5} {:>5} {:>6} {:>12.2} {:>12.2} {:>8}",
-            format!("{a} vs {b}"),
-            a_wins,
-            b_wins,
-            draws,
-            per(a_losses),
-            per(b_losses),
-            format!(
-                "1:{:.1}",
-                if a_losses > 0 {
-                    b_losses as f32 / a_losses as f32
-                } else {
-                    f32::INFINITY
-                }
-            ),
+        let per = |l: usize| l as f64 / games.max(1) as f64;
+        raw.insert(
+            (a, b),
+            [
+                a_wins as f64,
+                b_wins as f64,
+                draws as f64,
+                per(a_losses),
+                per(b_losses),
+            ],
         );
-        // Each pairing is a few hundred battles' worth of planning; print it
-        // as it finishes rather than making the reader wait for the block.
+        rows.push((format!("{a} vs {b}"), cells(&raw[&(a, b)])));
+        // Each pairing is a few hundred battles' worth of planning; let it
+        // out as it finishes rather than making the reader wait for the block.
         let _ = std::io::stdout().flush();
     }
+
+    // The three summary rows, and they are the ones to quote.
+    //
+    // The arena is mirror-symmetric but a battle is not: side 0 and side 1 do
+    // not resolve simultaneously, so each of the six rows above measures a
+    // skill gap *plus* whatever the ends are worth. Adding the two
+    // orientations of a pairing cancels that, and adding the two equal-skill
+    // pairings isolates it — which is the only honest way to read either.
+    // Quoting one orientation of one pairing is what put figures in CLAUDE.md
+    // that the other orientation did not support.
+    // `x` is the pairing with the better crew on side B and `y` the one with
+    // her on side A, so the strong side's figures are x[1]/y[0] and the weak
+    // side's are x[0]/y[1]. Strong first, because the row is named that way.
+    let both = |x: &[f64; 5], y: &[f64; 5]| {
+        cells(&[
+            x[1] + y[0],
+            x[0] + y[1],
+            x[2] + y[2],
+            (x[4] + y[3]) / 2.0,
+            (x[3] + y[4]) / 2.0,
+        ])
+    };
+    if let (Some(hi), Some(lo)) = (raw.get(&(5, 5)), raw.get(&(1, 1))) {
+        rows.push((
+            "the ends (A/B)".to_string(),
+            cells(&[
+                hi[0] + lo[0],
+                hi[1] + lo[1],
+                hi[2] + lo[2],
+                (hi[3] + lo[3]) / 2.0,
+                (hi[4] + lo[4]) / 2.0,
+            ]),
+        ));
+    }
+    for (weak, strong) in [(3u8, 5u8), (1u8, 5u8)] {
+        if let (Some(x), Some(y)) = (raw.get(&(weak, strong)), raw.get(&(strong, weak))) {
+            rows.push((format!("{strong} over {weak}, both ends"), both(x, y)));
+        }
+    }
+
+    Grid {
+        title: format!(
+            "skill gap: {games} battles per pairing on a mirrored arena — same forces, same doctrine, only execution differs"
+        ),
+        preamble: Vec::new(),
+        row_head: "pairing",
+        columns: vec![
+            col("A won", 0),
+            col("B won", 0),
+            col("draws", 0),
+            col("A lost", 2),
+            col("B lost", 2),
+            col("B per A", 1),
+        ],
+        rows,
+        note: "\n  `A lost` and `B lost` are vehicles per battle. `B per A` is B's losses\n  \
+               for each of A's: a side that wins by outfighting rather than by\n  \
+               outlasting shows it there, not in the win column.\n\n  \
+               the last three rows are the ones to quote. `the ends` adds the two\n  \
+               equal-skill pairings, so its win columns are worth of being side A\n  \
+               against worth of being side B and nothing else — the arena is mirrored\n  \
+               but a battle is not, and each of the six rows above carries that on\n  \
+               top of the skill gap it is for. `both ends` adds a pairing's two\n  \
+               orientations, which cancels it: those columns are the better crew\n  \
+               against the worse one, and `B per A` there is the worse crew's losses\n  \
+               for each of the better crew's.\n\n  \
+               read this table at --games 36 or not at all, and re-draw it before\n  \
+               quoting it: --sweep seed=0,1000,2000,3000. Twelve battles cannot\n  \
+               resolve a 70% edge, and this is the table most often quoted at somebody.",
+    }
+}
+
+// --- the same game, more than once ----------------------------------------
+//
+// Everything below exists so that a question of the form "what would this
+// number do" can be answered by *running both games*, side by side, instead
+// of editing `mod.json`, running, reverting, running again and comparing two
+// screens of scrollback from memory. That loop was the actual method used for
+// the whole ballistics rewrite and it has two failure modes worth naming: a
+// revert that was never made, and a difference small enough to be inside the
+// noise of the sample being read as a result anyway. A sweep fixes the first
+// by never touching the file, and exposes the second by putting the baseline
+// on the row above.
+
+/// One number to change before anything runs, named the way the json names it.
+///
+/// The path is `<block>.<field>` for the single-value rule blocks — `balance`,
+/// `scale`, `casualties`, `morale`, `reaction`, `command` — and
+/// `<kind>.<id>.<field>` for the content maps, where `kind` is one of
+/// `vehicle`, `weapon`, `ammo`, `module`, `terrain`, `doctrine`. Nesting and
+/// list indices work throughout: `morale.rungs[2].accuracy` is a path.
+#[derive(Clone)]
+struct Override {
+    path: String,
+    value: String,
+}
+
+impl Override {
+    /// `path=value`, which is how it is written on the command line.
+    fn parse(text: &str) -> Result<Self, String> {
+        let (path, value) = text
+            .split_once('=')
+            .ok_or_else(|| format!("`{text}` is not `path=value`"))?;
+        if path.is_empty() {
+            return Err(format!("`{text}` names no field"));
+        }
+        Ok(Self {
+            path: path.to_string(),
+            value: value.to_string(),
+        })
+    }
+
+    /// The short name this override goes by in a table heading. The full path
+    /// is printed once, in the legend under the table, because
+    /// `balance.partial_penetration_percent=55` is six columns wide on its own.
+    fn leaf(&self) -> &str {
+        self.path.rsplit('.').next().unwrap_or(&self.path)
+    }
+}
+
+/// One axis of a sweep: a number, and the values to try in it.
+struct Axis {
+    path: String,
+    values: Vec<String>,
+}
+
+/// One whole configuration of the game, and what it is called in the table.
+struct Variant {
+    label: String,
+    /// Which mod tree to load. An axis may sweep this, which is how two
+    /// *versions* of the content get compared rather than two numbers in one.
+    mods: std::path::PathBuf,
+    /// Where this variant's battles start counting from. An axis may sweep
+    /// this too, and that is the most useful sweep there is: rows that differ
+    /// only in their seed are the same game sampled twice, so the spread down
+    /// those rows is the noise floor that every *other* difference in the
+    /// table has to clear before it means anything. It is the answer to the
+    /// question the sample-size note asks, in the table rather than in prose.
+    seed: Option<u64>,
+    overrides: Vec<Override>,
+}
+
+/// How many battles may be in the air at once.
+///
+/// A static rather than a parameter threaded through five call sites, because
+/// it is a property of the machine rather than of any table. `--jobs` is what
+/// makes this harness usable *beside itself*: two sweeps at `--jobs 4` on an
+/// eight-core box finish in about the time one at full width would, and
+/// neither one's numbers move, because the folding is by seed either way.
+static JOBS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn thread_budget() -> usize {
+    let asked = JOBS.load(std::sync::atomic::Ordering::Relaxed);
+    if asked > 0 {
+        return asked;
+    }
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+}
+
+/// Read `value` the way json would, falling back to a bare string.
+///
+/// So `55`, `-10`, `1.5`, `true` and `[1, 2]` all mean what they look like,
+/// and `foot` means `"foot"` without the shell-quoting that would otherwise
+/// be needed to get a quote past bash.
+fn parse_value(text: &str) -> serde_json::Value {
+    serde_json::from_str(text).unwrap_or_else(|_| serde_json::Value::String(text.to_string()))
+}
+
+/// `rungs[2]` -> `("rungs", Some(2))`.
+fn parse_segment(seg: &str) -> Result<(&str, Option<usize>), String> {
+    let Some(open) = seg.find('[') else {
+        return Ok((seg, None));
+    };
+    let rest = &seg[open + 1..];
+    let close = rest
+        .find(']')
+        .ok_or_else(|| format!("`{seg}` opens a [ and never closes it"))?;
+    let index: usize = rest[..close]
+        .parse()
+        .map_err(|_| format!("`{}` is not a list position", &rest[..close]))?;
+    Ok((&seg[..open], Some(index)))
+}
+
+/// Walk a dotted path into a json value and replace the leaf, returning what
+/// was there.
+///
+/// It refuses to *create* anything. A path naming no existing field is a typo,
+/// and a typo that quietly invented a key would produce a sweep whose rows all
+/// measured the same game and agreed with each other beautifully. The error
+/// lists what was actually at that level, because these names come from serde
+/// and are not always what the doc comment beside the field calls them.
+fn patch_json(
+    root: &mut serde_json::Value,
+    path: &str,
+    new: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let segs: Vec<&str> = path.split('.').filter(|s| !s.is_empty()).collect();
+    if segs.is_empty() {
+        return Err("no field named".to_string());
+    }
+    let mut cur = root;
+    for (n, seg) in segs.iter().enumerate() {
+        let (name, index) = parse_segment(seg)?;
+        let obj = cur
+            .as_object_mut()
+            .ok_or_else(|| format!("nothing under `{seg}`: the level above it holds no fields"))?;
+        if !obj.contains_key(name) {
+            let mut keys: Vec<&str> = obj.keys().map(String::as_str).collect();
+            keys.sort_unstable();
+            return Err(format!(
+                "no `{name}` here. This level has: {}",
+                keys.join(", ")
+            ));
+        }
+        cur = obj.get_mut(name).expect("checked on the line above");
+        if let Some(i) = index {
+            let len = cur.as_array().map(|a| a.len());
+            let arr = cur
+                .as_array_mut()
+                .ok_or_else(|| format!("`{name}` is not a list, so `[{i}]` means nothing"))?;
+            cur = arr.get_mut(i).ok_or_else(|| {
+                format!(
+                    "`{name}` has {} entries, so there is no [{i}]",
+                    len.unwrap_or(0)
+                )
+            })?;
+        }
+        if n + 1 == segs.len() {
+            // A number where a string was, or a string where a list was, is
+            // caught here rather than by `from_value` below, because serde's
+            // message names the Rust type and this one names the path.
+            if !cur.is_null() && std::mem::discriminant(&*cur) != std::mem::discriminant(&new) {
+                return Err(format!(
+                    "`{path}` holds {cur}, and {new} is a different kind of value"
+                ));
+            }
+            return Ok(std::mem::replace(cur, new));
+        }
+    }
+    unreachable!("the loop returns on the last segment")
+}
+
+/// A json value as a person would rather read it.
+///
+/// Only really about floats: most of this content is `f32`, json holds `f64`,
+/// and the widening prints an `aggression` of 0.85 as 0.8500000238418579. The
+/// "was" note exists so somebody can put the number back, and a number nobody
+/// would type is no help with that.
+fn render(value: &serde_json::Value) -> String {
+    match value.as_f64() {
+        Some(f) if !value.is_i64() && !value.is_u64() => {
+            let text = format!("{f:.6}");
+            let text = text.trim_end_matches('0').trim_end_matches('.');
+            text.to_string()
+        }
+        _ => value.to_string(),
+    }
+}
+
+/// Apply one override to a loaded registry, returning what the number was.
+///
+/// The round trip through json is deliberate and is the reason this covers
+/// every field rather than a hand-written list of the ones somebody thought
+/// to expose: the blocks already serialise, because a save file holds them,
+/// so the set of tunable numbers here is exactly the set a mod can declare.
+/// A field added to `Balance` tomorrow is sweepable the same afternoon with
+/// no change to this file.
+fn apply_override(reg: &mut DataRegistry, ov: &Override) -> Result<String, String> {
+    let new = parse_value(&ov.value);
+    let (block, rest) = ov
+        .path
+        .split_once('.')
+        .ok_or_else(|| format!("`{}` names a block but no field in it", ov.path))?;
+
+    macro_rules! patch {
+        ($slot:expr, $within:expr) => {{
+            let mut json = serde_json::to_value(&$slot).map_err(|e| e.to_string())?;
+            let was = patch_json(&mut json, $within, new)?;
+            $slot = serde_json::from_value(json).map_err(|e| format!("{}: {e}", ov.path))?;
+            Ok(render(&was))
+        }};
+    }
+
+    match block {
+        "balance" => patch!(reg.balance, rest),
+        "scale" => patch!(reg.scale, rest),
+        "casualties" => patch!(reg.casualties, rest),
+        "morale" => patch!(reg.morale, rest),
+        "reaction" => patch!(reg.reaction, rest),
+        "command" => match reg.command.as_mut() {
+            // Not defaulted, deliberately, and the message says so: "no chain
+            // of command" is the absence of the system rather than the system
+            // with generous numbers, so there is nothing here to patch.
+            None => Err("no `command` block is declared by these mods".to_string()),
+            Some(rules) => patch!(*rules, rest),
+        },
+        "vehicle" | "weapon" | "ammo" | "module" | "terrain" | "doctrine" => {
+            let (id, within) = rest
+                .split_once('.')
+                .ok_or_else(|| format!("`{}` names a {block} but no field on it", ov.path))?;
+            macro_rules! entry {
+                ($map:expr) => {{
+                    match $map.get_mut(id) {
+                        None => {
+                            let mut ids: Vec<&str> = $map.keys().map(String::as_str).collect();
+                            ids.sort_unstable();
+                            Err(format!("no {block} `{id}`. There is: {}", ids.join(", ")))
+                        }
+                        Some(def) => patch!(*def, within),
+                    }
+                }};
+            }
+            match block {
+                "vehicle" => entry!(reg.vehicles),
+                "weapon" => entry!(reg.weapons),
+                "ammo" => entry!(reg.ammo),
+                "module" => entry!(reg.modules),
+                "terrain" => entry!(reg.terrain),
+                _ => entry!(reg.doctrines),
+            }
+        }
+        other => Err(format!(
+            "`{other}` is not something to set. Blocks: balance, scale, casualties, \
+             morale, reaction, command. Content: vehicle.<id>, weapon.<id>, ammo.<id>, \
+             module.<id>, terrain.<id>, doctrine.<id>."
+        )),
+    }
+}
+
+/// Load a mod tree and apply every override, loudly.
+///
+/// Loud because the alternative is a sweep that silently measured one game
+/// twice: a bad path here has to stop the run, not warn in a line that scrolls
+/// off before the tables arrive.
+fn configure(root: &std::path::Path, overrides: &[Override]) -> DataRegistry {
+    let (mut reg, _) = DataRegistry::load_dir(root).unwrap_or_else(|e| {
+        eprintln!("error: could not load mods from {}: {e}", root.display());
+        std::process::exit(1);
+    });
+    for ov in overrides {
+        match apply_override(&mut reg, ov) {
+            Ok(was) => println!("  set {} = {} (was {was})", ov.path, ov.value),
+            Err(e) => {
+                eprintln!("error: --set {}={}: {e}", ov.path, ov.value);
+                std::process::exit(1);
+            }
+        }
+    }
+    reg
+}
+
+/// The headline numbers of a fought-out run, reduced to something a row can
+/// hold and a difference can be taken of.
+///
+/// Deliberately a *summary* and not the whole report: the value of the
+/// comparison table is that two runs fit on the screen at once, and the full
+/// report is still one `--verbose` away for whichever row turns out to be
+/// interesting.
+#[derive(Clone, Default)]
+struct Digest {
+    wins: BTreeMap<String, usize>,
+    draws: f64,
+    stalemates: f64,
+    rounds: f64,
+    shots: f64,
+    hit: f64,
+    bounce: f64,
+    miss: f64,
+    moving: f64,
+    on_target: f64,
+    wounded: f64,
+    out: f64,
+    kills: BTreeMap<String, usize>,
+    losses: BTreeMap<String, usize>,
+}
+
+impl Digest {
+    fn of(t: &Tally, games: usize) -> Self {
+        let games = games.max(1) as f64;
+        let shots = t.shots.max(1) as f64;
+        let shells = t.shells.max(1) as f64;
+        Self {
+            wins: t.wins.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+            draws: t.draws as f64,
+            stalemates: t.stalemates as f64,
+            rounds: t.rounds.iter().sum::<u32>() as f64 / t.rounds.len().max(1) as f64,
+            shots: t.shots as f64 / games,
+            hit: 100.0 * t.hits as f64 / shots,
+            bounce: 100.0 * t.bounces as f64 / shots,
+            miss: 100.0 * t.misses as f64 / shots,
+            moving: 100.0 * t.shots_on_the_move as f64 / shots,
+            on_target: 100.0 * t.shells_on_target as f64 / shells,
+            wounded: t.girls_wounded as f64 / games,
+            out: t.girls_out as f64 / games,
+            kills: t.kills.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+            losses: t.deaths.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+        }
+    }
+}
+
+/// One column of the comparison table: what it is called, how wide it is, and
+/// how to read it off a digest.
+///
+/// A list rather than a `println!` argument list, because the values table and
+/// the differences table have to line up exactly — the second one is only
+/// legible sitting under the first — and two format strings maintained by hand
+/// would drift the first time a column was added.
+struct Column {
+    head: &'static str,
+    of: fn(&Digest) -> f64,
+    dp: usize,
+}
+
+const COLUMNS: &[Column] = &[
+    Column {
+        head: "draw",
+        of: |d| d.draws,
+        dp: 0,
+    },
+    Column {
+        head: "stale",
+        of: |d| d.stalemates,
+        dp: 0,
+    },
+    Column {
+        head: "rounds",
+        of: |d| d.rounds,
+        dp: 1,
+    },
+    Column {
+        head: "shots",
+        of: |d| d.shots,
+        dp: 0,
+    },
+    Column {
+        head: "hit%",
+        of: |d| d.hit,
+        dp: 0,
+    },
+    Column {
+        head: "bnc%",
+        of: |d| d.bounce,
+        dp: 0,
+    },
+    Column {
+        head: "miss%",
+        of: |d| d.miss,
+        dp: 0,
+    },
+    Column {
+        head: "mov%",
+        of: |d| d.moving,
+        dp: 0,
+    },
+    Column {
+        head: "arty%",
+        of: |d| d.on_target,
+        dp: 0,
+    },
+    Column {
+        head: "wnd",
+        of: |d| d.wounded,
+        dp: 1,
+    },
+    Column {
+        head: "out",
+        of: |d| d.out,
+        dp: 1,
+    },
+];
+
+/// Every side name that won anything in any variant, so the win columns are
+/// the same columns in every row. Sorted, because a `HashMap`'s order is not
+/// a decision anywhere in this project.
+fn side_names(digests: &[Digest]) -> Vec<String> {
+    let mut names: Vec<String> = digests
+        .iter()
+        .flat_map(|d| d.wins.keys().cloned())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// The two tables the whole sweep is for: what each variant did, and how that
+/// differs from the first one.
+///
+/// Two tables rather than one with the difference in brackets, because the
+/// question being asked is almost always "did anything move at all", and the
+/// answer to that is a screenful of `·` or it is not.
+fn compare(labels: &[String], digests: &[Digest], games: usize) {
+    let sides = side_names(digests);
+    let width = labels.iter().map(|l| l.len()).max().unwrap_or(7).max(7);
+
+    let header = |title: &str| {
+        heading(title);
+        print!("  {:<width$}", "variant");
+        for name in &sides {
+            print!(" {:>11}", short(name));
+        }
+        for col in COLUMNS {
+            print!(" {:>6}", col.head);
+        }
+        println!();
+    };
+
+    header(&format!("per variant: {games} battles each"));
+    for (label, d) in labels.iter().zip(digests) {
+        print!("  {label:<width$}");
+        for name in &sides {
+            print!(" {:>11}", d.wins.get(name).copied().unwrap_or(0));
+        }
+        for col in COLUMNS {
+            print!(" {:>6.*}", col.dp, (col.of)(d));
+        }
+        println!();
+    }
+
+    if digests.len() < 2 {
+        return;
+    }
+    let base = &digests[0];
+    header(&format!("difference from `{}`", labels[0]));
+    for (label, d) in labels.iter().zip(digests).skip(1) {
+        print!("  {label:<width$}");
+        let mut moved = false;
+        for name in &sides {
+            let delta = d.wins.get(name).copied().unwrap_or(0) as i64
+                - base.wins.get(name).copied().unwrap_or(0) as i64;
+            moved |= delta != 0;
+            print!(" {:>11}", signed(delta as f64, 0));
+        }
+        for col in COLUMNS {
+            let delta = (col.of)(d) - (col.of)(base);
+            moved |= delta.abs() >= 0.05;
+            print!(" {:>6}", signed(delta, col.dp));
+        }
+        if !moved {
+            print!("   <- the same game");
+        }
+        println!();
+    }
     println!(
-        "\n  ratio is B's losses per A's loss: a side that wins by outfighting\n  \
-         rather than by outlasting shows it here, not in the win column."
+        "\n  A `·` is no difference at the precision shown. A row that is all dots\n  \
+         changed nothing these {games} battles could see, which is a result about the\n  \
+         number and not about the sample only if {games} is enough of them — see the\n  \
+         note on sample size in CLAUDE.md before quoting a small one at anybody."
     );
+
+    // Kills and losses per chassis, which is the table the ballistics arcs
+    // kept quoting at each other. Skipped past a handful of variants because
+    // it is one column per variant and stops fitting on a screen.
+    if digests.len() > 6 {
+        return;
+    }
+    let mut chassis: Vec<String> = digests
+        .iter()
+        .flat_map(|d| d.kills.keys().chain(d.losses.keys()).cloned())
+        .collect();
+    chassis.sort();
+    chassis.dedup();
+    if chassis.is_empty() {
+        return;
+    }
+    heading("per variant: what each chassis killed and lost");
+    // Headed by what differs between the variants rather than by the whole
+    // label: every column here would otherwise read `partial_pe.`, which is
+    // three identical headings over three different columns.
+    let heads = distinct(labels);
+    let cell = heads.iter().map(|h| h.len()).max().unwrap_or(9).max(9);
+    print!("  {:<18}", "vehicle");
+    for head in &heads {
+        print!(" {head:>cell$}");
+    }
+    println!();
+    for id in &chassis {
+        print!("  {:<18}", short(id));
+        for d in digests {
+            let k = d.kills.get(id).copied().unwrap_or(0);
+            let l = d.losses.get(id).copied().unwrap_or(0);
+            print!(" {:>cell$}", format!("{k}/{l}"));
+        }
+        println!();
+    }
+    println!("  (kills/losses, against the full labels listed at the top of the run)");
+}
+
+/// Whatever part of these labels tells them apart.
+///
+/// Sweep labels share a prefix by construction — every row of a one-axis
+/// sweep is `<same field>=<different value>` — so a narrow column headed by
+/// the front of the label is the same heading repeated. Dropping the shared
+/// front leaves the part that is the point. The full labels are printed once
+/// at the top of the run, which is where a reader goes if `55` is not enough.
+fn distinct(labels: &[String]) -> Vec<String> {
+    let Some(first) = labels.first() else {
+        return Vec::new();
+    };
+    let mut shared = first.chars().count();
+    for other in &labels[1..] {
+        shared = shared.min(
+            first
+                .chars()
+                .zip(other.chars())
+                .take_while(|(a, b)| a == b)
+                .count(),
+        );
+    }
+    let trimmed: Vec<String> = labels
+        .iter()
+        .map(|l| l.chars().skip(shared).collect::<String>())
+        .collect();
+    if trimmed.iter().any(|t| t.is_empty()) {
+        return labels.to_vec();
+    }
+    trimmed
+}
+
+/// How far apart the variants got, per column, under one row.
+///
+/// The single most useful line in a swept table and the reason it is printed
+/// unasked: a difference between two variants means nothing until it is held
+/// against how far the same configuration wanders on its own, and the way to
+/// get that is a `--sweep seed=` whose spread row *is* the noise floor. Two
+/// variants have no spread worth the name, so it starts at three.
+fn spread_line(base: &Grid, grids: &[Grid], name: &str, w: usize, vw: usize) {
+    if grids.len() < 3 {
+        return;
+    }
+    print!("  {:<w$} {:<vw$}", "", "spread");
+    for (j, c) in base.columns.iter().enumerate() {
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for g in grids {
+            if let Some(cells) = g.row(name) {
+                let v = cells.get(j).copied().unwrap_or(0.0);
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+        }
+        let text = if lo.is_finite() && hi > lo {
+            c.cell(hi - lo)
+        } else {
+            "·".to_string()
+        };
+        print!(" {:>width$}", text, width = c.width());
+    }
+    println!();
+}
+
+/// A difference, printed so that "no change" is visibly not a small number.
+fn signed(v: f64, dp: usize) -> String {
+    if v.abs() < 0.5 / 10f64.powi(dp as i32) {
+        return "·".to_string();
+    }
+    format!("{}{:.*}", if v > 0.0 { "+" } else { "" }, dp, v)
+}
+
+/// Every combination of the axes, first axis varying slowest.
+///
+/// An odometer rather than anything cleverer, so that reading the table top to
+/// bottom groups the rows the way somebody sweeping two numbers expects: all
+/// the values of the last axis, then the next value of the one before it.
+fn variants(root: &std::path::Path, axes: &[Axis], base: &[Override]) -> Vec<Variant> {
+    let mut out = vec![Variant {
+        label: String::new(),
+        mods: root.to_path_buf(),
+        seed: None,
+        overrides: base.to_vec(),
+    }];
+    for axis in axes {
+        let mut next = Vec::with_capacity(out.len() * axis.values.len());
+        for prefix in &out {
+            for value in &axis.values {
+                let mut v = Variant {
+                    label: prefix.label.clone(),
+                    mods: prefix.mods.clone(),
+                    seed: prefix.seed,
+                    overrides: prefix.overrides.clone(),
+                };
+                // Two axis names are not fields of anything. `mods` selects
+                // which tree to load, which is how two *versions* of the
+                // content get compared rather than two numbers within one;
+                // `seed` selects which battles get fought, which is how the
+                // table is made to show its own noise floor.
+                let leaf = if axis.path == "mods" {
+                    v.mods = std::path::PathBuf::from(value);
+                    std::path::Path::new(value)
+                        .file_name()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| value.clone())
+                } else if axis.path == "seed" {
+                    v.seed = Some(value.parse().unwrap_or_else(|_| {
+                        eprintln!("error: --sweep seed=...: `{value}` is not a seed");
+                        std::process::exit(1);
+                    }));
+                    format!("seed={value}")
+                } else {
+                    let ov = Override {
+                        path: axis.path.clone(),
+                        value: value.clone(),
+                    };
+                    let leaf = format!("{}={}", ov.leaf(), ov.value);
+                    v.overrides.push(ov);
+                    leaf
+                };
+                if !v.label.is_empty() {
+                    v.label.push(' ');
+                }
+                v.label.push_str(&leaf);
+                next.push(v);
+            }
+        }
+        out = next;
+    }
+    out
+}
+
+/// Fight every variant, and put the results beside each other.
+///
+/// The battles of *all* the variants go into one flat list of jobs before any
+/// of them runs, which matters: three variants at twelve battles each is
+/// thirty-six independent fights, and scheduling them as three batches of
+/// twelve would leave most of a machine idle at the end of each batch while
+/// its slowest battle finished. The fold is still per variant and still in
+/// seed order, so the table says the same thing at any `--jobs`.
+fn sweep(axes: &[Axis], base: &[Override], root: &std::path::Path, cfg: &Run) {
+    let plan = variants(root, axes, base);
+    println!(
+        "\nsweeping {} variant(s) of {} battle(s) each across {} thread(s)",
+        plan.len(),
+        cfg.games,
+        thread_budget().min(plan.len() * cfg.games.max(1)),
+    );
+    for v in &plan {
+        println!(
+            "  {}",
+            if v.label.is_empty() {
+                "baseline"
+            } else {
+                &v.label
+            }
+        );
+    }
+
+    let registries: Vec<DataRegistry> = plan
+        .iter()
+        .map(|v| {
+            println!("\nloading `{}`:", label_of(v));
+            configure(&v.mods, &v.overrides)
+        })
+        .collect();
+
+    if cfg.verbose {
+        for (v, reg) in plan.iter().zip(&registries) {
+            heading(&format!("=== {} ===", label_of(v)));
+            analytic(reg, cfg);
+        }
+    }
+
+    if !cfg.sim {
+        println!(
+            "\n(no --sim, so nothing was fought. The analytic tables above are per\n\
+             variant with --verbose; the comparison tables below need battles.)"
+        );
+        return;
+    }
+
+    let labels: Vec<String> = plan.iter().map(|v| label_of(v).to_string()).collect();
+
+    if cfg.only.wants("sim") {
+        // One job per (variant, battle). The map roster can differ between
+        // variants — a swept mod tree may ship different maps — so each
+        // variant resolves its own.
+        let maps: Vec<Vec<&str>> = registries.iter().map(battle_maps).collect();
+        let jobs: Vec<(usize, u64)> = plan
+            .iter()
+            .enumerate()
+            .flat_map(|(v, variant)| {
+                let base = variant.seed.unwrap_or(cfg.seed);
+                (0..cfg.games).map(move |g| (v, FOUGHT_SEED + base + g as u64))
+            })
+            .collect();
+        let fought = run_all(&jobs, |&(v, seed)| {
+            fight_one(&registries[v], &maps[v], seed)
+        });
+
+        let mut tallies: Vec<Tally> = (0..plan.len()).map(|_| Tally::default()).collect();
+        for ((v, _), t) in jobs.iter().zip(&fought) {
+            tallies[*v].merge(t);
+        }
+
+        if cfg.verbose {
+            for (v, t) in plan.iter().zip(&tallies) {
+                heading(&format!("=== {} ===", label_of(v)));
+                report(t, cfg.games);
+            }
+        }
+
+        let digests: Vec<Digest> = tallies.iter().map(|t| Digest::of(t, cfg.games)).collect();
+        compare(&labels, &digests, cfg.games);
+        if cfg.csv {
+            csv(&labels, &digests);
+        }
+    }
+
+    if cfg.games < 36 {
+        println!(
+            "\n  NOTE {} battles is a small sample to read a difference out of. The\n  \
+             doctrine table needs 36 before it discriminates at all (CLAUDE.md says\n  \
+             so, with the numbers); a sweep comparing two rows of it needs at least\n  \
+             as many. Re-run the interesting rows at --games 36 before believing one.",
+            cfg.games
+        );
+    }
+    // The three that fight their own battles, laid out the same way. They run
+    // after the digest rather than beside it because each is already parallel
+    // inside itself, and because the digest is the table somebody watching the
+    // run is waiting for.
+    // The variant's own seed, not the run's: a `--sweep seed=` axis has to move
+    // these tables too, or the row it adds is a sample of the fought-out pass
+    // alone sitting under three tables that never moved — which reads as three
+    // tables nothing can move.
+    let grids: Vec<Vec<Grid>> = plan
+        .iter()
+        .zip(&registries)
+        .map(|(v, reg)| fought_grids(reg, cfg, v.seed.unwrap_or(cfg.seed)))
+        .collect();
+    for i in 0..grids.first().map(Vec::len).unwrap_or(0) {
+        let column: Vec<Grid> = grids.iter().map(|g| g[i].clone()).collect();
+        compare_grids(&labels, &column, cfg.absolute);
+    }
+}
+
+/// The three tables that fight battles but are not the fought-out pass.
+///
+/// One list, called by both the single run and the sweep, because the failure
+/// mode of two lists is a table that quietly stops being swept the day it is
+/// added to one of them.
+fn fought_grids(reg: &DataRegistry, cfg: &Run, seed: u64) -> Vec<Grid> {
+    let mut out = Vec::new();
+    if cfg.only.wants("delegation") {
+        out.push(delegation_tax(reg, cfg.games, seed));
+    }
+    if cfg.only.wants("mustered") {
+        out.push(mustered_forces(reg, cfg.games, cfg.budget, seed));
+    }
+    if cfg.only.wants("skill") {
+        out.push(skill_gap(reg, cfg.games, seed));
+    }
+    out
+}
+
+fn label_of(v: &Variant) -> &str {
+    if v.label.is_empty() {
+        "baseline"
+    } else {
+        &v.label
+    }
+}
+
+/// The same digests again, for something other than a person to read.
+///
+/// A sweep big enough to be worth plotting is bigger than a terminal, and the
+/// alternative to this is somebody re-parsing the aligned table with `awk`.
+fn csv(labels: &[String], digests: &[Digest]) {
+    let sides = side_names(digests);
+    heading("csv");
+    print!("variant");
+    for name in &sides {
+        // Quoted because a side name is content: nothing stops a mod from
+        // putting a comma in one, and a csv that only works for the base mod
+        // is a csv that breaks on the day somebody uses this for its purpose.
+        print!(",{}", quoted(&format!("wins {name}")));
+    }
+    for col in COLUMNS {
+        print!(",{}", col.head.trim_end_matches('%'));
+    }
+    println!();
+    for (label, d) in labels.iter().zip(digests) {
+        print!("{}", quoted(label));
+        for name in &sides {
+            print!(",{}", d.wins.get(name).copied().unwrap_or(0));
+        }
+        for col in COLUMNS {
+            print!(",{:.3}", (col.of)(d));
+        }
+        println!();
+    }
+}
+
+/// One csv field, escaped the way every reader of csv agrees on.
+fn quoted(text: &str) -> String {
+    format!("\"{}\"", text.replace('"', "\"\""))
+}
+
+/// A table reduced to what a sweep can lay beside another copy of itself:
+/// named rows, named columns, numbers.
+///
+/// The three tables under `--sim` that are not the fought-out pass each ask a
+/// question about the *shape* of the game rather than about one shot, and each
+/// used to be a `println!` per row with its own format string. That is fine
+/// for reading once and useless for comparing, which is the whole of why they
+/// build one of these now: a table that knows what its columns are can be laid
+/// beside another copy of itself, and one that only knows how to print itself
+/// cannot. Anything added here gets sweeping for free; anything that goes on
+/// printing itself does not.
+#[derive(Clone)]
+struct Grid {
+    title: String,
+    /// Lines printed above the table — a shopping list, a caveat. Compared
+    /// across variants too, because a mod change that alters what a doctrine
+    /// *buys* has already answered the question before a shot is fired.
+    preamble: Vec<String>,
+    /// What a row is.
+    row_head: &'static str,
+    columns: Vec<GridColumn>,
+    rows: Vec<(String, Vec<f64>)>,
+    /// Prose printed under it: what the reader is looking at, and what would
+    /// make it wrong.
+    note: &'static str,
+}
+
+#[derive(Clone)]
+struct GridColumn {
+    head: &'static str,
+    dp: usize,
+}
+
+fn col(head: &'static str, dp: usize) -> GridColumn {
+    GridColumn { head, dp }
+}
+
+impl GridColumn {
+    fn width(&self) -> usize {
+        self.head.len().max(6)
+    }
+
+    fn cell(&self, v: f64) -> String {
+        format!("{:.*}", self.dp, v)
+    }
+}
+
+impl Grid {
+    fn label_width(&self) -> usize {
+        self.rows
+            .iter()
+            .map(|(n, _)| n.len())
+            .chain(std::iter::once(self.row_head.len()))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The row of this grid that goes by `name`, if it has one. Matched by
+    /// name rather than by position because a swept mod tree may not produce
+    /// the same rows at all, and lining up row three with row three when one
+    /// of them is missing would compare two different pairings silently.
+    fn row(&self, name: &str) -> Option<&[f64]> {
+        self.rows
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, cells)| cells.as_slice())
+    }
+}
+
+fn print_grid(g: &Grid) {
+    heading(&g.title);
+    for line in &g.preamble {
+        println!("{line}");
+    }
+    if !g.preamble.is_empty() {
+        println!();
+    }
+    let w = g.label_width();
+    print!("  {:<w$}", g.row_head);
+    for c in &g.columns {
+        print!(" {:>width$}", c.head, width = c.width());
+    }
+    println!();
+    for (name, cells) in &g.rows {
+        print!("  {name:<w$}");
+        for (c, v) in g.columns.iter().zip(cells) {
+            print!(" {:>width$}", c.cell(*v), width = c.width());
+        }
+        println!();
+    }
+    println!("{}", g.note);
+}
+
+/// The same grid from every variant, stacked so the differences are adjacent.
+///
+/// The baseline's numbers are printed and everybody else's are printed as
+/// deltas from them, rather than four rows of absolute figures with the
+/// subtraction left to the reader. A row of `·` therefore means what it means
+/// everywhere else in this harness: nothing these battles could see moved.
+fn compare_grids(labels: &[String], grids: &[Grid], absolute: bool) {
+    let (Some(base), Some(base_label)) = (grids.first(), labels.first()) else {
+        return;
+    };
+    heading(&format!("{} — per variant", base.title));
+
+    // A preamble is part of the answer when it differs: a swept mod tree can
+    // change what a doctrine buys, and that is a result about the content, not
+    // a caption on one.
+    if grids.iter().any(|g| g.preamble != base.preamble) {
+        for (label, g) in labels.iter().zip(grids) {
+            println!("  [{label}]");
+            for line in &g.preamble {
+                println!("  {line}");
+            }
+        }
+        println!();
+    } else {
+        for line in &base.preamble {
+            println!("{line}");
+        }
+        if !base.preamble.is_empty() {
+            println!();
+        }
+    }
+
+    let w = base.label_width();
+    let vw = labels.iter().map(|l| l.len()).max().unwrap_or(7).max(7);
+    print!("  {:<w$} {:<vw$}", base.row_head, "variant");
+    for c in &base.columns {
+        print!(" {:>width$}", c.head, width = c.width());
+    }
+    println!();
+
+    for (name, cells) in &base.rows {
+        for (i, (label, g)) in labels.iter().zip(grids).enumerate() {
+            let head = if i == 0 { name.as_str() } else { "" };
+            print!("  {head:<w$} {label:<vw$}");
+            match g.row(name) {
+                None => print!("  (this variant has no such row)"),
+                Some(theirs) => {
+                    let mut moved = false;
+                    for (j, c) in base.columns.iter().enumerate() {
+                        let v = theirs.get(j).copied().unwrap_or(0.0);
+                        let text = if i == 0 || absolute {
+                            c.cell(v)
+                        } else {
+                            let delta = v - cells.get(j).copied().unwrap_or(0.0);
+                            moved |= delta.abs() >= 0.5 / 10f64.powi(c.dp as i32);
+                            signed(delta, c.dp)
+                        };
+                        print!(" {:>width$}", text, width = c.width());
+                    }
+                    if i > 0 && !absolute && !moved {
+                        print!("   <- the same");
+                    }
+                }
+            }
+            println!();
+        }
+        spread_line(base, grids, name, w, vw);
+    }
+    if absolute {
+        println!(
+            "\n  every line is that variant's own number. `spread` is the widest gap\n  \
+             between variants in that column."
+        );
+    } else {
+        println!(
+            "\n  the first line of each {} is `{base_label}`; the rest are differences\n  \
+             from it, and a line of `·` is a variant these battles could not tell\n  \
+             apart from the baseline. `spread` is the widest gap between variants.",
+            base.row_head
+        );
+    }
+    println!("{}", base.note);
+}
+
+/// Which tables to print, by name; empty means all of them.
+///
+/// Iterating on one number means reading one table, and `--sim` runs four that
+/// fight battles. Paying for the other three every time is the kind of friction
+/// that ends with somebody not running the instrument at all — which is the
+/// failure this whole file is built against.
+struct Only(Vec<String>);
+
+/// Every name `--only` accepts, in the order the tables print.
+const TABLES: &[&str] = &[
+    "roster",
+    "hit",
+    "pen",
+    "kills",
+    "flight",
+    "flags",
+    "sim",
+    "delegation",
+    "mustered",
+    "skill",
+];
+
+impl Only {
+    fn parse(text: Option<&str>) -> Self {
+        let Some(text) = text else {
+            return Self(Vec::new());
+        };
+        let names: Vec<String> = text.split(',').map(str::to_string).collect();
+        for name in &names {
+            if !TABLES.contains(&name.as_str()) {
+                eprintln!(
+                    "error: --only {name}: no such table. There is: {}",
+                    TABLES.join(", ")
+                );
+                std::process::exit(1);
+            }
+        }
+        Self(names)
+    }
+
+    fn wants(&self, name: &str) -> bool {
+        debug_assert!(TABLES.contains(&name), "{name} is not in TABLES");
+        self.0.is_empty() || self.0.iter().any(|n| n == name)
+    }
+}
+
+/// What one invocation of the fought-out pass was asked for.
+struct Run {
+    games: usize,
+    seed: u64,
+    budget: i32,
+    sim: bool,
+    verbose: bool,
+    csv: bool,
+    /// Print the variants' own numbers rather than their differences from the
+    /// baseline. The differences are what a tuning question wants; the values
+    /// are what a *range* wants, and a seed sweep is asking for a range.
+    absolute: bool,
+    only: Only,
 }

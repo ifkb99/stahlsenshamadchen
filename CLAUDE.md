@@ -28,18 +28,84 @@ cargo run --release -p tactics_core --example balance    # what the data does
 cargo run --release -p tactics_core --example balance -- --sim   # ...fought out
 cargo run --release -p tactics_core --example balance -- --sim --points 100  # richer armies
 cargo run --release -p tactics_core --example balance -- --brains --brain-games 64  # which planner
+cargo run --release -p tactics_core --example balance -- --help  # every flag, with examples
+
+# what does this number do that the old one did not?
+cargo run --release -p tactics_core --example balance -- \
+    --sim --games 36 --sweep balance.partial_penetration_percent=40,55,70
+# ...and how much of that was the dice?
+cargo run --release -p tactics_core --example balance -- --sim --games 36 --sweep seed=0,1000,2000
+# ...for one table, in about three seconds
+cargo run --release -p tactics_core --example balance -- \
+    --sim --games 36 --only skill --absolute --sweep seed=0,1000,2000,3000
 ```
 
-**The battles run across every core** (`fight_all`, `std::thread::scope`, no
+**The battles run across every core** (`run_all`, `std::thread::scope`, no
 new dependency). They are genuinely independent — each has its own map,
 state, planners and seeded rng, sharing only the read-only registry — so what
 parallelism could damage is not a battle but a *table*. That is guarded
-rather than hoped for: every battle writes into the slot its seed owns and
-results are folded in seed order, so the printed numbers cannot depend on
-which core finished first. A balance figure that moved with scheduling would
-be worse than a slow one, because it would look exactly like noise. If you
-add a table, fold it in seed order too, and check a run against itself before
-trusting it.
+rather than hoped for: every job writes into the slot it owns and results are
+folded in job order, which is seed order, so the printed numbers cannot depend
+on which core finished first. A balance figure that moved with scheduling
+would be worse than a slow one, because it would look exactly like noise. If
+you add a table, fold it in seed order too, and check a run against itself
+before trusting it. `Tally::merge` is where that contract is written down:
+every field is a sum, a concatenation or a union of sums, and a field that is
+none of those — a maximum, a ratio, a last value — breaks it.
+
+`--jobs N` caps how much of the machine one invocation takes, so several
+sweeps can run beside each other; **no printed number moves with it**, and
+that is checked rather than assumed (`--jobs 1 / 3 / 7` on the same batch are
+byte-identical, as is the parallel fought-out pass against the sequential one
+it replaced).
+
+### Asking what a number does, instead of what it is
+
+`--set path=value` changes one number before anything runs and `--sweep
+path=a,b,c` runs the whole thing once per value and prints the rows side by
+side, with a second table of differences from the first row. Both address
+fields by the name the json uses — `balance.partial_penetration_percent`,
+`weapon.howitzer_105.dispersion`, `morale.rungs[2].accuracy`,
+`vehicle.medium_tank.profile` — and they reach *every* field of every block
+and every content map, because the patch is a serde round trip through the
+same representation a save file holds rather than a hand-written list of the
+knobs somebody thought to expose. A field added to `Balance` tomorrow is
+sweepable the same afternoon with no change to `balance.rs`. A path that
+names nothing is an error listing what was actually at that level, because
+the silent alternative is a sweep whose rows all measured the same game and
+agreed with each other beautifully.
+
+Three things about it are worth knowing before reaching for it:
+
+- **It is the same thing as editing `mod.json`, and that is checked.** A
+  hand-edited copy of the mod tree swept with `--sweep mods=a,b` and the
+  equivalent `--sweep balance.moving_target_per_hex=5,40` print
+  byte-identical difference rows. That equivalence is the whole claim; if it
+  ever stops holding, the override machinery has become a second game.
+- **Two axis names are not fields.** `mods=` selects the tree to load, which
+  compares two *versions* of the content rather than two numbers in one;
+  `seed=` selects which battles get fought, which puts the noise floor in the
+  same table and the same columns as the difference being read. That second
+  one is the more useful of the two: at 36 games, four seeds alone move the
+  tank destroyer's kills between 74 and 89 and the mean battle length by 1.1
+  rounds, which is larger than several differences this project has quoted as
+  results.
+- **The sweep compares every table that fights battles.** The fought-out
+  digest — outcome, length, gunnery, artillery, crew cost, kills and losses
+  per chassis — and then the delegation tax, mustered forces and the skill
+  gap, each printed with the baseline's numbers on the first line of a row
+  and everybody else's as differences from it. Those three go through `Grid`
+  (named rows, named columns, numbers) and `fought_grids`, which is one list
+  called by both the single run and the sweep: a table that prints itself
+  cannot be compared, and a table added to only one of those two lists would
+  quietly stop being swept. `--verbose` still prints each variant's full
+  analytic pass and full fought-out report.
+- **`--seed` is an offset, not a base.** Zero is the sample every number this
+  project has quoted was measured on; any other value shifts all four
+  fought-out tables together, which is what makes sweeping it a re-draw of
+  the whole report rather than of one table in it. The per-table constants it
+  is added to (`FOUGHT_SEED`, `DELEGATION_SEED`, `MUSTER_SEED`, `ARENA_SEED`)
+  are the ones each table was born with, kept for exactly that reason.
 
 `balance` is the content-iteration loop, and it is built around the kill chain
 rather than around damage. The analytic pass is instant and answers "what did
@@ -877,26 +943,49 @@ rule they defend (`unspotted_enemies_still_ambush`).
   crossing a plateau to park on identical grass. The second half was the
   instrument itself: the skill-gap table fought on `river_crossing`,
   whose sides field different vehicles, so it measured the map — it now
-  fights on a mirrored arena inside `balance --sim`. Measured after: 5v1
-  wins 29–7 / 28–8 across orientations at 1:1.9–2.1 exchange (B4's
-  written success metric was "most battles at visibly better than 1:2"),
-  equal-skill pairings sit at parity, and the deterministic 36–0 sweep is
-  gone. Re-measured 2026-08-25 after the blast-pricing fix and still
-  standing: **26–10 / 28–8 at 1:1.7–1.9**, and again after difficulty noise
-  became a per-round lean: **28–8 / 9–27 at 1:2.1**, the best recorded.
-  ~~Residual, tracked: side B retains a modest edge on the mirrored
-  arena~~ — **it was not resolution order.** The 5-vs-3 gap paid 24 wins
-  from one end and 32 from the other; once difficulty noise stopped being
-  drawn per candidate tile it pays 20 and 20. The bias scaled with how many
-  tiles a unit could reach, which is what an argmax-over-independent-draws
-  bias does. Note the same change *lowered* how much 5v3 discriminates at
-  all (67%/89% to 56%/56%); the reading is that most of the old figure was
-  the artifact, and that reading is a hypothesis — see DONE.md.
+  fights on a mirrored arena inside `balance --sim`, and the deterministic
+  36–0 sweep is gone.
 
-  **Read this table at `--games 36` or not at all.** The default 12 put
-  5v1 at 6–6 and looked like a regression against the numbers above; the
-  same build at 36 gives 26–10. Twelve battles cannot resolve a 70% edge,
-  and the table is the one most often quoted at somebody.
+  **The current numbers, and they are seed-swept rather than drawn once.**
+  Measured 2026-08-26: 16 seeds at `--games 36`, so 576 battles per pairing
+  row and 1152 per summary row, read off the table's own `both ends` rows —
+  which add a pairing's two orientations and therefore cancel whatever being
+  side A is worth.
+
+  | | wins | share | per 72-battle draw | exchange |
+  | --- | --- | --- | --- | --- |
+  | difficulty 5 over 1 | 824–326 | **71.5%** | 46–58 | 1:1.2–1.8 |
+  | difficulty 5 over 3 | 710–441 | **61.6%** | 36–54 | 1:0.9–1.6 |
+
+  Read the fourth column before quoting the third. One draw of 72 battles
+  puts 5-over-1 anywhere between 64% and 81%, and puts 5-over-3 **level, at
+  36–36, on one seed of sixteen** — so a single run cannot tell you whether
+  the 5-vs-3 gap discriminates at all. Every figure this section used to
+  quote was one such draw near the top of that band: 29–7 / 28–8 at
+  1:1.9–2.1 when the arena was built, 26–10 / 28–8 at 1:1.7–1.9 after the
+  blast-pricing fix, 28–8 / 9–27 at 1:2.1 after difficulty noise became a
+  per-round lean. B4's written success metric was "most battles at visibly
+  better than 1:2"; against difficulty 1 the exchange reaches that on some
+  seeds and not on others.
+
+  **Side B still holds an edge on the mirrored arena, and it is not small.**
+  The table's `the ends` row adds the two *equal-skill* pairings, so its two
+  win columns are worth-of-being-A against worth-of-being-B and nothing
+  else: **494–652, side B on 56.6% of 1152 battles**, in the same direction
+  on 14 of the 16 seeds. An earlier version of this note struck that
+  residual through on the strength of the 5-vs-3 row paying "20 and 20"
+  once — one draw of a figure that ranges 16–27. What *was* real about that
+  fix is its mechanism: difficulty noise drawn per candidate tile gave a bias
+  that scaled with how many tiles a unit could reach, which is what an
+  argmax-over-independent-draws bias does, and removing it was right. It did
+  not remove this. Tracked in TODO under Balance; the arena is symmetric and
+  a battle is not, so resolution order is the first place to look.
+
+  **Read this table at `--games 36` or not at all**, and re-draw it before
+  quoting it — `--only skill --sweep seed=0,1000,2000,3000` costs about
+  three seconds. The default 12 put 5v1 at 6–6 and looked like a regression
+  against the numbers above; twelve battles cannot resolve a 70% edge, and
+  this is the table most often quoted at somebody.
 - **Army-contained unit placements are never validated.**
   `map.rs:962` passes `a.at` (the army's own hex) instead of `u.at` when
   checking each unit inside an `ArmyPlacement`, so a unit's own coordinates are

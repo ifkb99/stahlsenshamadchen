@@ -149,6 +149,20 @@ stalemate, so there is finally a baseline to measure a rewrite against.
 - cadet progression: xp, leveling, skills. fire emblem is a stated inspiration and this is the emotional engine of the genre. sketch the shape early since it lives on the cadet-instance model
 - basic requisition flow: vehicle costs, side funds, and income all exist but nothing spends money until academy mode. a minimal buy/reinforce loop shouldn't wait for the 4x layer
 ### Balance
+- **side B wins 56.6% of equal-skill battles on the mirrored arena**
+  (measured 2026-08-26, 16 seeds × `--games 36` = 1152 battles, the skill-gap
+  table's `the ends` row: 494–652, same direction on 14 of 16 seeds). CLAUDE.md
+  and DONE.md both had this struck through as fixed by the per-round
+  difficulty lean; it was not — that fix removed a *different* bias, the one
+  that scaled with reachable-tile count, and "20 and 20" was one draw of a
+  figure that ranges 16–27. The arena is mirror-symmetric and a battle is not,
+  so **resolution order is the first place to look**: within a tick, side 0's
+  movement and fire resolve before side 1's, and a tick is 5 s. Two things
+  follow. It taxes every reading of that table, which is why the table now
+  prints `both ends` rows that add the two orientations and cancel it — quote
+  those. And if it is resolution order, it is a *game* problem and not an
+  instrument one: a player who deploys on the wrong side of `river_crossing`
+  is paying it too.
 - **infantry lose badly at their asking price** (measured 2026-08-14, first
   run of the mustered-forces table): given 60 points, elastic defence buys
   seven mixed units — two rifle platoons, two scout sections, their rides, a
@@ -159,6 +173,19 @@ stalemate, so there is finally a baseline to measure a rewrite against.
   anybody, cannot plan a taxi run, and holds infantry short-ranged in cover,
   so a platoon is currently paying five points for very little. Re-run the
   table after per-unit tasking lands before touching a single price.
+- **`balance.blind_penalty` is inert in every measured battle** (found
+  2026-08-26 by the first sweep that could ask). At 36 games, `--sweep
+  balance.blind_penalty=40,0,95` prints three byte-identical rows: outcome,
+  length, gunnery, artillery, crew cost and every chassis's kills and losses
+  all agree exactly. It is not broken — nothing in `ai/` ever sets
+  `ShotFired.blind`, so blind fire is a player-only path and an AI-vs-AI
+  sample can never move with it. Two consequences. The number cannot be tuned
+  by this harness at all, so tuning it needs either a scripted battle or an AI
+  that shells ground it cannot see; and **shelling unseen ground is a tactic
+  the AI does not have**, which is worth deciding about on its own — see
+  artillery lead under Chain of Command, which wants the same target-track
+  memory. Do not "fix" this by giving the sweep a special case; the sweep is
+  right and it is reporting something true.
 ### Content gaps
 - **a random map generator** (noted 2026-08-14, deliberately not yet): real
   balance work needs terrain the numbers were not tuned on, and the designer
