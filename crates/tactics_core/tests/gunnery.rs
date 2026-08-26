@@ -1,5 +1,5 @@
-//! The hit half of the resolver: everything a shot has to survive before the
-//! plate is ever consulted.
+//! The resolver-depth arc's tests: everything a shot has to survive before
+//! the plate is consulted, and where a shell aimed at ground actually goes.
 //!
 //! The B-chunks left this side of the model five lines long — base accuracy,
 //! range, gunnery, a flat bonus for shooting downhill and half the terrain's
@@ -38,7 +38,7 @@ fn registry() -> DataRegistry {
 /// Deliberately featureless: every test here is about a term that is *not*
 /// terrain, and a hedge in the way would make each of them a two-variable
 /// experiment.
-fn field(reg: &DataRegistry, attacker: &str, target: &str, dist: i32) -> BattleState {
+fn field(reg: &DataRegistry, attacker: &str, target: &str, dist: i32, seed: u64) -> BattleState {
     let width = (dist + 3) as usize;
     let row = "g".repeat(width);
     let file: MapFile = serde_json::from_value(serde_json::json!({
@@ -92,7 +92,7 @@ fn field(reg: &DataRegistry, attacker: &str, target: &str, dist: i32) -> BattleS
         &placements,
         &crews,
         std::sync::Arc::new(roster),
-        1,
+        seed,
     )
 }
 
@@ -121,7 +121,7 @@ fn chance(reg: &DataRegistry, state: &BattleState) -> i32 {
 #[test]
 fn a_crossing_target_is_harder_to_hit_than_a_parked_one() {
     let reg = registry();
-    let mut state = field(&reg, "medium_tank", "medium_tank", 6);
+    let mut state = field(&reg, "medium_tank", "medium_tank", 6, 1);
     let parked = chance(&reg, &state);
 
     state.units[1].moved = 3;
@@ -142,7 +142,7 @@ fn a_dash_costs_more_than_a_crawl_at_both_ends_of_the_shot() {
     // makes a fast chassis' speed a defence rather than a way of arriving
     // sooner.
     let reg = registry();
-    let mut state = field(&reg, "medium_tank", "medium_tank", 6);
+    let mut state = field(&reg, "medium_tank", "medium_tank", 6, 1);
 
     state.units[1].moved = 1;
     let crawling = chance(&reg, &state);
@@ -173,7 +173,7 @@ fn laying_a_gun_from_a_moving_vehicle_costs_more_than_being_the_moving_vehicle()
     // nothing is stabilised. If these two ever cross over, halting to shoot
     // has stopped being worth anything.
     let reg = registry();
-    let mut state = field(&reg, "medium_tank", "medium_tank", 6);
+    let mut state = field(&reg, "medium_tank", "medium_tank", 6, 1);
 
     state.units[1].moved = 3;
     let at_a_mover = chance(&reg, &state);
@@ -197,11 +197,11 @@ fn a_platoon_on_its_feet_is_a_smaller_target_than_a_tank() {
     // the open and plainly visible.
     let reg = registry();
     let at_a_tank = {
-        let state = field(&reg, "medium_tank", "medium_tank", 6);
+        let state = field(&reg, "medium_tank", "medium_tank", 6, 1);
         chance(&reg, &state)
     };
     let at_a_platoon = {
-        let state = field(&reg, "medium_tank", "rifle_platoon", 6);
+        let state = field(&reg, "medium_tank", "rifle_platoon", 6, 1);
         chance(&reg, &state)
     };
     assert!(
@@ -225,7 +225,7 @@ fn a_chassis_that_declares_no_profile_is_the_target_she_always_was() {
             "{id} declares a profile, so this test can no longer prove \
              anything about the default"
         );
-        let state = field(&reg, "medium_tank", id, 6);
+        let state = field(&reg, "medium_tank", id, 6, 1);
         let breakdown = hit_breakdown(
             &reg,
             &state,
@@ -253,7 +253,7 @@ fn a_frightened_crew_lays_her_gun_worse() {
     // what being shot at costs a gunner is a number on the rung she has been
     // driven to.
     let reg = registry();
-    let mut state = field(&reg, "medium_tank", "medium_tank", 6);
+    let mut state = field(&reg, "medium_tank", "medium_tank", 6, 1);
     let steady = chance(&reg, &state);
 
     let wavering = reg
@@ -282,7 +282,7 @@ fn a_ladder_that_charges_nothing_for_fear_has_no_suppression() {
     for rung in &mut reg.morale.rungs {
         rung.accuracy = 0;
     }
-    let mut state = field(&reg, "medium_tank", "medium_tank", 6);
+    let mut state = field(&reg, "medium_tank", "medium_tank", 6, 1);
     let steady = chance(&reg, &state);
     state.units[0].pressure = 10_000;
     let terrified = chance(&reg, &state);
@@ -304,7 +304,7 @@ fn scoring_a_tile_she_has_not_driven_to_does_not_charge_her_for_the_drive() {
     // appeared in 36 games where the baseline had none, which is the exact
     // pathology land objectives were built to remove.
     let reg = registry();
-    let state = field(&reg, "medium_tank", "medium_tank", 6);
+    let state = field(&reg, "medium_tank", "medium_tank", 6, 1);
     let weapon = gun(&reg, &state);
     let here = state.units[0].pos;
 
@@ -328,7 +328,7 @@ fn every_new_term_is_shown_to_the_player_and_adds_up() {
     // a modifier that is listed but not applied is the other half of the
     // same failure.
     let reg = registry();
-    let mut state = field(&reg, "medium_tank", "rifle_platoon", 6);
+    let mut state = field(&reg, "medium_tank", "rifle_platoon", 6, 1);
     state.units[0].moved = 2;
     state.units[1].moved = 3;
     state.units[0].pressure = reg
@@ -382,7 +382,7 @@ fn driving_is_counted_once_however_she_came_to_drive() {
     // crew's flight all cost the same accuracy. A second increment anywhere
     // else would mean two answers to whether she is under way.
     let reg = registry();
-    let mut state = field(&reg, "medium_tank", "medium_tank", 12);
+    let mut state = field(&reg, "medium_tank", "medium_tank", 12, 1);
     let start = state.units[0].pos;
     let dest = start + tactics_core::Hex::new(2, 0);
     state
@@ -401,7 +401,7 @@ fn driving_is_counted_once_however_she_came_to_drive() {
     // next planning phase and the whole point is what the resolver sees
     // *during* the fighting.
     let mut seen = 0;
-    while state.resolving_tick().is_some() {
+    for _ in 0..reg.scale.ticks_per_round {
         state.step_tick(&reg);
         seen = seen.max(state.units[0].moved);
     }
@@ -411,4 +411,158 @@ fn driving_is_counted_once_however_she_came_to_drive() {
         "and the count is zeroed for the next round's planning, so nobody \
          plans as though she were already under way"
     );
+}
+
+// --- where a shell actually goes -------------------------------------------
+
+/// Fire the attacker's indirect piece at a hex and report where the shell
+/// says it will come down.
+///
+/// Reads the shell out of `state.shells` rather than waiting for it to land,
+/// because the impact point is rolled when the shot is fired — a shell in the
+/// air is not still deciding where to go — and because a test about aim
+/// should not also depend on what the round does when it arrives.
+fn shell_impact(reg: &DataRegistry, seed: u64, dist: i32) -> Option<i32> {
+    let mut state = field(reg, "artillery", "medium_tank", dist, seed);
+    let at = state.units[1].pos;
+    state
+        .apply(
+            reg,
+            &Order::SetFire {
+                unit: UnitId(0),
+                fire: tactics_core::battle::FireIntent::Area { at, weapon: 0 },
+            },
+        )
+        .expect("shelling a tile is always sayable");
+    let _ = state.apply(reg, &Order::Commit { side: 0 });
+    let _ = state.apply(reg, &Order::Commit { side: 1 });
+    // Bounded, and never on `resolving_tick()`: `step_tick` returns early
+    // once the battle is decided and leaves the phase on `Resolving`, so a
+    // loop waiting for the phase to change spins forever the moment this
+    // shell kills the only unit on the other side.
+    for _ in 0..reg.scale.ticks_per_round {
+        if let Some(shell) = state.shells.first() {
+            return Some(shell.impact.distance_to(shell.at));
+        }
+        state.step_tick(reg);
+    }
+    None
+}
+
+#[test]
+fn a_piece_that_declares_no_dispersion_lands_where_it_was_aimed() {
+    // The additivity contract, and the one that matters most here: artillery
+    // arriving exactly on its map reference is the game every mod written
+    // before this field existed was tuned against.
+    let mut reg = registry();
+    for weapon in reg.weapons.values_mut() {
+        weapon.dispersion = 0;
+    }
+    for seed in 0..12 {
+        assert_eq!(
+            shell_impact(&reg, seed, 20),
+            Some(0),
+            "with no dispersion declared every shell is exact (seed {seed})"
+        );
+    }
+}
+
+#[test]
+fn a_shell_can_come_down_off_the_ground_it_was_aimed_at() {
+    // Dispersion is a different fact from flight time, and this is the test
+    // that says so. Flight time models the *target* being somewhere else; a
+    // target standing perfectly still it does nothing to at all, and before
+    // this a shell aimed at a parked vehicle arrived on her with certainty.
+    let reg = registry();
+    assert!(
+        reg.weapon("howitzer_105").expect("base mod").dispersion > 0,
+        "the base howitzer must declare dispersion or this proves nothing"
+    );
+
+    // Many battles rather than many shots in one, because the shell under
+    // test tends to end the battle it is fired in — and because a scatter
+    // that happens to roll zero once is not evidence of anything.
+    let offsets: Vec<i32> = (0..24)
+        .filter_map(|seed| shell_impact(&reg, seed, 24))
+        .collect();
+    assert!(!offsets.is_empty(), "the battery has to fire at all");
+    assert!(
+        offsets.iter().any(|d| *d > 0),
+        "a battery firing two and a half kilometres must sometimes miss the \
+         hex it was laid on: {offsets:?}"
+    );
+    assert!(
+        offsets.contains(&0),
+        "and must sometimes hit it, or this is not dispersion but a penalty: \
+         {offsets:?}"
+    );
+}
+
+#[test]
+fn dispersion_grows_with_the_range_flown() {
+    // A percentage of the distance flown, not a flat radius — which is the
+    // whole reason a battery registers on a target before firing for effect.
+    // Stated as a comparison of worst cases over the same seeds, because any
+    // single pair of shots can roll the other way.
+    let reg = registry();
+    let worst = |dist: i32| {
+        (0..24)
+            .filter_map(|seed| shell_impact(&reg, seed, dist))
+            .max()
+            .unwrap_or(0)
+    };
+    let near = worst(6);
+    let far = worst(36);
+    assert!(
+        far > near,
+        "a shell sent three and a half kilometres must scatter further than \
+         one sent six hundred metres: {far} against {near}"
+    );
+}
+
+#[test]
+fn a_shell_bursts_where_it_landed_and_not_where_it_was_aimed() {
+    // The half of dispersion that is easy to leave half-done: displacing the
+    // impact point buys nothing if the burst still resolves against the aim.
+    // `ShellLanded` reports the impact for the same reason — a player
+    // watching her own battery walk off the target should see it happen
+    // rather than conclude the game moved her enemy.
+    let reg = registry();
+    let mut state = field(&reg, "artillery", "medium_tank", 24, 7);
+    let at = state.units[1].pos;
+    let _ = state.apply(
+        &reg,
+        &Order::SetFire {
+            unit: UnitId(0),
+            fire: tactics_core::battle::FireIntent::Area { at, weapon: 0 },
+        },
+    );
+    let _ = state.apply(&reg, &Order::Commit { side: 0 });
+    let _ = state.apply(&reg, &Order::Commit { side: 1 });
+
+    let mut impacts = Vec::new();
+    let mut landed = Vec::new();
+    for _ in 0..reg.scale.ticks_per_round {
+        for shell in &state.shells {
+            if !impacts.contains(&shell.impact) {
+                impacts.push(shell.impact);
+            }
+        }
+        for event in state.step_tick(&reg) {
+            if let tactics_core::battle::Event::ShellLanded { at, .. } = event {
+                landed.push(at);
+            }
+        }
+    }
+    assert!(
+        !landed.is_empty(),
+        "the shell has to come down at some point"
+    );
+    for at in &landed {
+        assert!(
+            impacts.contains(at),
+            "the burst is announced at the impact the shell carried, not the \
+             aim: landed {at:?}, impacts {impacts:?}"
+        );
+    }
 }

@@ -806,8 +806,8 @@ fn flight_table(reg: &DataRegistry) {
     }
     heading("shell flight: how much warning the ground gets");
     println!(
-        "{:<26} {:>10} {:>8} {:>8} {:>14}",
-        "gun / round", "range", "ticks", "seconds", "target moves"
+        "{:<26} {:>10} {:>8} {:>8} {:>14} {:>12}",
+        "gun / round", "range", "ticks", "seconds", "target moves", "spread"
     );
     // What the quickest thing on the field covers while the shell is up: the
     // lead an artillery order has to guess, in the only unit that matters.
@@ -829,13 +829,23 @@ fn flight_table(reg: &DataRegistry) {
             let ticks = flight_ticks(&reg.scale, ammo.velocity, dist);
             let seconds = reg.scale.seconds(ticks as u32);
             let hexes = fastest as f32 * ticks as f32 / reg.scale.ticks_per_round as f32;
+            // The gun's own error, in the same units the mod writes it in:
+            // a percentage of the range flown, resolved through the scale
+            // into the hexes the resolver will actually displace by.
+            let spread = reg.scale.meters(dist) * weapon.dispersion as f32 / 100.0;
+            let radius = (spread / reg.scale.hex_meters).round() as i32;
             println!(
-                "{:<26} {:>10} {:>8} {:>8} {:>14}",
+                "{:<26} {:>10} {:>8} {:>8} {:>14} {:>12}",
                 format!("{weapon_id} / {ammo_id}"),
                 format!("{label} {dist}h"),
                 ticks,
                 format!("{seconds:.0}s"),
                 format!("{hexes:.1} hex"),
+                if weapon.dispersion == 0 {
+                    "exact".to_string()
+                } else {
+                    format!("{spread:.0} m / {radius} hex")
+                },
             );
         }
     }
@@ -843,7 +853,10 @@ fn flight_table(reg: &DataRegistry) {
         "\n  a shell is aimed at ground, so `target moves` is how far the quickest\n  \
          vehicle in the roster ({}) travels before it lands — the lead an\n  \
          artillery order has to guess, and the reason standing still is the\n  \
-         mistake it historically was.",
+         mistake it historically was. `spread` is the piece's own dispersion\n  \
+         at that range, and the hex radius the resolver displaces the impact\n  \
+         by: a different fact from the lead, and the one that decides whether\n  \
+         a shell aimed at somebody standing perfectly still arrives on her.",
         reg.scale.format_speed(fastest)
     );
 }

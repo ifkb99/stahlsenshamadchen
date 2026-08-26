@@ -183,6 +183,38 @@ Two more distinctions worth keeping straight:
   or one whose rungs say nothing about accuracy, has no suppression at all
   and needs no `if` in Rust to switch off.
 
+**Dispersion is a different fact from flight time, and the shell carries
+both.** `ShellInFlight` has `at` (the map reference the gunner laid on) and
+`impact` (where the round comes down), rolled from `WeaponDef.dispersion` —
+a percentage of the range flown — when the shot is fired, because that is
+when the barrel, the charge and the lay stop being adjustable. Four things
+about it:
+
+- **Flight time models the target moving; dispersion models the gun.** Until
+  this existed a shell aimed at a *parked* vehicle arrived on her with
+  certainty, because the only inaccuracy modelled was the ticks she had to
+  be elsewhere. There is still deliberately **no hit roll for a shell** — a
+  round that comes down on an occupied hex hits what is on it, and adding a
+  blind-fire penalty on top would price the same scatter twice.
+- **A percentage of the range flown, not a flat radius**, because dispersion
+  grows with range — which is the whole reason a battery registers before
+  firing for effect. The base howitzer's 4% is exact at 300 m, one hex at
+  2 km, two at 4 km.
+- **The draw falls off toward the edge.** A ring at radius two holds twice
+  the hexes of a ring at radius one, so drawing a hex uniformly from the
+  disc would put most shells on the rim and almost none on the aiming point.
+  `scatter` takes the smaller of two ring rolls, then walks `hexx`'s own
+  ring order and indexes it — a pure function of coordinates, unlike
+  iterating a set, which is the mistake this project has already made once.
+- **`shell_lands` resolves against `impact` everywhere** — the direct
+  occupant, the splashed neighbours, and `ShellLanded`'s own hex. Displacing
+  the impact buys nothing if the burst still resolves against the aim, and
+  the event reporting the impact is what lets a player see her own battery
+  walk off the target instead of concluding the game moved her enemy.
+  `impact` is deliberately not `#[serde(default)]`: the default would be
+  `Hex::ZERO`, so an old save's airborne shells would come down on the map
+  corner — a silent wrong answer where refusing to load is the loud one.
+
 The instrument for all of this is `balance`'s **`to hit`** table, the twin of
 the penetration table: every cell is `hit_breakdown` against a medium tank on
 open grass, with the attacker's motion shown as a gradient (1/3/5 hexes)
@@ -191,7 +223,8 @@ roster table gained a `profile` column and `--sim` reports what share of
 shots were laid from a vehicle under way — a resolver term nobody's guns ever
 meet is a term that changed nothing. `Event::ShotFired` carries `moving`
 beside `blind` and `opportunity` for the same reason, and so the log can say
-why.
+why. The shell-flight table gained a `spread` column beside `target moves`,
+which is the two facts side by side.
 
 ### What a shot is worth, and what keeps a battle open
 

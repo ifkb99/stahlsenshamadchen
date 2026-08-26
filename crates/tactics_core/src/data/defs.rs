@@ -268,6 +268,31 @@ pub struct WeaponDef {
     /// unit spots the target.
     #[serde(default)]
     pub indirect: bool,
+    /// How far a shell from this piece can land from where it was aimed, as
+    /// a percentage of the distance it flew.
+    ///
+    /// Dispersion, and it is a different fact from the flight time beside
+    /// it — which is the trap this field has to be read carefully to avoid.
+    /// Flight time models the *target* being somewhere else by the time the
+    /// round arrives; it says nothing about a target who is standing still,
+    /// and until this existed a shell aimed at a parked vehicle hit it with
+    /// certainty. This is the gun's own error: the piece is laid on a map
+    /// reference by a crew reading a plotting board, and the round goes
+    /// where the barrel and the charge send it.
+    ///
+    /// A percentage of the range flown rather than a flat radius, because
+    /// dispersion grows with range, which is the whole reason a battery
+    /// registers on a target before firing for effect. At 3% a shell sent
+    /// three kilometres can be a hex out.
+    ///
+    /// Zero by default and only read on the indirect path, so a mod that
+    /// says nothing shells exactly as it did — the same additivity contract
+    /// [`Self::indirect`] and the ammunition list already keep. Note this is
+    /// deliberately **not** a hit roll: a shell that comes down on an
+    /// occupied hex still hits what is on it, and charging a blind-fire
+    /// accuracy penalty as well would price the same scatter twice.
+    #[serde(default)]
+    pub dispersion: u32,
     /// Ticks before this weapon can fire again, as a practical aimed rate of
     /// fire rather than a mechanical reload — at the default scale a tick is
     /// 5 s, so 4 is a shot every 20 s.

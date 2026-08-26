@@ -675,8 +675,28 @@ pub struct ShellInFlight {
     /// arrival. The battery may be dead by the time it matters, so the
     /// position travels with the shell rather than being looked up.
     pub from: Hex,
-    /// The ground it was aimed at.
+    /// The ground it was aimed at — the map reference the gunner laid on.
     pub at: Hex,
+    /// The ground it actually comes down on.
+    ///
+    /// Rolled when the shot is fired, because that is when the barrel, the
+    /// charge and the lay stop being adjustable; a shell in the air is not
+    /// still deciding where to go. Equal to [`Self::at`] whenever the piece
+    /// declares no `dispersion`, which is every mod written before this
+    /// existed.
+    ///
+    /// Kept separate rather than folded into `at` so the log can tell the
+    /// truth twice over: `ShotFired` reports where the battery aimed and
+    /// `ShellLanded` reports where the round arrived, and a player watching
+    /// her own artillery walk off the target can see it happen instead of
+    /// concluding the game moved her enemy.
+    ///
+    /// Deliberately **not** `#[serde(default)]`. A default would be
+    /// `Hex::ZERO`, so a save written before this field existed would bring
+    /// its airborne shells down on the map's origin — a silent wrong answer
+    /// on a corner of the field, which is the worst of the three ways this
+    /// could go. Refusing to load such a save is the loud one.
+    pub impact: Hex,
     /// Absolute tick it comes down on: `round * ticks_per_round + tick`, the
     /// same clock [`super::SideFog::spotted_since`] runs on.
     pub lands: u64,
@@ -714,7 +734,7 @@ pub fn flight_ticks(scale: &Scale, velocity: u32, hexes: i32) -> u64 {
 /// rounds that a mod actually wrote down go up in the air.
 fn shell_in_flight(
     registry: &DataRegistry,
-    state: &BattleState,
+    state: &mut BattleState,
     attacker: UnitId,
     weapon: &WeaponDef,
     round: &Round<'_>,
@@ -727,14 +747,65 @@ fn shell_in_flight(
     let from = state.unit(attacker)?.pos;
     let lands = state.absolute_tick(registry)
         + flight_ticks(&registry.scale, ammo.velocity, from.distance_to(at));
+    let impact = scatter(registry, state, weapon, from, at);
     Some(ShellInFlight {
         attacker,
         ammo: ammo.id.clone(),
         weapon: weapon.id.clone(),
         from,
         at,
+        impact,
         lands,
     })
+}
+
+/// Where a shell laid on `at` from `from` actually comes down.
+///
+/// The radius is the piece's `dispersion` as a percentage of the range
+/// flown, converted through the scale so that the number in the mod file is
+/// about metres and not about this game's hex size. Zero radius returns the
+/// aimed hex, which is both the common case and the additivity contract.
+///
+/// The draw is deliberately not uniform over the disc. A ring at radius two
+/// holds twice the hexes of a ring at radius one, so drawing a hex uniformly
+/// would put most shells on the rim and almost none on the aiming point —
+/// the opposite of what a dispersion pattern looks like. Taking the smaller
+/// of two rolls for the ring gives a distribution that falls off toward the
+/// edge, which is the cheapest honest shape: nothing here needs to be a
+/// Gaussian, it needs to be densest where the gunner aimed.
+///
+/// The ring is then walked in `hexx`'s own order and indexed, which is a
+/// pure function of the coordinates and therefore safe for the event stream
+/// — unlike iterating a set, which is the mistake this project has already
+/// made once.
+fn scatter(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    weapon: &WeaponDef,
+    from: Hex,
+    at: Hex,
+) -> Hex {
+    if weapon.dispersion == 0 {
+        return at;
+    }
+    let flown = registry.scale.meters(from.distance_to(at).max(0));
+    let spread = flown * weapon.dispersion as f32 / 100.0;
+    let radius = (spread / registry.scale.hex_meters).round() as i32;
+    if radius <= 0 {
+        return at;
+    }
+    let a = state.rng.random_range(0..=radius);
+    let b = state.rng.random_range(0..=radius);
+    let ring = a.min(b);
+    if ring == 0 {
+        return at;
+    }
+    let hexes: Vec<Hex> = at.ring(ring as u32).collect();
+    if hexes.is_empty() {
+        return at;
+    }
+    let index = state.rng.random_range(0..hexes.len());
+    hexes[index]
 }
 
 /// Bring down every shell whose time has come, in the order they were fired.
@@ -795,9 +866,12 @@ fn shell_lands(
     shell: &ShellInFlight,
     events: &mut Vec<Event>,
 ) {
+    // The impact, not the aim. A player watching her own battery walk off
+    // the target is entitled to see where the round actually arrived, and
+    // everything below resolves against the ground it hit.
     events.push(Event::ShellLanded {
         attacker: shell.attacker,
-        at: shell.at,
+        at: shell.impact,
         ammo: shell.ammo.clone(),
     });
     // Content can go away underneath a shell — a mod reloaded, a save opened
@@ -809,7 +883,7 @@ fn shell_lands(
     };
     let round = Round::loaded(ammo, weapon);
 
-    let direct = state.unit_at(shell.at).map(|u| u.id);
+    let direct = state.unit_at(shell.impact).map(|u| u.id);
     if let Some(target) = direct {
         resolve_impact(
             registry,
@@ -827,7 +901,7 @@ fn shell_lands(
     // sequence in every replay — `all_neighbors` is fixed, but which of them
     // are occupied is not something the event stream should learn from.
     let mut splashed: Vec<UnitId> = shell
-        .at
+        .impact
         .all_neighbors()
         .into_iter()
         .filter_map(|hex| state.unit_at(hex).map(|u| u.id))
@@ -850,7 +924,7 @@ fn shell_lands(
             blast /= 2;
         }
         if blast > 0 {
-            overpressure(registry, state, id, blast, shell.at, events);
+            overpressure(registry, state, id, blast, shell.impact, events);
         }
     }
 }
