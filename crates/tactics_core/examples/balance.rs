@@ -1669,6 +1669,86 @@ fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
     ))
 }
 
+/// One battle's outcome, reduced to what the tables count.
+struct Outcome {
+    winner: Option<u8>,
+    a_losses: usize,
+    b_losses: usize,
+    rounds: usize,
+}
+
+/// Fight a batch of independent battles across the machine's cores.
+///
+/// They really are independent: each has its own map, its own `BattleState`,
+/// its own planners and its own seeded rng, and they share nothing but the
+/// registry, which is read-only for the whole run. So the only thing
+/// parallelism can damage is the *table*, and it is guarded rather than
+/// hoped for — every battle writes into the slot its seed owns, and the
+/// results are folded in seed order afterwards. A balance figure that moved
+/// depending on which core finished first would be worse than a slow one,
+/// and it would be the kind of wrong that looks like noise.
+///
+/// `std::thread::scope` rather than a work-stealing pool: the batch is known
+/// up front, the battles are within a factor of a few of each other, and it
+/// costs no dependency. Chunked by slice rather than by index so the borrow
+/// checker proves no two threads touch the same slot.
+fn fight_all<T: Send>(
+    reg: &DataRegistry,
+    games: usize,
+    each: impl Fn(&DataRegistry, u64) -> T + Sync,
+) -> Vec<T> {
+    let mut out: Vec<Option<T>> = (0..games).map(|_| None).collect();
+    if games == 0 {
+        return Vec::new();
+    }
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(games);
+    let per = games.div_ceil(threads);
+    std::thread::scope(|scope| {
+        let each = &each;
+        let mut rest = out.as_mut_slice();
+        let mut base = 0usize;
+        while !rest.is_empty() {
+            let take = per.min(rest.len());
+            let (mine, tail) = rest.split_at_mut(take);
+            let start = base;
+            scope.spawn(move || {
+                for (i, slot) in mine.iter_mut().enumerate() {
+                    *slot = Some(each(reg, (start + i) as u64));
+                }
+            });
+            base += take;
+            rest = tail;
+        }
+    });
+    out.into_iter()
+        .map(|o| o.expect("every battle in the batch ran"))
+        .collect()
+}
+
+/// Play one battle between two configured planners on the mirrored arena.
+fn arena_duel(reg: &DataRegistry, seed: u64, a: &AiConfig, b: &AiConfig) -> Option<Outcome> {
+    let mut state = symmetric_arena(reg, 9000 + seed)?;
+    let mut ai = AiDriver::new();
+    for (side, cfg) in [(0u8, a), (1u8, b)] {
+        ai.insert(side, make_battle_planner(cfg, seed * 2 + side as u64, reg));
+    }
+    let mut rounds = 0;
+    while !state.is_over() && rounds < 60 {
+        ai.plan_round(reg, &mut state);
+        state.resolve_round(reg);
+        rounds += 1;
+    }
+    Some(Outcome {
+        winner: state.over.and_then(|r| r.winner),
+        a_losses: state.lost_units().filter(|u| u.side == 0).count(),
+        b_losses: state.lost_units().filter(|u| u.side == 1).count(),
+        rounds,
+    })
+}
+
 /// Which brain is better, controlled.
 ///
 /// REVIEW.md read "Kuhlmann won 3/3" as evidence that MCTS beats the utility
@@ -1697,41 +1777,27 @@ fn brains_table(reg: &DataRegistry, games: usize, difficulty: u8) {
         ("mcts", "utility"),
         ("utility", "mcts"),
     ] {
+        let cfg = |planner: &str| AiConfig {
+            planner: planner.into(),
+            difficulty,
+            doctrine: None,
+        };
+        let (a_cfg, b_cfg) = (cfg(a), cfg(b));
+        let fought = fight_all(reg, games, |reg, seed| {
+            arena_duel(reg, seed, &a_cfg, &b_cfg)
+        });
+
         let (mut a_wins, mut b_wins, mut draws) = (0, 0, 0);
         let (mut a_losses, mut b_losses, mut total_rounds) = (0usize, 0usize, 0usize);
-        for seed in 0..games as u64 {
-            let Some(mut state) = symmetric_arena(reg, 9000 + seed) else {
-                continue;
-            };
-            let mut ai = AiDriver::new();
-            for (side, planner) in [(0u8, a), (1u8, b)] {
-                ai.insert(
-                    side,
-                    make_battle_planner(
-                        &AiConfig {
-                            planner: planner.into(),
-                            difficulty,
-                            doctrine: None,
-                        },
-                        seed * 2 + side as u64,
-                        reg,
-                    ),
-                );
-            }
-            let mut rounds = 0;
-            while !state.is_over() && rounds < 60 {
-                ai.plan_round(reg, &mut state);
-                state.resolve_round(reg);
-                rounds += 1;
-            }
-            total_rounds += rounds;
-            match state.over.and_then(|r| r.winner) {
+        for outcome in fought.into_iter().flatten() {
+            total_rounds += outcome.rounds;
+            match outcome.winner {
                 Some(0) => a_wins += 1,
                 Some(_) => b_wins += 1,
                 None => draws += 1,
             }
-            a_losses += state.lost_units().filter(|u| u.side == 0).count();
-            b_losses += state.lost_units().filter(|u| u.side == 1).count();
+            a_losses += outcome.a_losses;
+            b_losses += outcome.b_losses;
         }
         let per = |l: usize| l as f32 / games.max(1) as f32;
         println!(
@@ -1759,40 +1825,26 @@ fn skill_gap(reg: &DataRegistry, games: usize) {
         "pairing", "A won", "B won", "draws", "A lost/game", "B lost/game", "ratio"
     );
     for (a, b) in [(5, 5), (1, 1), (5, 3), (3, 5), (5, 1), (1, 5)] {
+        let cfg = |difficulty: u8| AiConfig {
+            planner: "utility".into(),
+            difficulty,
+            doctrine: None,
+        };
+        let (a_cfg, b_cfg) = (cfg(a), cfg(b));
+        let fought = fight_all(reg, games, |reg, seed| {
+            arena_duel(reg, seed, &a_cfg, &b_cfg)
+        });
+
         let (mut a_wins, mut b_wins, mut draws) = (0, 0, 0);
         let (mut a_losses, mut b_losses) = (0usize, 0usize);
-        for seed in 0..games as u64 {
-            let Some(mut state) = symmetric_arena(reg, 9000 + seed) else {
-                continue;
-            };
-            let mut ai = AiDriver::new();
-            for (side, diff) in [(0u8, a), (1u8, b)] {
-                ai.insert(
-                    side,
-                    make_battle_planner(
-                        &AiConfig {
-                            planner: "utility".into(),
-                            difficulty: diff,
-                            doctrine: None,
-                        },
-                        seed * 2 + side as u64,
-                        reg,
-                    ),
-                );
-            }
-            let mut rounds = 0;
-            while !state.is_over() && rounds < 60 {
-                ai.plan_round(reg, &mut state);
-                state.resolve_round(reg);
-                rounds += 1;
-            }
-            match state.over.and_then(|r| r.winner) {
+        for outcome in fought.into_iter().flatten() {
+            match outcome.winner {
                 Some(0) => a_wins += 1,
                 Some(_) => b_wins += 1,
                 None => draws += 1,
             }
-            a_losses += state.lost_units().filter(|u| u.side == 0).count();
-            b_losses += state.lost_units().filter(|u| u.side == 1).count();
+            a_losses += outcome.a_losses;
+            b_losses += outcome.b_losses;
         }
         let per = |l: usize| l as f32 / games.max(1) as f32;
         println!(

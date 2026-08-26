@@ -26,7 +26,19 @@ cargo run --release -p tactics_core --example perf       # hot-path timings
 cargo run --release -p tactics_core --example balance    # what the data does
 cargo run --release -p tactics_core --example balance -- --sim   # ...fought out
 cargo run --release -p tactics_core --example balance -- --sim --points 100  # richer armies
+cargo run --release -p tactics_core --example balance -- --brains --brain-games 64  # which planner
 ```
+
+**The battles run across every core** (`fight_all`, `std::thread::scope`, no
+new dependency). They are genuinely independent — each has its own map,
+state, planners and seeded rng, sharing only the read-only registry — so what
+parallelism could damage is not a battle but a *table*. That is guarded
+rather than hoped for: every battle writes into the slot its seed owns and
+results are folded in seed order, so the printed numbers cannot depend on
+which core finished first. A balance figure that moved with scheduling would
+be worse than a slow one, because it would look exactly like noise. If you
+add a table, fold it in seed order too, and check a run against itself before
+trusting it.
 
 `balance` is the content-iteration loop, and it is built around the kill chain
 rather than around damage. The analytic pass is instant and answers "what did
