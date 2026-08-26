@@ -315,6 +315,38 @@ fn the_move_grid_answers_exactly_what_the_reference_does() {
 }
 
 #[test]
+fn a_sight_grid_folded_in_a_region_at_a_time_is_the_grid_of_the_whole_map() {
+    // The streaming claim for the other grid. Both of them resolve a per-tile
+    // fact from immutable terrain, both will have tiles arriving and leaving
+    // when the world becomes one continuous map, and both therefore have to
+    // land in exactly the state a whole-map build would.
+    let reg = registry();
+    let whole = BattleState::from_map(&reg, "river_crossing", 1).unwrap();
+    let map = &whole.map;
+
+    let mut streamed = tactics_core::battle::SightGrid::default();
+    assert!(streamed.is_empty(), "and an unbuilt one knows it");
+    streamed.extend(&reg, map);
+    streamed.extend(&reg, map);
+    assert_eq!(streamed.len(), whole.sight.len());
+
+    let mut hexes: Vec<_> = map.iter().map(|(h, _)| h).collect();
+    hexes.sort_unstable_by_key(|h| (h.x, h.y));
+    let mut checked = 0;
+    for a in hexes.iter().step_by(29) {
+        for b in hexes.iter().step_by(31) {
+            assert_eq!(
+                streamed.clear(*a, *b),
+                whole.sight.clear(*a, *b),
+                "a streamed grid disagrees about {a:?} -> {b:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 1000, "sampled too little of the map: {checked}");
+}
+
+#[test]
 fn a_move_grid_folded_in_a_region_at_a_time_is_the_grid_of_the_whole_map() {
     // The streaming claim, which is what the grid is shaped for: the world is
     // meant to become one continuous map at two zoom levels, so tiles arrive

@@ -167,6 +167,12 @@ impl FogMap {
 }
 
 /// The two heights line of sight needs from a tile, in metres.
+///
+/// **Adding a fact to the grid is meant to be one field here and one line in
+/// [`Heights::of`]**, and nothing else — the same bargain
+/// `movement::TileMove` makes, and for the same reason: these two grids are
+/// the shape a streamed world resolves terrain in, and the next per-tile fact
+/// worth resolving once should cost a line rather than a redesign.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Heights {
     /// The ground an observer stands on or a target is measured from.
@@ -174,6 +180,18 @@ struct Heights {
     /// The top of whatever blocks sight here — the ground plus the terrain's
     /// own `vision_block`, so a forest stands above the hill it grows on.
     obstacle: f32,
+}
+
+impl Heights {
+    /// Resolve one tile against the registry. **The one place this grid reads
+    /// a terrain definition.**
+    fn of(tile: &crate::map::Tile, terrain: Option<&crate::data::TerrainDef>) -> Self {
+        let block = terrain.map(|t| t.vision_block).unwrap_or(0);
+        Self {
+            surface: tile.elevation as f32 * ELEVATION_STEP,
+            obstacle: (tile.elevation + block) as f32 * ELEVATION_STEP,
+        }
+    }
 }
 
 /// Every tile's sight heights, resolved once.
@@ -187,6 +205,21 @@ struct Heights {
 ///
 /// Shared through [`BattleState`] behind an `Arc`, so cloning a state for
 /// search branching does not copy it.
+///
+/// # Built for a world that streams
+///
+/// The twin of [`crate::battle::MoveGrid`] in this too: tiles are folded in a
+/// region at a time through [`Self::extend`] rather than resolved once for a
+/// map that is the whole world, because the design has the overworld and the
+/// battlefield converging into one continuous world at two zoom levels.
+/// Deriving a whole 1261-tile battle map costs about 25 microseconds, which
+/// is why these are built on load and never shipped as map assets: a grid
+/// written into content would be a second copy of `vision_block`, and a mod
+/// that retuned the terrain would silently get the old answer.
+///
+/// **The thing that will bite:** see [`sight_line_clear`], which treats a tile
+/// it cannot find as transparent. That is exactly right while the map is the
+/// whole world and a wrong answer the moment it is a window onto one.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SightGrid {
     /// Not saved: derived entirely from the map and the terrain definitions,
@@ -202,32 +235,40 @@ pub struct SightGrid {
 }
 
 impl SightGrid {
+    /// Resolve a whole map.
+    pub fn build(registry: &DataRegistry, map: &HexMap) -> Self {
+        let mut grid = Self::default();
+        grid.extend(registry, map);
+        grid
+    }
+
+    /// Fold a region's tiles in, replacing anything already known about them.
+    ///
+    /// `build` is this on an empty grid, deliberately: the streaming path and
+    /// the whole-map path are one piece of code, so the one used every day is
+    /// the one keeping the other honest.
+    pub fn extend(&mut self, registry: &DataRegistry, map: &HexMap) {
+        for (hex, tile) in map.iter() {
+            self.insert(registry, hex, tile);
+        }
+    }
+
+    /// Resolve one tile.
+    pub fn insert(&mut self, registry: &DataRegistry, hex: Hex, tile: &crate::map::Tile) {
+        self.tiles
+            .insert(hex, Heights::of(tile, registry.terrain(&tile.terrain)));
+    }
+
     /// Whether this grid has been built. A deserialized battle carries an
     /// empty one until [`crate::save`] refills it.
     pub fn is_empty(&self) -> bool {
         self.tiles.is_empty()
     }
-}
 
-impl SightGrid {
-    pub fn build(registry: &DataRegistry, map: &HexMap) -> Self {
-        let tiles = map
-            .iter()
-            .map(|(hex, tile)| {
-                let block = registry
-                    .terrain(&tile.terrain)
-                    .map(|t| t.vision_block)
-                    .unwrap_or(0);
-                (
-                    hex,
-                    Heights {
-                        surface: tile.elevation as f32 * ELEVATION_STEP,
-                        obstacle: (tile.elevation + block) as f32 * ELEVATION_STEP,
-                    },
-                )
-            })
-            .collect();
-        Self { tiles }
+    /// How many tiles are resolved. Uninteresting today and the thing a
+    /// streamed world watches.
+    pub fn len(&self) -> usize {
+        self.tiles.len()
     }
 
     /// Line of sight, using the precomputed heights. Identical in result to
@@ -263,7 +304,21 @@ fn sight_line_clear(heights: impl Fn(Hex) -> Option<Heights>, from: Hex, to: Hex
             continue;
         }
         let Some(h) = heights(hex) else {
-            // Off-map gaps don't block sight.
+            // A tile nobody knows about does not block sight.
+            //
+            // Correct while the map is the whole world — "not on the map"
+            // then means there is genuinely nothing there — and a **wrong
+            // answer the day the map is a window onto a streamed one**, where
+            // it would mean "not loaded". A ridge in an unloaded chunk would
+            // stop blocking, so whether a crew can see a tank would depend on
+            // what the renderer happened to have paged in, which is the one
+            // kind of non-determinism this engine cannot survive: replays,
+            // the search AI and the committed event stream all rest on it.
+            //
+            // The fix is not here. It is the loading rule: the resolved
+            // region has to cover everything any unit can see or shoot, not
+            // merely where the units are standing. See TODO under hex
+            // streaming.
             continue;
         };
         let ray = eye + (target - eye) * (i as f32 / last);

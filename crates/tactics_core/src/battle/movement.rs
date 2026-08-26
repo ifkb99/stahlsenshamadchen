@@ -145,10 +145,14 @@ impl TileMove {
 /// - **It is derived data, and cheap.** One pass, no allocation per tile
 ///   beyond the map itself, so it is always safe to rebuild a region rather
 ///   than reason about whether it is stale.
-/// - **It wants to merge with `SightGrid` when that day comes.** They are the
-///   same structure — a per-tile fact resolved once from immutable terrain —
-///   and streaming one of them means writing the same logic twice. Tracked in
-///   TODO.
+/// - **`SightGrid` is the same structure and has the same shape**, deliberately:
+///   a per-tile fact resolved once from immutable terrain, folded in a region
+///   at a time. They are both cheap to derive — 85 and 25 microseconds for a
+///   whole 1261-tile battle map — which is why they are built on load rather
+///   than shipped inside map assets, where they would be a second copy of
+///   `move_cost` and `vision_block` that a retuned mod would silently
+///   contradict. Whether the two should become one object owned by the map is
+///   in TODO under hex streaming.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MoveGrid {
     /// Not saved: derived entirely from the map and the terrain definitions,
