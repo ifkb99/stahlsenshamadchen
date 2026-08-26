@@ -43,7 +43,7 @@
 //! nothing to migrate, because the alternative is discovering the need for it
 //! from a player's corrupted campaign.
 
-use crate::battle::{BattleState, SightGrid};
+use crate::battle::{BattleState, MoveGrid, SightGrid};
 use crate::data::DataRegistry;
 use crate::overworld::OverworldState;
 use serde::{Deserialize, Serialize};
@@ -213,6 +213,12 @@ impl SaveGame {
 pub fn rehydrate(registry: &DataRegistry, battle: &mut BattleState) {
     if battle.sight.is_empty() {
         battle.sight = Arc::new(SightGrid::build(registry, &battle.map));
+    }
+    // The movement grid is skipped for the same reason and has the same
+    // failure mode, one step worse: an empty one says every step is
+    // impossible, so a loaded battle would have nobody able to move at all.
+    if battle.moves.is_empty() {
+        battle.moves = Arc::new(MoveGrid::build(registry, &battle.map));
     }
     // The fog's per-unit vision and per-side keys are skipped too, and the
     // key list is indexed by side during recompute, so an empty one panics

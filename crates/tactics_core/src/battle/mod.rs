@@ -34,8 +34,8 @@ pub use command::{
 };
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
-    Roads, along_the_bearing, destination_blocked, edge_cost as movement_edge_cost, move_points,
-    path_to, reachable, roads, step_toward,
+    MoveGrid, Roads, along_the_bearing, destination_blocked, edge_cost as movement_edge_cost,
+    move_points, path_to, reachable, roads, step_toward,
 };
 pub use orders::{Event, FireIntent, Order, OrderError, UnitIntent};
 
@@ -440,6 +440,11 @@ pub struct BattleState {
     /// battle. `Arc` keeps state cloning — which search planners do
     /// constantly — cheap.
     pub sight: Arc<SightGrid>,
+    /// Movement costs for every tile, resolved once from the map and the
+    /// registry. Shared for exactly the reasons [`Self::sight`] is: terrain
+    /// never changes during a battle, the searches ask for it per edge of
+    /// every tile they touch, and a planner clones the whole state to branch.
+    pub moves: Arc<MoveGrid>,
     pub sides: Vec<SideState>,
     /// The cadets crewing the vehicles in this battle.
     ///
@@ -543,6 +548,7 @@ impl BattleState {
         let side_count = sides.len();
         let objective_count = map.objectives().len();
         let sight = Arc::new(SightGrid::build(registry, &map));
+        let moves = Arc::new(MoveGrid::build(registry, &map));
         // Resolved before the map is moved into its `Arc`, and from the same
         // two things the units are spawned from, so membership cannot drift
         // from the roster it describes.
@@ -553,6 +559,7 @@ impl BattleState {
         let mut state = Self {
             map: Arc::new(map),
             sight,
+            moves,
             sides,
             roster: Arc::new(roster),
             units: Vec::new(),
@@ -593,6 +600,7 @@ impl BattleState {
         let side_count = sides.len();
         let objective_count = map.objectives().len();
         let sight = Arc::new(SightGrid::build(registry, &map));
+        let moves = Arc::new(MoveGrid::build(registry, &map));
         // The formations travel on the map for exactly this reason: a field
         // battle the overworld assembles picks them up without this signature
         // growing, the same trip objectives already make. A declaration whose
@@ -602,6 +610,7 @@ impl BattleState {
         let mut state = Self {
             map: Arc::new(map),
             sight,
+            moves,
             sides,
             roster,
             units: Vec::new(),

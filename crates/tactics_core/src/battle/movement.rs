@@ -6,6 +6,7 @@ use crate::data::{DataRegistry, MovementClass};
 use crate::map::HexMap;
 use crate::roster::Roster;
 use hexx::Hex;
+use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
@@ -34,8 +35,34 @@ pub fn move_points(
     skilled * unit.mobility_halves(registry) / 2
 }
 
+/// What one step costs, given a way of asking a tile for its height and its
+/// price to the class doing the stepping.
+///
+/// The climb rule lives here and nowhere else, so [`edge_cost`] and
+/// [`MoveGrid::cost`] cannot drift apart about what "too steep" means. Same
+/// arrangement as `sight_line_clear` behind [`super::los_clear`] and
+/// `SightGrid::clear`, and for the same reason.
+fn step_cost(
+    tile: impl Fn(Hex) -> Option<(i32, Option<u32>)>,
+    max_climb: i32,
+    from: Hex,
+    to: Hex,
+) -> Option<u32> {
+    let (from_elevation, _) = tile(from)?;
+    let (to_elevation, cost) = tile(to)?;
+    if (to_elevation - from_elevation).abs() > max_climb {
+        return None;
+    }
+    cost
+}
+
 /// Cost of stepping from `from` onto `to`, or `None` if that step is
 /// impossible (impassable terrain, off-map, or too steep).
+///
+/// This is the reference implementation and the one to reach for in a test,
+/// on the campaign map, or for any one-off query. Anything inside a search
+/// should go through [`BattleState::moves`] instead, which answers the same
+/// question without hashing a terrain id per step.
 pub fn edge_cost(
     registry: &DataRegistry,
     map: &HexMap,
@@ -44,12 +71,148 @@ pub fn edge_cost(
     from: Hex,
     to: Hex,
 ) -> Option<u32> {
-    let from_tile = map.get(from)?;
-    let to_tile = map.get(to)?;
-    if (to_tile.elevation - from_tile.elevation).abs() > max_climb {
-        return None;
+    step_cost(
+        |hex| {
+            map.get(hex).map(|tile| {
+                (
+                    tile.elevation,
+                    registry
+                        .terrain(&tile.terrain)
+                        .and_then(|t| t.cost_for(class)),
+                )
+            })
+        },
+        max_climb,
+        from,
+        to,
+    )
+}
+
+/// One tile's movement facts, resolved once.
+///
+/// **Adding a fact to the grid is meant to be one field here and one line in
+/// [`TileMove::of`]**, and nothing else. Everything the grid does — building,
+/// streaming a chunk in, answering a step — is written in terms of those two,
+/// so the next thing worth resolving once per tile (a terrain's `capacity`,
+/// its `cover`) costs a line rather than a redesign.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TileMove {
+    elevation: i32,
+    /// Cost to enter, indexed by [`MovementClass::index`]. `None` is
+    /// impassable to that class, which is what a terrain that names no cost
+    /// for it means.
+    cost: [Option<u32>; MovementClass::ALL.len()],
+}
+
+impl TileMove {
+    /// Resolve one tile against the registry. **The one place this module
+    /// reads a terrain definition.**
+    fn of(tile: &crate::map::Tile, terrain: Option<&crate::data::TerrainDef>) -> Self {
+        let mut cost = [None; MovementClass::ALL.len()];
+        for class in MovementClass::ALL {
+            cost[class.index()] = terrain.and_then(|t| t.cost_for(class));
+        }
+        Self {
+            elevation: tile.elevation,
+            cost,
+        }
     }
-    registry.terrain(&to_tile.terrain)?.cost_for(class)
+}
+
+/// Every tile's movement cost, resolved once, per movement class.
+///
+/// The twin of [`super::SightGrid`] and built for the same measured reason.
+/// [`edge_cost`] looks terrain up by `String` in the registry, and the
+/// searches call it per edge of every tile they touch: one `roads` call over
+/// a radius-20 map is about seven and a half thousand of those string hashes,
+/// for an answer that cannot change because no battle alters its own terrain.
+/// Measured on `river_crossing`, resolving them once took `roads` from 322 to
+/// 219 microseconds and `reachable` from 26.5 to 18.0.
+///
+/// # Built for a world that streams
+///
+/// This is keyed on tiles, never on a battle or a map's identity, because the
+/// design has the overworld and the battlefield converging into **one
+/// continuous world at two zoom levels** — crossing what is today a map edge
+/// becomes an ordinary drive, with no seam and therefore no exit tiles to
+/// declare. Three things follow, and they are why the shape is what it is:
+///
+/// - **Tiles arrive and leave.** [`Self::extend`] folds a region in and
+///   [`Self::insert`] does one tile, so a chunk coming into view costs a pass
+///   over its own tiles rather than a rebuild of the world.
+///   `HashMap::retain` on `tiles` is how a chunk leaves, when something wants
+///   that.
+/// - **It is derived data, and cheap.** One pass, no allocation per tile
+///   beyond the map itself, so it is always safe to rebuild a region rather
+///   than reason about whether it is stale.
+/// - **It wants to merge with `SightGrid` when that day comes.** They are the
+///   same structure — a per-tile fact resolved once from immutable terrain —
+///   and streaming one of them means writing the same logic twice. Tracked in
+///   TODO.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MoveGrid {
+    /// Not saved: derived entirely from the map and the terrain definitions,
+    /// exactly like `SightGrid`, so a loaded game rebuilds it rather than
+    /// carrying a copy of something that holds no state a player changed.
+    /// [`crate::save::rehydrate`] *must* refill it — an empty grid says every
+    /// step is impossible, which is a silent wrong answer rather than a loud
+    /// one.
+    #[serde(skip)]
+    tiles: HashMap<Hex, TileMove>,
+}
+
+impl MoveGrid {
+    /// Resolve a whole map.
+    pub fn build(registry: &DataRegistry, map: &HexMap) -> Self {
+        let mut grid = Self::default();
+        grid.extend(registry, map);
+        grid
+    }
+
+    /// Fold a region's tiles in, replacing anything already known about them.
+    ///
+    /// `build` is this on an empty grid, which is deliberate: the streaming
+    /// path and the whole-map path are one piece of code, so the one that is
+    /// used every day is the one that keeps the other honest.
+    pub fn extend(&mut self, registry: &DataRegistry, map: &HexMap) {
+        for (hex, tile) in map.iter() {
+            self.insert(registry, hex, tile);
+        }
+    }
+
+    /// Resolve one tile.
+    pub fn insert(&mut self, registry: &DataRegistry, hex: Hex, tile: &crate::map::Tile) {
+        self.tiles
+            .insert(hex, TileMove::of(tile, registry.terrain(&tile.terrain)));
+    }
+
+    /// Whether this grid has been built. A deserialized battle carries an
+    /// empty one until [`crate::save`] refills it.
+    pub fn is_empty(&self) -> bool {
+        self.tiles.is_empty()
+    }
+
+    /// How many tiles are resolved. Uninteresting today and the thing a
+    /// streamed world watches.
+    pub fn len(&self) -> usize {
+        self.tiles.len()
+    }
+
+    /// Cost of stepping from `from` onto `to`. Identical in result to
+    /// [`edge_cost`] — they share [`step_cost`] precisely so the fast path
+    /// cannot drift away from the reference one.
+    pub fn cost(&self, class: MovementClass, max_climb: i32, from: Hex, to: Hex) -> Option<u32> {
+        step_cost(
+            |hex| {
+                self.tiles
+                    .get(&hex)
+                    .map(|tile| (tile.elevation, tile.cost[class.index()]))
+            },
+            max_climb,
+            from,
+            to,
+        )
+    }
 }
 
 fn unit_movement(registry: &DataRegistry, unit: &Unit) -> (MovementClass, i32) {
@@ -69,7 +232,7 @@ pub fn edge_cost_for(
     to: Hex,
 ) -> Option<u32> {
     let (class, max_climb) = unit_movement(registry, unit);
-    edge_cost(registry, &state.map, class, max_climb, from, to)
+    state.moves.cost(class, max_climb, from, to)
 }
 
 /// Whether `unit` may pass through (not stop on) `hex`.
@@ -178,7 +341,7 @@ pub fn reachable(registry: &DataRegistry, state: &BattleState, id: UnitId) -> Ha
             if !passable(state, unit, next) {
                 continue;
             }
-            let Some(step) = edge_cost(registry, &state.map, class, max_climb, hex, next) else {
+            let Some(step) = state.moves.cost(class, max_climb, hex, next) else {
                 continue;
             };
             let total = cost + step;
@@ -365,7 +528,7 @@ pub fn roads(registry: &DataRegistry, state: &BattleState, id: UnitId, rounds: u
             continue;
         }
         for next in hex.all_neighbors() {
-            let Some(step) = edge_cost(registry, &state.map, class, max_climb, hex, next) else {
+            let Some(step) = state.moves.cost(class, max_climb, hex, next) else {
                 continue;
             };
             let total = cost + step;
@@ -407,12 +570,12 @@ pub fn path_to(
         if !passable(state, unit, next) {
             return None;
         }
-        edge_cost(registry, &state.map, class, max_climb, from, next)
+        state.moves.cost(class, max_climb, from, next)
     })?;
 
     let mut cost = 0;
     for pair in path.windows(2) {
-        cost += edge_cost(registry, &state.map, class, max_climb, pair[0], pair[1])?;
+        cost += state.moves.cost(class, max_climb, pair[0], pair[1])?;
     }
     (cost <= budget).then_some((path, cost))
 }

@@ -8,7 +8,7 @@ use tactics_core::battle::{
     BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Latitude, Mission,
     Order, STALEMATE_ROUNDS, SideState, UnitId, los_clear, reachable,
 };
-use tactics_core::data::DataRegistry;
+use tactics_core::data::{DataRegistry, MovementClass};
 use tactics_core::map::{HexMap, UnitPlacement};
 use tactics_core::overworld::{
     Army, ArmyId, ArmyMission, OverworldError, OverworldEvent, OverworldOrder, OverworldState,
@@ -280,6 +280,71 @@ fn the_sight_grid_answers_exactly_what_the_reference_does() {
         }
     }
     assert!(checked > 1000, "sampled too little of the map: {checked}");
+}
+
+#[test]
+fn the_move_grid_answers_exactly_what_the_reference_does() {
+    // Same bargain as the sight grid: it exists only to stop the searches
+    // re-deriving a tile's cost through a String-keyed registry lookup on
+    // every edge they touch. It is allowed to be faster; it is not allowed to
+    // price a single step differently, for any class, at any climb limit.
+    let reg = registry();
+    let state = BattleState::from_map(&reg, "river_crossing", 1).unwrap();
+    let mut hexes: Vec<_> = state.map.iter().map(|(h, _)| h).collect();
+    hexes.sort_unstable_by_key(|h| (h.x, h.y));
+
+    let mut checked = 0;
+    for hex in &hexes {
+        for next in hex.all_neighbors() {
+            for class in MovementClass::ALL {
+                for climb in [0, 1, 2] {
+                    assert_eq!(
+                        state.moves.cost(class, climb, *hex, next),
+                        tactics_core::battle::movement_edge_cost(
+                            &reg, &state.map, class, climb, *hex, next
+                        ),
+                        "move grid disagrees about {hex:?} -> {next:?} for {class:?} at climb \
+                         {climb}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 10_000, "sampled too little of the map: {checked}");
+}
+
+#[test]
+fn a_move_grid_folded_in_a_region_at_a_time_is_the_grid_of_the_whole_map() {
+    // The streaming claim, which is what the grid is shaped for: the world is
+    // meant to become one continuous map at two zoom levels, so tiles arrive
+    // and leave and rebuilding everything is not an option. Folding a map in
+    // through `extend` must therefore land in exactly the state `build`
+    // would, and folding the same region in twice must change nothing —
+    // otherwise a chunk that comes back into view is a chunk that prices
+    // differently.
+    let reg = registry();
+    let whole = BattleState::from_map(&reg, "river_crossing", 1).unwrap();
+    let map = &whole.map;
+
+    let mut streamed = tactics_core::battle::MoveGrid::default();
+    assert!(streamed.is_empty(), "and an unbuilt one knows it");
+    streamed.extend(&reg, map);
+    streamed.extend(&reg, map);
+    assert_eq!(streamed.len(), whole.moves.len());
+
+    let mut checked = 0;
+    for (hex, _) in map.iter() {
+        for next in hex.all_neighbors() {
+            assert_eq!(
+                streamed.cost(MovementClass::Tracked, 1, hex, next),
+                whole.moves.cost(MovementClass::Tracked, 1, hex, next),
+                "a streamed grid disagrees about {hex:?} -> {next:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 5_000, "sampled too little of the map: {checked}");
 }
 
 #[test]

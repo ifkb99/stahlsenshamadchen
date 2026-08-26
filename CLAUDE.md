@@ -550,6 +550,13 @@ water. It also knew nothing about what happens on the way there, or about who
 else wants the same ground. `UtilityChooser` now prices all three, and every
 one of them is read off one Dijkstra.
 
+- **Every step is priced through `BattleState::moves`, a `MoveGrid`**, which
+  is `SightGrid`'s twin: every tile's cost per movement class resolved once,
+  shared behind an `Arc`, rebuilt by `save::rehydrate`. `movement::edge_cost`
+  remains the reference implementation for tests, one-off queries and the
+  campaign map, and the two share `step_cost` so the climb rule cannot drift.
+  The grid is written to have tiles folded in a region at a time — see the
+  streaming note on it.
 - **`battle::roads` is the road-pricing twin of `path_to`**, and differs from
   it in the three ways a plan differs from an order: many destinations at
   once, a *horizon* in rounds rather than this round's budget, and **no
@@ -563,6 +570,11 @@ one of them is read off one Dijkstra.
 - **One Dijkstra for the whole candidate list, not an A* per candidate.** The
   first draft did the latter and cost five to ten times as much per planned
   order. Every goal is a place to drive from the same hex.
+- **`HORIZON` is 4 rounds and is the only thing bounding the walk.** It is a
+  number in rounds, so a recon car looks further ahead than a heavy tank,
+  which is right; but it means the cost of `roads` is set by how many tiles
+  that reaches rather than by how many candidates there are. See the
+  performance section before changing it.
 - **Ground with no road inside the horizon is priced at the horizon**, not at
   the crow flight. The first draft fell back to the crow flight and had it
   exactly backwards — the ground with no road inside the horizon is the ground
@@ -1057,12 +1069,13 @@ through a save file, and requires both to produce the same events for the rest
 of the fight. That is why the rng's stream position is saved rather than its
 seed.
 
-Two structures are `#[serde(skip)]` because they are caches: `SightGrid` and
-the per-unit vision inside `FogMap`. They are pure functions of the map, and
-the sight grid alone would be a thousand entries per save. The price is that
-`save::rehydrate` *must* rebuild them — an empty sight grid answers every
-line-of-sight question wrongly rather than loudly, and an empty `visible_key`
-panics because recompute indexes it by side.
+Three structures are `#[serde(skip)]` because they are caches: `SightGrid`,
+`MoveGrid`, and the per-unit vision inside `FogMap`. They are pure functions of
+the map, and either grid alone would be a thousand entries per save. The price
+is that `save::rehydrate` *must* rebuild them — an empty sight grid answers
+every line-of-sight question wrongly rather than loudly, an empty move grid
+says every step is impossible so nobody can drive at all, and an empty
+`visible_key` panics because recompute indexes it by side.
 
 ### Seeing the game without playing it
 
@@ -1392,10 +1405,11 @@ rule they defend (`unspotted_enemies_still_ambush`).
 
   | | |
   | --- | --- |
-  | round resolution | 1.36 ms (1.05–1.80 across seeds) |
-  | `reachable()` per call | 26.5 µs |
-  | `unit_vision` per unit, cold | 71.8 µs |
-  | utility order | 0.17 ms |
+  | round resolution | 1.42 ms (0.89–1.78 across seeds) |
+  | `reachable()` per call | 17.6 µs |
+  | `roads()` per call | 134.8 µs |
+  | `unit_vision` per unit, cold | 71.9 µs |
+  | utility order | 0.09 ms |
   | mcts order, difficulty 3 / 4 | 1.84 s / 4.24 s |
 
   Utility order was 0.03 ms until the evaluator started pricing danger as a
@@ -1409,6 +1423,30 @@ rule they defend (`unspotted_enemies_still_ambush`).
   choosing at once, on the first round) is the worst case rather than the
   usual one. An A* per candidate instead of one Dijkstra for the list cost
   0.21–0.42 ms, which is what the shape is for.
+
+- **`MoveGrid` is `SightGrid`'s twin and was worth the same kind of money.**
+  `edge_cost` resolves terrain by `String` through the registry, and the
+  searches call it per edge of every tile they touch — one `roads` call over
+  the radius-20 map is about 7,500 of those string hashes for an answer no
+  battle can change. Resolving them once per tile took `roads` 322 → 219 µs
+  and `reachable` 26.5 → 18.0 µs, and **the event stream was byte-identical**
+  with the grid in and the horizon unchanged, which is the whole claim: it is
+  allowed to be faster, it is not allowed to price a step differently.
+  `the_move_grid_answers_exactly_what_the_reference_does` pins that against
+  `edge_cost` for every neighbour of every tile, at three climb limits and all
+  five movement classes.
+
+  Cutting `ai::goal::HORIZON` from 6 rounds to 4 took `roads` the rest of the
+  way, to 135 µs. Six was set on the impatience arithmetic without checking
+  what it *covered*: six rounds is 30–42 movement points and the map is a
+  radius-20 hexagon, so the horizon was the whole map and pruned nothing. At
+  2 / 3 / 4 / 6 rounds the call costs 61 / 106 / 155 / 219 µs.
+
+  Note what is **not** in either grid's inner loop, because it comes up: a
+  hex's capacity and a vehicle's footprint. `roads` consults no occupancy at
+  all by design, and stripping the friend check out of `destination_blocked`
+  entirely — infinite stacking — moves `reachable` only 31.1 → 27.6 µs.
+  Stacking is not a performance question.
 
   Round resolution has been an unstable number lately and the history is worth
   keeping. It was 1.07 ms; detection rolls took it to 1.87, and the deepened

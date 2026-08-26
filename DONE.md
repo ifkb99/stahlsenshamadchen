@@ -556,6 +556,38 @@ core: 256 battles took four minutes, where the first attempt at a quarter of
 that sample had been framed as an overnight job and produced six battles a
 pairing, which said nothing at all.
 
+**`MoveGrid`: the same trick as `SightGrid`, one layer down.** `edge_cost`
+resolved terrain by `String` through the registry and the searches called it
+per edge of every tile they touched — about 7,500 string hashes per `roads`
+call, for an answer no battle can change. Every tile's cost per movement class
+is now resolved once, shared behind an `Arc` on `BattleState`, and rebuilt by
+`save::rehydrate` (an empty one says every step is impossible, so a loaded
+battle would have nobody able to move at all).
+
+`roads` 322 → 219 µs, `reachable` 26.5 → 18.0, and **the event stream was
+byte-identical** with the grid in and nothing else changed, which is the whole
+claim: allowed to be faster, not allowed to price a step differently.
+`movement::edge_cost` stays as the reference implementation — tests, one-off
+queries, the campaign map — and the two share `step_cost` so the climb rule
+cannot drift, exactly as `los_clear` and `SightGrid::clear` share
+`sight_line_clear`.
+
+Cutting `ai::goal::HORIZON` from 6 rounds to 4 took `roads` to 135 µs and the
+planner's per-order cost from 0.17 to 0.09 ms. Six was chosen on the impatience
+arithmetic without checking what it covered: six rounds is 30–42 movement
+points and the battle map is a radius-20 hexagon, so the horizon was the entire
+map and pruned nothing.
+
+Two things worth keeping from the investigation. **Stacking is not a
+performance question** — `roads` consults no occupancy at all by design, and
+stripping the friend check out of `destination_blocked` entirely, infinite
+stacking, moves `reachable` only 31.1 → 27.6 µs. And the grid is written for
+the streamed world the design is heading for: keyed on tiles rather than on a
+map's identity, folded in a region at a time through `extend`/`insert`, with
+adding a new per-tile fact meant to be one field on `TileMove` and one line in
+`TileMove::of`. `SightGrid` is the same structure and wants merging with it
+when that day comes.
+
 **The goal chooser reads the road.** It priced a march as `distance / speed`
 and knew nothing about what happened on the way or about who else wanted the
 ground. It now prices the real terrain cost (`battle::roads`, one Dijkstra out

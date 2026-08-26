@@ -1465,7 +1465,7 @@ order SetGoal { unit: UnitId(1), goal: Take(Hex { x: 12, y: 20, z: -32 }) }
 order SetMove { unit: UnitId(1), to: Hex { x: 8, y: 14, z: -22 } }
 order SetGoal { unit: UnitId(2), goal: Take(Hex { x: 11, y: 20, z: -31 }) }
 order SetMove { unit: UnitId(2), to: Hex { x: 5, y: 25, z: -30 } }
-order SetGoal { unit: UnitId(3), goal: Take(Hex { x: 3, y: 31, z: -34 }) }
+order SetGoal { unit: UnitId(3), goal: Take(Hex { x: 2, y: 31, z: -33 }) }
 order SetMove { unit: UnitId(3), to: Hex { x: -4, y: 22, z: -18 } }
 order Commit { side: 0 }
 order SetGoal { unit: UnitId(4), goal: Take(Hex { x: 11, y: 20, z: -31 }) }
@@ -1568,7 +1568,7 @@ order SetMove { unit: UnitId(0), to: Hex { x: 10, y: 20, z: -30 } }
 order SetFire { unit: UnitId(0), fire: Target { target: UnitId(7), weapon: 0 } }
 order SetGoal { unit: UnitId(1), goal: Take(Hex { x: 12, y: 20, z: -32 }) }
 order SetMove { unit: UnitId(1), to: Hex { x: 8, y: 17, z: -25 } }
-order SetGoal { unit: UnitId(3), goal: Take(Hex { x: 3, y: 31, z: -34 }) }
+order SetGoal { unit: UnitId(3), goal: Take(Hex { x: 2, y: 31, z: -33 }) }
 order SetMove { unit: UnitId(3), to: Hex { x: -4, y: 24, z: -20 } }
 order SetFire { unit: UnitId(3), fire: Target { target: UnitId(7), weapon: 0 } }
 order Commit { side: 0 }
@@ -1645,7 +1645,7 @@ order SetGoal { unit: UnitId(0), goal: Take(Hex { x: 10, y: 20, z: -30 }) }
 order SetFire { unit: UnitId(0), fire: Hold }
 order SetGoal { unit: UnitId(1), goal: Take(Hex { x: 12, y: 20, z: -32 }) }
 order SetMove { unit: UnitId(1), to: Hex { x: 8, y: 20, z: -28 } }
-order SetGoal { unit: UnitId(3), goal: Take(Hex { x: 3, y: 31, z: -34 }) }
+order SetGoal { unit: UnitId(3), goal: Take(Hex { x: 2, y: 31, z: -33 }) }
 order SetMove { unit: UnitId(3), to: Hex { x: -3, y: 25, z: -22 } }
 order SetFire { unit: UnitId(3), fire: Target { target: UnitId(5), weapon: 0 } }
 order Commit { side: 0 }
@@ -1723,7 +1723,7 @@ ShotMissed { attacker: UnitId(6), at: Hex { x: 8, y: 20, z: -28 } }
 RoundStarted { round: 4 }
 order SetGoal { unit: UnitId(1), goal: Take(Hex { x: 12, y: 20, z: -32 }) }
 order SetMove { unit: UnitId(1), to: Hex { x: 10, y: 20, z: -30 } }
-order SetGoal { unit: UnitId(3), goal: Take(Hex { x: 3, y: 31, z: -34 }) }
+order SetGoal { unit: UnitId(3), goal: Take(Hex { x: 2, y: 31, z: -33 }) }
 order SetMove { unit: UnitId(3), to: Hex { x: -2, y: 26, z: -24 } }
 order SetFire { unit: UnitId(3), fire: Target { target: UnitId(4), weapon: 0 } }
 order Commit { side: 0 }

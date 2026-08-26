@@ -49,14 +49,23 @@ const IMPATIENCE: f32 = 0.35;
 
 /// How many rounds of driving the chooser bothers to price a road for.
 ///
-/// At `IMPATIENCE` a sixth round of driving costs two points, which is most
-/// of a good objective, so ground further off than this is ground she is not
-/// going to pick however cheap the road turns out to be. Stopping the walk
-/// there is most of what makes pricing every road affordable: the horizon is
-/// a few hundred tiles of a 1261-tile map rather than all of it. Anything
-/// beyond it falls back to the crow flight, which is what the chooser used
-/// for everything before it could see a road at all.
-const HORIZON: u32 = 6;
+/// At `IMPATIENCE` a fourth round of driving already costs a point and a
+/// half, which is most of a good objective, so ground further off than this
+/// is ground she is not going to pick however cheap the road turns out to be.
+///
+/// It is also the only thing bounding the walk, and it was set to six on the
+/// arithmetic alone without checking what six *covered*: six rounds is thirty
+/// to forty-two movement points, and the battle map is a radius-20 hexagon,
+/// so the horizon was the whole map and pruned nothing. Measured on
+/// `river_crossing`, `roads` costs 61 / 106 / 155 / 219 microseconds at a
+/// horizon of two, three, four and six rounds.
+///
+/// Four still reaches most of a battle map for a fast chassis, which is the
+/// honest reading of "how far ahead does a crew plan": it is a number in
+/// *rounds*, so a recon car looks further than a heavy tank, and that is
+/// right. Ground beyond it is priced at the horizon rather than at the crow
+/// flight — see `drive`.
+const HORIZON: u32 = 4;
 
 /// The goals worth considering for this crew right now.
 ///

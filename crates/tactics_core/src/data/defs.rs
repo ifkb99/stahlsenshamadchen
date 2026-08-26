@@ -20,6 +20,33 @@ pub enum MovementClass {
     Air,
 }
 
+impl MovementClass {
+    /// Every class there is, so a per-class table can be built by walking
+    /// them rather than by remembering to add a row.
+    pub const ALL: [MovementClass; 5] = [
+        MovementClass::Foot,
+        MovementClass::Wheeled,
+        MovementClass::Tracked,
+        MovementClass::Boat,
+        MovementClass::Air,
+    ];
+
+    /// This class's slot in such a table.
+    ///
+    /// An exhaustive match rather than a cast, so adding a class fails to
+    /// compile here instead of quietly indexing past the end of somebody's
+    /// array. [`Self::ALL`] is checked against it in the tests below.
+    pub const fn index(self) -> usize {
+        match self {
+            MovementClass::Foot => 0,
+            MovementClass::Wheeled => 1,
+            MovementClass::Tracked => 2,
+            MovementClass::Boat => 3,
+            MovementClass::Air => 4,
+        }
+    }
+}
+
 /// A person. Rides in vehicles, has a face and a name.
 ///
 /// Characters are people; vehicles are hardware, and a unit on the battlefield
@@ -569,5 +596,22 @@ impl TerrainDef {
     /// Movement cost for the class, `None` if impassable.
     pub fn cost_for(&self, class: MovementClass) -> Option<u32> {
         self.move_cost.get(&class).copied()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_movement_class_has_its_own_slot_in_a_per_class_table() {
+        // `MovementClass::index` is an exhaustive match, so adding a class
+        // fails to compile there; what nothing else checks is that `ALL`
+        // lists every one of them and that no two share a slot. A table
+        // sized from `ALL` with a gap in it is an array index past the end
+        // waiting to happen.
+        let mut slots: Vec<usize> = MovementClass::ALL.iter().map(|c| c.index()).collect();
+        slots.sort_unstable();
+        assert_eq!(slots, (0..MovementClass::ALL.len()).collect::<Vec<_>>());
     }
 }
