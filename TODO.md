@@ -25,6 +25,24 @@ Things that shape everything below them. Deciding late means rework; ordered by 
   still needs: **selecting which mods are active at runtime** (see Menus)
 
 ## Bugs
+- **three of the ten dev tours in `scripts/dev/` are red, and have been for at
+  least five commits.** measured 2026-08-26 across the whole set:
+  `infantry-tour` (5 failures), `press-on` (3), `orders-explained` (2); the
+  other seven — `battle-tour`, `battle-fight`, `command-tour`, `after-action`,
+  `overworld-tour`, `orders-waiting`, `the-roll` — pass. checked against
+  `1c6c823` and every one of the three fails identically there, so this is not
+  fallout from the detection or goal-chooser work.
+  what they fail on: `infantry-tour` never gets Grenadier 2 aboard and then
+  loses Grenadier 1; `press-on` expects Anka Weiss alive and two "will press
+  on to" log lines; `orders-explained` expects "ordered to assault" and
+  "ordered to advance" in the log. all three are plausibly *scripts* that
+  drifted from behaviour rather than behaviour that broke, since the scripted
+  clicks name specific hexes.
+  the real problem is the one behind them: **nothing runs the tours**.
+  `cargo test --workspace` does not, CI does not, and the change loop only
+  says to screenshot when the Bevy layer was touched — so "a tour is a test"
+  (see the devtools note in CLAUDE.md) is a property nothing is currently
+  enforcing. either wire them into a gate or stop claiming it
 - `WARN bevy_render::view::window: Couldn't get swap chain texture after configuring. Cause: 'Outdated'`
 - `WARN winit::platform_impl::linux::x11::xdisplay: error setting XSETTINGS; Xft options won't reload automatically`
 - ~~units cannot move through friendlies on campaign map~~ fixed 2026-08-26,

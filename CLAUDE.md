@@ -1448,18 +1448,17 @@ rule they defend (`unspotted_enemies_still_ambush`).
   entirely — infinite stacking — moves `reachable` only 31.1 → 27.6 µs.
   Stacking is not a performance question.
 
-  Round resolution has been an unstable number lately and the history is worth
-  keeping. It was 1.07 ms; detection rolls took it to 1.87, and the deepened
-  goal chooser brought it back to 1.36 — the chooser is *outside* the timed
-  region, so what changed is the battle: crews pick ground they can actually
-  drive to and spend fewer ticks milling. The detection half was never
-  attributed. Over the same benchmark that rule *lowers* the number of fog
-  recomputes (545 → 454) and of cold field-of-view computations (322 → 305)
-  and `search` runs about 2.4 times a round, so the spotting pass is not where
-  it went; the leading guess is that the same raycasting happens with the units
-  standing further apart in open ground. Nobody has confirmed it. It is the
-  first thing to check if this number becomes a problem, and the shadowcasting
-  FOV work in TODO is what would move it.
+  **Round resolution moves with how well the AI plays, not only with how much
+  work the tick loop does**, and that is the thing to know before reading it.
+  It was 1.07 ms; detection rolls took it to 1.87; the deepened goal chooser
+  brought it to 1.38 — and re-measuring detection *after* the chooser landed
+  now shows the rule making rounds **faster** (1.62 ms off against 1.38 on),
+  the opposite of the sign it had a day earlier. Nothing in the spotting pass
+  changed in between. What changed is that crews pick ground they can drive to
+  and spend fewer ticks manoeuvring, which was the standing (unconfirmed)
+  explanation for the detection cost and is now about as confirmed as it will
+  get. `reachable()`, `roads()` and `unit_vision` measure work and are the
+  numbers to read when the question is whether something got slower.
 
   Run it `--release` or the figures are meaningless. Note this supersedes the
   "~39 µs per call on the 768-tile map" figure that used to appear below: that

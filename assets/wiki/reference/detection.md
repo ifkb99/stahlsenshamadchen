@@ -83,12 +83,14 @@ or fires.
 
 Measured 2026-08-26, 36 battles per row, four seeds, against the same run with
 `detection_certain_percent` at 100 (its neutral value, which is the rule
-switched off):
+switched off). **Re-measured after the goal chooser learned to price a road**,
+because the first draft of this table was taken before it and every number in
+it moved a little:
 
 | | wins (side A of 36) | rounds | stalemates | contact range | shots on the move |
 | --- | --- | --- | --- | --- | --- |
-| rule off | 15 / 18 / 21 / 24 | 12.6–13.5 | 0 | 10.8–11.1 hexes | 50–53% |
-| rule on | 23 / 20 / 21 / 22 | 12.9–14.1 | 0 | 10.9–11.2 hexes | 48–53% |
+| rule off | 14 / 19 / 21 / 24 | 12.5–13.2 | 0 | 10.7–11.1 hexes | 51–53% |
+| rule on | 19 / 22 / 20 / 22 | 12.7–14.1 | 0 | 11.0–11.1 hexes | 48–53% |
 
 At 36 battles a genuinely level pairing lands anywhere from 12–24 to 24–12
 nineteen times in twenty, so the win column says nothing either way — which is
@@ -121,17 +123,24 @@ are answers to "what should be built next":
 
 ## Costs
 
-Round resolution on `river_crossing` measures **1.30 ms with the rule off and
-1.87 ms with it on** (`cargo run --release -p tactics_core --example perf`,
-three runs each, spread 1.3–1.5 against 1.86–1.87). The spotting pass itself is
-not where that went: over the same benchmark the number of fog recomputes falls
-(545 → 454), the number of cold field-of-view computations falls (322 → 305),
-and `search` runs about 2.4 times a round. The extra time is inside the same
-raycasting work with the same call count, which points at *where the units are
-standing* when they do it — contact comes later, so more of the benchmark's
-eight rounds are spent with everybody alive and looking across open ground.
-Nobody has confirmed that; it is the first thing to check if this number ever
-becomes a problem, and the shadowcasting work is what would move it.
+Round resolution on `river_crossing` measures **1.62 ms with the rule off and
+1.38 ms with it on** (`cargo run --release -p tactics_core --example perf`).
+
+That is the right way round and it was not always: measured on the day this
+landed, before the goal chooser could price a road, the same comparison read
+1.30 off against 1.87 *on* — and the spotting pass was demonstrably not where
+that went, since the rule *lowers* the number of fog recomputes (545 → 454)
+and of cold field-of-view computations (322 → 305) over the same benchmark,
+with `search` running about 2.4 times a round. The standing guess was that the
+cost was behavioural: contact comes later, so crews spend longer manoeuvring.
+The chooser then made them manoeuvre better and the sign flipped, which is
+about as much confirmation as that guess is going to get.
+
+The lesson for the next person is not about detection. It is that **round
+resolution on this benchmark moves with how well the AI plays**, so a change
+to the planners will move it without anything in the tick loop getting slower
+or faster. Read it alongside `reachable()`, `roads()` and `unit_vision`, which
+measure work rather than behaviour.
 
 ## Additivity
 
