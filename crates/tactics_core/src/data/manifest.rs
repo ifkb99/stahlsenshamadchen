@@ -1,4 +1,4 @@
-use super::{Balance, Scale};
+use super::{Balance, Casualties, Scale};
 use serde::{Deserialize, Serialize};
 
 /// `mod.json` at the root of every mod directory.
@@ -27,7 +27,7 @@ pub struct ModManifest {
     /// Jobs aboard a vehicle, and which skills each answers for.
     #[serde(default)]
     pub roles: Option<Vec<super::RoleDef>>,
-    /// Things that are true about a girl but are not numbers.
+    /// Things that are true about a cadet but are not numbers.
     #[serde(default)]
     pub traits: Option<Vec<super::TraitDef>>,
     /// How long crews take to act on orders. Replaced wholesale, like the
@@ -35,7 +35,7 @@ pub struct ModManifest {
     #[serde(default)]
     pub reaction: Option<super::ReactionRules>,
     /// What a crew can take before it stops doing as it is told. A mod that
-    /// ships a one-rung ladder has girls who never waver.
+    /// ships a one-rung ladder has cadets who never waver.
     #[serde(default)]
     pub morale: Option<super::MoraleRules>,
     /// How far an order carries and how long it takes to arrive. Replaced
@@ -58,4 +58,9 @@ pub struct ModManifest {
     /// [`Self::scale`].
     #[serde(default)]
     pub balance: Option<Balance>,
+    /// What a battle costs the cadets who fought it. Same one-in-effect rule
+    /// as [`Self::scale`]: a campaign that wants attrition to bite declares
+    /// this block and changes nothing else.
+    #[serde(default)]
+    pub casualties: Option<Casualties>,
 }

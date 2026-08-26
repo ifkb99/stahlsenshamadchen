@@ -6,10 +6,11 @@
 //! planner buffers the pair and hands them over one call at a time, keeping
 //! [`AiPlanner::next_order`] the only entry point the callers need.
 
+use super::goal::{self, GoalChooser};
 use super::{
     AiConfig, AiPlanner, Evaluator, difficulty_noise, next_unplanned_unit, resolve_doctrine,
 };
-use crate::battle::{BattleState, FireIntent, Order, UnitId, reachable};
+use crate::battle::{BattleState, FireIntent, Order, UnitId, reachable, step_toward};
 use crate::data::DataRegistry;
 use hexx::Hex;
 use rand::{RngExt, SeedableRng};
@@ -236,12 +237,39 @@ impl UtilityPlanner {
         best.map(|(_, id)| id)
     }
 
-    fn noisy_score(&mut self, score: f32) -> f32 {
-        if self.noise > 0.0 {
-            score + self.rng.random_range(-self.noise..self.noise)
-        } else {
-            score
+    /// The blur this crew is seeing the field through this round: a lean in
+    /// one direction, not a haze over every tile separately.
+    ///
+    /// Difficulty noise used to be drawn per candidate tile and the planner
+    /// then took an argmax over every tile she could reach — which is a
+    /// selection bias, not a handicap. The maximum of ninety independent
+    /// draws from ±0.5 is about +0.49 every single time, while the objective
+    /// gradient this was competing with is 0.54 a hex, so the tile that won
+    /// was reliably the one that drew luckiest rather than the one nearer the
+    /// bridge. Worse, it scaled the wrong way: a faster vehicle reaches more
+    /// tiles, takes the maximum over more draws, and wanders harder. Measured
+    /// on `battle_plains`, the 7 MP recon car finished further from the
+    /// objective than she deployed while the 3 MP howitzer merely twitched.
+    ///
+    /// A lean is drawn once per unit per round and applied as a smooth
+    /// function of where a tile lies relative to her, so no tile can win by
+    /// drawing well — there is nothing to draw. What it buys instead is a
+    /// coherent misjudgement: today she favours the left, and she favours it
+    /// consistently, which is what "the same candidates through a blurrier
+    /// lens" was supposed to mean in the first place. A flat per-unit offset
+    /// would have been the obvious reading and is a no-op: adding the same
+    /// number to every candidate changes no argmax.
+    ///
+    /// Zero at difficulty 5, exactly as before, so a noiseless side is
+    /// untouched by this.
+    fn lean(&mut self) -> (f32, f32) {
+        if self.noise <= 0.0 {
+            return (0.0, 0.0);
         }
+        (
+            self.rng.random_range(-self.noise..self.noise),
+            self.rng.random_range(-self.noise..self.noise),
+        )
     }
 
     /// Decide everything one unit will do this round.
@@ -348,10 +376,24 @@ impl UtilityPlanner {
         let mut options: Vec<Hex> = reachable(registry, state, unit).into_keys().collect();
         options.sort_unstable_by_key(|h| (h.x, h.y));
 
+        // Drawn once, before the sweep, so every tile is judged through the
+        // same lens. `span` normalises it against how far she can actually
+        // get, which keeps a difficulty level worth the same to a howitzer as
+        // to a recon car — the old draw was worth much more to whoever could
+        // reach more ground.
+        let lean = self.lean();
+        let span = options
+            .iter()
+            .map(|h| pos.distance_to(*h))
+            .max()
+            .unwrap_or(1)
+            .max(1) as f32;
         let mut scored: Vec<Candidate> = Vec::with_capacity(options.len());
         for tile in options {
             let tile_score = self.evaluator.score_tile(registry, state, unit, tile);
-            scored.push((tile, self.noisy_score(tile_score.score), tile_score.attack));
+            let blur =
+                (lean.0 * (tile.x - pos.x) as f32 + lean.1 * (tile.y - pos.y) as f32) / span / 2.0;
+            scored.push((tile, tile_score.score + blur, tile_score.attack));
         }
         let top = scored
             .iter()
@@ -380,12 +422,59 @@ impl UtilityPlanner {
             .min_by_key(|(tile, _, _)| (pos.distance_to(*tile), tile.x, tile.y))
             .map(|(tile, _, attack)| Choice { dest: tile, attack });
 
-        let (dest, attack) = match best {
+        let (best_dest, attack) = match best {
             Some(choice) => (choice.dest, choice.attack),
             None => (pos, None),
         };
-        let mut orders = Vec::new();
-        if dest != pos {
+
+        // The goal layer. She keeps the goal she has until it finishes, and
+        // chooses a new one from a short list of places that mean something
+        // when it does — objectives, where her orders point, and (always) the
+        // tile this round's sweep just picked, which is the guarantee that a
+        // goal can never leave her worse off than having none.
+        //
+        // The sweep above still runs, and has to: its answer is a candidate,
+        // and its `attack` is what she shoots at while driving. What changed
+        // is that its answer is no longer automatically her destination.
+        let live = state
+            .unit(unit)
+            .and_then(|u| u.goal)
+            .filter(|g| !g.finished(state, unit));
+        let goal = match live {
+            Some(goal) => goal,
+            None => {
+                let options = goal::candidates(
+                    registry,
+                    state,
+                    unit,
+                    state
+                        .command
+                        .formation_of(unit)
+                        .and_then(|f| f.mission_for(unit)),
+                    Some(best_dest),
+                );
+                let mut chooser = goal::UtilityChooser {
+                    evaluator: &self.evaluator,
+                    noise: self.noise,
+                    rng: &mut self.rng,
+                };
+                chooser.choose(registry, state, unit, &options)
+            }
+        };
+
+        // One leg toward it. A `SetMove` naming ground beyond this round's
+        // movement is refused by the engine — which is the right rule for an
+        // order and the reason this planner only ever *scored* ground it
+        // could reach — so a goal several rounds off is walked a leg at a
+        // time through the same `step_toward` a commander's personal tasking
+        // uses. Two implementations of "closest reachable" would be two
+        // answers to where she is going.
+        let dest = match goal {
+            crate::battle::Goal::Hold => None,
+            crate::battle::Goal::Take(hex) => step_toward(registry, state, unit, hex),
+        };
+        let mut orders = vec![Order::SetGoal { unit, goal }];
+        if let Some(dest) = dest {
             orders.push(Order::SetMove { unit, to: dest });
         }
         match attack {
@@ -394,8 +483,10 @@ impl UtilityPlanner {
                 fire: FireIntent::Target { target, weapon },
             }),
             // Nothing worth engaging: watch the ground instead. Said out
-            // loud so the unit counts as planned rather than forgotten.
-            None if orders.is_empty() => orders.push(Order::SetFire {
+            // loud so the unit counts as planned rather than forgotten —
+            // and `SetGoal` does not count, because stating an intention is
+            // not doing anything about it.
+            None if dest.is_none() => orders.push(Order::SetFire {
                 unit,
                 fire: FireIntent::Hold,
             }),

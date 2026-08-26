@@ -1,394 +1,505 @@
 {
-    "id": "base",
-    "name": "Stahlsensham\u00e4dchen Base",
-    "version": "0.1.0",
-    "description": "Core content: starter characters, vehicles, weapons, terrain and demo maps.",
-    "dependencies": [],
-    "scale": {
-        "hex_meters": 100,
-        "round_seconds": 60,
-        "ticks_per_round": 12,
-        "elevation_meters": 10,
-        "overworld_hex_meters": 4000,
-        "overworld_turn_hours": 24
-    },
-    "balance": {
-        "speed_per_driving": 5,
-        "accuracy_per_gunnery": 3,
-        "substitution_penalty": 2,
-        "vision_per_observation": 5,
-        "pen_scatter": 15,
-        "brewup_percent": 60,
-        "brew_safety_percent": 12
-    },
-    "cores": [
-        {
-            "id": "strength",
-            "name": "Strength",
-            "description": "Physical power. Ramming a shell home, heaving track links, carrying a load on foot."
-        },
-        {
-            "id": "dexterity",
-            "name": "Dexterity",
-            "description": "Coordination. Laying a gun, handling a vehicle, steady hands."
-        },
-        {
-            "id": "intellect",
-            "name": "Intellect",
-            "description": "Reasoning and planning. Reading ground, and understanding an order correctly."
-        },
-        {
-            "id": "health",
-            "name": "Health",
-            "description": "Constitution and stamina. Lasting a long day, and surviving what happens to the vehicle."
-        },
-        {
-            "id": "will",
-            "name": "Will",
-            "description": "Mental resistance. Holding when it would be sensible to run."
-        },
-        {
-            "id": "perception",
-            "name": "Perception",
-            "description": "Noticing. What she sees, hears, and how soon."
-        },
-        {
-            "id": "speed",
-            "name": "Speed",
-            "description": "Reaction time. How quickly she acts once something changes."
-        },
-        {
-            "id": "presence",
-            "name": "Presence",
-            "description": "Authority. Whether an order lands and is obeyed."
-        },
-        {
-            "id": "charm",
-            "name": "Charm",
-            "description": "Rapport. Who she gets on with, and how morale travels."
-        }
+  "id": "base",
+  "name": "Stahlsenshamädchen Base",
+  "version": "0.1.0",
+  "description": "Core content: starter characters, vehicles, weapons, terrain and demo maps.",
+  "dependencies": [],
+  "scale": {
+    "hex_meters": 100,
+    "round_seconds": 60,
+    "ticks_per_round": 12,
+    "elevation_meters": 10,
+    "overworld_hex_meters": 4000,
+    "overworld_turn_hours": 24
+  },
+  "balance": {
+    "speed_per_driving": 5,
+    "accuracy_per_gunnery": 3,
+    "substitution_penalty": 2,
+    "vision_per_observation": 5,
+    "pen_scatter": 15,
+    "brewup_percent": 60,
+    "brew_safety_percent": 12
+  },
+  "casualties": {
+    "harm_kinetic": 55,
+    "harm_explosive": 40,
+    "harm_small_arms": 20,
+    "harm_unattributed": 40,
+    "harm_per_safety": 8,
+    "harm_floor": 5,
+    "harm_ceiling": 95,
+    "adrift_percent": 25,
+    "adrift_days": [
+      1,
+      3
     ],
-    "skills": [
-        {
-            "id": "gunnery",
-            "name": "Gunnery",
-            "cores": {
-                "dexterity": 2,
-                "perception": 1,
-                "speed": 1
-            },
-            "untrained_penalty": 4
-        },
-        {
-            "id": "driving",
-            "name": "Driving",
-            "cores": {
-                "dexterity": 2,
-                "health": 1,
-                "speed": 1
-            },
-            "untrained_penalty": 3
-        },
-        {
-            "id": "loading",
-            "name": "Loading",
-            "cores": {
-                "strength": 2,
-                "dexterity": 1
-            },
-            "untrained_penalty": 3
-        },
-        {
-            "id": "observation",
-            "name": "Observation",
-            "cores": {
-                "perception": 3,
-                "intellect": 1
-            },
-            "untrained_penalty": 2
-        },
-        {
-            "id": "signals",
-            "name": "Signals",
-            "cores": {
-                "intellect": 2,
-                "perception": 1
-            },
-            "untrained_penalty": 4
-        },
-        {
-            "id": "maintenance",
-            "name": "Maintenance",
-            "cores": {
-                "intellect": 2,
-                "dexterity": 1,
-                "strength": 1
-            },
-            "untrained_penalty": 5
-        },
-        {
-            "id": "first_aid",
-            "name": "First Aid",
-            "cores": {
-                "intellect": 2,
-                "dexterity": 1
-            },
-            "untrained_penalty": 5
-        },
-        {
-            "id": "command",
-            "name": "Command",
-            "cores": {
-                "presence": 2,
-                "intellect": 1,
-                "charm": 1
-            },
-            "untrained_penalty": 6
-        },
-        {
-            "id": "discipline",
-            "name": "Discipline",
-            "cores": {
-                "will": 2,
-                "intellect": 1
-            },
-            "untrained_penalty": 3
-        },
-        {
-            "id": "small_arms",
-            "name": "Small Arms",
-            "cores": {
-                "dexterity": 2,
-                "perception": 1
-            },
-            "untrained_penalty": 2
-        },
-        {
-            "id": "fieldcraft",
-            "name": "Fieldcraft",
-            "cores": {
-                "perception": 2,
-                "intellect": 1
-            },
-            "untrained_penalty": 3
-        },
-        {
-            "id": "athletics",
-            "name": "Athletics",
-            "cores": {
-                "health": 2,
-                "strength": 1
-            },
-            "untrained_penalty": 2
-        },
-        {
-            "id": "reactions",
-            "name": "Reactions",
-            "cores": {
-                "speed": 3,
-                "will": 1
-            },
-            "untrained_penalty": 2
-        }
+    "severe_percent": 25,
+    "severe_days": [
+      5,
+      10
     ],
-    "roles": [
-        {
-            "id": "commander",
-            "name": "Commander",
-            "skills": [
-                "command",
-                "observation",
-                "signals"
-            ]
-        },
-        {
-            "id": "driver",
-            "name": "Driver",
-            "skills": [
-                "driving",
-                "maintenance"
-            ]
-        },
-        {
-            "id": "gunner",
-            "name": "Gunner",
-            "skills": [
-                "gunnery"
-            ]
-        },
-        {
-            "id": "loader",
-            "name": "Loader",
-            "skills": [
-                "loading",
-                "first_aid"
-            ]
-        },
-        {
-            "id": "radio",
-            "name": "Radio Operator",
-            "skills": [
-                "signals"
-            ]
-        },
-        {
-            "id": "platoon_leader",
-            "name": "Platoon Leader",
-            "skills": [
-                "command",
-                "fieldcraft",
-                "small_arms",
-                "gunnery"
-            ]
-        },
-        {
-            "id": "section_leader",
-            "name": "Section Leader",
-            "skills": [
-                "fieldcraft",
-                "small_arms",
-                "observation",
-                "gunnery"
-            ]
-        }
+    "light_days": [
+      1,
+      4
     ],
-    "traits": [
-        {
-            "id": "lead_foot",
-            "name": "Lead foot",
-            "description": "Quick where the going is good, and finds every ditch where it is not.",
-            "effects": [
-                {
-                    "skill": "driving",
-                    "when": {
-                        "terrain": "road"
-                    },
-                    "modifier": 3
-                },
-                {
-                    "skill": "driving",
-                    "when": {
-                        "not_terrain": "road"
-                    },
-                    "modifier": -2
-                }
-            ]
-        },
-        {
-            "id": "deliberate",
-            "name": "Deliberate",
-            "description": "Takes her time over the shot, and stops watching anything else while she does.",
-            "effects": [
-                {
-                    "skill": "gunnery",
-                    "modifier": 2
-                },
-                {
-                    "skill": "observation",
-                    "modifier": -2
-                }
-            ]
-        },
-        {
-            "id": "eagle_eyed",
-            "name": "Eagle-eyed",
-            "description": "Misses nothing in front of her. Says less about it than you would like.",
-            "effects": [
-                {
-                    "skill": "observation",
-                    "modifier": 2
-                },
-                {
-                    "skill": "signals",
-                    "modifier": -1
-                }
-            ]
-        },
-        {
-            "id": "eager",
-            "name": "Eager",
-            "description": "Loads like the war depends on it. Holds fire like it does not.",
-            "effects": [
-                {
-                    "skill": "loading",
-                    "modifier": 2
-                },
-                {
-                    "skill": "discipline",
-                    "modifier": -2
-                }
-            ]
-        },
-        {
-            "id": "loner",
-            "name": "Loner",
-            "description": "Steadier with nobody looking over her shoulder.",
-            "effects": [
-                {
-                    "skill": "gunnery",
-                    "when": "alone",
-                    "modifier": 2
-                },
-                {
-                    "skill": "gunnery",
-                    "when": "crewed",
-                    "modifier": -1
-                }
-            ]
-        }
+    "carried_days": [
+      3,
+      8
     ],
-    "reaction": {
-        "skill": "reactions",
-        "base_ticks": 2,
-        "levels_per_tick": 4,
-        "max_ticks": 5
+    "grazed_days": [
+      1,
+      4
+    ]
+  },
+  "cores": [
+    {
+      "id": "strength",
+      "name": "Strength",
+      "description": "Physical power. Ramming a shell home, heaving track links, carrying a load on foot."
     },
-    "command": {
-        "radius": 8,
-        "radius_per_signals": 1,
-        "relay": true,
-        "visual_range": 3,
-        "overworld_radius": 4,
-        "review": {
-            "skill": "command",
-            "base_ticks": 1,
-            "levels_per_tick": 4,
-            "max_ticks": 2
-        },
-        "latency": {
-            "skill": "command",
-            "base_ticks": 2,
-            "levels_per_tick": 4,
-            "max_ticks": 4
-        }
+    {
+      "id": "dexterity",
+      "name": "Dexterity",
+      "description": "Coordination. Laying a gun, handling a vehicle, steady hands."
     },
-    "morale": {
-        "skill": "discipline",
-        "rungs": [
-            {
-                "id": "steady",
-                "name": "Steady",
-                "at_pressure": 0,
-                "obeys": true
-            },
-            {
-                "id": "wavering",
-                "name": "Wavering",
-                "at_pressure": 6,
-                "obeys": true
-            },
-            {
-                "id": "breaking",
-                "name": "Breaking",
-                "at_pressure": 12,
-                "obeys": false
-            }
-        ],
-        "hit": 3,
-        "bounced": 1,
-        "ally_destroyed": 4,
-        "leader_lost": 4,
-        "recovery": 2,
-        "recovery_per_skill": 4
+    {
+      "id": "intellect",
+      "name": "Intellect",
+      "description": "Reasoning and planning. Reading ground, and understanding an order correctly."
+    },
+    {
+      "id": "health",
+      "name": "Health",
+      "description": "Constitution and stamina. Lasting a long day, and surviving what happens to the vehicle."
+    },
+    {
+      "id": "will",
+      "name": "Will",
+      "description": "Mental resistance. Holding when it would be sensible to run."
+    },
+    {
+      "id": "perception",
+      "name": "Perception",
+      "description": "Noticing. What she sees, hears, and how soon."
+    },
+    {
+      "id": "speed",
+      "name": "Speed",
+      "description": "Reaction time. How quickly she acts once something changes."
+    },
+    {
+      "id": "presence",
+      "name": "Presence",
+      "description": "Authority. Whether an order lands and is obeyed."
+    },
+    {
+      "id": "charm",
+      "name": "Charm",
+      "description": "Rapport. Who she gets on with, and how morale travels."
     }
+  ],
+  "skills": [
+    {
+      "id": "gunnery",
+      "name": "Gunnery",
+      "cores": {
+        "dexterity": 2,
+        "perception": 1,
+        "speed": 1
+      },
+      "untrained_penalty": 4
+    },
+    {
+      "id": "driving",
+      "name": "Driving",
+      "cores": {
+        "dexterity": 2,
+        "health": 1,
+        "speed": 1
+      },
+      "untrained_penalty": 3
+    },
+    {
+      "id": "loading",
+      "name": "Loading",
+      "cores": {
+        "strength": 2,
+        "dexterity": 1
+      },
+      "untrained_penalty": 3
+    },
+    {
+      "id": "observation",
+      "name": "Observation",
+      "cores": {
+        "perception": 3,
+        "intellect": 1
+      },
+      "untrained_penalty": 2
+    },
+    {
+      "id": "signals",
+      "name": "Signals",
+      "cores": {
+        "intellect": 2,
+        "perception": 1
+      },
+      "untrained_penalty": 4
+    },
+    {
+      "id": "maintenance",
+      "name": "Maintenance",
+      "cores": {
+        "intellect": 2,
+        "dexterity": 1,
+        "strength": 1
+      },
+      "untrained_penalty": 5
+    },
+    {
+      "id": "first_aid",
+      "name": "First Aid",
+      "cores": {
+        "intellect": 2,
+        "dexterity": 1
+      },
+      "untrained_penalty": 5
+    },
+    {
+      "id": "command",
+      "name": "Command",
+      "cores": {
+        "presence": 2,
+        "intellect": 1,
+        "charm": 1
+      },
+      "untrained_penalty": 6
+    },
+    {
+      "id": "discipline",
+      "name": "Discipline",
+      "cores": {
+        "will": 2,
+        "intellect": 1
+      },
+      "untrained_penalty": 3
+    },
+    {
+      "id": "small_arms",
+      "name": "Small Arms",
+      "cores": {
+        "dexterity": 2,
+        "perception": 1
+      },
+      "untrained_penalty": 2
+    },
+    {
+      "id": "fieldcraft",
+      "name": "Fieldcraft",
+      "cores": {
+        "perception": 2,
+        "intellect": 1
+      },
+      "untrained_penalty": 3
+    },
+    {
+      "id": "athletics",
+      "name": "Athletics",
+      "cores": {
+        "health": 2,
+        "strength": 1
+      },
+      "untrained_penalty": 2
+    },
+    {
+      "id": "reactions",
+      "name": "Reactions",
+      "cores": {
+        "speed": 3,
+        "will": 1
+      },
+      "untrained_penalty": 2
+    }
+  ],
+  "roles": [
+    {
+      "id": "commander",
+      "name": "Commander",
+      "skills": [
+        "command",
+        "observation",
+        "signals"
+      ]
+    },
+    {
+      "id": "driver",
+      "name": "Driver",
+      "skills": [
+        "driving",
+        "maintenance"
+      ]
+    },
+    {
+      "id": "gunner",
+      "name": "Gunner",
+      "skills": [
+        "gunnery"
+      ]
+    },
+    {
+      "id": "loader",
+      "name": "Loader",
+      "skills": [
+        "loading",
+        "first_aid"
+      ]
+    },
+    {
+      "id": "radio",
+      "name": "Radio Operator",
+      "skills": [
+        "signals"
+      ]
+    },
+    {
+      "id": "platoon_leader",
+      "name": "Platoon Leader",
+      "skills": [
+        "command",
+        "fieldcraft",
+        "small_arms",
+        "gunnery"
+      ]
+    },
+    {
+      "id": "section_leader",
+      "name": "Section Leader",
+      "skills": [
+        "fieldcraft",
+        "small_arms",
+        "observation",
+        "gunnery"
+      ]
+    }
+  ],
+  "traits": [
+    {
+      "id": "lead_foot",
+      "name": "Lead foot",
+      "description": "Quick where the going is good, and finds every ditch where it is not.",
+      "effects": [
+        {
+          "skill": "driving",
+          "when": {
+            "terrain": "road"
+          },
+          "modifier": 3
+        },
+        {
+          "skill": "driving",
+          "when": {
+            "not_terrain": "road"
+          },
+          "modifier": -2
+        }
+      ]
+    },
+    {
+      "id": "deliberate",
+      "name": "Deliberate",
+      "description": "Takes her time over the shot, and stops watching anything else while she does.",
+      "effects": [
+        {
+          "skill": "gunnery",
+          "modifier": 2
+        },
+        {
+          "skill": "observation",
+          "modifier": -2
+        }
+      ]
+    },
+    {
+      "id": "eagle_eyed",
+      "name": "Eagle-eyed",
+      "description": "Misses nothing in front of her. Says less about it than you would like.",
+      "effects": [
+        {
+          "skill": "observation",
+          "modifier": 2
+        },
+        {
+          "skill": "signals",
+          "modifier": -1
+        }
+      ]
+    },
+    {
+      "id": "eager",
+      "name": "Eager",
+      "description": "Loads like the war depends on it. Holds fire like it does not.",
+      "effects": [
+        {
+          "skill": "loading",
+          "modifier": 2
+        },
+        {
+          "skill": "discipline",
+          "modifier": -2
+        }
+      ]
+    },
+    {
+      "id": "loner",
+      "name": "Loner",
+      "description": "Steadier with nobody looking over her shoulder.",
+      "effects": [
+        {
+          "skill": "gunnery",
+          "when": "alone",
+          "modifier": 2
+        },
+        {
+          "skill": "gunnery",
+          "when": "crewed",
+          "modifier": -1
+        }
+      ]
+    },
+    {
+      "id": "reckless",
+      "name": "Reckless",
+      "description": "Answers a bad situation by making it louder. Superb with a gun in her hands and no use at all at holding still.",
+      "effects": [
+        {
+          "skill": "gunnery",
+          "modifier": 2
+        },
+        {
+          "skill": "discipline",
+          "modifier": -2
+        },
+        {
+          "defiance": "fight",
+          "modifier": 3
+        }
+      ]
+    },
+    {
+      "id": "craven",
+      "name": "Craven",
+      "description": "Sees exactly how bad it is, sooner than anybody. Not a coward for wanting out, and no less inconvenient for that.",
+      "effects": [
+        {
+          "skill": "observation",
+          "modifier": 2
+        },
+        {
+          "skill": "gunnery",
+          "modifier": -1
+        },
+        {
+          "defiance": "flight",
+          "modifier": 3
+        }
+      ]
+    },
+    {
+      "id": "stolid",
+      "name": "Stolid",
+      "description": "Takes it. Keeps taking it. Will still be sitting there when it stops.",
+      "effects": [
+        {
+          "skill": "discipline",
+          "modifier": 2
+        },
+        {
+          "skill": "driving",
+          "modifier": -1
+        },
+        {
+          "defiance": "freeze",
+          "modifier": 2
+        }
+      ]
+    }
+  ],
+  "reaction": {
+    "skill": "reactions",
+    "base_ticks": 2,
+    "levels_per_tick": 4,
+    "max_ticks": 5
+  },
+  "command": {
+    "radius": 8,
+    "radius_per_signals": 1,
+    "relay": true,
+    "visual_range": 3,
+    "overworld_radius": 4,
+    "review": {
+      "skill": "command",
+      "base_ticks": 1,
+      "levels_per_tick": 4,
+      "max_ticks": 2
+    },
+    "latency": {
+      "skill": "command",
+      "base_ticks": 2,
+      "levels_per_tick": 4,
+      "max_ticks": 4
+    }
+  },
+  "morale": {
+    "skill": "discipline",
+    "rungs": [
+      {
+        "id": "steady",
+        "name": "Steady",
+        "at_pressure": 0,
+        "obeys": true
+      },
+      {
+        "id": "wavering",
+        "name": "Wavering",
+        "at_pressure": 6,
+        "obeys": true
+      },
+      {
+        "id": "breaking",
+        "name": "Breaking",
+        "at_pressure": 12,
+        "obeys": false
+      }
+    ],
+    "defiance": [
+      {
+        "id": "freeze",
+        "name": "goes to ground",
+        "response": "freeze",
+        "base": 0
+      },
+      {
+        "id": "flight",
+        "name": "falls back",
+        "response": "flight",
+        "core": "speed",
+        "base": 0
+      },
+      {
+        "id": "fight",
+        "name": "fights on",
+        "response": "fight",
+        "core": "will",
+        "base": 0
+      }
+    ],
+    "hit": 3,
+    "bounced": 1,
+    "ally_destroyed": 4,
+    "leader_lost": 4,
+    "recovery": 2,
+    "recovery_per_skill": 4,
+    "recovery_near_leader": 2
+  }
 }

@@ -1,9 +1,9 @@
-//! Cores and skills: what a girl is made of, declared in mod data.
+//! Cores and skills: what a cadet is made of, declared in mod data.
 //!
-//! A girl's abilities are never written down. What is stored is her
+//! A cadet's abilities are never written down. What is stored is her
 //! temperament (cores) and what she has been taught (skills); everything she
 //! can *do* is worked out at the point of use. See
-//! `assets/wiki/reference/girls.md` for why.
+//! `assets/wiki/reference/cadets.md` for why.
 //!
 //! # Everything is a skill check
 //!
@@ -21,7 +21,7 @@
 //! # Untrained is not zero
 //!
 //! Borrowed from GURPS: a skill nobody has taught you *defaults* to its
-//! controlling cores at a penalty. An average girl who has never been near a
+//! controlling cores at a penalty. An average cadet who has never been near a
 //! gun still shoots, at `hands - 4`, which is bad but not helpless. The effect
 //! is that cores dominate when training is thin and fade as it grows, which is
 //! the relationship between talent and experience the campaign wants — and it
@@ -61,9 +61,9 @@ pub struct SkillDef {
     pub name: String,
     /// Core id to weight. Weights are relative: `{"hands": 2, "wits": 1}` is
     /// two parts coordination to one part quickness, and the weighted mean is
-    /// what an untrained girl falls back on.
+    /// what an untrained cadet falls back on.
     pub cores: HashMap<String, i32>,
-    /// How far below her cores an untrained girl performs. Higher for skills
+    /// How far below her cores an untrained cadet performs. Higher for skills
     /// that are genuinely specialised — you can flail at a gun, but you cannot
     /// improvise field surgery.
     #[serde(default = "default_untrained_penalty")]
@@ -160,16 +160,29 @@ pub struct CheckContext<'a> {
     pub crew_size: usize,
 }
 
-/// One clause of a trait: a modifier to a skill, under a condition.
+/// One clause of a trait: a modifier to a skill or to a way of defying an
+/// order, under a condition.
+///
+/// Both targets are optional and a clause names one of them. `skill` was
+/// once required and is still what almost every clause says; `defiance` is
+/// how a personality reaches the fight-or-flight question, which is the
+/// thing traits were always going to be for. A crew's temperament under
+/// fire is not a competence, so it could not be spelled as a skill
+/// modifier, and pretending otherwise would have meant inventing a
+/// "cowardice skill" that a cadet could be trained in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraitEffect {
-    pub skill: String,
+    #[serde(default)]
+    pub skill: Option<String>,
+    /// The `id` of a [`crate::data::DefianceDef`] this leans her toward.
+    #[serde(default)]
+    pub defiance: Option<String>,
     #[serde(default)]
     pub when: TraitCondition,
     pub modifier: i32,
 }
 
-/// Something true about a girl that is not a number.
+/// Something true about a cadet that is not a number.
 ///
 /// The rule that separates a trait from a skill: **a skill changes how well a
 /// rule applies; a trait changes whether or when it applies.** Numbers are
@@ -193,7 +206,19 @@ impl TraitDef {
     pub fn modifier(&self, skill: &str, ctx: &CheckContext) -> i32 {
         self.effects
             .iter()
-            .filter(|e| e.skill == skill && e.when.holds(ctx))
+            .filter(|e| e.skill.as_deref() == Some(skill) && e.when.holds(ctx))
+            .map(|e| e.modifier)
+            .sum()
+    }
+
+    /// This trait's contribution to how far she leans toward one way of
+    /// defying an order. Same shape as [`Self::modifier`], and conditional
+    /// in the same way — a crew can be steady in the trees and brittle in
+    /// the open, which is a person rather than a number.
+    pub fn defiance_modifier(&self, defiance: &str, ctx: &CheckContext) -> i32 {
+        self.effects
+            .iter()
+            .filter(|e| e.defiance.as_deref() == Some(defiance) && e.when.holds(ctx))
             .map(|e| e.modifier)
             .sum()
     }
@@ -202,7 +227,7 @@ impl TraitDef {
 /// A job aboard a vehicle, and the skills that job is responsible for.
 ///
 /// This is what stops a crew from being a bag of interchangeable numbers: the
-/// gunner's gunnery is what lays the gun, not the best gunnery aboard. A girl
+/// gunner's gunnery is what lays the gun, not the best gunnery aboard. A cadet
 /// is therefore worth something specific in a specific seat, which is the
 /// whole point of being able to move her.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,7 +271,7 @@ impl CoreIndex {
         self.order.is_empty()
     }
 
-    /// Core ids in registry order, which is the order a girl's values are
+    /// Core ids in registry order, which is the order a cadet's values are
     /// stored in.
     pub fn ids(&self) -> &[String] {
         &self.order

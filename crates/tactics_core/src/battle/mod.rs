@@ -25,23 +25,24 @@ mod orders;
 
 pub use combat::{
     AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, MAX_HIT, MIN_HIT,
-    ShellInFlight, expected_damage, flight_ticks, hit_breakdown, hit_chance, preview_attack,
-    struck_facing, weapon_ready,
+    ShellInFlight, blast_overmatches, expected_damage, flight_ticks, hit_breakdown, hit_chance,
+    preview_attack, struck_facing, weapon_ready,
 };
 pub use command::{
-    CommandState, Contact, CutOff, Formation, FormationId, Mission, MissionChange, WaitingOrders,
-    nearest_exit,
+    CommandState, Contact, CutOff, Formation, FormationId, Goal, Latitude, Mission, MissionChange,
+    WaitingOrders, nearest_exit,
 };
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
     destination_blocked, edge_cost as movement_edge_cost, move_points, path_to, reachable,
+    step_toward,
 };
 pub use orders::{Event, FireIntent, Order, OrderError, UnitIntent};
 
 use crate::ai::AiConfig;
 use crate::data::{DataError, DataRegistry, ModuleEffect, ValidationReport};
 use crate::map::{HexMap, MapKind, UnitPlacement};
-use crate::roster::{GirlId, Roster};
+use crate::roster::{CadetId, Roster};
 use hexx::{EdgeDirection, Hex};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -78,7 +79,7 @@ pub enum Phase {
     Resolving { tick: u32 },
 }
 
-/// How one girl aboard a vehicle is doing, mid-battle.
+/// How one cadet aboard a vehicle is doing, mid-battle.
 ///
 /// Deliberately three states and not a hit-point bar: *wounded* is the
 /// dramatic middle where she is still at her station and worse at it, and
@@ -96,6 +97,35 @@ pub enum CrewCondition {
     /// No longer part of the fight. Whether she comes home is the roster's
     /// question, not the battle's.
     Out,
+    /// She never got in. Wounded from a previous battle, or still walking
+    /// back from one, and so not fit to deploy — her seat is on the roll and
+    /// empty in the vehicle.
+    ///
+    /// Distinct from [`Self::Out`] in the one way that matters: an absent
+    /// cadet is not a casualty of *this* battle. Nothing inside can hit her,
+    /// her empty seat does not make the vehicle look half-destroyed, and she
+    /// takes no fresh wound home. She is still listed in
+    /// [`Unit::crew`] rather than filtered out of it, because the campaign
+    /// hands the crew back at the end and a cadet dropped from the list here
+    /// would be a cadet deleted from her tank forever.
+    Absent,
+}
+
+impl CrewCondition {
+    /// Whether she is still part of the fight — still somebody a shell can
+    /// find, still somebody working a station. Wounded counts: she is at her
+    /// post and worse at it, which is the whole point of the middle state.
+    ///
+    /// Named as a question rather than left as a match on the variant
+    /// because [`Self::Out`] and [`Self::Absent`] both answer no for
+    /// completely different reasons, and every caller that wanted "not Out"
+    /// wanted this instead. [`BattleState::substance`] is deliberately the
+    /// exception: it distinguishes all four, because a seat nobody is
+    /// sitting in and a seat whose cadet has been hit are opposite kinds of
+    /// nothing.
+    pub fn fighting(self) -> bool {
+        matches!(self, Self::Fine | Self::Wounded)
+    }
 }
 
 /// A crewed vehicle on the battlefield.
@@ -108,7 +138,7 @@ pub struct Unit {
     /// Who is riding in it. Handles into [`BattleState::roster`], not
     /// definition ids: a crew member is a person with a history, and the
     /// battle needs to be able to mark her.
-    pub crew: Vec<GirlId>,
+    pub crew: Vec<CadetId>,
     /// Display name (commander name unless overridden by the scenario).
     pub name: String,
     pub pos: Hex,
@@ -166,7 +196,7 @@ pub struct Unit {
     /// what it was — a vehicle with nothing inside to lose but her crew.
     #[serde(default)]
     pub modules: std::collections::BTreeMap<String, u32>,
-    /// How each girl aboard is doing, index-aligned with [`Self::crew`] —
+    /// How each cadet aboard is doing, index-aligned with [`Self::crew`] —
     /// a parallel `Vec` rather than a map because save files are JSON and
     /// the alignment is the invariant anyway: seat *k* of the crew list is
     /// entry *k* here, always.
@@ -179,7 +209,7 @@ pub struct Unit {
     /// The crew left her: a bail-out under fire, rolled through the same
     /// discipline check that governs refusing orders. The vehicle is a
     /// wreck as far as the battle is concerned — reaped like a kill,
-    /// scored like a loss — but the girls are walking home, which the
+    /// scored like a loss — but the cadets are walking home, which the
     /// campaign's fate machinery treats very differently from burning.
     #[serde(default)]
     pub abandoned: bool,
@@ -240,6 +270,24 @@ pub struct Unit {
     /// is given fresh orders.
     #[serde(default)]
     pub tasking: Option<Hex>,
+    /// What she has decided to do about it: her own goal, as opposed to her
+    /// formation's mission or her commander's [`Self::tasking`].
+    ///
+    /// Kept across rounds, which is the whole of its value — a planner that
+    /// re-decides where it is going every round is a planner that never gets
+    /// anywhere, and measuring that is what put this here. Cleared when the
+    /// goal finishes ([`Goal::finished`]) and wherever `tasking` clears,
+    /// because fresh orders end her own errand too.
+    #[serde(default)]
+    pub goal: Option<crate::battle::Goal>,
+    /// How hard her commander meant [`Self::tasking`]: whether the battle
+    /// drill may set the march aside to keep her alive.
+    ///
+    /// Travels with the destination and is cleared with it, because latitude
+    /// is a property of an order rather than of a crew — the same cadet is
+    /// pressed on one ridge and given her head on the next.
+    #[serde(default)]
+    pub latitude: crate::battle::Latitude,
     pub alive: bool,
     /// This vehicle drove off the map by an exit objective.
     ///
@@ -277,7 +325,7 @@ impl Unit {
     /// fired at full weight. The three meanings the design doc promises
     /// hang off this one reading: interior weight is the module's own
     /// `size` (free), firepower scales by this fraction, and a remnant is
-    /// simply this reaching zero while the girls live.
+    /// simply this reaching zero while the cadets live.
     pub fn troops(&self, registry: &DataRegistry) -> Option<(u32, u32)> {
         let mut have = 0u32;
         let mut total = 0u32;
@@ -377,12 +425,12 @@ pub struct BattleState {
     /// constantly — cheap.
     pub sight: Arc<SightGrid>,
     pub sides: Vec<SideState>,
-    /// The girls crewing the vehicles in this battle.
+    /// The cadets crewing the vehicles in this battle.
     ///
     /// Shared behind an `Arc` for the same reason the map is: search planners
     /// clone the whole state constantly and nothing in a battle rewrites the
     /// roster in place. Campaign battles are handed the campaign's roster, so
-    /// the girls who fight are the same objects that carry their scars out
+    /// the cadets who fight are the same objects that carry their scars out
     /// again; scenario battles get one stamped from mod data on the spot.
     pub roster: Arc<Roster>,
     pub units: Vec<Unit>,
@@ -483,7 +531,7 @@ impl BattleState {
         // two things the units are spawned from, so membership cannot drift
         // from the roster it describes.
         let command = CommandState::from_placements(map.formations(), &file.units);
-        // A scenario battle has no campaign behind it, so its girls are
+        // A scenario battle has no campaign behind it, so its cadets are
         // stamped fresh from mod data and forgotten afterwards.
         let (roster, crews) = Roster::stamp_for(registry, &file.units);
         let mut state = Self {
@@ -522,7 +570,7 @@ impl BattleState {
         map: HexMap,
         sides: Vec<SideState>,
         placements: &[UnitPlacement],
-        crews: &[Vec<GirlId>],
+        crews: &[Vec<CadetId>],
         roster: Arc<Roster>,
         seed: u64,
     ) -> Self {
@@ -666,22 +714,22 @@ impl BattleState {
         &mut self,
         registry: &DataRegistry,
         placement: &UnitPlacement,
-        crew: Vec<GirlId>,
+        crew: Vec<CadetId>,
     ) -> UnitId {
         let id = UnitId(self.units.len() as u32);
         let vehicle = registry
             .vehicle(&placement.vehicle)
             .expect("placement validated against registry");
-        // A placement that names no girls gets an anonymous, average crew —
+        // A placement that names no cadets gets an anonymous, average crew —
         // one per seat the chassis declares. Without hit points, dying is
         // something that happens to the people aboard, and whether a
         // vehicle is mortal must never depend on whether a scenario author
-        // wrote a roster. Anonymous girls have no stated cores or skills,
+        // wrote a roster. Anonymous cadets have no stated cores or skills,
         // which the character model already reads as "average at
         // everything": the same fighting strength crewless units always
         // had, plus the ability to be lost.
         let crew = if crew.is_empty() && !vehicle.crew_slots.is_empty() {
-            let anonymous: Vec<GirlId> = vehicle
+            let anonymous: Vec<CadetId> = vehicle
                 .crew_slots
                 .iter()
                 .map(|role| {
@@ -725,6 +773,7 @@ impl BattleState {
                     .map(|g| g.name.clone())
             })
             .unwrap_or_else(|| vehicle.name.clone());
+        let crew_state = self.who_deploys(&crew);
         self.units.push(Unit {
             id,
             side: placement.side,
@@ -760,7 +809,7 @@ impl BattleState {
                 .into_iter()
                 .map(|m| (m.id.clone(), m.toughness))
                 .collect(),
-            crew_state: Vec::new(),
+            crew_state,
             abandoned: false,
             brewed: false,
             wrecked: false,
@@ -771,10 +820,58 @@ impl BattleState {
             pressure: 0,
             detached: false,
             tasking: None,
+            goal: None,
+            latitude: Latitude::default(),
             alive: true,
             exited: false,
         });
         id
+    }
+
+    /// Which of this crew actually climbs in, as the seat-aligned condition
+    /// list the unit spawns with.
+    ///
+    /// This is where a wound earns its keep. Until it existed a cadet carried
+    /// a [`crate::roster::CadetStatus::Wounded`] from one battle to the next
+    /// and it cost her side nothing visible: she deployed anyway, and only
+    /// `crew_skill`'s quiet "she is not ready" filter took her bonuses away.
+    /// A consequence the player cannot see is not a consequence. Now she
+    /// stays behind, her seat is empty, and whoever is left covers for her at
+    /// the substitution penalty — which is the same arithmetic a crew short
+    /// of a gunner has always used.
+    ///
+    /// Two deliberate refusals:
+    ///
+    /// - **An all-empty vehicle is never produced.** If nobody named is fit,
+    ///   the walking wounded go out anyway, because the campaign has no pool
+    ///   of replacements to draw on and a vehicle with no crew at all is one
+    ///   nothing inside can kill — see the anonymous-crew comment in
+    ///   [`Self::spawn_unit`] for why that must never happen.
+    /// - **Nobody is removed from [`Unit::crew`].** The campaign takes the
+    ///   crew list back at the end of the battle, so a cadet filtered out here
+    ///   would be a cadet deleted from her tank for good.
+    ///
+    /// Returns an empty vec when everyone is fit, which keeps the common case
+    /// — every scenario battle, every save written before this — byte for
+    /// byte what it was.
+    fn who_deploys(&self, crew: &[CadetId]) -> Vec<CrewCondition> {
+        let fit = |id: &CadetId| {
+            self.roster
+                .get(*id)
+                .is_none_or(|cadet| cadet.status.is_ready())
+        };
+        if crew.iter().all(fit) || !crew.iter().any(fit) {
+            return Vec::new();
+        }
+        crew.iter()
+            .map(|id| {
+                if fit(id) {
+                    CrewCondition::Fine
+                } else {
+                    CrewCondition::Absent
+                }
+            })
+            .collect()
     }
 
     /// Change what one vehicle is carrying, before the battle starts.
@@ -902,9 +999,9 @@ impl BattleState {
     }
 
     /// Whether this crew will still do as it is told.
-    /// Girls aboard `unit` still part of the fight — everyone whose
-    /// condition is not [`CrewCondition::Out`]. An empty `crew_state` means
-    /// nobody has been hurt, so the whole crew counts.
+    /// Cadets aboard `unit` still part of the fight. An empty `crew_state`
+    /// means nobody has been hurt and nobody stayed behind, so the whole
+    /// crew counts — which is every battle written before either existed.
     pub fn fighting_crew(&self, unit: &Unit) -> usize {
         unit.crew
             .iter()
@@ -914,13 +1011,13 @@ impl BattleState {
                     .get(*seat)
                     .copied()
                     .unwrap_or(CrewCondition::Fine)
-                    != CrewCondition::Out
+                    .fighting()
             })
             .count()
     }
 
     /// The fraction of this vehicle's fighting substance still aboard: her
-    /// girls (two points each — fine is two, wounded one, out zero) and her
+    /// cadets (two points each — fine is two, wounded one, out zero) and her
     /// modules (hits remaining over toughness), as one 0..=1 number.
     ///
     /// This is the condition score that replaces the hit-point fraction
@@ -946,17 +1043,28 @@ impl BattleState {
         let mut have = 0u32;
         let mut total = 0u32;
         for (seat, _) in unit.crew.iter().enumerate() {
-            total += 2;
-            have += match unit
+            // A seat nobody is sitting in counts for neither half. Charging
+            // an absent cadet's two points to the denominator would make a
+            // vehicle that deployed short-handed read as one that had
+            // already been shot up — braver crews would flee it and the AI
+            // would price it as a kill nearly made.
+            match unit
                 .crew_state
                 .get(seat)
                 .copied()
                 .unwrap_or(CrewCondition::Fine)
             {
-                CrewCondition::Fine => 2,
-                CrewCondition::Wounded => 1,
-                CrewCondition::Out => 0,
-            };
+                CrewCondition::Fine => {
+                    total += 2;
+                    have += 2;
+                }
+                CrewCondition::Wounded => {
+                    total += 2;
+                    have += 1;
+                }
+                CrewCondition::Out => total += 2,
+                CrewCondition::Absent => {}
+            }
         }
         for (id, hits) in &unit.modules {
             let toughness = registry.module(id).map(|m| m.toughness).unwrap_or(1);
@@ -971,7 +1079,7 @@ impl BattleState {
     ///
     /// A reference scale, and the reason the AI can talk about danger as a
     /// fraction without a constant in Rust saying how big a tank is. A mod
-    /// whose vehicles carry ten girls apiece, or a scenario of nothing but
+    /// whose vehicles carry ten cadets apiece, or a scenario of nothing but
     /// scout sections, moves this with the content instead of measuring its
     /// units against a number written for the base game.
     ///
@@ -996,6 +1104,88 @@ impl BattleState {
 
     pub fn obeys(&self, registry: &DataRegistry, unit: &Unit) -> bool {
         self.morale(registry, unit).obeys
+    }
+
+    /// What this crew does instead of what she was told.
+    ///
+    /// Only meaningful for a crew who is not obeying; every caller checks
+    /// [`Self::obeys`] first, and asking it of a steady crew answers with
+    /// whatever her temperament would be if she broke, which is a fair
+    /// question to ask a panel.
+    ///
+    /// **The senior cadet still fighting decides.** Not the best score
+    /// aboard and not an average: somebody says "back her out" or "keep
+    /// firing" and the rest of the crew does it, and in this engine that is
+    /// whoever is left in the most forward seat — the same leaders-last
+    /// ordering the interior model already uses, so a commander going out
+    /// hands her temperament to the next woman down along with everything
+    /// else. That is a rule about people, so it is deliberately not
+    /// `crew_skill`'s "best aboard".
+    pub fn defiance(&self, registry: &DataRegistry, unit: &Unit) -> crate::data::DefianceResponse {
+        let rules = &registry.morale;
+        if rules.defiance.is_empty() {
+            return crate::data::DefianceResponse::default();
+        }
+        let speaker = unit.crew.iter().enumerate().find(|(seat, id)| {
+            unit.crew_state
+                .get(*seat)
+                .copied()
+                .unwrap_or(CrewCondition::Fine)
+                .fighting()
+                && self.roster.get(**id).is_some()
+        });
+        let vehicle = registry.vehicle(&unit.vehicle);
+        let ctx = crate::data::CheckContext {
+            terrain: self.terrain_at(unit.pos),
+            vehicle_class: vehicle.map(|v| v.class.as_str()),
+            crew_size: unit
+                .crew
+                .iter()
+                .filter(|id| self.roster.get(**id).is_some())
+                .count(),
+        };
+        // Nobody aboard the campaign knows about — an anonymously crewed
+        // vehicle, which is every scenario battle written before cadets
+        // existed — has no temperament to read, so she does what a crew has
+        // always done.
+        let Some(cadet) = speaker.and_then(|(_, id)| self.roster.get(*id)) else {
+            return rules
+                .defiance
+                .first()
+                .map(|d| d.response)
+                .unwrap_or_default();
+        };
+        rules
+            .defiance
+            .iter()
+            .map(|d| {
+                let core = d
+                    .core
+                    .as_deref()
+                    .and_then(|c| registry.core_index.get(c))
+                    .and_then(|i| cadet.cores.get(i).copied())
+                    .unwrap_or(crate::data::AVERAGE);
+                let from_traits: i32 = cadet
+                    .traits
+                    .iter()
+                    .filter_map(|id| registry.trait_def(id))
+                    .map(|t| t.defiance_modifier(&d.id, &ctx))
+                    .sum();
+                (d.base + core + from_traits, d.response)
+            })
+            // `max_by_key` on an iterator returns the LAST maximum, and the
+            // additivity argument in `DefianceDef` rests on ties going to the
+            // first. Fold explicitly rather than relying on a subtlety of the
+            // standard library that a reader would have to look up.
+            .fold(
+                None::<(i32, crate::data::DefianceResponse)>,
+                |best, next| match best {
+                    Some((score, _)) if score >= next.0 => best,
+                    _ => Some(next),
+                },
+            )
+            .map(|(_, response)| response)
+            .unwrap_or_default()
     }
 
     /// The terrain a unit is standing on, for checks that care where they

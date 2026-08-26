@@ -1,0 +1,411 @@
+[
+    {
+        "id": "anka",
+        "name": "Anka Weiss",
+        "bio": "Calm under fire. Commands the school's medium tank like she was born in it.",
+        "cores": {
+            "will": 13,
+            "presence": 13,
+            "intellect": 11,
+            "charm": 11
+        },
+        "skills": {
+            "gunnery": 11,
+            "driving": 9,
+            "signals": 10,
+            "command": 12
+        }
+    },
+    {
+        "id": "juno",
+        "name": "Juno Akiyama",
+        "bio": "Drives like the brakes are a suggestion.",
+        "cores": {
+            "dexterity": 14,
+            "speed": 13,
+            "health": 12,
+            "intellect": 9
+        },
+        "skills": {
+            "driving": 15,
+            "maintenance": 10
+        },
+        "traits": [
+            "lead_foot"
+        ]
+    },
+    {
+        "id": "mina",
+        "name": "Mina Falkenrath",
+        "bio": "Gunnery prodigy with a grudge against paper targets.",
+        "cores": {
+            "dexterity": 14,
+            "will": 9,
+            "perception": 11,
+            "charm": 9,
+            "presence": 8
+        },
+        "skills": {
+            "gunnery": 15,
+            "loading": 10
+        }
+    },
+    {
+        "id": "rosa",
+        "name": "Rosa Steiner",
+        "bio": "First-year. Enthusiasm outweighs experience, barely.",
+        "cores": {
+            "will": 14,
+            "charm": 13,
+            "health": 12,
+            "strength": 12,
+            "perception": 9,
+            "intellect": 9,
+            "presence": 8
+        },
+        "skills": {
+            "gunnery": 9,
+            "driving": 9,
+            "loading": 9
+        },
+        "traits": [
+            "eager"
+        ]
+    },
+    {
+        "id": "elsa",
+        "name": "Elsa Brandt",
+        "bio": "Sees everything, says little. The recon section is hers.",
+        "cores": {
+            "perception": 15,
+            "intellect": 12,
+            "charm": 8,
+            "speed": 11
+        },
+        "skills": {
+            "signals": 12,
+            "driving": 10,
+            "observation": 13
+        },
+        "traits": [
+            "eagle_eyed"
+        ]
+    },
+    {
+        "id": "ada",
+        "name": "Ada Lindqvist",
+        "bio": "Reverses out of trouble faster than most of the school drives into it.",
+        "cores": {
+            "dexterity": 13,
+            "speed": 13,
+            "perception": 12,
+            "will": 9
+        },
+        "skills": {
+            "driving": 13,
+            "maintenance": 10,
+            "observation": 11
+        }
+    },
+    {
+        "id": "hanne",
+        "name": "Hanne Bergmann",
+        "bio": "Third-year. Reads the ground before the briefing gets to it, and says so.",
+        "cores": {
+            "intellect": 13,
+            "presence": 12,
+            "perception": 12,
+            "charm": 11
+        },
+        "skills": {
+            "command": 12,
+            "observation": 12,
+            "signals": 11
+        }
+    },
+    {
+        "id": "yuki",
+        "name": "Yuki Tachibana",
+        "bio": "Came for the engineering course and stayed for the engines.",
+        "cores": {
+            "dexterity": 13,
+            "intellect": 13,
+            "health": 11,
+            "presence": 8
+        },
+        "skills": {
+            "driving": 12,
+            "maintenance": 14,
+            "first_aid": 9
+        }
+    },
+    {
+        "id": "ilse",
+        "name": "Ilse Radtke",
+        "bio": "Deadly at eight hundred metres, hopeless at conversation.",
+        "cores": {
+            "dexterity": 13,
+            "perception": 12,
+            "will": 11,
+            "charm": 7
+        },
+        "skills": {
+            "gunnery": 13,
+            "loading": 10
+        },
+        "traits": [
+            "loner"
+        ]
+    },
+    {
+        "id": "lore",
+        "name": "Lore Hartmann",
+        "bio": "Keeps the platoon's kit, its mail and its secrets, and loses none of them.",
+        "cores": {
+            "presence": 12,
+            "charm": 13,
+            "intellect": 11,
+            "dexterity": 9
+        },
+        "skills": {
+            "command": 11,
+            "signals": 12,
+            "first_aid": 11
+        }
+    },
+    {
+        "id": "nele",
+        "name": "Nele Brauer",
+        "bio": "Drives a full track of infantry as though the crockery were hers.",
+        "cores": {
+            "health": 13,
+            "will": 12,
+            "dexterity": 11,
+            "speed": 9
+        },
+        "skills": {
+            "driving": 11,
+            "maintenance": 11,
+            "athletics": 11
+        }
+    },
+    {
+        "id": "sigrun",
+        "name": "Sigrun Falk",
+        "bio": "Runs the platoon the way she runs everything: at a walk, out in front.",
+        "cores": {
+            "will": 14,
+            "presence": 13,
+            "health": 12,
+            "speed": 9
+        },
+        "skills": {
+            "command": 12,
+            "fieldcraft": 12,
+            "small_arms": 11,
+            "gunnery": 9,
+            "athletics": 12
+        }
+    },
+    {
+        "id": "marlen",
+        "name": "Marlen Ostwald",
+        "bio": "Quartermaster's daughter. Counts rounds out loud, and is always right.",
+        "cores": {
+            "perception": 13,
+            "intellect": 12,
+            "strength": 11,
+            "charm": 9
+        },
+        "skills": {
+            "fieldcraft": 12,
+            "small_arms": 12,
+            "observation": 12,
+            "gunnery": 10
+        }
+    },
+    {
+        "id": "katrin",
+        "name": "Katrin Zeller",
+        "bio": "Second Company's senior cadet by three weeks, and has never once let it go.",
+        "cores": {
+            "presence": 12,
+            "intellect": 12,
+            "will": 11,
+            "charm": 9
+        },
+        "skills": {
+            "command": 11,
+            "signals": 11,
+            "observation": 10
+        }
+    },
+    {
+        "id": "doro",
+        "name": "Doro Wendt",
+        "bio": "Parks the gun where the map said, rather than where the ground allows.",
+        "cores": {
+            "dexterity": 11,
+            "health": 11,
+            "intellect": 9,
+            "perception": 9
+        },
+        "skills": {
+            "driving": 10,
+            "maintenance": 9
+        }
+    },
+    {
+        "id": "petra",
+        "name": "Petra Voss",
+        "bio": "Firing solutions by intuition, confirmed by mathematics.",
+        "cores": {
+            "intellect": 14,
+            "dexterity": 12,
+            "perception": 11,
+            "strength": 9
+        },
+        "skills": {
+            "gunnery": 13,
+            "maintenance": 11
+        }
+    },
+    {
+        "id": "emmi",
+        "name": "Emmi Ranke",
+        "bio": "Strong, cheerful, and entirely unbothered by the noise.",
+        "cores": {
+            "strength": 14,
+            "health": 13,
+            "will": 12,
+            "intellect": 8
+        },
+        "skills": {
+            "loading": 13,
+            "first_aid": 10,
+            "athletics": 12
+        }
+    },
+    {
+        "id": "vera",
+        "name": "Vera Sandoval",
+        "bio": "Argues with the plan, then carries it out exactly.",
+        "cores": {
+            "intellect": 13,
+            "will": 12,
+            "presence": 11,
+            "charm": 8
+        },
+        "skills": {
+            "command": 10,
+            "observation": 11,
+            "signals": 10
+        }
+    },
+    {
+        "id": "berit",
+        "name": "Berit Halvorsen",
+        "bio": "Steady on ice and nervous on tarmac. She grew up somewhere colder.",
+        "cores": {
+            "health": 12,
+            "dexterity": 11,
+            "will": 11,
+            "speed": 9
+        },
+        "skills": {
+            "driving": 11,
+            "maintenance": 10
+        }
+    },
+    {
+        "id": "lotte",
+        "name": "Lotte Vogel",
+        "bio": "First-year. Has hit the target twice, and talks about both.",
+        "cores": {
+            "dexterity": 12,
+            "charm": 12,
+            "perception": 10,
+            "will": 8
+        },
+        "skills": {
+            "gunnery": 9,
+            "loading": 9
+        },
+        "traits": [
+            "eager"
+        ]
+    },
+    {
+        "id": "wilma",
+        "name": "Wilma Sorge",
+        "bio": "Worries professionally, which is most of what a commander does.",
+        "cores": {
+            "perception": 13,
+            "intellect": 12,
+            "presence": 10,
+            "will": 9
+        },
+        "skills": {
+            "command": 10,
+            "observation": 12,
+            "signals": 11,
+            "first_aid": 10
+        }
+    },
+    {
+        "id": "ines",
+        "name": "Ines Duval",
+        "bio": "Would rather be in the light tank, and mentions it at every opportunity.",
+        "cores": {
+            "speed": 12,
+            "dexterity": 12,
+            "charm": 9,
+            "will": 9
+        },
+        "skills": {
+            "driving": 12,
+            "maintenance": 9
+        },
+        "traits": [
+            "lead_foot"
+        ]
+    },
+    {
+        "id": "traudl",
+        "name": "Traudl Kessler",
+        "bio": "Loud, organised, and the reason Second Company arrives anywhere at all.",
+        "cores": {
+            "presence": 13,
+            "will": 12,
+            "health": 12,
+            "intellect": 9
+        },
+        "skills": {
+            "command": 11,
+            "fieldcraft": 11,
+            "small_arms": 11,
+            "gunnery": 9,
+            "athletics": 11
+        }
+    },
+    {
+        "id": "ruth",
+        "name": "Ruth Adler",
+        "bio": "Quiet, thorough, and the first to notice the wire.",
+        "cores": {
+            "perception": 14,
+            "intellect": 11,
+            "speed": 11,
+            "charm": 8
+        },
+        "skills": {
+            "fieldcraft": 12,
+            "observation": 13,
+            "small_arms": 11,
+            "gunnery": 9
+        },
+        "traits": [
+            "eagle_eyed"
+        ]
+    }
+]

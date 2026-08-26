@@ -10,13 +10,13 @@ Everything the game looks and sounds like is currently placeholder, and the
 brief for replacing it lives in one line of TODO.md: *"late 1960s tech, with a
 cutesy anime vibe. going for Wargame Red Dragon but anime."* That is enough to
 recognise and not enough to build from, which is why the naming question in
-TODO ("need to find a better name for *girls*") has been stuck — it is a
-question about register, and the register was never written down.
+TODO ("need to find a better name for *girls*") stayed stuck for so long — it
+is a question about register, and the register was never written down.
 
-This page is the place for that. Two things are now decided outright — the
-**register** and the **period** — and a third, **what the shipped content
-already commits to**, turns out to be more than the roadmap admits. What is
-left genuinely open is at the bottom.
+This page is the place for that. Three things are now decided outright — the
+**register**, **the word** and the **period** — and a fourth, **what the
+shipped content already commits to**, turns out to be more than the roadmap
+admits. What is left genuinely open is at the bottom.
 
 ## The register: serious in the field, lighthearted at home
 
@@ -33,7 +33,7 @@ intensity dial:
 That split resolves several questions that were open a moment ago. The HUD
 question is answered: cuteness is not sprayed across the interface, it is
 concentrated in the academy screens, portraits and barks. And the "what are the
-girls *to* the fighting" question is answered as *in between* — they are
+cadets *to* the fighting" question is answered as *in between* — they are
 neither career soldiers nor schoolgirls play-acting, and the in-between is the
 point, because it is what makes the two registers legible as two sides of the
 same characters rather than tonal whiplash.
@@ -43,14 +43,45 @@ Consequences worth holding onto as things get built:
 - The academy layer is not decoration. It is half the tone, so the menus and
   roster screens on TODO carry as much of the game's identity as the battle
   screen does — they should not be built as bare utility UI and prettied later.
-- The VN layer wants the girl-instance refactor that TODO already lists first
+- The VN layer wants the cadet-instance refactor that TODO already lists first
   under "Design Decisions to Lock Early". Support conversations need persistent
-  per-girl state (who has fought alongside whom, and how often) and that is the
-  same mutable per-girl object wounds and XP need. It is now load-bearing for
+  per-cadet state (who has fought alongside whom, and how often) and that is the
+  same mutable per-cadet object wounds and XP need. It is now load-bearing for
   two systems, not one.
 - Crew death is still open, and this makes it sharper rather than softer: the
-  more the academy half invests you in a specific girl, the more a permadeath
+  more the academy half invests you in a specific cadet, the more a permadeath
   rule costs. Worth deciding before the VN work, not after.
+
+## The word: cadet
+
+**Decided, 2026-08-24.** They are **cadets**. The engine says so in its types
+(`Cadet`, `CadetId`, `CadetStatus`), the UI says so on every screen, and the
+prose here says so.
+
+The objection worth answering is that *cadet* sounds like a low rank, and this
+game runs the whole chain of command — a section leader and a company captain
+are both on the roster. That objection mistakes what the word does. At an
+academy, cadet is an **enrolment status, not a rank**: everyone enrolled is a
+cadet, and the appointments — gunner, commander, platoon leader, captain of the
+school team — are layered on top of it. Real academies do exactly this, with
+cadet appointments running the full ladder. So the word spans the chain of
+command precisely *because* it is not itself a rung on it, and "Cadet Krieger,
+commanding 1st Company" is not a contradiction.
+
+The cost is the one this page named when it ruled the institutional words out:
+*cadet* is colder than the academy half wants. That is a real cost and it is
+paid in the right place. The battlefield register wants the cold word — a fire
+order says *cadet*, not a pet name — and the academy register does not use the
+category noun at all. Nobody in a common room says "the cadets"; they say
+Anka, or Rosa, or "the second-years". **The warmth belongs in the names, not in
+the collective noun,** which is why picking a soft collective noun would have
+put it in the one place it does not help.
+
+Two things this does not settle, deliberately. It is not a claim about German
+(*Kadett* is available and unglamorous in the same way, but no in-fiction
+German is written yet). And it leaves room for a self-applied nickname to
+appear later in the VN layer — a nickname is a thing characters coin, and it
+sits on top of the institutional word rather than replacing it.
 
 ## What the shipped content already commits to
 
@@ -62,12 +93,19 @@ is a real Wehrmacht designation: Luchs, Wiesel, Panther, Löwe, Marder, Hummel.
 The guns are 37 / 75 / 88 mm plus a 105 mm howitzer. The player's academy is
 Kuhlmann; the title is *Stahl*senshamädchen.
 
-**The crews are not.** Of ten characters, six are German (Weiss, Falkenrath,
-Brandt, Voss, Steiner, Krieger, Müller), one Japanese (Juno Akiyama), one
-Italian (Sofia Ravenna), one Russian (Nadja Orlov). So the mixed-nationality
-roster inside a nationally-themed school is already the de facto pattern —
-close to how Girls und Panzer handles it, and worth making explicit before more
-characters are written.
+**The crews are not.** Of the forty-nine characters the base mod now ships,
+twenty-nine carry German surnames and twenty do not — Japanese (Akiyama,
+Tachibana), Italian (Ravenna, Marchetti), Russian (Belova, Orlov), Nordic
+(Lindqvist, Halvorsen, Eide, Lindholm), French (Duval, Girard, Aubry), and
+single instances of Spanish, Polish, Hungarian, Turkish and Balkan names. So
+the mixed-nationality roster inside a nationally-themed school is the de facto
+pattern — close to how Girls und Panzer handles it.
+
+The mix is not even between the two academies, and that is deliberate
+characterisation rather than an accident of name-picking: **Kuhlmann is a local
+school** (eighteen of twenty-four are German) **and the Iron Valkyries recruit**
+(eleven of twenty-five). It is the cheapest thing on this page to say
+something with, and it costs no art.
 
 **Factions are academies with military nicknames.** "Kuhlmann Academy" versus
 "Iron Valkyries" — one institutional, one a unit moniker. Currently the only
@@ -123,13 +161,9 @@ sprite briefs, and any UI work.
 1. **Is the mixed-nationality roster inside a German-themed academy the
    intended pattern**, or an accident of ten placeholder names? If intended, do
    other academies get their own national kit the way GuP does?
-2. **What do we call the girls?** The register is now settled as *in between*,
-   which rules out both the purely institutional (*cadet*, *recruit* — too cold
-   for the academy half) and the purely affectionate (too soft for the
-   battlefield half). What is wanted is a word that can be said seriously over
-   the radio and warmly in a common room. Still open: should it work in English
-   and German both, and is it a rank, a self-applied nickname, or a coined
-   term?
+2. ~~**What do we call the cadets?**~~ Answered above under *The word:
+   cadet*. What is still open is the German, and whether the VN layer coins a
+   nickname on top of it.
 3. **Is hiring an artist near-term?** TODO says "worth contacting an actual
    artist and paying". If that is soon, the deliverable they need is a written
    brief with reference images, and this page should become that rather than a

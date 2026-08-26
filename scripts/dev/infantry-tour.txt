@@ -18,8 +18,15 @@
 # `aboard_at` in the map file is what puts the platoon in the back at the
 # bell, so the opening screenshot is already a loaded carrier: nine placements
 # a side, eight of them on the ground.
+#
+# This tour waits on the game rather than on a stopwatch. Every `until idle`
+# below used to be `wait 6`, which was a guess at how long twelve ticks take
+# to animate on this machine — too short and the screenshot photographs a
+# half-played round, too long and the tour is slow for nothing, and neither
+# shows up in the output. The `expect` lines make it a test as well as a tour:
+# if a platoon stops being able to mount, this exits nonzero.
 
-at 3.0
+until idle
 
 # The camera opens on the middle of a 41-hex-wide hexagon and both sides
 # deploy out of its west and east vertices, so nobody is in frame at the bell.
@@ -53,10 +60,12 @@ shot /tmp/inf-03-selected.png
 key U
 wait 0.5
 log "unload ordered; nothing happens until the round resolves"
+expect unit "Grenadier 2" aboard
 shot /tmp/inf-04-unload-ordered.png
 
 key Enter
-wait 6
+until idle
+expect unit "Grenadier 2" afoot
 log "the platoon is on the ground beside the taxi"
 shot /tmp/inf-05-dismounted.png
 
@@ -94,8 +103,14 @@ wait 0.5
 log "mount ordered: she walks to the taxi and climbs in on arrival"
 shot /tmp/inf-10-mount-ordered.png
 
+# She is standing alongside, so she is up the same round — but "the same
+# round" is the thing being tested, not something to assume. Waiting on her
+# state rather than on the clock means this line still passes if boarding
+# ever takes two.
 key Enter
-wait 6
+until unit "Grenadier 2" aboard
+until idle
+expect log "mounts up in"
 hex -7,20
 wait 0.3
 log "aboard again; the panel should carry her once more"
@@ -106,9 +121,10 @@ shot /tmp/inf-11-remounted.png
 # module losing hits, and the log should say "takes casualties" rather than
 # reporting a broken component.
 key Enter
-wait 6
+until idle
 key Enter
-wait 6
+until idle
+expect unit "Grenadier 1" alive
 shot /tmp/inf-12-under-fire.png
 
 quit

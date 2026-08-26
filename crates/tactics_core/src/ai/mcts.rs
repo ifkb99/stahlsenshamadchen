@@ -1,4 +1,22 @@
-//! Monte Carlo tree search planner.
+//! Monte Carlo tree search planner. **PARKED — see [PARKED.md] at the repo
+//! root before spending time in here.**
+//!
+//! It is on ice because it was measured and it does not win: parity with the
+//! [`UtilityPlanner`] over 256 controlled battles on the mirrored arena
+//! (`balance --brains`), at roughly thirty thousand times the cost per order.
+//! Nothing ships it. Two consequences while you are working:
+//!
+//! - **No change elsewhere owes this file a performance budget.** If an
+//!   evaluator or planner change makes the search slower, that is not a
+//!   reason to reject the change.
+//! - **Do not revive it on the strength of a narrated battle.** That is the
+//!   observation that kept the question open for months, and it turned out to
+//!   be measuring the doctrine and the map rather than the brain.
+//!
+//! The likeliest reason it fails is visible from the paragraph below: the
+//! rollout policy *is* the utility planner, so this searches a tree whose
+//! leaves are scored by the thing it is trying to beat. A better evaluator is
+//! what would make the question worth re-asking.
 //!
 //! Runs UCT over cloned battle states -- this is why the sim core is plain
 //! data. Fog honesty is enforced by *determinization*: the search runs on a

@@ -1,7 +1,7 @@
 //! Combat resolution: accuracy, armor facings, terrain cover, elevation
 //! advantage, blind fire, opportunity fire, and shells in the air.
 
-use super::{BattleState, Event, FireIntent, UnitId, fog, stats};
+use super::{BattleState, Event, FireIntent, Unit, UnitId, fog, stats};
 use crate::data::{
     AmmoClass, AmmoDef, ArmorFacing, DamageType, DataRegistry, Scale, TerrainDef, WeaponDef,
 };
@@ -279,7 +279,7 @@ impl<'r> Round<'r> {
     fn damage_type(&self) -> Option<DamageType> {
         self.ammo.map(|a| match a.class {
             // A shaped charge's jet and spall are kinetic events for the
-            // girls inside; the distinction that matters downstream is
+            // cadets inside; the distinction that matters downstream is
             // "something sharp came through" versus blast versus bullets.
             AmmoClass::Kinetic | AmmoClass::Chemical => DamageType::Kinetic,
             AmmoClass::Explosive => DamageType::Explosive,
@@ -327,7 +327,7 @@ pub fn chambered<'r>(
 /// A platoon shoots with the riflemen she still has. Any unit carrying
 /// [`ModuleEffect::Troops`] modules scales every round's effect by the
 /// fraction still standing — half the platoon is half the fire, and a
-/// remnant with the girls alone left rounds down to nearly nothing, which
+/// remnant with the cadets alone left rounds down to nearly nothing, which
 /// is what makes her want the exit rather than the fight. A unit with no
 /// troops modules (every tank there is) passes through untouched.
 fn mustered<'r>(
@@ -345,19 +345,149 @@ fn mustered<'r>(
 }
 
 /// What one round is expected to accomplish against one profile: the
-/// penetration chain's value plus a modest price on blast, because a shell
-/// that cannot get through still rattles tracks and antennas from outside.
+/// penetration chain's value plus what the burst does from outside if the
+/// plate holds.
 /// The one value function behind both the loader's choice and the AI's shot
 /// pricing — if they read different formulas, the crew would load a round
 /// the planner did not price, and every number upstream would quietly lie.
-fn round_worth(profile: &ShotProfile, ammo: Option<&AmmoDef>) -> f32 {
-    /// What a point of blast is worth next to a point of expected
-    /// penetration damage. An AI pricing constant in the same family as the
-    /// evaluator's SUPPORT and DEVOLVED, not physics — the physics of blast
-    /// live in `overpressure`.
-    const BLAST_WORTH: f32 = 0.3;
-    let blast = ammo.map(|a| a.blast).unwrap_or(0).max(0) as f32;
-    profile.pen_chance * profile.damage as f32 + (1.0 - profile.pen_chance) * BLAST_WORTH * blast
+///
+/// The blast half used to be a flat `0.3 * blast`, and being flat is exactly
+/// what was wrong with it: [`overpressure`] reads the plate the burst
+/// arrives against and this did not, so every shell a howitzer fired was
+/// priced the same against a heavy tank's glacis as against an open-topped
+/// carrier's roof. The playthrough review's headline defect is that
+/// arithmetic and nothing else — a 105 put thirty-six shells into one tank
+/// destroyer's front, twenty-nine of them after the only two things blast
+/// could reach out there were already broken, because the number said 1.8
+/// every time. It now asks [`blast_worth`], which walks the same three
+/// cases `overpressure` walks.
+fn round_worth(
+    registry: &DataRegistry,
+    state: &BattleState,
+    target: UnitId,
+    profile: &ShotProfile,
+    ammo: Option<&AmmoDef>,
+) -> f32 {
+    let blast = ammo.map(|a| a.blast).unwrap_or(0).max(0);
+    profile.pen_chance * profile.damage as f32
+        + (1.0 - profile.pen_chance) * blast_worth(registry, state, target, profile.plate, blast)
+}
+
+/// What a burst of `blast` against `plate` is expected to be worth, in the
+/// same ledger points a penetration spends — the pricing twin of
+/// [`overpressure`], case for case, and the reason the two are written
+/// beside each other.
+///
+/// There is no conversion constant here and there deliberately is not one.
+/// `points_per_effect` already states what a ledger point buys, and
+/// `overpressure` already spends blast through it against a soft target, so
+/// the exchange rate between blast and damage is not an opinion anybody has
+/// to hold — it is a fact about the resolver, and this reads it off rather
+/// than guessing at it.
+fn blast_worth(
+    registry: &DataRegistry,
+    state: &BattleState,
+    target: UnitId,
+    plate: i32,
+    blast: i32,
+) -> f32 {
+    if blast <= 0 {
+        return 0.0;
+    }
+    if plate == 0 {
+        // Splash against no armour cashes straight into casualty rolls at
+        // the same rate a penetration's budget does, so a point of blast is
+        // worth exactly a point of damage.
+        //
+        // Today's only caller cannot reach this, and the line is here anyway.
+        // `round_worth` prices this term as `1 - pen_chance`, and against no
+        // armour the gate always passes, so a direct hit on a platoon is
+        // priced through the penetration half with the full budget — which is
+        // the same sentence `overpressure` carries about why direct hits
+        // never reach ITS plate-zero branch. The trap is what happens
+        // without this line: `blast_overmatches(blast, 0)` is true for any
+        // positive blast, so the next caller to price area fire or splash
+        // through here would silently get "the whole platoon is wrecked",
+        // and artillery against infantry is attrition and never a
+        // single-event erasure.
+        return blast as f32;
+    }
+    if blast_overmatches(blast, plate) {
+        // She is wrecked, gate or no gate, so the shot is worth whatever is
+        // left of her — which also means `best_weapon_against` reads it as a
+        // kill and the evaluator pays its kill bonus, without either of them
+        // learning a special case for blast.
+        return state
+            .unit(target)
+            .map(|u| state.substance(registry, u).0 as f32)
+            .unwrap_or(0.0);
+    }
+    // What is left is the harassing case: some chance of breaking one of the
+    // things a burst can reach from outside. A crew whose tracks and antenna
+    // are already gone is a crew this shell cannot touch, and saying so is
+    // the whole fix — the alternative is a gun that keeps firing at a number
+    // rather than at a tank.
+    let Some(unit) = state.unit(target) else {
+        return 0.0;
+    };
+    // Summed the way the resolver picks, not merely counted. `overpressure`
+    // draws from the weighted list and returns early when the weights come
+    // to nothing, so a hull whose exterior modules are all size zero is one
+    // blast provably cannot touch — and a pricing that counted entries
+    // instead would put high explosive up against solid shot on a plate the
+    // HE cannot beat, which is the loader making a choice on a number no
+    // resolver will honour.
+    let total: u32 = exterior_modules(registry, unit)
+        .iter()
+        .map(|(_, w)| w)
+        .sum();
+    if total == 0 {
+        return 0.0;
+    }
+    // One roll's worth of harm, at the odds of getting it: `points_per_effect`
+    // is by definition what one effect costs the ledger, so this needs no
+    // conversion of its own.
+    overpressure_chance(blast, plate) as f32 / 100.0
+        * registry.balance.points_per_effect.max(1) as f32
+}
+
+/// Blast that does not need the penetration gate's permission: twice the
+/// plate it arrives against crushes the hull. One line, shared, because
+/// [`blast_worth`] pricing it differently from [`overpressure`] resolving it
+/// is precisely the drift this chunk exists to remove. Public because the
+/// balance instrument's "worth a look" section asks the same question of a
+/// gun's heaviest round against a hull's thinnest plate, and a table that
+/// says a gun can hurt a tank while the resolver disagrees is worse than no
+/// table.
+pub fn blast_overmatches(blast: i32, plate: i32) -> bool {
+    blast >= plate * 2
+}
+
+/// The odds a burst that neither overmatches nor penetrates breaks
+/// something anyway. Shared with [`blast_worth`] for the reason above.
+fn overpressure_chance(blast: i32, plate: i32) -> i32 {
+    blast * 100 / (blast + plate).max(1)
+}
+
+/// What blast can actually reach from outside, weighted like the inside is:
+/// running gear and antennas, the things bolted to the hull rather than
+/// sheltered by it. Shared between the resolver and the pricing so that a
+/// module set a mod invents is priced by whatever it is, not by a list
+/// somebody remembered to update twice.
+fn exterior_modules(registry: &DataRegistry, unit: &Unit) -> Vec<(String, u32)> {
+    unit.modules
+        .iter()
+        .filter(|(_, hits)| **hits > 0)
+        .filter_map(|(id, _)| {
+            registry.module(id).and_then(|m| {
+                matches!(
+                    m.effect,
+                    crate::data::ModuleEffect::Mobility | crate::data::ModuleEffect::Radio
+                )
+                .then(|| (id.clone(), m.size))
+            })
+        })
+        .collect()
 }
 
 /// The round the loader picks with a target in her commander's sights: the
@@ -390,7 +520,7 @@ pub fn best_round_against<'r>(
         let Some(profile) = shot_profile(registry, state, weapon, &round, u.pos, target) else {
             continue;
         };
-        let worth = round_worth(&profile, Some(ammo));
+        let worth = round_worth(registry, state, target, &profile, Some(ammo));
         if best.as_ref().is_none_or(|(w, _)| worth > *w) {
             best = Some((worth, round));
         }
@@ -722,6 +852,11 @@ fn penetration_roll(state: &mut BattleState, pen: f32, armor: f32, scatter: i32)
 /// the ledger loses if it does.
 pub struct ShotProfile {
     pub facing: ArmorFacing,
+    /// The struck plate as the vehicle lists it, before obliquity. Blast
+    /// reads this rather than [`Self::effective_armor`], because
+    /// [`overpressure`] does: a burst crushing a hull is not defeated by the
+    /// angle a solid shot would skip off.
+    pub plate: i32,
     /// Plate value after obliquity, in the abstract armor units.
     pub effective_armor: f32,
     /// Probability the chambered round defeats it, 0..=1.
@@ -755,6 +890,7 @@ pub fn shot_profile(
     let pen = round.pen_at(attacker_pos.distance_to(tgt.pos), weapon.range);
     Some(ShotProfile {
         facing,
+        plate,
         effective_armor,
         pen_chance: penetration_chance(pen, effective_armor, registry.balance.pen_scatter),
         damage: round.damage,
@@ -787,7 +923,7 @@ pub fn expected_damage(
         return 0.0;
     };
     let p = hit_chance(registry, state, attacker, from, weapon, tgt.pos, blind) as f32 / 100.0;
-    p * round_worth(&profile, round.ammo)
+    p * round_worth(registry, state, target, &profile, round.ammo)
 }
 
 /// Everything the player should know before committing to a shot.
@@ -801,7 +937,7 @@ pub struct AttackPreview {
     pub target_vehicle: String,
     /// Display name of the side the target belongs to.
     pub target_side: String,
-    /// The target's condition — girls and modules remaining over her full
+    /// The target's condition — cadets and modules remaining over her full
     /// complement — as a percent. The health bar's successor: there are no
     /// hit points behind it, only the state of what is aboard.
     pub target_condition: i32,
@@ -1077,7 +1213,7 @@ fn resolve_impact(
         // Remembered so that, if this is the hit that kills it, the campaign
         // can ask what actually went through the crew compartment. A kinetic
         // penetration and a machine gun finishing off a burning wreck are
-        // very different days for the girls inside.
+        // very different days for the cadets inside.
         tgt.last_hit_by = Some(damage_type);
     }
     events.push(Event::ShotHit {
@@ -1089,7 +1225,7 @@ fn resolve_impact(
     behind_armor_effects(registry, state, round, &profile, target, events);
 }
 
-/// What one girl or one module weighs when a penetration rolls what it
+/// What one cadet or one module weighs when a penetration rolls what it
 /// found inside. Seats before modules, in seat order, then module id
 /// (BTreeMap) order — the walk is fixed so replays agree on who was hit.
 fn interior(registry: &DataRegistry, unit: &super::Unit) -> Vec<(InteriorChoice, u32)> {
@@ -1101,7 +1237,10 @@ fn interior(registry: &DataRegistry, unit: &super::Unit) -> Vec<(InteriorChoice,
             .get(seat)
             .copied()
             .unwrap_or(super::CrewCondition::Fine);
-        if condition != super::CrewCondition::Out && crew_weight > 0 {
+        // Out and absent both weigh nothing, for opposite reasons: one has
+        // already been found by a previous roll and the other was never in
+        // the vehicle to find.
+        if condition.fighting() && crew_weight > 0 {
             targets.push((InteriorChoice::Seat(seat), crew_weight));
         }
     }
@@ -1141,7 +1280,7 @@ fn effect_rolls(
         }
         // The pool is everything physically inside the hull: the target's
         // own crew and modules, and — the shared-fate ruling — every
-        // passenger's girls and troops too, in passenger id order. A round
+        // passenger's cadets and troops too, in passenger id order. A round
         // that comes through a loaded carrier does not check tickets.
         let mut targets: Vec<(UnitId, InteriorChoice, u32)> = interior(registry, unit)
             .into_iter()
@@ -1188,9 +1327,9 @@ enum InteriorChoice {
 ///
 /// The budget is the ledger damage the gate already computed — the weapon's
 /// weight times the round's potency — cashed as one effect roll per
-/// `points_per_effect`, rounded up. Each roll picks a girl or a module,
+/// `points_per_effect`, rounded up. Each roll picks a cadet or a module,
 /// weighted by size; a heavily overmatching round (double the budget the
-/// knob asks for, per roll) puts a girl straight out rather than wounding
+/// knob asks for, per roll) puts a cadet straight out rather than wounding
 /// her first. The ammunition rack is the special module: every hit on it
 /// rolls brew-up at `brewup_percent` scaled by how full the racks still
 /// are, and a rack destroyed without a fire leaves the remaining rounds
@@ -1218,7 +1357,7 @@ fn behind_armor_effects(
     // version, a 75 does. The threshold was double, which put every gun on
     // the field over it — B5's crew-cost table read 0.1 wounded to 3.0 out
     // per battle, meaning the dramatic middle state effectively never
-    // happened and a girl's first hit was almost always her last.
+    // happened and a cadet's first hit was almost always her last.
     let savage = profile.damage >= per_effect * 3;
     effect_rolls(
         registry,
@@ -1272,7 +1411,7 @@ fn behind_armor_effects(
     }
 }
 
-/// One effect roll found a girl.
+/// One effect roll found a cadet.
 fn crew_hit(
     state: &mut BattleState,
     target: UnitId,
@@ -1287,7 +1426,7 @@ fn crew_hit(
         unit.crew_state
             .resize(unit.crew.len(), super::CrewCondition::Fine);
     }
-    let Some(girl) = unit.crew.get(seat).copied() else {
+    let Some(cadet) = unit.crew.get(seat).copied() else {
         return;
     };
     let Some(condition) = unit.crew_state.get_mut(seat) else {
@@ -1301,7 +1440,7 @@ fn crew_hit(
     };
     events.push(Event::CrewHit {
         unit: target,
-        girl,
+        cadet,
         out,
     });
 }
@@ -1458,23 +1597,7 @@ fn overpressure(
             .armor
             .value(struck_facing(unit.pos, unit.facing, from))
             .max(0);
-        // What blast can actually reach from outside, weighted like the
-        // inside is.
-        let exterior: Vec<(String, u32)> = unit
-            .modules
-            .iter()
-            .filter(|(_, hits)| **hits > 0)
-            .filter_map(|(id, _)| {
-                registry.module(id).and_then(|m| {
-                    matches!(
-                        m.effect,
-                        crate::data::ModuleEffect::Mobility | crate::data::ModuleEffect::Radio
-                    )
-                    .then(|| (id.clone(), m.size))
-                })
-            })
-            .collect();
-        (plate, exterior)
+        (plate, exterior_modules(registry, unit))
     };
     if plate == 0 {
         // Soft, dispersed things do not have a hull for overpressure to
@@ -1490,7 +1613,7 @@ fn overpressure(
         effect_rolls(registry, state, target, rolls, false, 1.0, events);
         return;
     }
-    if blast >= plate * 2 {
+    if blast_overmatches(blast, plate) {
         // Overmatch: the shell does not need the gate's permission. Reap
         // folds the flag into `alive` at the end of the tick and announces
         // the destruction, the same simultaneity bargain every other death
@@ -1504,7 +1627,7 @@ fn overpressure(
     if total == 0 {
         return;
     }
-    let chance = blast * 100 / (blast + plate).max(1);
+    let chance = overpressure_chance(blast, plate);
     if state.rng.random_range(0..100) >= chance {
         return;
     }
@@ -1539,7 +1662,7 @@ pub fn reap(registry: &DataRegistry, state: &mut BattleState, events: &mut Vec<E
         .iter()
         .filter(|u| {
             // The crew clause only applies to a vehicle that HAS a crew
-            // list: an empty one means the girls are abstracted away (test
+            // list: an empty one means the cadets are abstracted away (test
             // scaffolding, a mod without a roster), and "everyone aboard
             // nobody is out" must read as today's game, not as a ghost
             // ship.
@@ -1791,12 +1914,23 @@ fn fire_at_tile(
 /// The best shot this unit could take on its own initiative: the loaded
 /// direct-fire weapon and spotted enemy promising the most damage. Indirect
 /// weapons do not snap-fire, so artillery holds unless it was given a target.
+///
+/// "On its own initiative" is load-bearing now that a crew can lose hers.
+/// Everything here is what a crew decides for herself, so it is exactly what
+/// a crew who has gone to ground stops doing — she still has a gun and she
+/// will still use it if her commander names a target, but nothing happening
+/// in front of her prompts her to. It is also where a crew who has decided
+/// to fight stops being careful.
 pub fn best_opportunity_shot(
     registry: &DataRegistry,
     state: &BattleState,
     unit: UnitId,
 ) -> Option<(usize, UnitId)> {
     let att = state.unit(unit)?;
+    let defiance = (!state.obeys(registry, att)).then(|| state.defiance(registry, att));
+    if defiance == Some(crate::data::DefianceResponse::Freeze) {
+        return None;
+    }
     // Opportunity fire is the crew reacting to something nobody told them
     // about, so it costs them their reaction time — per TARGET, from the
     // moment he was first seen, not per round from tick zero. The old gate
@@ -1804,7 +1938,7 @@ pub fn best_opportunity_shot(
     // sight across five rounds was paid for five times) and waived the tax
     // exactly when it was owed (an ambush at tick seven answered instantly,
     // because seven beat any delay). The clock is the side's
-    // `spotted_since`, and the model is girls.md's oldest sentence: she
+    // `spotted_since`, and the model is cadets.md's oldest sentence: she
     // notices at tick four and does something about it at tick six. Ordered
     // fire is untouched: they knew what they were shooting at before the
     // round began, and taxing that would model rate of fire twice over.
@@ -1865,7 +1999,14 @@ pub fn best_opportunity_shot(
             // true wait-for-the-flank reasoning is deliberately future
             // work.
             const AMBUSH_PATIENCE: f32 = 0.25;
-            let unseen = !state.fog.side(enemy.side).spotted.contains(&unit);
+            // A crew who has decided to fight has stopped weighing shots.
+            // Discipline is what patience is made of, and hers has gone —
+            // this is the same rung that will not take an order, spending
+            // her ambush on the first thing she can see rather than the
+            // right thing. It is a cost, not a bonus: the shot is worse and
+            // it gives her position away.
+            let patient = defiance != Some(crate::data::DefianceResponse::Fight);
+            let unseen = patient && !state.fog.side(enemy.side).spotted.contains(&unit);
             if unseen {
                 let decisive = state.substance(registry, enemy).0 as f32 * AMBUSH_PATIENCE;
                 if value < decisive {

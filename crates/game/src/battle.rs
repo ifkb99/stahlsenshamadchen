@@ -13,13 +13,13 @@ use std::sync::Arc;
 use tactics_core::Hex;
 use tactics_core::ai::{AiConfig, AiDriver, SideCommand, make_battle_planner};
 use tactics_core::battle::{
-    BattleState, Contact, EndReason, Event as BattleEvent, FireIntent, Formation, FormationId,
-    Mission, Order, SideState, Unit, UnitId, reachable,
+    BattleState, Contact, CrewCondition, EndReason, Event as BattleEvent, FireIntent, Formation,
+    FormationId, Latitude, Mission, Order, SideState, Unit, UnitId, reachable,
 };
 use tactics_core::map::{ObjectiveKind, UnitPlacement};
 use tactics_core::overworld::ArmyId;
 use tactics_core::overworld::{ArmyMission, ArmyUnit, CrewLoss};
-use tactics_core::roster::{GirlId, Roster};
+use tactics_core::roster::{CadetId, Roster};
 
 /// One army committed to a field battle.
 #[derive(Clone)]
@@ -42,7 +42,7 @@ pub enum PendingBattle {
     /// two can take part: neighbours on either side may reinforce.
     Field {
         map_id: String,
-        /// The campaign's girls, so the crews that fight are the same people
+        /// The campaign's cadets, so the crews that fight are the same people
         /// who walk away from it.
         roster: Arc<Roster>,
         /// The army that started it, and the one that was attacked. These
@@ -65,7 +65,7 @@ pub struct BattleOutcome {
     /// Both sides withdrew intact rather than one being destroyed.
     pub stalemate: bool,
     pub survivors: Vec<(ArmyId, Vec<ArmyUnit>)>,
-    /// Girls who were aboard a vehicle that was destroyed. What became of
+    /// Cadets who were aboard a vehicle that was destroyed. What became of
     /// them is the campaign's decision, not the battle's.
     pub losses: Vec<CrewLoss>,
 }
@@ -137,6 +137,29 @@ impl Battle {
     /// Whether the player may issue orders right now.
     fn accepting_orders(&self) -> bool {
         !self.state.is_over() && self.state.is_planning() && self.anim.is_empty()
+    }
+
+    /// Whether a keystroke would actually be acted on this frame.
+    ///
+    /// `accepting_orders` is not the whole answer — sprites finishing a walk
+    /// hold the keyboard too, and the side may have committed already — and
+    /// the difference matters to exactly two callers who must never disagree:
+    /// [`handle_input`], which ignores a key it is not listening for, and the
+    /// dev harness's `idle` fact, which is a script's way of asking "are you
+    /// listening yet". They disagreed once, and the symptom was silent and
+    /// nasty: `until idle` came true while unit sprites were still walking,
+    /// the script pressed Enter into a game that was not listening, and four
+    /// commits advanced the battle by one round while every screenshot after
+    /// them quietly described the wrong turn.
+    ///
+    /// So: one predicate, both callers. Anything new that would make
+    /// `handle_input` refuse a keystroke belongs in here, not beside it.
+    fn listening(&self, movers_idle: bool) -> bool {
+        movers_idle
+            && self.accepting_orders()
+            && self
+                .human_side()
+                .is_some_and(|side| !self.state.has_committed(side))
     }
 
     /// The formations the player commands, in the order their map declared
@@ -372,10 +395,10 @@ struct FormationHighlight;
 
 /// The formation marker's colour: violet, because it belongs to neither
 /// side's palette nor to the amber of ground worth taking. It says "these are
-/// the girls you are talking to", which is not a fact about the map.
+/// the cadets you are talking to", which is not a fact about the map.
 const FORMATION_MARKER: Color = Color::srgba(0.65, 0.5, 1.0, 0.5);
 
-/// The same marker under a girl who cannot hear a word of it. Kept at the
+/// The same marker under a cadet who cannot hear a word of it. Kept at the
 /// violet's weight and swung to red rather than made a new symbol: it is the
 /// *same* fact — she is in the formation you are commanding — with the one
 /// thing that matters about her tonight said in the colour of a warning.
@@ -498,7 +521,77 @@ impl Plugin for BattlePlugin {
                     .chain()
                     .run_if(in_state(AppState::Battle)),
             );
+        // Only a dev build answers questions about itself. The publisher
+        // walks every unit once a frame, which is nothing next to rendering
+        // them but is pure waste in a build nobody is scripting.
+        if crate::devtools::debug_enabled() {
+            app.init_resource::<crate::devtools::ScriptFacts>()
+                .add_systems(
+                    Update,
+                    publish_script_facts
+                        .after(finish_battle)
+                        .run_if(in_state(AppState::Battle)),
+                );
+        }
     }
+}
+
+/// Tell the script runner what this screen knows about itself.
+///
+/// Runs last in the frame and reads only what is already settled, so an
+/// `until idle` sees the state the next screenshot would photograph rather
+/// than a half-applied one. The facts themselves are deliberately thin — see
+/// [`crate::devtools::ScriptFacts`] — and the translation lives here rather
+/// than in the runner because `Battle` is this module's business and the
+/// campaign map will answer the same questions in its own terms.
+fn publish_script_facts(
+    battle: Option<Res<Battle>>,
+    log: Res<BattleLog>,
+    movers: Query<&Mover>,
+    mut facts: ResMut<crate::devtools::ScriptFacts>,
+) {
+    // Optional, and not defensively: `finish_battle` removes `Battle`, and
+    // the explicit `.after(finish_battle)` ordering makes Bevy insert a sync
+    // point between the two — so on the frame a battle ends this system runs
+    // with the resource already gone. A required `Res` panics there, which is
+    // what happens to a scripted campaign tour the moment its battle is over,
+    // and it took three runs of one to find because a panic in a task pool
+    // prints no system name.
+    let Some(battle) = battle else {
+        return;
+    };
+    facts.turn = battle.state.round;
+    // "Idle" means the game is *waiting for the player*: the only moment a
+    // script's keystroke does what a person's would, and the only moment a
+    // screenshot shows a settled board. That is exactly `listening`, and it
+    // is a method on `Battle` rather than a copy of the conditions here
+    // precisely so the two cannot drift — see the note on it for what
+    // drifting cost.
+    //
+    // A battle that has ended is idle too — nothing is moving and nothing
+    // more will — or every tour that fights to a finish would hang on its
+    // last `until`.
+    facts.idle = battle.state.is_over() || battle.listening(movers.is_empty());
+    // Every screen answers for every fact, even the ones it has no notion of.
+    // `ScriptFacts` is one resource shared by all of them, so a field left
+    // alone here would still be holding the campaign map's last answer, and a
+    // script would wait on a prompt that was dismissed two screens ago.
+    facts.waiting = false;
+    facts.over = battle.state.is_over();
+    facts.score.clone_from(&battle.state.score);
+    facts.log = log.0.iter().cloned().collect();
+    facts.units.clear();
+    facts.units.extend(
+        battle
+            .state
+            .units
+            .iter()
+            .map(|unit| crate::devtools::UnitFact {
+                name: unit.name.clone(),
+                alive: unit.alive,
+                aboard: unit.aboard.is_some(),
+            }),
+    );
 }
 
 // --- setup ----------------------------------------------------------------
@@ -551,7 +644,7 @@ fn setup_battle(
             let file = registry.map(map_id).expect("field battle map exists");
             let map = tactics_core::map::HexMap::from_map_file(file).expect("map parses");
             let (placements, crews, origins) = deploy(registry, &map, forces, *attacker_side);
-            // The campaign's own roster, so these are the same girls who will
+            // The campaign's own roster, so these are the same cadets who will
             // carry whatever happens here back out again.
             let state = BattleState::from_placements(
                 registry,
@@ -762,6 +855,7 @@ fn inherit_army_missions(
             let order = Order::SetMission {
                 formation: FormationId(index as u32),
                 mission: Mission::Withdraw { via },
+                latitude: Latitude::Delegated,
             };
             if state.apply(registry, &order).is_ok() {
                 lines.push(format!("{name} is under orders to break contact."));
@@ -780,7 +874,7 @@ fn deploy(
     map: &tactics_core::map::HexMap,
     forces: &[BattleForce],
     attacker_side: u8,
-) -> (Vec<UnitPlacement>, Vec<Vec<GirlId>>, Vec<ArmyId>) {
+) -> (Vec<UnitPlacement>, Vec<Vec<CadetId>>, Vec<ArmyId>) {
     // Tiles a vehicle can actually sit on, nearest edge first. Taking spots
     // in this order lets a side deploy as deep inland as it needs to, so
     // three armies fit where one used to.
@@ -857,7 +951,7 @@ fn deploy(
                 if leads {
                     led.push(formation.clone().expect("leads implies a formation"));
                 }
-                // The crew travels alongside as girl handles rather than in
+                // The crew travels alongside as cadet handles rather than in
                 // the placement: a `UnitPlacement` names crew by definition
                 // id, which is the thing this whole refactor is getting away
                 // from.
@@ -914,7 +1008,7 @@ fn spawn_unit_sprite(commands: &mut Commands, art: &ArtCache, id: UnitId, side: 
                 UnitBadge(id),
             ));
             // Spawned for everybody and shown for the few, because command
-            // passes: the girl who inherits a formation mid-battle needs the
+            // passes: the cadet who inherits a formation mid-battle needs the
             // wedge to appear over her without anything spawning a sprite in
             // the middle of a round. `sync_units` reads `Formation.leader`
             // every frame, so there is no event to miss.
@@ -978,7 +1072,10 @@ fn spawn_battle_ui(commands: &mut Commands) {
             position_type: PositionType::Absolute,
             top: Val::Px(8.0),
             right: Val::Px(8.0),
-            width: Val::Px(240.0),
+            // Wider than it was, because the panel now says what an order
+            // means rather than only naming it, and a promise that wraps to
+            // three lines is one nobody reads.
+            width: Val::Px(300.0),
             padding: UiRect::all(Val::Px(8.0)),
             flex_direction: FlexDirection::Column,
             row_gap: Val::Px(6.0),
@@ -1087,41 +1184,7 @@ fn pump_events(
     // the electronic-warfare future, not a freebie. Fighting events (shots,
     // spots, wrecks) stay side-blind exactly as before.
     let view_side = battle.view_side();
-    let own = |formation: &str| {
-        battle
-            .state
-            .formations()
-            .iter()
-            .find(|f| f.id == formation)
-            .is_none_or(|f| f.side == view_side)
-    };
-    let own_unit = |unit: &UnitId| {
-        battle
-            .state
-            .units
-            .get(unit.index())
-            .is_none_or(|u| u.side == view_side)
-    };
-    drained.retain(|event| match event {
-        BattleEvent::MissionAssigned { formation, .. }
-        | BattleEvent::MissionReceived { formation, .. }
-        | BattleEvent::MissionCompleted { formation, .. }
-        | BattleEvent::CommandPassed { formation, .. } => own(formation),
-        BattleEvent::OutOfContact { unit }
-        | BattleEvent::ContactRestored { unit }
-        | BattleEvent::OrdersWaiting { unit }
-        | BattleEvent::OrdersDelivered { unit }
-        | BattleEvent::TookCover { unit, .. }
-        | BattleEvent::ContactReported { by: unit, .. } => own_unit(unit),
-        // How much ammunition the enemy has left is her quartermaster's
-        // secret, not something the sound of her gun gives away — and what
-        // is broken or bleeding inside her hull even more so. A brew-up or
-        // a bail-out, by contrast, is visible across the battlefield.
-        BattleEvent::WeaponDry { unit, .. }
-        | BattleEvent::CrewHit { unit, .. }
-        | BattleEvent::ModuleHit { unit, .. } => own_unit(unit),
-        _ => true,
-    });
+    drained.retain(|event| heard_by(&battle.state, view_side, event));
     if drained.is_empty() {
         return;
     }
@@ -1137,6 +1200,20 @@ fn pump_events(
             .cloned()
             .unwrap_or_else(|| "???".into())
     };
+    // The log is radio traffic, not an omniscient narrator. One of ours
+    // speaks with her call sign in front of her and says what she is doing;
+    // anything else is a spot report — something the net heard about, with
+    // nobody's voice on it.
+    //
+    // This is presentation and only presentation. The events carry the same
+    // ids, hexes and flags they always did, so the script harness, the
+    // replay and every consumer downstream read exactly what they read
+    // before; what changed is who is speaking. Keeping that line clean is
+    // what lets the voice be rewritten again later without anybody having to
+    // check whether the engine still works.
+    let sides: Vec<u8> = battle.state.units.iter().map(|u| u.side).collect();
+    let mine = |id: UnitId| sides.get(id.index()).is_none_or(|s| *s == view_side);
+    let traffic = |id: UnitId, said: &str| format!("{}: {said}", name(id));
     let entity_of = |id: UnitId| units.iter().find(|(_, u)| u.0 == id).map(|(e, _)| e);
 
     for event in &drained {
@@ -1179,7 +1256,11 @@ fn pump_events(
                 }
             }
             BattleEvent::UnitTrapped { unit, .. } => {
-                log.push(format!("{} ran into an ambush!", name(*unit)));
+                log.push(if mine(*unit) {
+                    traffic(*unit, "ambush! we're in it —")
+                } else {
+                    format!("{} has driven into somebody.", name(*unit))
+                });
             }
             BattleEvent::ShotFired {
                 attacker,
@@ -1190,17 +1271,21 @@ fn pump_events(
                 ..
             } => {
                 let verb = if *blind {
-                    "fires blind"
+                    "firing blind"
                 } else if *opportunity {
-                    "takes a shot of opportunity"
+                    "target of opportunity — engaging"
                 } else {
-                    "fires"
+                    "engaging"
                 };
                 let weapon_name = registry
                     .weapon(weapon)
                     .map(|w| w.name.clone())
                     .unwrap_or_default();
-                log.push(format!("{} {verb} ({weapon_name})", name(*attacker)));
+                log.push(if mine(*attacker) {
+                    traffic(*attacker, &format!("{verb}, {weapon_name}."))
+                } else {
+                    format!("{} is firing.", name(*attacker))
+                });
                 spawn_puff(
                     &mut commands,
                     *at,
@@ -1219,7 +1304,7 @@ fn pump_events(
                     .ammo(ammo)
                     .map(|a| a.name.clone())
                     .unwrap_or_else(|| ammo.clone());
-                log.push(format!("A {round} shell lands at {}.", hex_label(*at)));
+                log.push(format!("Shellfire — {round} at {}.", hex_label(*at)));
                 spawn_puff(
                     &mut commands,
                     *at,
@@ -1234,12 +1319,14 @@ fn pump_events(
                 facing,
                 ..
             } => {
-                log.push(format!(
-                    "{} penetrates {} through the {:?}.",
-                    name(*attacker),
-                    name(*target),
-                    facing
-                ));
+                log.push(if mine(*attacker) {
+                    traffic(
+                        *attacker,
+                        &format!("through {}'s {facing:?} plate.", name(*target)),
+                    )
+                } else {
+                    traffic(*target, &format!("we're hit — {facing:?}."))
+                });
                 if let Some(entity) = entity_of(*target) {
                     commands
                         .entity(entity)
@@ -1247,7 +1334,11 @@ fn pump_events(
                 }
             }
             BattleEvent::ShotMissed { attacker, at } => {
-                log.push(format!("{} misses", name(*attacker)));
+                log.push(if mine(*attacker) {
+                    traffic(*attacker, "miss.")
+                } else {
+                    format!("{} misses.", name(*attacker))
+                });
                 spawn_puff(
                     &mut commands,
                     *at,
@@ -1257,7 +1348,11 @@ fn pump_events(
                 );
             }
             BattleEvent::UnitDestroyed { unit, at } => {
-                log.push(format!("{} is destroyed!", name(*unit)));
+                log.push(if mine(*unit) {
+                    format!("{} is off the net.", name(*unit))
+                } else {
+                    format!("{} is finished.", name(*unit))
+                });
                 spawn_puff(
                     &mut commands,
                     *at,
@@ -1271,10 +1366,10 @@ fn pump_events(
             }
             BattleEvent::UnitSpotted { unit, by_side, .. } => {
                 if battle.state.sides[*by_side as usize].ai.is_none() {
-                    log.push(format!("Enemy spotted: {}", name(*unit)));
+                    log.push(format!("Contact — {}.", name(*unit)));
                 }
             }
-            // Said in the log, because a girl doing something other than what
+            // Said in the log, because a cadet doing something other than what
             // she was told has to be attributable or it reads as a bug.
             BattleEvent::MoraleChanged { unit, rung, obeys } => {
                 let who = battle
@@ -1283,33 +1378,47 @@ fn pump_events(
                     .map(|u| u.name.clone())
                     .unwrap_or_else(|| "A crew".into());
                 log.push(if *obeys {
-                    format!("{who} is {rung}.")
+                    format!("{who}: {rung}.")
                 } else {
-                    format!("{who} is {rung} and will not advance.")
+                    format!("{who}: {rung} — not going forward.")
                 });
             }
-            BattleEvent::OrderRefused { unit, rung } => {
+            BattleEvent::SetOut { unit, doing, .. } => {
                 let who = battle
                     .state
                     .unit(*unit)
                     .map(|u| u.name.clone())
                     .unwrap_or_else(|| "A crew".into());
-                log.push(format!("{who} refuses to advance - {rung}."));
+                // The first thing this AI has ever done that can be said in a
+                // sentence. A vehicle crossing the map with nothing in the log
+                // behind it reads as the game moving her for no reason.
+                log.push(format!("{who}: {doing}."));
+            }
+            BattleEvent::Defied {
+                unit, rung, doing, ..
+            } => {
+                let who = battle
+                    .state
+                    .unit(*unit)
+                    .map(|u| u.name.clone())
+                    .unwrap_or_else(|| "A crew".into());
+                // Her name, her rung, and what she is doing about it. The
+                // last part is the one that matters: a tank reversing out of
+                // the line with nothing in the log to explain it is
+                // indistinguishable from the game malfunctioning.
+                log.push(format!("{who}: {rung} — {doing}."));
             }
             // The mid-round drill. Same sentence shape as the planning-table
             // drill's line, so the player learns one idiom for "she decided
             // this herself" wherever in the round it happens.
             BattleEvent::TookCover { unit, .. } => {
-                log.push(format!(
-                    "{} is under fire and breaks for cover.",
-                    name(*unit)
-                ));
+                log.push(traffic(*unit, "under fire — breaking for cover."));
             }
-            BattleEvent::CrewHit { unit, girl, out } => {
+            BattleEvent::CrewHit { unit, cadet, out } => {
                 let who = battle
                     .state
                     .roster
-                    .get(*girl)
+                    .get(*cadet)
                     .map(|g| g.name.clone())
                     .unwrap_or_else(|| "somebody".into());
                 // A platoon's leaders have no station to slump at: they are on
@@ -1324,15 +1433,15 @@ fn pump_events(
                     .units
                     .get(unit.index())
                     .is_some_and(|u| u.troops(&mods.0).is_some());
-                log.push(match (*out, afoot) {
-                    (true, true) => format!("{who} goes down leading {}.", name(*unit)),
-                    (false, true) => format!("{who} is hit leading {}.", name(*unit)),
-                    (true, false) => format!(
-                        "{who} is hit aboard {} and slumps at her station.",
-                        name(*unit)
-                    ),
-                    (false, false) => format!("{who} is wounded aboard {}.", name(*unit)),
-                });
+                log.push(traffic(
+                    *unit,
+                    &match (*out, afoot) {
+                        (true, true) => format!("{who} is down."),
+                        (false, true) => format!("{who} is hit, still up."),
+                        (true, false) => format!("{who} is out at her station."),
+                        (false, false) => format!("{who} is hit."),
+                    },
+                ));
             }
             BattleEvent::ModuleHit {
                 unit,
@@ -1345,53 +1454,53 @@ fn pump_events(
                 let module_def = mods.0.module(module);
                 if module_def.is_some_and(|m| m.effect == tactics_core::data::ModuleEffect::Troops)
                 {
-                    log.push(if *destroyed {
-                        format!("{} has no sections left to lead.", name(*unit))
-                    } else {
-                        format!("{} takes casualties.", name(*unit))
-                    });
+                    log.push(traffic(
+                        *unit,
+                        if *destroyed {
+                            "no sections left."
+                        } else {
+                            "taking casualties."
+                        },
+                    ));
                 } else {
                     let what = module_def
                         .map(|m| m.name.clone())
                         .unwrap_or_else(|| module.clone());
-                    log.push(format!(
-                        "{}'s {what} is {}.",
-                        name(*unit),
-                        if *destroyed { "destroyed" } else { "damaged" }
+                    log.push(traffic(
+                        *unit,
+                        &format!("{what} {}.", if *destroyed { "gone" } else { "damaged" }),
                     ));
                 }
             }
             BattleEvent::BrewedUp { unit } => {
-                log.push(format!("{} brews up!", name(*unit)));
+                log.push(format!("{} is burning.", name(*unit)));
             }
             BattleEvent::Abandoned { unit } => {
-                log.push(format!("The crew abandons {}.", name(*unit)));
+                log.push(format!("{} — crew are out and clear.", name(*unit)));
             }
             BattleEvent::Mounted { unit, into } => {
-                log.push(format!("{} mounts up in {}.", name(*unit), name(*into)));
+                log.push(traffic(*unit, &format!("mounts up in {}.", name(*into))));
             }
             BattleEvent::Dismounted { unit, .. } => {
-                log.push(format!("{} dismounts.", name(*unit)));
+                log.push(traffic(*unit, "dismounting."));
             }
             // The armor holding is news the player must hear, or the shot
             // reads as the game eating a hit.
             BattleEvent::ShotBounced { target, facing, .. } => {
-                log.push(format!(
-                    "The round bounces off {}'s {facing:?} armor.",
-                    name(*target)
-                ));
+                log.push(if mine(*target) {
+                    traffic(*target, &format!("that one bounced — {facing:?}."))
+                } else {
+                    format!("No effect on {} — {facing:?} plate held.", name(*target))
+                });
             }
             BattleEvent::WeaponDry { unit, weapon } => {
-                log.push(format!(
-                    "{} has fired her last {weapon} round.",
-                    name(*unit)
-                ));
+                log.push(traffic(*unit, &format!("that was our last {weapon}.")));
             }
             // Withdrawing is not dying, and the screen has to say so plainly:
             // the sprite vanishes either way, and a player who reads a
             // successful withdrawal as a loss has been told a lie by the UI.
             BattleEvent::UnitExited { unit, at, .. } => {
-                log.push(format!("{} withdraws off the map.", name(*unit)));
+                log.push(traffic(*unit, "clear of the field."));
                 spawn_puff(
                     &mut commands,
                     *at,
@@ -1591,6 +1700,55 @@ fn spawn_puff(commands: &mut Commands, at: Hex, rotation: u32, center: Hex, colo
 /// Let every AI side that still owes orders make one decision. Planning is
 /// simultaneous, so this is not a turn: all of them write orders at once and
 /// nothing happens until the last one commits.
+/// Whether this side's net carries this piece of news.
+///
+/// Command traffic is a side's own business: the enemy commander's orders,
+/// her formations' contact troubles, her radio queue and **where her crews
+/// have decided to go** must not read out in the player's log — that is her
+/// net, and listening to it is the electronic-warfare future, not a freebie.
+/// Fighting events — shots, spots, wrecks, brew-ups — stay side-blind,
+/// because they are things anybody on the field can see.
+///
+/// One function, two callers, and they must not drift: the log filters with
+/// it *after* draining, and [`drive_ai`] filters with it *before* queueing.
+/// The second is not tidiness. Planning events go through the same paced
+/// animation queue as combat, and `accepting_orders` is false while that
+/// queue has anything in it — so an event nobody will print still costs the
+/// player a beat of not being able to give orders. One `SetOut` a unit put
+/// nine of them in front of every planning phase, and the symptom was the
+/// infantry tour clicking on a game that was not listening.
+fn heard_by(state: &BattleState, side: u8, event: &BattleEvent) -> bool {
+    let own_formation = |formation: &str| {
+        state
+            .formations()
+            .iter()
+            .find(|f| f.id == formation)
+            .is_none_or(|f| f.side == side)
+    };
+    let own_unit = |unit: &UnitId| state.units.get(unit.index()).is_none_or(|u| u.side == side);
+    match event {
+        BattleEvent::MissionAssigned { formation, .. }
+        | BattleEvent::MissionReceived { formation, .. }
+        | BattleEvent::MissionCompleted { formation, .. }
+        | BattleEvent::CommandPassed { formation, .. } => own_formation(formation),
+        BattleEvent::OutOfContact { unit }
+        | BattleEvent::ContactRestored { unit }
+        | BattleEvent::OrdersWaiting { unit }
+        | BattleEvent::OrdersDelivered { unit }
+        | BattleEvent::TookCover { unit, .. }
+        | BattleEvent::SetOut { unit, .. }
+        | BattleEvent::ContactReported { by: unit, .. } => own_unit(unit),
+        // How much ammunition the enemy has left is her quartermaster's
+        // secret, not something the sound of her gun gives away — and what
+        // is broken or bleeding inside her hull even more so. A brew-up or
+        // a bail-out, by contrast, is visible across the battlefield.
+        BattleEvent::WeaponDry { unit, .. }
+        | BattleEvent::CrewHit { unit, .. }
+        | BattleEvent::ModuleHit { unit, .. } => own_unit(unit),
+        _ => true,
+    }
+}
+
 fn drive_ai(mods: Res<Mods>, mut battle: ResMut<Battle>, movers: Query<&Mover>) {
     if battle.state.is_over() || !battle.anim.is_empty() || !movers.is_empty() {
         return;
@@ -1607,8 +1765,18 @@ fn drive_ai(mods: Res<Mods>, mut battle: ResMut<Battle>, movers: Query<&Mover>) 
         // Planning orders used to be silent, but a mission being assigned is
         // news the log carries; route whatever the orders announced through
         // the same animation queue every other event takes.
+        let side = battle.view_side();
         for decision in decisions {
-            battle.anim.extend(decision.events);
+            // Filtered before it is queued, not after it is drained: an event
+            // the player will never be shown must not cost her a beat of the
+            // paced animation queue, because `accepting_orders` is false
+            // while that queue is not empty.
+            battle.anim.extend(
+                decision
+                    .events
+                    .into_iter()
+                    .filter(|e| heard_by(&battle.state, side, e)),
+            );
         }
     }
 }
@@ -1639,15 +1807,12 @@ fn handle_input(
     movers: Query<&Mover>,
 ) {
     let registry = &mods.0;
-    if !movers.is_empty() || !battle.accepting_orders() {
+    if !battle.listening(movers.is_empty()) {
         return;
     }
     let Some(side) = battle.human_side() else {
         return;
     };
-    if battle.state.has_committed(side) {
-        return;
-    }
 
     // Enter closes this side's orders. The round only starts once every side
     // has done the same.
@@ -1687,6 +1852,7 @@ fn handle_input(
                     unit,
                     to: None,
                     fire: Some(FireIntent::Hold),
+                    latitude: Latitude::Delegated,
                 },
                 &mut log,
             );
@@ -1723,15 +1889,39 @@ fn handle_input(
     {
         match asked {
             Ok(mission) => {
-                // Shift queues instead of replacing: "…and then this." The
-                // engine refuses a leg behind a stand-fast or a retreat, and
-                // that refusal reaches the log like any other.
+                // Two modifiers, each qualifying the order rather than
+                // changing it, and they compose: Shift queues instead of
+                // replacing ("…and then this"), Ctrl means it ("and I am not
+                // asking"). The engine refuses a leg behind a stand-fast or a
+                // retreat, and that refusal reaches the log like any other.
+                //
+                // Ctrl rather than a key of its own because there is no key
+                // left that would not lie: `X` is already the assault, which
+                // is the *other* axis — press on through fire — and a player
+                // who pressed it expecting insistence would get a different
+                // order. Latitude has no verb of its own at formation scale,
+                // so it takes a modifier.
                 let queue = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+                let insist =
+                    keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
+                let latitude = if insist {
+                    Latitude::Binding
+                } else {
+                    Latitude::Delegated
+                };
                 let formation = FormationId(index as u32);
                 let order = if queue {
-                    Order::QueueMission { formation, mission }
+                    Order::QueueMission {
+                        formation,
+                        mission,
+                        latitude,
+                    }
                 } else {
-                    Order::SetMission { formation, mission }
+                    Order::SetMission {
+                        formation,
+                        mission,
+                        latitude,
+                    }
                 };
                 let battle = &mut *battle;
                 match battle.state.apply(registry, &order) {
@@ -1764,8 +1954,42 @@ fn handle_input(
         return;
     }
 
+    // X = press on: march to the hovered ground and do not break off for
+    // cover on the way.
+    //
+    // Deliberately the same key that orders a *formation* to assault, because
+    // it is deliberately the same sentence: `Advance`/`Assault` and
+    // `Delegated`/`Binding` are one distinction at two scales — take that
+    // ground using your judgment, versus take that ground and I mean it. A
+    // player who has learned what X costs a platoon has already learned what
+    // it costs a crew, and there is no second idiom to teach. The two never
+    // collide: picking a formation drops the unit selection and vice versa,
+    // so only one of them can be listening.
+    //
+    // Any tile on the map is fair game rather than only this round's reach,
+    // which is what a standing destination means — she marches for it over as
+    // many rounds as the ground demands. The engine refuses one off the map.
+    if keys.just_pressed(KeyCode::KeyX) {
+        if let (Some(unit), Some(hex)) = (battle.selected, hovered) {
+            let who = unit_name(&battle.state, unit);
+            set_intent_saying(
+                registry,
+                &mut battle,
+                &Order::Radio {
+                    unit,
+                    to: Some(hex),
+                    fire: None,
+                    latitude: Latitude::Binding,
+                },
+                &mut log,
+                format!("{who} will press on to {} through fire.", hex_label(hex)),
+            );
+        }
+        return;
+    }
+
     // M = mount: the selected foot unit boards the friendly transport under
-    // the cursor. Deliberately the same grammar as `A` — pick your girl,
+    // the cursor. Deliberately the same grammar as `A` — pick your cadet,
     // point at the thing you mean, press the key — because "board that
     // halftrack" and "shoot that tank" are the same kind of sentence and the
     // player should not have to learn a second idiom for it. `Order::Mount`
@@ -1800,7 +2024,7 @@ fn handle_input(
     // U = unload, read two ways that can never be confused for each other: a
     // passenger gets off, and a loaded carrier puts everybody off. It is one
     // `Dismount` per passenger rather than an order aimed at the vehicle,
-    // because the order is about a girl deciding to be on the ground — a
+    // because the order is about a cadet deciding to be on the ground — a
     // carrier is not a thing that can be told to empty itself.
     if keys.just_pressed(KeyCode::KeyU) {
         if let Some(unit) = battle.selected {
@@ -1843,6 +2067,7 @@ fn handle_input(
                     unit,
                     to: None,
                     fire: Some(FireIntent::Area { at: hex, weapon }),
+                    latitude: Latitude::Delegated,
                 },
                 &mut log,
             );
@@ -1893,6 +2118,7 @@ fn handle_input(
                 unit,
                 to: Some(hex),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
             &mut log,
         );
@@ -1903,7 +2129,7 @@ fn handle_input(
 ///
 /// The player's direct orders travel as [`Order::Radio`] rather than
 /// `SetMove`/`SetFire`, because they are the *commander* speaking and a
-/// commander needs a wire. The engine decides what that costs: a girl on the
+/// commander needs a wire. The engine decides what that costs: a cadet on the
 /// net gets her orders instantly and identically to before, one who is not
 /// has them held at the radio and delivered when she can hear again. Nothing
 /// is gated here any more — the refusal this function used to print became an
@@ -2022,7 +2248,9 @@ fn commit_round(
         if let Some(error) = &decision.rejected {
             refused.push(error.to_string());
         }
-        if let Order::SetMove { unit, .. } = decision.order {
+        if let Order::SetMove { unit, .. } = decision.order
+            && decision.drill
+        {
             drilled.push(unit);
         }
     });
@@ -2030,27 +2258,36 @@ fn commit_round(
     for error in refused {
         log.push(format!("Your staff fumbled an order: {error}"));
     }
-    // A move for a unit outside any mission is the battle drill: she is
-    // under fire and nobody told her anything, so she is taking cover on
-    // her own. Said out loud, because a vehicle moving without a visible
-    // order behind it is indistinguishable from a bug — the same bargain
-    // every deviation in this game makes. (Filtered here rather than in the
-    // closure: the driver holds the state mutably while it runs, and an
-    // executor-only side never changes a formation's missions mid-drive, so
-    // reading them afterwards answers the same.)
-    drilled.retain(|unit| {
-        state
-            .command
-            .formation_of(*unit)
-            .is_none_or(|f| f.latest_mission().is_none())
-    });
+    // Every drill move is said out loud, because a vehicle moving without a
+    // visible order behind it is indistinguishable from a bug — the same
+    // bargain every deviation in this game makes.
+    //
+    // This used to guess at which moves were the drill by keeping only units
+    // whose formation had no mission, which silently dropped the one case
+    // that most needed saying: a crew under the commander's *personal*
+    // tasking is normally in a formation that does have a mission, so when
+    // her march was broken off for cover the line was filtered away and
+    // nothing was reported at all. The player watched a tank she had ordered
+    // to a ridge stop in a hedge, every round, for no stated reason. The
+    // planner now says which orders were its own idea (`Decision::drill`) so
+    // there is nothing left to guess.
+    //
+    // The two cases read differently on purpose. A crew nobody ordered took
+    // cover on her own initiative; a crew who *was* ordered somewhere broke
+    // off something she had been told to do, and the difference is the whole
+    // reason the player is being told.
     for unit in drilled {
-        let name = state
-            .units
-            .get(unit.index())
-            .map(|u| u.name.clone())
-            .unwrap_or_default();
-        log.push(format!("{name} is under fire and takes cover on her own."));
+        let Some(u) = state.units.get(unit.index()) else {
+            continue;
+        };
+        let name = u.name.clone();
+        log.push(match u.tasking {
+            Some(to) => format!(
+                "{name} breaks off her march to {} and takes cover.",
+                hex_label(to)
+            ),
+            None => format!("{name} is under fire and takes cover on her own."),
+        });
     }
 }
 
@@ -2239,6 +2476,7 @@ fn engage_with_best(
             unit,
             to: None,
             fire: Some(FireIntent::Target { target, weapon }),
+            latitude: Latitude::Delegated,
         },
         log,
     );
@@ -2380,7 +2618,7 @@ fn sync_units(
 
     for (bar, mut sprite, mut transform) in &mut widgets.bars {
         if let Some(unit) = state.unit(bar.0) {
-            // Condition — girls and modules over the full complement — is
+            // Condition — cadets and modules over the full complement — is
             // what the bar shows now that hit points are gone. Same bar,
             // honest quantity.
             let frac = state.condition(&mods.0, unit).clamp(0.0, 1.0);
@@ -2749,7 +2987,13 @@ fn update_panel(
     if let Some(unit) = shown {
         // Describe the tile under the cursor rather than the unit's own, so
         // terrain can be read without dropping the selection.
-        text.0 = format_unit(registry, state, unit, hovered_tile.unwrap_or(unit.pos));
+        text.0 = format_unit(
+            registry,
+            state,
+            unit,
+            hovered_tile.unwrap_or(unit.pos),
+            unit.side == view_side,
+        );
         set_portrait(&mut hud.portrait, &art, state, unit.id);
         return;
     }
@@ -2760,7 +3004,7 @@ fn update_panel(
     text.0 = "Hover a tile for terrain\n\nLMB: select / set route\nA: engage hovered enemy\nB: blind fire a tile\nV: hold and watch\nM: mount the hovered ride\nU: unload (her, or all aboard)\nC: clear orders\nEnter: commit the round\nF: pick a formation\nQ/E: rotate view".into();
 }
 
-/// The formation panel: who these girls are, what they were told to do, what
+/// The formation panel: who these cadets are, what they were told to do, what
 /// is still on its way to them, and which of them can no longer hear it.
 ///
 /// The mission is spelled out in words rather than as an enum name, because
@@ -2796,18 +3040,40 @@ fn format_formation(
         "Orders: {}",
         mission_sentence(state, formation.mission.as_ref())
     ));
+    // ...and what that order actually commits them to. The player is reading
+    // her own last decision back here, and the whole complaint that started
+    // this work was that she could not tell an advance from an assault after
+    // giving one. The promise comes from the engine so this line cannot
+    // describe an order the rules stopped implementing.
+    if let Some(mission) = formation.mission.as_ref() {
+        lines.push(format!("  ({})", mission.promise()));
+        // And how hard it was meant, which is a second sentence because it
+        // is a second decision. The verb says what she will do about the
+        // enemy; the latitude says whether her own doctrine may discount the
+        // order at all. A player who can read one back and not the other
+        // cannot tell why two formations under the same order are behaving
+        // differently.
+        lines.push(format!("  ({})", formation.latitude.mission_promise()));
+    }
     if let Some((change, ticks)) = &formation.incoming {
         // An amendment reads differently from a countermand, because the
         // player who queued a leg should not fear it will replace her plan.
         let verb = match change {
-            tactics_core::battle::MissionChange::Replace(_) => "In the air",
-            tactics_core::battle::MissionChange::Append(_) => "In the air (and then)",
+            tactics_core::battle::MissionChange::Replace { .. } => "In the air",
+            tactics_core::battle::MissionChange::Append { .. } => "In the air (and then)",
         };
         lines.push(format!(
             "{verb}: {} ({})",
             mission_sentence(state, Some(change.mission())),
             registry.scale.format_duration(*ticks)
         ));
+        // An order in transit is the one the player just gave, and under a
+        // signals net it is the *only* place she can read it back until it
+        // lands. Leaving the promise off this line would mean the panel
+        // explained her decision to her only after it was too late to
+        // change it.
+        lines.push(format!("  ({})", change.mission().promise()));
+        lines.push(format!("  ({})", change.latitude().mission_promise()));
     }
     for leg in &formation.plan {
         lines.push(format!("Then: {}", mission_sentence(state, Some(leg))));
@@ -2843,11 +3109,17 @@ fn format_formation(
         // Who will go where: a standing personal march is a promise about
         // future rounds, and a promise the player cannot read is one she
         // will fight against.
+        // ...and under how much insistence, because the whole value of being
+        // able to say "I mean it" is that the player can see afterwards which
+        // of her crews she said it to.
         if let Some(tasking) = unit.tasking {
-            tags.push(format!("moving to {}", hex_label(tasking)));
+            tags.push(match unit.latitude {
+                Latitude::Binding => format!("pressing on to {}", hex_label(tasking)),
+                Latitude::Delegated => format!("moving to {}", hex_label(tasking)),
+            });
         }
         // A passenger is in the formation and not on the map, which reads as
-        // a missing girl unless the roll call says where she went.
+        // a missing cadet unless the roll call says where she went.
         if let Some(carrier) = unit.aboard.and_then(|c| state.units.get(c.index())) {
             tags.push(format!("riding in {}", carrier.name));
         }
@@ -2859,8 +3131,21 @@ fn format_formation(
         lines.push(format!("  {}{}", unit.name, tag));
     }
     lines.push(String::new());
-    lines.push("G advance / X assault / H hold / R recon".into());
-    lines.push("on the hovered hex; W withdraw. (Shift queues)".into());
+    // The order menu, with what each verb costs, because a verb whose
+    // meaning is only discoverable by pressing it and watching is not a verb
+    // the player is really choosing between. The keys are the game's to know
+    // and the promises are the engine's, so they are joined here and written
+    // down in neither place twice.
+    lines.push("Orders, on the hovered hex:".into());
+    lines.extend(order_menu());
+    lines.push("Shift queues a leg behind the last.".into());
+    // The second modifier, and it gets its promise from the engine like the
+    // verbs above rather than a sentence written here: what insisting costs
+    // is a claim about the rules, and the rules should be the ones making it.
+    lines.push(format!(
+        "Ctrl means it - {}.",
+        Latitude::Binding.mission_promise()
+    ));
     lines.push("F next formation, Esc drops it.".into());
     if let Some(hex) = hovered {
         lines.push(String::new());
@@ -2868,6 +3153,39 @@ fn format_formation(
         lines.push(format_tile(registry, state, hex));
     }
     lines.join("\n")
+}
+
+/// Which key gives which order, in the order the panel lists them.
+///
+/// The keys belong to the game and the promises belong to the engine, so
+/// this is the join and the only place either is written down twice.
+/// `W` is last because it is the one order that is not aimed at the cursor.
+const MISSION_KEYS: [(&str, &str); 5] = [
+    ("G", "advance"),
+    ("X", "assault"),
+    ("H", "hold"),
+    ("R", "reconnoitre"),
+    ("W", "withdraw"),
+];
+
+/// The order menu: every mission key, its verb, and what that verb commits
+/// the platoon to.
+///
+/// A verb the engine no longer publishes a promise for is dropped rather
+/// than printed bare — a menu entry that explains nothing is worse than one
+/// line fewer — and `every_mission_key_has_a_promise` fails the build before
+/// a player ever sees the gap.
+fn order_menu() -> Vec<String> {
+    let vocabulary = Mission::vocabulary();
+    MISSION_KEYS
+        .iter()
+        .filter_map(|(key, verb)| {
+            vocabulary
+                .iter()
+                .find(|(v, _)| v == verb)
+                .map(|(_, promise)| format!("  {key} {verb} - {promise}"))
+        })
+        .collect()
 }
 
 /// The formation's net in numbers: how far the leader's radio carries, how
@@ -3000,7 +3318,7 @@ fn set_portrait(
         .crew
         .first()
         .and_then(|id| state.roster.get(*id))
-        .map(|girl| girl.def.as_str())
+        .map(|cadet| cadet.def.as_str())
         .unwrap_or(&unit.vehicle);
     if let Some(handle) = art.portraits.get(key) {
         image.image = handle.clone();
@@ -3081,11 +3399,17 @@ fn format_attack(
     lines.join("\n")
 }
 
+/// One crew, as the panel describes her. `own` says whether she is the
+/// viewer's to order, which is the only thing that decides whether the
+/// order hints belong on the page: telling the player which key would press
+/// an *enemy* crew on through fire is nonsense, and worse, it reads as an
+/// offer.
 fn format_unit(
     registry: &tactics_core::data::DataRegistry,
     state: &BattleState,
     unit: &tactics_core::battle::Unit,
     tile: Hex,
+    own: bool,
 ) -> String {
     let vehicle = registry.vehicle(&unit.vehicle);
     let mut lines = vec![
@@ -3123,7 +3447,7 @@ fn format_unit(
             v.armor.front, v.armor.side, v.armor.rear
         ));
         // The crewed figures, not the vehicle's paper ones: what this unit
-        // actually does with these girls aboard is the interesting number,
+        // actually does with these cadets aboard is the interesting number,
         // and it is the only place the player can see the crew bonus land.
         let speed = tactics_core::battle::move_points(
             registry,
@@ -3158,12 +3482,12 @@ fn format_unit(
         }
     }
     lines.push("Crew:".into());
-    for c in &unit.crew {
-        if let Some(girl) = state.roster.get(*c) {
+    for (seat, c) in unit.crew.iter().enumerate() {
+        if let Some(cadet) = state.roster.get(*c) {
             // Her strongest training, named. Words rather than a stat block:
-            // girls read as people when described and as units when
+            // cadets read as people when described and as units when
             // tabulated, and the exact numbers belong behind a toggle.
-            let mut best: Vec<(&String, &i32)> = girl.skills.iter().collect();
+            let mut best: Vec<(&String, &i32)> = cadet.skills.iter().collect();
             best.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
             let summary = best
                 .iter()
@@ -3177,12 +3501,43 @@ fn format_unit(
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
+            // What she is doing, when it is not "her job". A seat nobody is
+            // sitting in has to be visible or the crew bonuses simply look
+            // wrong: the panel would show a full crew and the tank would
+            // drive like an empty one.
+            let state_tag = match unit.crew_state.get(seat) {
+                Some(CrewCondition::Absent) => " - in the infirmary, not aboard",
+                Some(CrewCondition::Wounded) => " - hurt, still at her station",
+                Some(CrewCondition::Out) => " - out of the fight",
+                _ => "",
+            };
             if summary.is_empty() {
-                lines.push(format!("  {}", girl.name));
+                lines.push(format!("  {}{state_tag}", cadet.name));
             } else {
-                lines.push(format!("  {} ({summary})", girl.name));
+                lines.push(format!("  {} ({summary}){state_tag}", cadet.name));
             }
         }
+    }
+    // What she is under, and the two ways to change it. The formation panel
+    // explains its verbs; this one had nothing at all to say about the key
+    // that presses a single crew on through fire, which meant the whole
+    // point of being able to insist was discoverable only by reading the
+    // changelog. Both promises come from the engine, so the two scales of
+    // the same decision are described in the same words.
+    if own {
+        lines.push(String::new());
+        match unit.tasking {
+            Some(to) => {
+                lines.push(format!(
+                    "Marching on {} - {}",
+                    hex_label(to),
+                    unit.latitude.promise()
+                ));
+            }
+            None => lines.push("No standing destination.".into()),
+        }
+        lines.push(format!("  click - {}", Latitude::Delegated.promise()));
+        lines.push(format!("  X - {}", Latitude::Binding.promise()));
     }
     lines.push(String::new());
     lines.push(format_tile(registry, state, tile));
@@ -3310,16 +3665,48 @@ fn finish_battle(
             });
         }
 
-        // Everyone who was aboard something that burned. The battle reports
-        // who and what killed it; the campaign decides what that cost them,
-        // because whether this game kills its characters is a campaign rule.
+        // Everyone the battle hurt, in two kinds.
+        //
+        // First, everyone who was aboard something that burned. The battle
+        // reports who and what killed it; the campaign decides what that
+        // cost them, because whether this game kills its characters is a
+        // campaign rule.
         let mut losses = Vec::new();
         for unit in battle.state.lost_units() {
-            for girl in &unit.crew {
+            for cadet in &unit.crew {
                 losses.push(CrewLoss {
-                    girl: *girl,
+                    cadet: *cadet,
                     vehicle: unit.vehicle.clone(),
                     killed_by: unit.last_hit_by,
+                    found: None,
+                });
+            }
+        }
+        // ...and then everyone who was hurt at her station in a vehicle that
+        // came home. This half used to be thrown away at the door: the
+        // battle tracked each cadet's condition seat by seat all fight, and
+        // then the only casualties the campaign ever heard about were the
+        // crews of destroyed vehicles. A gunner knocked out on the first
+        // round of a battle her side won was fit again by the time the
+        // campaign screen drew, which is the wound system having no teeth in
+        // the most literal possible sense.
+        //
+        // `Absent` is skipped for the reason it exists: she was in the
+        // infirmary before this battle started and is not a casualty of it.
+        for unit in battle.state.surviving_units() {
+            for (seat, cadet) in unit.crew.iter().enumerate() {
+                let found = unit.crew_state.get(seat).copied();
+                if !matches!(
+                    found,
+                    Some(CrewCondition::Wounded) | Some(CrewCondition::Out)
+                ) {
+                    continue;
+                }
+                losses.push(CrewLoss {
+                    cadet: *cadet,
+                    vehicle: unit.vehicle.clone(),
+                    killed_by: unit.last_hit_by,
+                    found,
                 });
             }
         }
@@ -3519,5 +3906,163 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The panels say what an order commits her to, at both scales.
+    ///
+    /// Screenshots are the usual way to review a panel and they cannot be
+    /// captured from a headless shell, so the wording that the whole of step
+    /// 2 consists of would otherwise be reviewable by nobody. Asserting on
+    /// the strings is not elegant; a promise silently disappearing from the
+    /// one page that explains the game is worse.
+    #[test]
+    fn the_panels_explain_the_orders_they_offer() {
+        let reg = registry();
+        let mut state = BattleState::from_map(&reg, "river_crossing", 5).expect("battle builds");
+
+        // The formation panel, under an order, offers the menu and reads the
+        // standing order back with its price attached.
+        let formation = FormationId(0);
+        let to = state
+            .formations()
+            .first()
+            .and_then(|f| f.leader)
+            .and_then(|id| state.unit(id))
+            .map(|u| u.pos)
+            .expect("a formation with somebody in it");
+        state
+            .apply(
+                &reg,
+                &Order::SetMission {
+                    formation,
+                    mission: Mission::Assault { to },
+                    latitude: Latitude::Delegated,
+                },
+            )
+            .expect("the order lands");
+        let panel = format_formation(&reg, &state, &state.formations()[0], None);
+        assert!(
+            panel.contains(Mission::Assault { to }.promise()),
+            "the standing order does not say what it costs:\n{panel}"
+        );
+        assert!(
+            panel.contains(Mission::Advance { to }.promise()),
+            "the menu does not offer the alternative:\n{panel}"
+        );
+
+        // ...and the unit panel does the same for the per-crew twin, but only
+        // for a crew the viewer may actually order.
+        let ours = state.units.iter().find(|u| u.side == 0).expect("our tank");
+        let theirs = state
+            .units
+            .iter()
+            .find(|u| u.side == 1)
+            .expect("their tank");
+        let mine = format_unit(&reg, &state, ours, ours.pos, true);
+        assert!(
+            mine.contains(Latitude::Binding.promise()),
+            "the key that presses her on is explained nowhere:\n{mine}"
+        );
+        let hers = format_unit(&reg, &state, theirs, theirs.pos, false);
+        assert!(
+            !hers.contains(Latitude::Binding.promise()),
+            "the panel is offering to give the enemy orders:\n{hers}"
+        );
+    }
+
+    /// A formation's orders read back with how hard they were meant.
+    ///
+    /// The same argument as the promises above and one step further: the
+    /// verb and the latitude are two decisions, and a panel that shows one
+    /// of them leaves the player unable to tell why two formations under the
+    /// same order behave differently. Asserted on both branches — a standing
+    /// order and one still on the wire — because under a signals net the
+    /// second is the only place she can read her decision back before it is
+    /// too late to change it.
+    #[test]
+    fn a_formation_panel_says_how_hard_its_orders_were_meant() {
+        let reg = registry();
+        let to = |state: &BattleState| {
+            state
+                .formations()
+                .first()
+                .and_then(|f| f.leader)
+                .and_then(|id| state.unit(id))
+                .map(|u| u.pos)
+                .expect("a formation with somebody in it")
+        };
+        let panel = |latitude: Latitude| {
+            let mut state = BattleState::from_map(&reg, "river_crossing", 5).expect("battle");
+            let to = to(&state);
+            state
+                .apply(
+                    &reg,
+                    &Order::SetMission {
+                        formation: FormationId(0),
+                        mission: Mission::Advance { to },
+                        latitude,
+                    },
+                )
+                .expect("the order lands");
+            format_formation(&reg, &state, &state.formations()[0], None)
+        };
+
+        let insisted = panel(Latitude::Binding);
+        assert!(
+            insisted.contains(Latitude::Binding.mission_promise()),
+            "an order the player insisted on reads back as an ordinary one:\n{insisted}"
+        );
+        let asked = panel(Latitude::Delegated);
+        assert!(
+            asked.contains(Latitude::Delegated.mission_promise()),
+            "and an ordinary one says so rather than saying nothing:\n{asked}"
+        );
+        // The negative half is asserted on the *delegated* clause rather
+        // than the binding one, because the menu line below advertises what
+        // insisting buys and would satisfy a naive `contains` on every
+        // panel. What must not appear is the promise that contradicts the
+        // order actually given.
+        assert!(
+            !insisted.contains(Latitude::Delegated.mission_promise()),
+            "an insisted order still says her doctrine may bend it:\n{insisted}"
+        );
+        // The modifier that buys it is offered in the same place the verbs
+        // are, or it is a feature only a reader of the source can find.
+        assert!(
+            asked.contains("Ctrl"),
+            "nothing on the page says how to insist:\n{asked}"
+        );
+    }
+
+    /// Every key the order menu offers explains itself.
+    ///
+    /// The menu joins two tables that live in different crates — the keys
+    /// here, the promises in the engine beside the missions they describe —
+    /// and the failure mode of a join like that is silent: rename a verb in
+    /// core and the panel simply lists one order fewer, which nobody notices
+    /// until a player cannot find the key for it.
+    #[test]
+    fn every_mission_key_has_a_promise() {
+        let menu = order_menu();
+        assert_eq!(
+            menu.len(),
+            MISSION_KEYS.len(),
+            "an order key dropped out of the menu: {menu:#?}"
+        );
+        for (key, verb) in MISSION_KEYS {
+            assert!(
+                menu.iter().any(|line| line.contains(verb)),
+                "{key} ({verb}) is offered by the keyboard and explained nowhere"
+            );
+        }
+        // ...and the two that the whole step exists to tell apart are both
+        // there, saying different things.
+        let advance = menu.iter().find(|l| l.contains("advance")).unwrap();
+        let assault = menu.iter().find(|l| l.contains("assault")).unwrap();
+        assert_ne!(
+            advance.split(" - ").nth(1),
+            assault.split(" - ").nth(1),
+            "the menu must not describe G and X the same way"
+        );
     }
 }

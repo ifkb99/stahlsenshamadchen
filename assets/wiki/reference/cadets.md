@@ -1,19 +1,19 @@
 ---
-id: girls
+id: cadets
 title: Cores, Training and Traits
 category: Reference
 ---
 
 # Cores, Training and Traits
 
-How a girl's abilities are decided, and why they are decided that way.
+How a cadet's abilities are decided, and why they are decided that way.
 
 The short version: **what she can do is derived, never written down directly.**
-A girl has a temperament she was born with, training she has been given, things
+A cadet has a temperament she was born with, training she has been given, things
 that have happened to her, and a condition she is in right now. Her gunnery is
 the sum of those. Nothing in the data says "gunnery: 3".
 
-That indirection is the whole point. If a stat *is* the ability, then a girl is
+That indirection is the whole point. If a stat *is* the ability, then a cadet is
 her competence and the roster is a spreadsheet. Separating who she is from what
 she has been taught is what lets a gifted novice and a plodding veteran be
 different people rather than different numbers.
@@ -43,7 +43,7 @@ The base game ships the GURPS attribute set, plus two the genre needs.
 Taking the whole set costs nothing at runtime — cores are a `Vec<i32>` resolved
 to indices at load — and it buys depth that a smaller set was quietly throwing
 away. The first sketch had four, and two of them were doing double duty:
-"nerve" was Health *and* Will, so a girl who was physically tough and a girl
+"nerve" was Health *and* Will, so a cadet who was physically tough and a cadet
 who was mentally unbreakable could not be told apart; "wits" was Perception
 *and* Basic Speed, which conflated seeing a tank with reacting to it. Those are
 exactly the distinctions that make a person recognisable.
@@ -93,7 +93,7 @@ never need a code change.
 cost together. See below.
 
 **Condition** — right now. Wounded, suppressed, exhausted, out of contact.
-Temporary, and the reason the same girl performs differently in two battles.
+Temporary, and the reason the same cadet performs differently in two battles.
 
 ### Checks, not derived stats
 
@@ -151,7 +151,7 @@ supplies — they **set the floor when there is no training at all**.
 
 That third job is what makes the whole model hold together. In GURPS a skill
 you have never studied is not zero; it *defaults* to an attribute at a penalty.
-A girl who has never been trained as a gunner can still shoot, at Hands minus a
+A cadet who has never been trained as a gunner can still shoot, at Hands minus a
 few. So:
 
 ```text
@@ -167,7 +167,7 @@ with her Hands as the reason she got there faster and still has the edge in a
 snap shot. That is exactly the relationship between talent and experience the
 campaign wants, and it falls out of one subtraction.
 
-It also means every girl can attempt every job badly, which matters the first
+It also means every cadet can attempt every job badly, which matters the first
 time a driver has to take over a gun.
 
 ## How training advances
@@ -179,7 +179,7 @@ shoot improve at shooting. This ties progression to play and makes veterans
 emerge from the campaign rather than from a menu.
 
 **At the academy, by direction.** Between battles you decide what someone is
-*studying*, which is how a girl with no combat time gets trained at all, and how
+*studying*, which is how a cadet with no combat time gets trained at all, and how
 you deliberately turn a driver into a gunner. This is the academy layer's
 reason to exist.
 
@@ -192,7 +192,7 @@ conditions are personality.
 Traits come from two places:
 
 - **Innate** — a couple at recruitment, which is who she is when you meet her.
-- **Acquired** — from what happens to her. A girl who bails out of a burning
+- **Acquired** — from what happens to her. A cadet who bails out of a burning
   Panther can come back afraid of fire. This is the loop worth caring about:
   the simulation already records what destroyed a vehicle
   (`Unit.last_hit_by`), how survivable it was (`VehicleDef.safety`) and what
@@ -227,11 +227,11 @@ Traits that change *behaviour* rather than a number — a hothead firing when
 told to hold — get a **Lua hook** instead. The campaign host already vendors
 `mlua`, so the scripting surface exists and costs nothing new; it is the escape
 hatch for the handful of traits a declarative vocabulary cannot reach, not the
-normal way to write one. Not yet built: nothing needs it until girls can
+normal way to write one. Not yet built: nothing needs it until cadets can
 disobey, which is slice 5.
 
 Acquired traits are also still to come. The data they need already exists —
-`Unit.last_hit_by`, `VehicleDef.safety`, `CrewFate` — so a girl who bails out
+`Unit.last_hit_by`, `VehicleDef.safety`, `CrewFate` — so a cadet who bails out
 of a burning Panther can come back afraid of fire. That is the loop worth
 having, and it feeds the visual-novel layer for free.
 
@@ -242,7 +242,7 @@ says. The alternative — treating unspecified as untrained — made every such
 vehicle quietly slower and blinder than its own definition, which broke a
 pathing test in a way that took a while to read: the mover simply could not
 reach a tile the comment said cost "exactly one round's fuel". Paper stats
-should mean what they say; named girls modify from there, in both directions.
+should mean what they say; named cadets modify from there, in both directions.
 
 | trait | gift | cost |
 | --- | --- | --- |
@@ -255,11 +255,11 @@ should mean what they say; named girls modify from there, in both directions.
 ## Soldiers and commanders
 
 **One stat page, two tracks.** Everyone has the same four cores. A commander is
-a girl with command training whose Presence is applied at formation scale
+a cadet with command training whose Presence is applied at formation scale
 rather than to her own vehicle.
 
 That matters for the story more than for the maths: promotion becomes something
-that happens *to a girl you know*, and losing a commander is losing a specific
+that happens *to a cadet you know*, and losing a commander is losing a specific
 person rather than a game piece. A separate commander stat block would have
 made them a different species.
 
@@ -268,14 +268,14 @@ made them a different species.
 **Words by default, numbers on request.** "Anka: steady hands, quick, rattles
 easily", with exact figures behind a toggle.
 
-This is not decoration. Girls read as people when described and as units when
+This is not decoration. Cadets read as people when described and as units when
 tabulated, and the game is asking the player to care about them. The numbers
 stay available because a player who wants to optimise should be able to, and
 because the developer needs them.
 
 ## Orders, and the licence to fail them
 
-Orders are given, not executed. What a girl was *told* and what she *does* are
+Orders are given, not executed. What a cadet was *told* and what she *does* are
 different things, and the gap between them is where character lives.
 
 The engine's round structure already has the right shape for this: a round is
@@ -285,8 +285,8 @@ the plan. A person notices at tick four and does something about it at tick
 six — or at tick nine, or not at all. **Reactivity is measured in ticks**, and
 that is the single most important derived ability.
 
-Girls have **full latitude**: under enough pressure, or with the right traits, a
-girl can do something other than what she was told. She can break off, refuse to
+Cadets have **full latitude**: under enough pressure, or with the right traits, a
+cadet can do something other than what she was told. She can break off, refuse to
 advance, or shoot when ordered to hold.
 
 That is a deliberate choice and it carries a debt. Deviation is only fair if it
@@ -308,7 +308,7 @@ it is the best thing in it.
 is remarkable, and 6 is a real weakness rather than a rounding error.
 
 Two things this buys that the old 0-5 scale could not. **"Average" becomes a
-place on the scale** — a girl at 10 Hands is unremarkable rather than
+place on the scale** — a cadet at 10 Hands is unremarkable rather than
 mid-table, which is what lets descriptions be written honestly. And there is
 **room to subtract from**: an untrained penalty of 4 is meaningful against a 10
 and meaningless against a 3, so skill defaults only work at all on a scale like
@@ -321,27 +321,40 @@ read — becomes cores plus training plus traits plus condition.
 
 Two consequences worth stating in advance:
 
-- ~~**Best-of-crew has to go.**~~ Done. Seats are positional: girl *i* fills the
+- ~~**Best-of-crew has to go.**~~ Done. Seats are positional: cadet *i* fills the
   vehicle's *i*th `crew_slots` entry, and a `roles` block in mod data says which
   skills each seat answers for. The gunner's gunnery lays the gun.
-- **Substitution is the normal case, not the edge one.** The school has ten
-  girls and its tanks have four seats each, so an empty seat is ordinary. The
-  best remaining crew member covers it at `balance.substitution_penalty`,
-  because a commander can lay a gun — she is simply not the gunner.
+- **Substitution is the exception now, and it is the wound model that causes
+  it.** It did not start that way: the school had ten cadets and its tanks four
+  seats each, so an empty seat was ordinary and substitution was the normal
+  case. The base mod now ships forty-nine characters and `frontier` fills every
+  seat in both academies, so a gap in a crew means somebody is in the
+  infirmary — `CrewCondition::Absent` — rather than that nobody was ever
+  written for it. The mechanism is unchanged: the best remaining crew member
+  covers the seat at `balance.substitution_penalty`, because a commander can
+  lay a gun — she is simply not the gunner.
+
+  This is also why filling the seats was worth doing as content rather than
+  leaving it. Substance is counted per person aboard, so a medium tank crewed
+  by two named cadets died about twice as fast as the same tank crewed by four
+  anonymous ones: naming your characters was a straight penalty, and the
+  penalty was invisible.
 
 ### Two things roles exposed immediately
 
 Neither was caused by the change; both were hidden by best-of, where a second
 crew member barely mattered.
 
-**The demo scenario is lopsided.** Kuhlmann fields six girls to the Valkyries'
-four, across four vehicles each. Under best-of that was nearly invisible. With
-seats it decides battles: the first run after the change went 5-0.
+**The demo scenario was lopsided.** Kuhlmann fielded six cadets to the
+Valkyries' four, across four vehicles each. Under best-of that was nearly
+invisible. With seats it decided battles: the first run after the change went
+5-0. `river_crossing` still fields those ten, because it is the determinism
+baseline; the campaign map no longer does.
 
 **Seat order in a map file is now meaningful, and `river_crossing` had it
 backwards.** Juno drives like the brakes are a suggestion (driving 15) and was
 sitting in the commander's seat, while Mina — gunnery 15 — was driving. Swapping
-those two girls moved the crew hit rate from 58% to 65% and the result from 5-0
+those two cadets moved the crew hit rate from 58% to 65% and the result from 5-0
 to a single win in twelve. That is the system working: who sits where is now a
 decision with a measurable price.
 
@@ -350,7 +363,7 @@ decision with a measurable price.
 A placement lists crew in seat order, so a crew of two fills seats one and two
 and cannot skip to the gunner's seat. That is why Mina commands a light tank
 she ought to be gunning. Explicit seat assignment is the fix, and it belongs
-with the "move girls between tanks" screen on the roadmap rather than being
+with the "move cadets between tanks" screen on the roadmap rather than being
 bolted onto the map format now.
 
 ## What to take from GURPS, and what to leave
@@ -370,7 +383,7 @@ a core does.
 refunds points that buy advantages, which is precisely the paired-trait economy
 this design wants — a flaw is not a punishment, it is what pays for a gift. The
 natural use here is *recruit generation*: give the generator a budget, let it
-spend into cores, training and traits, and a girl with a serious flaw arrives
+spend into cores, training and traits, and a cadet with a serious flaw arrives
 unusually gifted somewhere else. That is how you get people worth remembering
 instead of a smooth talent curve.
 
@@ -379,13 +392,13 @@ Three things not to take:
 - **Its breadth.** GURPS has hundreds of skills and a modifier for everything.
   Four cores and four or five trained skills is the right size for a game where
   the player commands a company, not a character.
-- **Point-buy in the player's hands.** Building a girl point by point is a
+- **Point-buy in the player's hands.** Building a cadet point by point is a
   different game. Use the budget internally, show the result.
 - **3d6 for everything.** Combat already resolves through a tuned percentage
   model and there is no reason to tear it out. Where GURPS's shape *is* worth
   copying is stat checks — reaction contests, morale, spotting — because a
   centred bell curve makes competence reliable and upsets rare but real. Flat
-  rolls make good crews feel arbitrary, which is fatal when girls have licence
+  rolls make good crews feel arbitrary, which is fatal when cadets have licence
   to disobey.
 
 ## Inspirations
@@ -438,7 +451,7 @@ Staged so each slice is verifiable on its own. The determinism baseline and
 what it moved.
 
 1. **Cores and checks as data.** `cores` and `skills` blocks in `mod.json`, a
-   `checks` definition, `CharacterDef`/`Girl` restructured, `crew.json` rewritten
+   `checks` definition, `CharacterDef`/`Cadet` restructured, `crew.json` rewritten
    on the 10-centred scale. Reroute the three existing consumers — aiming,
    driving, spotting — through checks. Behaviour should land close to today's;
    the balance harness says how close.
@@ -465,11 +478,11 @@ what it moved.
    Re-reading the design settled it: *"a person notices at tick four and does
    something about it at tick six"* is about reacting to **new information**,
    not about being slow to start a move already ordered. So the delay belongs
-   on responses to things the girl was not told about — a tank appearing
+   on responses to things the cadet was not told about — a tank appearing
    mid-round, an ambush, an order that arrives late — which is the same trigger
    deviation needs, and therefore belongs with slice 5 rather than before it.
 5. **Morale ladder and full latitude.** Steady / wavering / breaking, visible
-   before it matters, with a stated cause in the log whenever a girl does
+   before it matters, with a stated cause in the log whenever a cadet does
    something other than what she was told.
 
 Chain of command lands on top of 4 and 5: an order that takes time to arrive

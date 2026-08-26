@@ -11,7 +11,7 @@
 //!   elevation) and the runtime [`map::HexMap`].
 //! - [`battle`]: the WEGO battle simulation. Both sides plan a round, then a
 //!   tick loop resolves it: intents in, events out.
-//! - [`roster`]: girls as mutable per-campaign instances, as opposed to the
+//! - [`roster`]: cadets as mutable per-campaign instances, as opposed to the
 //!   immutable [`data`] definitions they are stamped from.
 //! - [`overworld`]: the strategic layer simulation.
 //! - [`save`]: serialising a game in progress, such that reloading it

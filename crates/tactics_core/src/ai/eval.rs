@@ -91,7 +91,7 @@ impl Evaluator {
         // not being asked. The sum above is in substance points, an absolute
         // quantity, so five points of expected damage read exactly the same to
         // a fresh heavy tank as to a battle taxi with a platoon in the back
-        // and one girl still on her feet. Every unit on the field weighed
+        // and one cadet still on her feet. Every unit on the field weighed
         // danger by the size of the shell rather than by what the shell would
         // take from her.
         //
@@ -152,7 +152,7 @@ impl Evaluator {
             let stake = 1.0 + riding as f32 / left;
             (fragility * stake).min(MAX_EXPOSURE)
         };
-        // Condition replaces the hit-point fraction: girls and modules
+        // Condition replaces the hit-point fraction: cadets and modules
         // remaining over the full complement. A crew that has taken wounds
         // and lost gear grows cautious by exactly the machinery that used
         // to read a shrinking pool.
@@ -281,7 +281,13 @@ impl Evaluator {
         };
         let objective = match standing {
             Some((mission, formation)) => {
-                self.mission_value(state, tile, mission, formation) * contact_scale
+                self.mission_value(
+                    state,
+                    tile,
+                    mission,
+                    formation,
+                    formation.latitude_for(unit),
+                ) * contact_scale
             }
             None => self.objective_value(state, me.side, tile, condition),
         };
@@ -367,7 +373,7 @@ impl Evaluator {
         // doctrine looks for a way out — so a high one is stubborn, which is
         // why massed armour sits at 0.85 and elastic defence at 0.45. The
         // crossing point is therefore `1 - threshold` of remaining condition
-        // (girls and modules over the full complement, now that there are no
+        // (cadets and modules over the full complement, now that there are no
         // hit points), and
         // wanting out rises from nothing there to everything at destruction.
         // Getting this the wrong way round makes the stubborn doctrine the
@@ -436,18 +442,35 @@ impl Evaluator {
     /// terms (cover, threat, a good shot) to bend the route. A withdrawal is
     /// exempt on purpose: latitude is about *how* to fight, never about
     /// whether an ordered retreat happens.
+    ///
+    /// **A binding order raises the floor and nothing else.** The complaint
+    /// this answers is that a player's order was quietly worth less because
+    /// of who she gave it to: a loose doctrine read "take the ford" at 0.8
+    /// where a tight one read it at 1.2, and no commander issues an order
+    /// meaning four fifths of it. Under [`Latitude::Binding`] the same
+    /// expression is clamped at 1.0 instead of 0.5, which says exactly the
+    /// intended thing — **`delegation` may make a subordinate more literal
+    /// than she was asked to be, never less.** Taking the doctrine out
+    /// altogether was the other candidate and is wrong: it would make a
+    /// binding order pull *less* than a delegated one for a tight doctrine,
+    /// which is not a thing "I mean it" can be allowed to do.
     fn mission_value(
         &self,
         state: &BattleState,
         tile: Hex,
         mission: &crate::battle::Mission,
         formation: &crate::battle::Formation,
+        latitude: crate::battle::Latitude,
     ) -> f32 {
         use crate::battle::Mission;
         /// Worth of a mission's ground, in objective-value units.
         const MISSION_WEIGHT: f32 = 2.0;
         let doctrine = &self.doctrine;
-        let strictness = (1.5 - doctrine.delegation).clamp(0.5, 1.5);
+        let floor = match latitude {
+            crate::battle::Latitude::Delegated => 0.5,
+            crate::battle::Latitude::Binding => 1.0,
+        };
+        let strictness = (1.5 - doctrine.delegation).clamp(floor, 1.5);
         match mission {
             // Take the ground and stand on it: reward for arriving, slope
             // for the road there — the objective shape with the commander
@@ -590,7 +613,7 @@ impl Evaluator {
         let mut ours = 0.0;
         let mut theirs = 0.0;
         for unit in state.alive_units() {
-            // Substance points — girls and module hits still aboard — are
+            // Substance points — cadets and module hits still aboard — are
             // the material currency now that hit points are gone. The
             // absolute scale differs from the old pool; only the ratio
             // below ever mattered.

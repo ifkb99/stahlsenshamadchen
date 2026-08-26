@@ -5,8 +5,8 @@ use tactics_core::ai::{
     AiConfig, AiDriver, AiPlanner, Evaluator, UtilityPlanner, make_battle_planner,
 };
 use tactics_core::battle::{
-    BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Mission, Order,
-    STALEMATE_ROUNDS, SideState, UnitId, los_clear, reachable,
+    BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Latitude, Mission,
+    Order, STALEMATE_ROUNDS, SideState, UnitId, los_clear, reachable,
 };
 use tactics_core::data::DataRegistry;
 use tactics_core::map::{HexMap, UnitPlacement};
@@ -1484,6 +1484,7 @@ fn a_withdrawing_army_fights_its_battle_toward_the_exit() {
             &Order::SetMission {
                 formation: FormationId(index as u32),
                 mission: Mission::Withdraw { via: via.clone() },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("her own lane");
@@ -2107,7 +2108,7 @@ fn a_chain_of_command_that_does_not_join_up_is_a_validation_error() {
         "nor a formation nobody is in: {errors}"
     );
     assert!(
-        errors.contains("only one girl can be in command"),
+        errors.contains("only one cadet can be in command"),
         "nor two crews both claiming to lead: {errors}"
     );
     assert!(
@@ -2257,6 +2258,7 @@ fn setting_a_mission_stores_it_on_the_formation_and_says_so_out_loud() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Advance { to: bridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("the bridge is on the map and the platoon exists");
@@ -2282,6 +2284,7 @@ fn setting_a_mission_stores_it_on_the_formation_and_says_so_out_loud() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Hold { at: None },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("countermanding is legal");
@@ -2308,6 +2311,7 @@ fn a_mission_is_a_standing_order_and_outlives_the_round_it_was_given_in() {
             &Order::SetMission {
                 formation: recon,
                 mission: Mission::Recon { toward: ford },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("the upper ford is on the map");
@@ -2335,6 +2339,7 @@ fn a_mission_for_a_formation_that_does_not_exist_is_refused() {
             &Order::SetMission {
                 formation: past_the_end,
                 mission: Mission::Hold { at: None },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         ),
         Err(tactics_core::battle::OrderError::NoSuchFormation),
@@ -2361,6 +2366,7 @@ fn a_mission_set_after_the_side_has_committed_is_refused() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Hold { at: None },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         ),
         Err(tactics_core::battle::OrderError::AlreadyCommitted),
@@ -2374,6 +2380,7 @@ fn a_mission_set_after_the_side_has_committed_is_refused() {
                 &Order::SetMission {
                     formation: line,
                     mission: Mission::Hold { at: None },
+                    latitude: tactics_core::battle::Latitude::Delegated,
                 },
             )
             .is_ok(),
@@ -2394,6 +2401,7 @@ fn a_withdrawal_must_name_an_exit_this_side_may_use() {
     let withdraw = |via: &str| Order::SetMission {
         formation: armor,
         mission: Mission::Withdraw { via: via.into() },
+        latitude: tactics_core::battle::Latitude::Delegated,
     };
     let refused = Err(tactics_core::battle::OrderError::NoSuchExit);
 
@@ -2449,6 +2457,7 @@ fn a_mission_that_names_ground_off_the_map_is_refused() {
                 &Order::SetMission {
                     formation: armor,
                     mission: mission.clone(),
+                    latitude: tactics_core::battle::Latitude::Delegated,
                 },
             ),
             not_on_map,
@@ -2885,7 +2894,7 @@ fn two_crews_can_kill_each_other_in_the_same_tick() {
     for seed in 0..40 {
         let mut state = duel(&reg, seed);
         let (west, east) = (UnitId(0), UnitId(1));
-        // One girl still fighting — already wounded, so any hit that finds
+        // One cadet still fighting — already wounded, so any hit that finds
         // her is her last — and nothing else aboard but the gun: a single
         // penetration finishes the vehicle, and both crews are in that
         // state when both rounds arrive in the same tick. (Wounded rather
@@ -3186,7 +3195,10 @@ fn an_unknown_planner_falls_back_instead_of_crashing() {
     assert!(
         matches!(
             order,
-            Order::SetMove { .. } | Order::SetFire { .. } | Order::Commit { .. }
+            Order::SetMove { .. }
+                | Order::SetFire { .. }
+                | Order::SetGoal { .. }
+                | Order::Commit { .. }
         ),
         "a typo in a mod should degrade to a working planner, got {order:?}"
     );
@@ -3309,12 +3321,12 @@ fn a_map_can_place_a_unit_looking_the_wrong_way() {
     );
 }
 
-/// The point of the roster: a girl is the same person on either side of a
+/// The point of the roster: a cadet is the same person on either side of a
 /// battle. Before this she was a lookup into static mod data, so nothing that
 /// happened to her could be recorded anywhere.
 #[test]
 fn girls_persist_across_battles_and_recover_over_days() {
-    use tactics_core::roster::{CasualtyRules, CrewFate, GirlStatus};
+    use tactics_core::roster::{CadetStatus, CasualtyRules, CrewFate};
 
     let reg = registry();
     let mut state = OverworldState::from_map(&reg, "frontier", 9).expect("overworld");
@@ -3325,28 +3337,29 @@ fn girls_persist_across_battles_and_recover_over_days() {
         "frontier's armies should have enlisted their crews"
     );
     let army = state.side_armies(0).next().unwrap();
-    let girl = army.units[0].crew[0];
+    let cadet = army.units[0].crew[0];
     assert_eq!(
-        state.roster.get(girl).unwrap().owner,
+        state.roster.get(cadet).unwrap().owner,
         0,
-        "a girl belongs to the academy whose army she rides with"
+        "a cadet belongs to the academy whose army she rides with"
     );
-    assert_eq!(state.roster.get(girl).unwrap().battles, 0);
+    assert_eq!(state.roster.get(cadet).unwrap().battles, 0);
 
     // Surviving a battle is recorded on her, not on the vehicle.
     let attacker = state.side_armies(0).next().unwrap().id;
     let defender = state.side_armies(1).next().unwrap().id;
     let survivors = vec![(attacker, state.army(attacker).unwrap().units.clone())];
     state.apply_battle_result(&reg, attacker, defender, &survivors, &[]);
-    assert_eq!(state.roster.get(girl).unwrap().battles, 1);
+    assert_eq!(state.roster.get(cadet).unwrap().battles, 1);
 
     // And so is being shot out of it. With permadeath off, the worst case is
     // a long recovery rather than a funeral.
     state.rules = CasualtyRules { permadeath: false };
     let loss = tactics_core::overworld::CrewLoss {
-        girl,
+        cadet,
         vehicle: state.army(attacker).unwrap().units[0].vehicle.clone(),
         killed_by: Some(tactics_core::data::DamageType::Kinetic),
+        found: None,
     };
     let events = state.apply_battle_result(&reg, attacker, defender, &[], &[loss]);
     assert!(
@@ -3358,7 +3371,7 @@ fn girls_persist_across_battles_and_recover_over_days() {
     );
 
     // Whatever befell her, it is temporary, and the campaign clock resolves it.
-    let status = state.roster.get(girl).unwrap().status;
+    let status = state.roster.get(cadet).unwrap().status;
     assert!(
         !status.is_permanent(),
         "no permanent losses with the rule off"
@@ -3368,8 +3381,8 @@ fn girls_persist_across_battles_and_recover_over_days() {
             state.roster.advance_day();
         }
         assert_eq!(
-            state.roster.get(girl).unwrap().status,
-            GirlStatus::Ready,
+            state.roster.get(cadet).unwrap().status,
+            CadetStatus::Ready,
             "she should come back after her days are served"
         );
     }
@@ -3379,30 +3392,30 @@ fn girls_persist_across_battles_and_recover_over_days() {
 /// before the shooting stopped, and is walking home.
 #[test]
 fn a_lost_girl_walks_back_rather_than_being_gone() {
-    use tactics_core::roster::{GirlStatus, Roster};
+    use tactics_core::roster::{CadetStatus, Roster};
     let mut roster = Roster::new();
     let reg = registry();
-    let girl = roster
+    let cadet = roster
         .enlist_from_registry(&reg, 0, "anka")
         .expect("anka exists");
-    roster.get_mut(girl).unwrap().status = GirlStatus::Lost { days: 2 };
+    roster.get_mut(cadet).unwrap().status = CadetStatus::Lost { days: 2 };
 
-    assert!(!roster.get(girl).unwrap().status.is_permanent());
+    assert!(!roster.get(cadet).unwrap().status.is_permanent());
     roster.advance_day();
     assert_eq!(
-        roster.get(girl).unwrap().status,
-        GirlStatus::Lost { days: 1 },
+        roster.get(cadet).unwrap().status,
+        CadetStatus::Lost { days: 1 },
         "still walking"
     );
     roster.advance_day();
     assert!(
-        roster.get(girl).unwrap().status.is_ready(),
+        roster.get(cadet).unwrap().status.is_ready(),
         "she made it back"
     );
 }
 
 /// A trait changes *whether or when* a rule applies, which is what separates
-/// it from a skill. Juno's lead foot is the clearest case: the same girl in the
+/// it from a skill. Juno's lead foot is the clearest case: the same cadet in the
 /// same tank drives differently depending on what is under her tracks.
 #[test]
 fn a_trait_can_depend_on_where_the_check_is_happening() {
@@ -3446,7 +3459,7 @@ fn a_trait_can_depend_on_where_the_check_is_happening() {
         "a lead foot should be quick on a road and worse off it: {on_road} vs {off_road}"
     );
 
-    // And the gift and the cost are both real, measured against the girl she
+    // And the gift and the cost are both real, measured against the cadet she
     // would have been without it.
     let plain = reg.skill("driving").unwrap().level_for(
         &reg.core_index,
@@ -3490,9 +3503,9 @@ fn a_paired_trait_costs_something() {
 }
 
 /// The reaction rules answer "how long before she acts", which is the number
-/// slice 5 will spend when a girl has to respond to something she was not
+/// slice 5 will spend when a cadet has to respond to something she was not
 /// told about. Nothing consumes it yet — see the note in
-/// `assets/wiki/reference/girls.md` on why gating *planned* execution was the
+/// `assets/wiki/reference/cadets.md` on why gating *planned* execution was the
 /// wrong place for it.
 #[test]
 fn reaction_delay_reads_the_crew_that_is_aboard() {
@@ -3511,10 +3524,10 @@ fn reaction_delay_reads_the_crew_that_is_aboard() {
     let quick = make(&mut roster, "quick", 16, 16);
     let slow = make(&mut roster, "slow", 5, 5);
 
-    let delay = |girl| {
+    let delay = |cadet| {
         reg.reaction.delay(
             roster
-                .skill_level(&reg, girl, "reactions", &Default::default())
+                .skill_level(&reg, cadet, "reactions", &Default::default())
                 .unwrap(),
         )
     };
@@ -3602,9 +3615,524 @@ fn a_breaking_crew_refuses_to_advance_and_says_so() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            BattleEvent::OrderRefused { unit, .. } if *unit == UnitId(0)
+            BattleEvent::Defied { unit, .. } if *unit == UnitId(0)
         )),
         "the refusal has to be said out loud: {events:?}"
+    );
+}
+
+// --- defiance: what a crew does instead (direction step 4, tax 2) -----------
+
+/// Force one response for every crew, so a test about what flight *does* is
+/// not also a test about who reaches for it. `base` outranks the `core` term
+/// by more than any core can differ, which is the point: temperament has its
+/// own tests.
+fn always(reg: &mut DataRegistry, response: &str) {
+    reg.morale.defiance = vec![tactics_core::data::DefianceDef {
+        id: response.into(),
+        name: "does it".into(),
+        response: serde_json::from_value(serde_json::json!(response)).expect("a real response"),
+        core: None,
+        base: 100,
+    }];
+}
+
+/// Two mediums far enough apart on a long field that a frightened crew has
+/// somewhere to reverse to. `duel`'s map is five columns wide, which is a
+/// fine place to shoot at somebody and no place at all to run away.
+fn flight_stage(reg: &DataRegistry, seed: u64) -> BattleState {
+    let row = "g".repeat(20);
+    two_side_battle(
+        reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([8, 1], 0, "medium_tank", "Runner"),
+            unit_at([13, 1], 1, "medium_tank", "Gun"),
+        ],
+        seed,
+    )
+}
+
+/// The pressure that puts a crew off the end of the shipped ladder.
+fn breaking(reg: &DataRegistry) -> u32 {
+    reg.morale
+        .rungs
+        .last()
+        .expect("the shipped ladder has rungs")
+        .at_pressure
+}
+
+#[test]
+fn a_frightened_crew_reverses_out_of_contact() {
+    // The review's second fun tax, and the shape of the defect was worse than
+    // it read: a crew who would not advance would not retreat either, and
+    // would not even break for cover, because all three went through one
+    // `obeys` gate. "A broken unit that cannot retreat is free kills for the
+    // enemy" — so morale narrated a death spiral instead of buying anything.
+    //
+    // Away from what is shooting at her, note, and not toward a lane. She is
+    // not navigating.
+    let mut reg = registry_wireless();
+    always(&mut reg, "flight");
+    let mut state = flight_stage(&reg, 61);
+    state.units[0].pressure = breaking(&reg);
+
+    let before = state.unit(UnitId(0)).expect("on the field").pos;
+    let enemy = state.unit(UnitId(1)).expect("on the field").pos;
+    let events = play_round(&reg, &mut state);
+    let after = state.unit(UnitId(0)).expect("on the field").pos;
+
+    assert!(
+        after.distance_to(enemy) > before.distance_to(enemy),
+        "she should have put ground between herself and the gun: {before:?} -> {after:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            BattleEvent::Defied { unit, to: Some(_), .. } if *unit == UnitId(0)
+        )),
+        "and it has to be said out loud, with where she went: {events:?}"
+    );
+}
+
+#[test]
+fn a_crew_cannot_refuse_the_decision_she_made_herself() {
+    // The trap under the whole feature. A refusing crew has her ordered path
+    // thrown away; flight then lays a path of her own. If the refusal check
+    // cannot tell the two apart it selects her again on the next tick, throws
+    // her own route away, lays it again, and she stands in place shaking for
+    // the rest of the battle — a livelock that looks exactly like the freeze
+    // this was built to remove.
+    let mut reg = registry_wireless();
+    always(&mut reg, "flight");
+    let mut state = flight_stage(&reg, 62);
+    state.units[0].pressure = breaking(&reg);
+    let enemy = state.unit(UnitId(1)).expect("on the field").pos;
+
+    let mut range = state
+        .unit(UnitId(0))
+        .expect("on the field")
+        .pos
+        .distance_to(enemy);
+    let mut opened = 0;
+    for _ in 0..3 {
+        if state.is_over() {
+            break;
+        }
+        play_round(&reg, &mut state);
+        let Some(me) = state.unit(UnitId(0)) else {
+            break;
+        };
+        let now = me.pos.distance_to(enemy);
+        if now > range {
+            opened += 1;
+        }
+        range = now;
+    }
+    assert!(
+        opened >= 2,
+        "she has to keep going, not re-argue with herself every tick"
+    );
+}
+
+#[test]
+fn a_crew_gone_to_ground_will_not_fire_on_her_own_initiative() {
+    // Freeze had to cost something or the third response was a label rather
+    // than a rule. She is a passenger in her own vehicle: nothing in front of
+    // her prompts her to shoot. Her gun is not broken, though, and the
+    // difference is the whole of it — an order still reaches the gunner.
+    let mut reg = registry_wireless();
+    always(&mut reg, "freeze");
+    let mut state = duel(&reg, 63);
+    state.units[0].pressure = breaking(&reg);
+
+    let events = play_round(&reg, &mut state);
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            BattleEvent::ShotFired { attacker, opportunity: true, .. } if *attacker == UnitId(0)
+        )),
+        "she is not looking for a shot: {events:?}"
+    );
+
+    let mut told = duel(&reg, 63);
+    told.units[0].pressure = breaking(&reg);
+    told.apply(
+        &reg,
+        &Order::SetFire {
+            unit: UnitId(0),
+            fire: FireIntent::Target {
+                target: UnitId(1),
+                weapon: 0,
+            },
+        },
+    )
+    .expect("the order is accepted");
+    let ordered = play_round(&reg, &mut told);
+    assert!(
+        ordered.iter().any(|e| matches!(
+            e,
+            BattleEvent::ShotFired { attacker, .. } if *attacker == UnitId(0)
+        )),
+        "but a target called by her commander is still shot at: {ordered:?}"
+    );
+}
+
+#[test]
+fn a_mod_that_names_no_defiance_freezes_exactly_as_it_always_did() {
+    // Additivity, the same rule difficulty-as-a-mod and the zeroed command
+    // block are held to. Freezing was the only thing a broken crew could ever
+    // do, so a mod that declines to describe defiance must still get it —
+    // which is also why `Freeze` is the enum's `#[default]` and why ties in
+    // the score go to the first entry listed.
+    let mut reg = registry_wireless();
+    reg.morale.defiance.clear();
+    let mut state = flight_stage(&reg, 64);
+    state.units[0].pressure = breaking(&reg);
+
+    let forward = tactics_core::offset_to_hex(10, 1);
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: UnitId(0),
+                to: forward,
+            },
+        )
+        .expect("the order is accepted");
+    let events = play_round(&reg, &mut state);
+
+    // Behaviour rather than a final position, for the reason
+    // `a_breaking_crew_refuses_to_advance_and_says_so` states: the round can
+    // kill her, and a dead unit has no position to compare.
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            BattleEvent::UnitMoved { unit, .. } if *unit == UnitId(0)
+        )),
+        "she does not move a hex, in any direction, which is what she always did: {events:?}"
+    );
+}
+
+#[test]
+fn the_senior_cadet_still_fighting_decides_how_the_crew_breaks() {
+    // Not the best score aboard and not an average: somebody says "back her
+    // out" or "keep firing" and the rest do it. In this engine that is
+    // whoever is left in the most forward seat, so a commander going out
+    // hands her temperament to the next woman down along with everything
+    // else — the same leaders-last ordering the interior model already uses.
+    let mut reg = registry_wireless();
+    reg.morale.defiance = vec![
+        tactics_core::data::DefianceDef {
+            id: "fight".into(),
+            name: "fights on".into(),
+            response: tactics_core::data::DefianceResponse::Fight,
+            core: Some("will".into()),
+            base: 0,
+        },
+        tactics_core::data::DefianceDef {
+            id: "flight".into(),
+            name: "falls back".into(),
+            response: tactics_core::data::DefianceResponse::Flight,
+            core: Some("speed".into()),
+            base: 0,
+        },
+    ];
+    // Anka has will 13 and no speed of her own; Sofia has speed 12 and no
+    // will. Read off the shipped characters on purpose — a temperament rule
+    // that only works on invented cadets is not a rule about this game.
+    let (mut state, ours) = crewed_stage(&reg, &["anka", "sofia"]);
+    state.unit_mut(ours).expect("on the field").pressure = breaking(&reg);
+    assert_eq!(
+        state.defiance(&reg, state.unit(ours).expect("on the field")),
+        tactics_core::data::DefianceResponse::Fight,
+        "her commander is the steady one, so the tank is"
+    );
+
+    let unit = state.unit_mut(ours).expect("on the field");
+    unit.crew_state = vec![
+        tactics_core::battle::CrewCondition::Out,
+        tactics_core::battle::CrewCondition::Fine,
+    ];
+    assert_eq!(
+        state.defiance(&reg, state.unit(ours).expect("on the field")),
+        tactics_core::data::DefianceResponse::Flight,
+        "with the commander out it is the next cadet's nerve that answers"
+    );
+}
+
+#[test]
+fn an_officer_in_sight_settles_a_crew_faster() {
+    // The half of the chain of command that had never paid anybody anything.
+    // Losing a leader has cost a formation its nerve since `leader_lost` was
+    // added; still having one bought nothing, so there was no reason beyond
+    // succession bookkeeping to keep an officer alive.
+    //
+    // Sight rather than the radio net, and deliberately: a commander steadies
+    // a frightened crew by being visibly still in it, which does not travel
+    // down a wire. It is also the only version that leaves a zeroed `command`
+    // block behaving identically to no block at all, because a crew with no
+    // radio is out of contact under one and not the other.
+    let mut reg = registry_wireless();
+    reg.morale.recovery_near_leader = 3;
+    let settled = |reg: &DataRegistry, blind: bool| -> u32 {
+        // A map that declares a formation, because a rally is a thing a chain
+        // of command does and `two_side_battle`'s map has no chain.
+        let row = "g".repeat(50);
+        let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+            "id": "rally_stage",
+            "palette": { "g": "grass" },
+            "rows": [&row, &row, &row],
+            "formations": [{ "id": "ours", "side": 0 }],
+        }))
+        .expect("fixture map");
+        let map = HexMap::from_map_file(&file).expect("map parses");
+        let formed = |at: [i32; 2], name: &str, leads: bool| UnitPlacement {
+            aboard_at: None,
+            at,
+            side: 0,
+            vehicle: "medium_tank".into(),
+            crew: Vec::new(),
+            name: Some(name.into()),
+            facing: None,
+            formation: Some("ours".into()),
+            leads,
+        };
+        // A second side is required or the battle is over before anybody
+        // recovers anything — one living side wins immediately, and pressure
+        // sheds at the *start* of the next round. She is parked forty hexes
+        // off and blind to everyone, because a firefight would move this
+        // number for reasons that are not the officer.
+        let placements = vec![
+            formed([0, 1], "Leader", true),
+            formed([2, 1], "Follower", false),
+            unit_at([45, 1], 1, "medium_tank", "Nobody"),
+        ];
+        let sides = vec![
+            SideState {
+                name: "West".into(),
+                ai: None,
+            },
+            SideState {
+                name: "East".into(),
+                ai: None,
+            },
+        ];
+        let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+        let mut state = BattleState::from_placements(
+            reg,
+            map,
+            sides,
+            &placements,
+            &crews,
+            std::sync::Arc::new(roster),
+            71,
+        );
+        // High enough that neither branch reaches the floor: pressure
+        // saturates at zero, and a comparison against a floor measures the
+        // floor.
+        state.units[1].pressure = 60;
+        if blind {
+            // Put the officer where her crew cannot see her, by taking her
+            // sight line rather than her life: killing her would charge the
+            // formation `leader_lost` and measure that instead.
+            // Twenty-odd hexes from her crew and twenty from the enemy:
+            // vision is ten to twenty, so she is out of everybody's sight and
+            // this measures the officer and nothing else. Parking her beside
+            // the enemy instead started a firefight and moved the number.
+            state.units[0].pos = tactics_core::offset_to_hex(25, 1);
+        }
+        // Recovery is paid when a round opens, which `resolve_round` reaches
+        // at the end of the round it played.
+        play_round(reg, &mut state);
+        state.unit(UnitId(1)).expect("on the field").pressure
+    };
+    let with_her = settled(&reg, false);
+    let without = settled(&reg, true);
+    assert!(
+        with_her < without,
+        "a crew who can see her officer settles faster: {with_her} against {without}"
+    );
+    assert_eq!(
+        without - with_her,
+        reg.morale.recovery_near_leader,
+        "and by exactly what the mod said, so the number means what it says"
+    );
+}
+
+#[test]
+fn a_side_that_sees_clearly_is_untouched_by_the_blur() {
+    // Difficulty noise changed shape — from an independent draw per candidate
+    // tile to one lean per unit per round — and the pin that has to survive
+    // that is the additivity rule: difficulty is content, and the top of the
+    // scale has none of it. A planner at difficulty 5 must plan exactly as it
+    // would with the whole mechanism deleted.
+    //
+    // This is the cheap half of the check. The expensive half is the
+    // determinism baseline, which fights at difficulty 3 and therefore moves
+    // when this changes; if a future edit makes THIS test fail, the noise has
+    // leaked into a side that is supposed to see the field as it is.
+    let reg = registry_wireless();
+    let orders_from = |difficulty: u8| -> Vec<String> {
+        // A shipped map, because the point is a field with enough ground on
+        // it to choose between. A twenty-hex test strip gives every planner
+        // the same answer whatever it can see, which pins nothing.
+        let mut state =
+            BattleState::from_map(&reg, "battle_plains", 93).expect("a shipped battle map");
+        let mut planner = UtilityPlanner::with_difficulty(difficulty, 5);
+        let mut log = Vec::new();
+        for _ in 0..6 {
+            if state.is_over() {
+                break;
+            }
+            log.push(format!("{:?}", planner.next_order(&reg, &state, 0)));
+            play_round(&reg, &mut state);
+        }
+        log
+    };
+    let sharp = orders_from(5);
+    assert!(!sharp.is_empty(), "the scene has to produce orders at all");
+    assert_ne!(
+        sharp,
+        orders_from(3),
+        "a blurred side must actually play differently, or this pins nothing"
+    );
+    // The real assertion: two difficulty-5 planners agree, and they agree
+    // because neither of them drew anything, not because the rng happened to
+    // land twice the same way.
+    assert_eq!(sharp, orders_from(5));
+}
+
+// --- goals: an intention that outlives a round --------------------------
+
+#[test]
+fn a_crew_keeps_the_goal_she_chose_until_it_is_finished() {
+    // The point of the whole layer. A greedy planner re-decides where it is
+    // going every round and therefore never gets anywhere; measured, that was
+    // a medium tank driving 53 hexes over 19 rounds to end 10 hexes further
+    // forward. A goal is kept, so the second round's plan is the first
+    // round's plan continued.
+    let reg = registry_wireless();
+    let mut state =
+        BattleState::from_map(&reg, "battle_plains", 101).expect("a shipped battle map");
+    let mut planner = UtilityPlanner::with_difficulty(5, 11);
+
+    let mut seen: Vec<(tactics_core::battle::Goal, tactics_core::Hex)> = Vec::new();
+    for _ in 0..6 {
+        if state.is_over() {
+            break;
+        }
+        loop {
+            let order = planner.next_order(&reg, &state, 0);
+            if matches!(order, Order::Commit { .. }) {
+                break;
+            }
+            let _ = state.apply(&reg, &order);
+        }
+        if let Some(me) = state.unit(UnitId(0))
+            && let Some(goal) = me.goal
+        {
+            seen.push((goal, me.pos));
+        }
+        play_round(&reg, &mut state);
+    }
+    assert!(
+        seen.len() >= 4,
+        "she should be planning every round: {seen:?}"
+    );
+    assert!(
+        seen.windows(2).any(|w| w[0].0 == w[1].0),
+        "she has to carry an intention across a round at all: {seen:?}"
+    );
+    // The real rule, and the one worth pinning: she only ever changes her
+    // mind by *finishing*. Anything else is the re-deciding this layer was
+    // built to stop, and it would not show up as a goal that never persists —
+    // it would show up as one that persists for a while and then wanders.
+    for pair in seen.windows(2) {
+        let ((was, _), (now, at)) = (pair[0], pair[1]);
+        if was != now {
+            assert_eq!(
+                was,
+                tactics_core::battle::Goal::Take(at),
+                "she changed her goal without having arrived at the old one: {seen:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_order_replaces_her_own_ideas_rather_than_competing_with_them() {
+    // The rule the direction memo exists to defend, restated where the goal
+    // layer could most easily have undone it. A mission that names ground is
+    // not one candidate among the objectives she likes the look of — it is
+    // the only one. Letting it compete was the first draft, and it meant a
+    // crew under orders and a crew with none chose the same ground, which is
+    // an order that has stopped being one.
+    //
+    // Note this is also the hook for subordinate initiative: that chunk
+    // widens this list by doctrine, and nothing else has to move.
+    let reg = registry_wireless();
+    let state = BattleState::from_map(&reg, "battle_plains", 102).expect("a shipped map");
+    let unit = UnitId(0);
+    let free = tactics_core::ai::goal::candidates(&reg, &state, unit, None, None);
+    assert!(
+        free.len() > 2,
+        "with no orders she has the run of the map: {free:?}"
+    );
+
+    let told = tactics_core::offset_to_hex(30, 30);
+    let under_orders = tactics_core::ai::goal::candidates(
+        &reg,
+        &state,
+        unit,
+        Some(&tactics_core::battle::Mission::Advance { to: told }),
+        None,
+    );
+    assert_eq!(
+        under_orders,
+        vec![
+            tactics_core::battle::Goal::Take(told),
+            tactics_core::battle::Goal::Hold
+        ],
+        "told where to go, that is where she is going"
+    );
+}
+
+#[test]
+fn two_crews_do_not_drive_for_the_same_hex() {
+    // A section takes a piece of ground each. Said in the candidate list so
+    // that it is said once and visibly, rather than as a tie-break buried in
+    // whatever does the scoring — which is where the equivalent problem lived
+    // before, as the plateau rule, and where it was very hard to see.
+    let reg = registry_wireless();
+    let mut state = BattleState::from_map(&reg, "battle_plains", 103).expect("a shipped map");
+    let (first, second) = (UnitId(0), UnitId(1));
+    let side = state.unit(first).expect("on the field").side;
+    assert_eq!(
+        state.unit(second).expect("on the field").side,
+        side,
+        "this test needs two crews of the same side"
+    );
+
+    let mine = tactics_core::ai::goal::candidates(&reg, &state, first, None, None);
+    let taken = mine
+        .iter()
+        .find_map(|g| match g {
+            tactics_core::battle::Goal::Take(hex) => Some(*hex),
+            tactics_core::battle::Goal::Hold => None,
+        })
+        .expect("there is ground worth having on this map");
+    state.unit_mut(first).expect("on the field").goal =
+        Some(tactics_core::battle::Goal::Take(taken));
+
+    let hers = tactics_core::ai::goal::candidates(&reg, &state, second, None, None);
+    assert!(
+        !hers.contains(&tactics_core::battle::Goal::Take(taken)),
+        "somebody is already going there: {hers:?}"
+    );
+    assert!(
+        hers.len() > 1,
+        "and she still has somewhere of her own to go"
     );
 }
 
@@ -3645,7 +4173,7 @@ fn crews_report_moving_up_the_ladder() {
     assert!(said, "taking fire should eventually be reported as morale");
 }
 
-/// Difficulty is a mod. A one-rung ladder has to produce girls who always do
+/// Difficulty is a mod. A one-rung ladder has to produce cadets who always do
 /// as they are told, with nothing in Rust switched off to achieve it.
 #[test]
 fn a_gentle_mod_has_girls_who_never_refuse() {
@@ -3684,7 +4212,7 @@ fn a_gentle_mod_has_girls_who_never_refuse() {
     assert!(
         !events
             .iter()
-            .any(|e| matches!(e, BattleEvent::OrderRefused { .. })),
+            .any(|e| matches!(e, BattleEvent::Defied { .. })),
         "nobody refuses in the gentle game: {events:?}"
     );
     assert_ne!(
@@ -3725,7 +4253,7 @@ fn a_map_with_formations_but_no_missions_fights_exactly_as_the_flat_pool_did() {
     //
     // Succession narrowed this from "identical" to "identical in deeds", the
     // same way the command block did in chunk 5. A formation whose commander
-    // burns hands over to the next girl whether or not anybody priced a
+    // burns hands over to the next cadet whether or not anybody priced a
     // radio, and says so — so `CommandPassed` is set aside here as words.
     // What it *costs* is `morale.leader_lost`, and at zero, which is what a
     // mod that never mentions the field gets, it costs nothing: the rest of
@@ -3790,6 +4318,7 @@ fn a_formation_advances_on_the_ground_its_mission_names() {
             &Order::SetMission {
                 formation,
                 mission: Mission::Advance { to: bridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -3839,6 +4368,7 @@ fn an_ordered_withdrawal_needs_no_wounds() {
                 mission: Mission::Withdraw {
                     via: "west_road".into(),
                 },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -4134,6 +4664,7 @@ fn an_executor_only_command_fills_gaps_without_issuing_missions() {
             &Order::SetMission {
                 formation,
                 mission: Mission::Advance { to: target },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("the player may order her own formation");
@@ -4361,7 +4892,7 @@ fn command_rules(radius: u32, relay: bool, base_ticks: u32) -> tactics_core::dat
         // about the radio, and the visual medium has its own.
         visual_range: 0,
         // Zero per point, so these tests are about the rules rather than about
-        // which girl happens to be sitting in the radio seat.
+        // which cadet happens to be sitting in the radio seat.
         radius_per_signals: 0,
         relay,
         // These are battle tests; the campaign's own radius has its own.
@@ -4409,6 +4940,7 @@ fn orders_take_time_to_arrive_when_the_radio_says_so() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Advance { to: bridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("the bridge is on the map");
@@ -4575,7 +5107,14 @@ fn quiet_round(
     let mut state = BattleState::from_map(reg, "river_crossing", 5).expect("battle");
     if let Some((formation, mission)) = mission {
         state
-            .apply(reg, &Order::SetMission { formation, mission })
+            .apply(
+                reg,
+                &Order::SetMission {
+                    formation,
+                    mission,
+                    latitude: tactics_core::battle::Latitude::Delegated,
+                },
+            )
             .expect("a legal mission");
     }
     commit_all(reg, &mut state);
@@ -4632,7 +5171,7 @@ fn plan_one(
 
 #[test]
 fn a_cut_off_unit_keeps_the_orders_she_had() {
-    // Out of contact is not amnesia and it is not license: a girl who loses
+    // Out of contact is not amnesia and it is not license: a cadet who loses
     // the wire soldiers on the standing orders she was carrying when it went
     // dead. What she cannot do is hear anything new. This inverts the first
     // model this test pinned — "cut off means unmissioned" — which measured
@@ -4708,7 +5247,7 @@ fn a_cut_off_unit_keeps_the_orders_she_had() {
         "nobody is cut off when the radius covers the map"
     );
 
-    // And the twin with no chain of command at all: what an unmissioned girl
+    // And the twin with no chain of command at all: what an unmissioned cadet
     // would do, which the deaf one must NOT match — she has orders.
     let mut twin = cut_off.clone();
     twin.command = Default::default();
@@ -4735,7 +5274,7 @@ fn a_cut_off_unit_keeps_the_orders_she_had() {
 
 #[test]
 fn an_order_never_heard_does_not_steer_her() {
-    // The counterpart: a girl already out of contact when the order is given
+    // The counterpart: a cadet already out of contact when the order is given
     // never receives it. The formation's standing mission changes behind her
     // back; she fights on what she knew — which was nothing.
     let reg = registry();
@@ -4768,6 +5307,7 @@ fn an_order_never_heard_does_not_steer_her() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Hold { at: Some(start) },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("a legal mission");
@@ -5048,7 +5588,7 @@ fn in_formation(mut placement: UnitPlacement, formation: &str, leads: bool) -> U
 }
 
 /// Beat a vehicle down to the state the old tests wrote as `hp = 1`:
-/// every girl wounded, everything but the running gear destroyed. Her
+/// every cadet wounded, everything but the running gear destroyed. Her
 /// condition falls below any doctrine's breaking point while she stays
 /// alive, mobile, and reapable by nothing — exactly what a withdraw test
 /// needs its casualties to be.
@@ -5081,7 +5621,7 @@ fn command_passes_to_the_next_girl_in_the_order_of_battle() {
     // Succession is formation machinery, not wire machinery, so this runs on
     // a registry with no `command` block at all: who is in charge of a platoon
     // is a fact about the platoon, and a mod that never priced a radio still
-    // has one girl senior to another. Seniority is the order the map author
+    // has one cadet senior to another. Seniority is the order the map author
     // wrote her formation down in — lowest living unit id — which is the same
     // authorable rule `leads` follows for the first leader.
     let reg = registry_wireless();
@@ -5128,7 +5668,7 @@ fn command_passes_to_the_next_girl_in_the_order_of_battle() {
     assert_eq!(
         formation.founding_leader,
         Some(leader),
-        "but the girl the map put in charge is not rewritten by her own death \
+        "but the cadet the map put in charge is not rewritten by her own death \
          — a scenario's loss condition asks about her, not her successor"
     );
     assert!(
@@ -5177,7 +5717,7 @@ fn strung_out_platoon(reg: &DataRegistry) -> BattleState {
 fn a_successor_leads_a_formation_back_into_contact() {
     // This inverts a rule an earlier chunk pinned: a dead leader used to
     // strand her whole formation out of contact for the rest of the battle,
-    // because the net was anchored on a girl who was no longer there. She is
+    // because the net was anchored on a cadet who was no longer there. She is
     // replaced within the tick now, and the net re-forms around wherever her
     // successor is standing — which is not where the commander was, so who is
     // in contact genuinely changes hands with the command.
@@ -5206,7 +5746,7 @@ fn a_successor_leads_a_formation_back_into_contact() {
     let events = state.step_tick(&reg);
 
     let formation = &state.formations()[column.index()];
-    assert_eq!(formation.leader, Some(heir), "the next girl has it");
+    assert_eq!(formation.leader, Some(heir), "the next cadet has it");
     assert!(
         formation.in_contact(heir) && formation.in_contact(neighbour),
         "and the net re-forms around her: {:?}",
@@ -5254,7 +5794,7 @@ fn losing_a_commander_shakes_her_formation() {
         assert_eq!(
             state.unit(*id).expect("still on the field").pressure,
             5,
-            "every girl in the column felt it, however far down the road she is"
+            "every cadet in the column felt it, however far down the road she is"
         );
     }
     assert_eq!(
@@ -5426,7 +5966,7 @@ fn a_loss_condition_must_name_a_formation_of_its_own_side() {
     );
     assert!(
         errors.contains("but that formation belongs to side 0"),
-        "and a side cannot stake the battle on somebody else's girls: {errors}"
+        "and a side cannot stake the battle on somebody else's cadets: {errors}"
     );
 }
 
@@ -5574,7 +6114,7 @@ fn radio_stage(reg: &DataRegistry, seed: u64) -> BattleState {
 }
 
 /// A two-hex radio, nobody relaying, no flags: the narrowest net there is, so
-/// a girl ten hexes out is out for a reason a test can state in one line.
+/// a cadet ten hexes out is out for a reason a test can state in one line.
 fn radio_rules() -> DataRegistry {
     let mut reg = registry();
     reg.command = Some(command_rules(2, false, 0));
@@ -5590,7 +6130,7 @@ fn settle(reg: &DataRegistry, state: &mut BattleState) -> Vec<BattleEvent> {
 
 #[test]
 fn an_order_to_a_cut_off_unit_waits_at_the_radio() {
-    // The heart of the chunk: an order to a girl who cannot hear it is
+    // The heart of the chunk: an order to a cadet who cannot hear it is
     // *accepted* and held, not refused. Refusing was the old model, and it
     // made the player's only recourse "remember to click again", which is
     // bookkeeping rather than command.
@@ -5608,6 +6148,7 @@ fn an_order_to_a_cut_off_unit_waits_at_the_radio() {
                 unit: crew,
                 to: Some(first),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("accepted, not refused");
@@ -5644,6 +6185,7 @@ fn an_order_to_a_cut_off_unit_waits_at_the_radio() {
                 unit: crew,
                 to: Some(second),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("accepted too");
@@ -5651,7 +6193,7 @@ fn an_order_to_a_cut_off_unit_waits_at_the_radio() {
         state.command.waiting_for(crew).unwrap().destination,
         Some(second)
     );
-    assert_eq!(state.command.waiting().len(), 1, "one slot, one girl");
+    assert_eq!(state.command.waiting().len(), 1, "one slot, one cadet");
 }
 
 #[test]
@@ -5677,6 +6219,7 @@ fn waiting_orders_arrive_with_contact_and_are_repathed() {
                 unit: crew,
                 to: Some(to),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("accepted");
@@ -5749,6 +6292,7 @@ fn clearing_reaches_the_radio_but_not_the_girl() {
                 unit: crew,
                 to: Some(tactics_core::offset_to_hex(4, 0)),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("accepted, and waiting");
@@ -5783,6 +6327,7 @@ fn a_dead_girl_takes_no_delivery() {
                 unit: crew,
                 to: Some(tactics_core::offset_to_hex(13, 0)),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("accepted");
@@ -5820,6 +6365,7 @@ fn a_radioed_order_to_a_girl_on_the_net_is_just_an_order() {
                 unit: leader,
                 to: Some(to),
                 fire: Some(FireIntent::Area { at, weapon: 0 }),
+                latitude: Latitude::Delegated,
             },
         )
         .expect("her own commander, on the net");
@@ -5865,6 +6411,7 @@ fn a_radioed_order_to_a_girl_on_the_net_is_just_an_order() {
                     target: UnitId(0),
                     weapon: 0
                 }),
+                latitude: Latitude::Delegated,
             },
         ),
         Err(tactics_core::battle::OrderError::FriendlyTarget)
@@ -5896,6 +6443,7 @@ fn a_plan_advances_when_its_first_leg_is_done() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Advance { to: near },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -5905,6 +6453,7 @@ fn a_plan_advances_when_its_first_leg_is_done() {
             &Order::QueueMission {
                 formation: armor,
                 mission: Mission::Hold { at: Some(hold_at) },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -5952,6 +6501,7 @@ fn nothing_follows_a_stand_fast_or_a_retreat() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Hold { at: None },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -5961,6 +6511,7 @@ fn nothing_follows_a_stand_fast_or_a_retreat() {
             &Order::QueueMission {
                 formation: armor,
                 mission: Mission::Advance { to: anywhere },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         ),
         Err(tactics_core::battle::OrderError::MissionIsTerminal),
@@ -5975,6 +6526,7 @@ fn nothing_follows_a_stand_fast_or_a_retreat() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Advance { to: anywhere },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -5986,6 +6538,7 @@ fn nothing_follows_a_stand_fast_or_a_retreat() {
                 mission: Mission::Withdraw {
                     via: "west_road".into(),
                 },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -5995,6 +6548,7 @@ fn nothing_follows_a_stand_fast_or_a_retreat() {
             &Order::QueueMission {
                 formation: armor,
                 mission: Mission::Advance { to: anywhere },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         ),
         Err(tactics_core::battle::OrderError::MissionIsTerminal),
@@ -6020,6 +6574,7 @@ fn an_amendment_travels_the_wire_like_any_order() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Advance { to: bridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -6036,6 +6591,7 @@ fn an_amendment_travels_the_wire_like_any_order() {
             &Order::QueueMission {
                 formation: armor,
                 mission: Mission::Recon { toward: bridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -6043,7 +6599,7 @@ fn an_amendment_travels_the_wire_like_any_order() {
     assert!(
         matches!(
             f.incoming,
-            Some((tactics_core::battle::MissionChange::Append(_), _))
+            Some((tactics_core::battle::MissionChange::Append { .. }, _))
         ),
         "the amendment is in the air, not in the plan"
     );
@@ -6057,6 +6613,7 @@ fn an_amendment_travels_the_wire_like_any_order() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Hold { at: None },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -6075,7 +6632,7 @@ fn the_ring_the_screen_draws_is_the_edge_the_engine_walks() {
     // `radio_reach` exists so the battle screen can draw a leader's range
     // ring without keeping its own copy of the formula. What makes it worth
     // having is that the contact graph reads the same function: set a radius
-    // the ring can be counted against, and the girl one hex inside it is on
+    // the ring can be counted against, and the cadet one hex inside it is on
     // the net while the one a hex outside is not.
     let mut reg = registry();
     reg.command = Some(command_rules(6, false, 0));
@@ -6098,7 +6655,7 @@ fn the_ring_the_screen_draws_is_the_edge_the_engine_walks() {
     settle(&reg, &mut state);
     assert!(
         state.formations()[0].in_contact(stray),
-        "a girl standing on the ring hears her leader"
+        "a cadet standing on the ring hears her leader"
     );
 
     state.units[stray.index()].pos = on_the_ring + tactics_core::Hex::new(1, 0);
@@ -6205,6 +6762,217 @@ fn an_idle_crew_out_of_danger_stays_put() {
     let unit = state.unit(crew).unwrap();
     assert!(unit.planned && unit.intent.path.is_empty());
     assert_eq!(unit.pos, parked);
+}
+
+// --- latitude: an order the crew may not set aside --------------------------
+
+/// A crew with a long march east along an open road, woods flanking the
+/// western half of it, and a gun watching from the open ground beyond.
+///
+/// Both halves of that shape were paid for by a failing test. The woods are
+/// there because the drill *seeks cover*: with none in reach it has nothing
+/// to choose and both latitudes march identically, so the test proves
+/// nothing. The woods stop short of the gun because cover works for whoever
+/// stands in it — with woods beside her too, the gun's own mid-round drill
+/// bolted into them, went concealed, and stopped being a threat at all,
+/// which killed the test from the other end.
+///
+/// A medium marching and a tank destroyer watching, which also took some
+/// getting to. The gun has to be one that can actually hurt the marcher,
+/// because `threatened` — the drill's trigger — asks whether any visible
+/// enemy has a weapon that could meaningfully hurt *her*, and after the
+/// ballistics rewrite a medium's gun cannot touch another medium's front
+/// plate head-on. Two mediums are therefore never in danger from each other
+/// on this road, the drill never fires, and a test in which the drill cannot
+/// fire cannot fail. The tank destroyer's gun gets through, which is what
+/// makes the road dangerous enough to be worth an order about.
+///
+/// The seed is pinned because she has to live through the opening round to
+/// have a second one. The sim is deterministic, so "she survives at seed 62"
+/// is a fact about this stage rather than a probability.
+fn marching_under_fire(reg: &DataRegistry, latitude: Latitude, seed: u64) -> (BattleState, UnitId) {
+    // Woods flank the road as far as x = 12; the gun sits at 13 on bare
+    // ground, with nothing better within a bound of it.
+    let flank = format!("{}{}", "f".repeat(12), "g".repeat(18));
+    let road = "g".repeat(30);
+    let mut state = two_side_battle(
+        reg,
+        &[&flank, &road, &flank],
+        vec![
+            unit_at([5, 1], 0, "medium_tank", "Ordered"),
+            unit_at([13, 1], 1, "tank_destroyer", "Gun Tank"),
+        ],
+        seed,
+    );
+    let crew = UnitId(0);
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "the stage needs her to see the danger she is being asked to drive past"
+    );
+    state
+        .apply(
+            reg,
+            &Order::Radio {
+                unit: crew,
+                to: Some(MARCH_TO),
+                fire: None,
+                latitude,
+            },
+        )
+        .expect("a far destination is an order, not a refusal");
+    assert_eq!(state.unit(crew).unwrap().latitude, latitude);
+    (state, crew)
+}
+
+/// The ground she is sent to, well east of the gun watching the road.
+const MARCH_TO: tactics_core::Hex = tactics_core::Hex::new(28, 1);
+
+fn executor_only_side(reg: &DataRegistry, seed: u64) -> AiDriver {
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
+        Box::new(tactics_core::ai::SideCommand::executor_only(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: None,
+            },
+            seed,
+            reg,
+        )),
+    );
+    ai
+}
+
+/// Fight the opening round, then plan the next one and report where she
+/// stands, where she is being sent from there, and whether that is cover.
+///
+/// The second round is the one that matters and it took a failing test to
+/// see why: `radio()` marches her itself the moment the order lands, so on
+/// the round she is ordered she is already planned and no planner is
+/// consulted at all. The drill can only ever preempt a march that is
+/// *already under way* — which is exactly the case the player was
+/// complaining about, the tank that sets off and then never arrives.
+fn second_round_plan(
+    reg: &DataRegistry,
+    mut state: BattleState,
+    crew: UnitId,
+    seed: u64,
+) -> (tactics_core::Hex, tactics_core::Hex, bool) {
+    executor_only_side(reg, seed).plan_round(reg, &mut state);
+    let _ = state.apply(reg, &Order::Commit { side: 1 });
+    state.resolve_round(reg);
+    let unit = state.unit(crew).expect("she survives being shot at");
+    assert!(unit.alive, "the stage is meant to bruise, not to kill");
+    assert!(
+        state.unit(UnitId(1)).is_some_and(|e| e.alive),
+        "and the gun watching the road has to still be watching it, or there \
+         is no threat left for the drill to answer"
+    );
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "and she has to still be able to see it"
+    );
+    let from = unit.pos;
+    executor_only_side(reg, seed).plan_round(reg, &mut state);
+    let to = state.unit(crew).unwrap().planned_destination();
+    let cover = state.terrain_at(to) == Some("forest");
+    (from, to, cover)
+}
+
+#[test]
+fn a_binding_march_presses_on_where_an_ordinary_one_takes_cover() {
+    // The rule this chunk exists for, and its additivity twin, in one test
+    // because they are one comparison: same crew, same gun, same ground,
+    // same seed, and the *only* difference is whether her commander said she
+    // meant it.
+    //
+    // Stated as a comparison rather than against a named tile on purpose.
+    // What is being defended is that latitude changes what she does, and in
+    // which direction — not which particular hedge the drill happens to
+    // like, which is a tuning detail that should be free to move without
+    // failing this.
+    const SEED: u64 = 62;
+    let reg = registry_wireless();
+    let (delegated_from, delegated_to, delegated_took_cover) = {
+        let (state, crew) = marching_under_fire(&reg, Latitude::Delegated, SEED);
+        second_round_plan(&reg, state, crew, SEED)
+    };
+    let (binding_from, binding_to, _) = {
+        let (state, crew) = marching_under_fire(&reg, Latitude::Binding, SEED);
+        second_round_plan(&reg, state, crew, SEED)
+    };
+
+    // Latitude is read when the *executor* plans, and on the opening round
+    // the order plans her itself, so the two runs must be identical up to
+    // that point. If this ever fails, latitude has leaked somewhere it does
+    // not belong.
+    assert_eq!(
+        delegated_from, binding_from,
+        "the two runs are the same battle until the second round's planning"
+    );
+
+    assert!(
+        MARCH_TO.distance_to(binding_to) < MARCH_TO.distance_to(delegated_to),
+        "told she is meant, she keeps driving at ground she has been shown is \
+         dangerous; told to use her judgment, she does not: \
+         from {binding_from:?}, binding -> {binding_to:?}, delegated -> {delegated_to:?}"
+    );
+    assert!(
+        MARCH_TO.distance_to(binding_to) < MARCH_TO.distance_to(binding_from),
+        "and pressing on is progress toward the ordered ground, not merely \
+         a different tile: {binding_from:?} -> {binding_to:?}"
+    );
+    // Not merely "somewhere else": the crew who was given her judgment used
+    // it for the thing the drill is for.
+    assert!(
+        delegated_took_cover,
+        "the delegated crew breaks off into the woods: {delegated_from:?} -> {delegated_to:?}"
+    );
+}
+
+#[test]
+fn a_recall_forgets_that_she_was_pressed_on() {
+    // Latitude belongs to an order, not to a crew: take the order back and
+    // the insistence goes with it, or the next thing she is told inherits an
+    // urgency nobody attached to it.
+    let reg = registry_wireless();
+    let (mut state, crew) = marching_under_fire(&reg, Latitude::Binding, 62);
+    state
+        .apply(&reg, &Order::ClearIntent { unit: crew })
+        .expect("a recall is always sayable");
+    let unit = state.unit(crew).unwrap();
+    assert_eq!(unit.tasking, None, "the march is off");
+    assert_eq!(
+        unit.latitude,
+        Latitude::Delegated,
+        "and so is the insistence behind it"
+    );
+}
+
+#[test]
+fn an_order_about_her_gun_says_nothing_about_her_march() {
+    // The two halves of a radioed order are independent, and latitude rides
+    // with the *route*. Telling a crew who is pressing on what to shoot at
+    // must not quietly relax the march she is already under.
+    let reg = registry_wireless();
+    let (mut state, crew) = marching_under_fire(&reg, Latitude::Binding, 63);
+    state
+        .apply(
+            &reg,
+            &Order::Radio {
+                unit: crew,
+                to: None,
+                fire: Some(FireIntent::Hold),
+                latitude: Latitude::Delegated,
+            },
+        )
+        .expect("hold fire is always sayable");
+    assert_eq!(
+        state.unit(crew).unwrap().latitude,
+        Latitude::Binding,
+        "she is still pressing on"
+    );
 }
 
 // --- fighting as one (chunk 10d) -------------------------------------------
@@ -6374,6 +7142,7 @@ fn a_section_in_contact_bounds_by_element() {
                 mission: Mission::Advance {
                     to: tactics_core::offset_to_hex(30, 1),
                 },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -6415,6 +7184,7 @@ fn a_section_out_of_contact_travels() {
                 mission: Mission::Advance {
                     to: tactics_core::offset_to_hex(30, 1),
                 },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -6440,6 +7210,7 @@ fn an_aggressive_doctrine_travels_in_overwatch() {
                 mission: Mission::Advance {
                     to: tactics_core::offset_to_hex(30, 1),
                 },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -6528,6 +7299,7 @@ fn contact_scores(
             &Order::SetMission {
                 formation: section,
                 mission,
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("the lane is on the map");
@@ -6543,6 +7315,138 @@ fn contact_scores(
             .score
     };
     (score(COVER), score(FORWARD))
+}
+
+/// What the forward tile is worth to a scout ordered onto it, under one
+/// doctrine at one latitude. Everything else about the calls a test makes is
+/// identical, so the difference between two of them is the mission term and
+/// nothing else.
+fn ordered_pull(
+    reg: &DataRegistry,
+    doctrine: &tactics_core::data::DoctrineDef,
+    latitude: Latitude,
+) -> f32 {
+    let (mut state, section) = contact_stage(reg, 4);
+    let forward = tactics_core::offset_to_hex(FORWARD.0, FORWARD.1);
+    state
+        .apply(
+            reg,
+            &Order::SetMission {
+                formation: section,
+                mission: Mission::Advance { to: forward },
+                latitude,
+            },
+        )
+        .expect("the lane is on the map");
+    Evaluator::new(doctrine.clone())
+        .score_tile(reg, &state, UnitId(0), forward)
+        .score
+}
+
+#[test]
+fn a_binding_mission_is_not_discounted_by_a_loose_doctrine() {
+    // Step 1 part 3 of DIRECTION.md, and the complaint it answers: a
+    // player's order was quietly worth less because of who she gave it to.
+    // Elastic defence devolves (delegation 0.7), so it read "take that
+    // ground" at four fifths of face value; massed armour does not (0.3) and
+    // read the same sentence at 1.2. Nobody issues an order meaning four
+    // fifths of it.
+    //
+    // Fought out on one doctrine with only `delegation` moved, because the
+    // score of a tile is a whole doctrine's opinion of it — cover, threat,
+    // the shot available — and comparing two *different* doctrines' totals
+    // would be comparing everything except the thing under test.
+    //
+    // Wireless on purpose: with a command block the order is still in the
+    // air when the tile is scored, and a mission nobody has heard yet has no
+    // latitude to read. What is under test is the executor, not the wire.
+    let reg = registry_wireless();
+    let base = reg
+        .doctrine("elastic_defense")
+        .cloned()
+        .expect("base doctrine");
+    let loose = tactics_core::data::DoctrineDef {
+        delegation: 0.7,
+        ..base.clone()
+    };
+    let neutral = tactics_core::data::DoctrineDef {
+        delegation: 0.5,
+        ..base.clone()
+    };
+    let tight = tactics_core::data::DoctrineDef {
+        delegation: 0.3,
+        ..base
+    };
+
+    let loose_delegated = ordered_pull(&reg, &loose, Latitude::Delegated);
+    let loose_binding = ordered_pull(&reg, &loose, Latitude::Binding);
+    assert!(
+        loose_binding > loose_delegated,
+        "insisting has to reach a formation that would otherwise have used its \
+         own judgment: delegated {loose_delegated}, binding {loose_binding}"
+    );
+
+    // How far it reaches, exactly: to the letter of the order and no
+    // further. A binding order read by a devolving doctrine is worth what an
+    // ordinary order read by a neutral one is worth — it raises a floor, it
+    // does not turn every commander into a martinet.
+    assert_eq!(
+        loose_binding,
+        ordered_pull(&reg, &neutral, Latitude::Delegated),
+        "insisting should buy the letter of the order, not more than it"
+    );
+
+    // And the other half of the rule, which is what keeps "I mean it"
+    // honest: `delegation` may make a subordinate *more* literal than she
+    // was asked to be, never less. A doctrine already holding to the letter
+    // hears nothing new in being told it twice.
+    assert_eq!(
+        ordered_pull(&reg, &tight, Latitude::Binding),
+        ordered_pull(&reg, &tight, Latitude::Delegated),
+        "a formation that was already going to follow the letter of it must \
+         not be pulled harder for being insisted on"
+    );
+}
+
+#[test]
+fn an_order_held_on_the_wire_arrives_as_hard_as_it_was_meant() {
+    // Latitude travels with the mission rather than being applied when it is
+    // sent, for the same reason `WaitingOrders` carries a unit's: an order
+    // that waits two ticks for a signaller has to land meaning what the
+    // commander meant, not what she happens to mean by the time it lands.
+    let mut reg = registry();
+    reg.command = Some(command_rules(999, true, 2));
+    let mut state = BattleState::from_map(&reg, "river_crossing", 5).expect("battle");
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let bridge = state.map.objectives()[0].anchor();
+
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: armor,
+                mission: Mission::Advance { to: bridge },
+                latitude: Latitude::Binding,
+            },
+        )
+        .expect("the bridge is on the map");
+    assert_eq!(
+        state.formations()[armor.index()]
+            .incoming
+            .as_ref()
+            .map(|(c, _)| c.latitude()),
+        Some(Latitude::Binding),
+        "the insistence is in the envelope, not left behind at headquarters"
+    );
+
+    commit_all(&reg, &mut state);
+    state.step_tick(&reg);
+    state.step_tick(&reg);
+    assert_eq!(
+        state.formations()[armor.index()].latitude,
+        Latitude::Binding,
+        "and it is still there when the order lands"
+    );
 }
 
 #[test]
@@ -6923,6 +7827,7 @@ fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Advance { to: bridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -6938,6 +7843,7 @@ fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
                 unit: member,
                 to: Some(post),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .unwrap();
@@ -6987,6 +7893,7 @@ fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
             &Order::SetMission {
                 formation: armor,
                 mission: Mission::Advance { to: ford },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -7110,6 +8017,7 @@ fn support_holds_her_at_overwatch_distance() {
                 mission: Mission::Support {
                     formation: "assault".into(),
                 },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("shooting for a friendly formation that is not your own is legal");
@@ -7169,6 +8077,7 @@ fn nobody_supports_the_enemy_or_herself() {
         mission: Mission::Support {
             formation: formation.into(),
         },
+        latitude: tactics_core::battle::Latitude::Delegated,
     };
 
     assert_eq!(
@@ -7207,6 +8116,7 @@ fn a_plan_may_end_in_support_but_not_continue_past_it() {
             &Order::SetMission {
                 formation: recon,
                 mission: Mission::Advance { to: ridge },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .unwrap();
@@ -7218,6 +8128,7 @@ fn a_plan_may_end_in_support_but_not_continue_past_it() {
                 mission: Mission::Support {
                     formation: "kuhlmann_armor".into(),
                 },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         )
         .expect("a plan may end in support");
@@ -7227,6 +8138,7 @@ fn a_plan_may_end_in_support_but_not_continue_past_it() {
             &Order::QueueMission {
                 formation: recon,
                 mission: Mission::Hold { at: None },
+                latitude: tactics_core::battle::Latitude::Delegated,
             },
         ),
         Err(tactics_core::battle::OrderError::MissionIsTerminal),
@@ -7371,14 +8283,14 @@ fn a_target_watched_across_rounds_is_not_news_twice() {
 /// Pull the 75's teeth without pulling its threat: one point of effect
 /// budget still prices the shot above zero — she is being shot at by
 /// something that CAN hurt her, which is what `threatened` and the drill
-/// read — but a penetration wounds one girl or dings one module instead of
+/// read — but a penetration wounds one cadet or dings one module instead of
 /// savaging the vehicle. The clock and drill tests need their subjects
 /// alive, mobile and unbroken long enough to watch them decide.
 fn soften(reg: &mut DataRegistry) {
     if let Some(w) = reg.weapons.get_mut("gun_75") {
         w.damage = 1;
     }
-    // Size-zero modules are never rolled, so penetrations wound girls and
+    // Size-zero modules are never rolled, so penetrations wound cadets and
     // break nothing: the gun keeps firing and the tracks keep driving,
     // which is what a test about timing or movement needs its subject to do.
     for module in reg.modules.values_mut() {
@@ -7887,11 +8799,11 @@ fn a_mod_without_ammunition_still_fights_with_its_guns_own_numbers() {
 #[test]
 fn a_penetration_names_the_girl_it_hurt() {
     // Permadeath without a name is just a number going down. Every crew hit
-    // carries the girl it found, she is really aboard the vehicle it names,
+    // carries the cadet it found, she is really aboard the vehicle it names,
     // and the seat she sits in is marked — the state and the story must be
     // the same fact.
     let mut reg = registry_wireless();
-    soften(&mut reg); // interiors are girls only: every pen finds one
+    soften(&mut reg); // interiors are cadets only: every pen finds one
     let mut state = duel(&reg, 401);
     let (west, east) = (UnitId(0), UnitId(1));
     state
@@ -7911,21 +8823,21 @@ fn a_penetration_names_the_girl_it_hurt() {
     let mut named = Vec::new();
     while state.resolving_tick().is_some() && !state.is_over() {
         for event in state.step_tick(&reg) {
-            if let BattleEvent::CrewHit { unit, girl, .. } = event
+            if let BattleEvent::CrewHit { unit, cadet, .. } = event
                 && unit == east
             {
-                named.push(girl);
+                named.push(cadet);
             }
         }
     }
     assert!(!named.is_empty(), "a softened 75 wounds rather than breaks");
     let hull = state.unit(east).unwrap();
-    for girl in named {
+    for cadet in named {
         let seat = hull
             .crew
             .iter()
-            .position(|g| *g == girl)
-            .expect("the girl the event names is aboard the vehicle it names");
+            .position(|g| *g == cadet)
+            .expect("the cadet the event names is aboard the vehicle it names");
         assert_ne!(
             hull.crew_state.get(seat).copied().unwrap_or_default(),
             tactics_core::battle::CrewCondition::Fine,
@@ -8022,7 +8934,7 @@ fn a_dead_radio_drops_her_off_the_net() {
     // The radio module dying is the chain-of-command layer's stake in
     // ballistics: six hexes from her leader — inside the set's reach, past
     // flag range — she is on the net right up until the set is wreckage,
-    // and then she is a girl driving on standing orders.
+    // and then she is a cadet driving on standing orders.
     let reg = registry();
     let mut state = BattleState::from_map(&reg, "river_crossing", 8).unwrap();
     let formation = state.formations()[0].clone();
@@ -8382,7 +9294,7 @@ fn a_shellburst_beside_a_platoon_is_attrition_not_erasure() {
 
 #[test]
 fn a_remnant_platoon_is_a_story_not_a_gun() {
-    // Troops at zero: the girls are alive, the platoon is finished. Her
+    // Troops at zero: the cadets are alive, the platoon is finished. Her
     // rifles are worth nothing, she holds fire even with an enemy in her
     // lap, and her condition says what the withdraw machinery needs to
     // hear.
@@ -8409,7 +9321,7 @@ fn a_remnant_platoon_is_a_story_not_a_gun() {
     for event in state.resolve_round(&reg) {
         assert!(
             !matches!(event, BattleEvent::ShotFired { attacker, .. } if attacker == platoon),
-            "two girls and no riflemen fire nothing worth firing"
+            "two cadets and no riflemen fire nothing worth firing"
         );
     }
     assert!(
@@ -8883,7 +9795,7 @@ fn a_crew_with_less_of_herself_left_weighs_the_same_shell_more_heavily() {
 fn a_penetrated_taxi_shares_its_luck_with_everyone_aboard() {
     // The shared-fate ruling: a round through a loaded carrier does not
     // check tickets. The pool a penetration rolls against includes the
-    // passengers' girls and troops, so riding a taxi under fire costs
+    // passengers' cadets and troops, so riding a taxi under fire costs
     // exactly what the period says it cost.
     let reg = registry_wireless();
     let mut state = taxi_stage(&reg, "tank_destroyer", 702);
@@ -9190,7 +10102,7 @@ fn a_long_battle_never_says_anything_about_a_crew_who_has_left() {
     // The soak. Six seeds of commander against commander, and every event in
     // both the planning and the resolution stream checked against the few
     // things that must never be true however the fight goes: nothing happens
-    // to a girl who is dead or driven off the map, no order is refused, no
+    // to a cadet who is dead or driven off the map, no order is refused, no
     // formation receives a mission nobody sent it, and no delivery is
     // announced for a crew with nothing waiting. These are cheap to check and
     // they are exactly the shapes a bug in the wire produces — an event about
@@ -9236,7 +10148,7 @@ fn a_long_battle_never_says_anything_about_a_crew_who_has_left() {
                         departed(by, "a report filed by");
                     }
                     BattleEvent::CommandPassed { to, .. } => departed(to, "CommandPassed to"),
-                    BattleEvent::OrderRefused { unit, .. } => departed(unit, "OrderRefused"),
+                    BattleEvent::Defied { unit, .. } => departed(unit, "Defied"),
                     BattleEvent::MoraleChanged { unit, .. } => departed(unit, "MoraleChanged"),
                     BattleEvent::OrdersWaiting { unit } => {
                         departed(unit, "OrdersWaiting");
@@ -9299,6 +10211,7 @@ fn a_searching_planner_copes_with_missions_a_detachment_and_a_running_clock() {
                 &Order::SetMission {
                     formation: FormationId(index as u32),
                     mission: Mission::Advance { to: bridge },
+                    latitude: tactics_core::battle::Latitude::Delegated,
                 },
             )
             .expect("the bridge is on the map");
@@ -9314,6 +10227,7 @@ fn a_searching_planner_copes_with_missions_a_detachment_and_a_running_clock() {
                 unit: scout,
                 to: Some(aside),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("a hex she is already standing on");
@@ -9494,7 +10408,7 @@ fn a_zeroed_command_block_is_the_game_without_one_with_a_commander_at_both_ends(
 }
 
 /// A quiet field with one commanded formation, two pieces of ground worth
-/// holding, and enough girls in the formation to lose four commanders. The
+/// holding, and enough cadets in the formation to lose four commanders. The
 /// only enemy is far beyond anyone's eyes, so nothing can interrupt the
 /// commander's clock except what a test does to her on purpose.
 fn succession_stage(reg: &DataRegistry) -> BattleState {
@@ -9734,6 +10648,7 @@ fn a_formation_of_one_can_be_given_any_mission_in_the_book() {
                 &Order::SetMission {
                     formation: FormationId(0),
                     mission: mission.clone(),
+                    latitude: tactics_core::battle::Latitude::Delegated,
                 },
             )
             .unwrap_or_else(|e| panic!("{mission:?} should be a legal order: {e}"));
@@ -9859,6 +10774,7 @@ fn a_waiting_order_arrives_as_an_order_however_far_she_has_come() {
                 unit: stray,
                 to: Some(east),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("accepted and held at the radio");
@@ -9972,10 +10888,11 @@ fn a_campaign_run_by_standing_orders_and_planners_plays_itself_out() {
             .flat_map(|u| {
                 u.crew
                     .iter()
-                    .map(move |girl| tactics_core::overworld::CrewLoss {
-                        girl: *girl,
+                    .map(move |cadet| tactics_core::overworld::CrewLoss {
+                        cadet: *cadet,
                         vehicle: u.vehicle.clone(),
                         killed_by: None,
+                        found: None,
                     })
             })
             .collect();
@@ -10090,6 +11007,7 @@ fn a_personal_march_carries_across_rounds_and_ends_in_a_hold() {
                 unit,
                 to: Some(far),
                 fire: None,
+                latitude: Latitude::Delegated,
             },
         )
         .expect("a far destination is an order now, not a refusal");
@@ -10394,6 +11312,225 @@ fn neighbors_of_a_shellburst_feel_half_the_blast() {
 }
 
 #[test]
+fn a_shell_is_priced_against_the_plate_it_will_strike() {
+    // The playthrough review's headline defect, stated as a rule. Blast used
+    // to be priced at a flat fraction of its rating no matter what it landed
+    // on, while `overpressure` has always read the struck plate — so the one
+    // value function behind the loader's choice and the AI's shot pricing
+    // disagreed with the resolver about the most common shell in the game.
+    //
+    // A 105 against a tank destroyer is the sharpest case there is. Her
+    // glacis is six and blast six does not overmatch it; her back plate is
+    // one, and the same shell arriving there does not need the penetration
+    // gate's permission at all. Same gun, same round, same range: only the
+    // arc differs, and the price has to differ with it.
+    //
+    // The gun is stripped of its penetration first, and that is the whole
+    // reason this test is worth anything. The penetration half of the price
+    // has ALWAYS read the plate, so a howitzer with its own numbers scores
+    // the back of a tank destroyer higher than the front no matter which
+    // version of the code is running, and a test that merely compared the
+    // two arcs would pass against the defect it was written for. With pen at
+    // zero the only term left is blast, which is the term that was flat.
+    let mut reg = registry_wireless();
+    for weapon in reg.weapons.values_mut() {
+        weapon.penetration = 0;
+    }
+    for ammo in reg.ammo.values_mut() {
+        ammo.penetration = [0, 0];
+    }
+    let mut state = battery_stage(&reg, "tank_destroyer", 811);
+    let (battery, quarry) = (UnitId(0), UnitId(1));
+    let howitzer = reg
+        .weapon(
+            &reg.vehicle("artillery")
+                .expect("she is in the base mod")
+                .weapons[0],
+        )
+        .expect("the battery has a gun")
+        .clone();
+    let from = state.unit(battery).expect("on the field").pos;
+
+    let facing_the_guns = state.unit(quarry).expect("on the field").pos;
+    state.unit_mut(quarry).expect("on the field").facing = facing_the_guns.main_direction_to(from);
+    let front = tactics_core::battle::expected_damage(
+        &reg, &state, battery, from, &howitzer, quarry, false,
+    );
+
+    state.unit_mut(quarry).expect("on the field").facing = from.main_direction_to(facing_the_guns);
+    let rear = tactics_core::battle::expected_damage(
+        &reg, &state, battery, from, &howitzer, quarry, false,
+    );
+
+    assert!(
+        rear > front * 3.0,
+        "a burst on the back plate is worth far more than the same burst on \
+         the glacis, and was worth exactly the same before: front {front}, rear {rear}"
+    );
+    let whole = state
+        .substance(&reg, state.unit(quarry).expect("on the field"))
+        .0 as f32;
+    assert!(
+        rear >= whole * 0.5,
+        "and it is priced as what it is — a wreck, not a scratch: {rear} against \
+         {whole} of tank destroyer"
+    );
+}
+
+#[test]
+fn a_gun_with_nothing_left_to_break_expects_nothing() {
+    // Game 1 of the review, in eight lines. A howitzer put thirty-six shells
+    // into one tank destroyer's front; by the seventh round her tracks and
+    // her antenna — everything a burst can reach from outside a plate it
+    // cannot beat — were already destroyed, and the remaining twenty-nine
+    // shells were spent on a vehicle the shell provably could not touch.
+    //
+    // The AI was not being stubborn. It was reading a number that never
+    // consulted the hull, so there was nothing in the arithmetic to change
+    // its mind. Now the price of that shot is zero and `best_weapon_against`
+    // — the predicate every planner in the game prices shots with — refuses
+    // to call it a weapon at all, which is what puts the gun back on a
+    // target worth having.
+    let reg = registry_wireless();
+    let mut state = battery_stage(&reg, "tank_destroyer", 812);
+    let (battery, quarry) = (UnitId(0), UnitId(1));
+    let howitzer = reg
+        .weapon(
+            &reg.vehicle("artillery")
+                .expect("she is in the base mod")
+                .weapons[0],
+        )
+        .expect("the battery has a gun")
+        .clone();
+    let from = state.unit(battery).expect("on the field").pos;
+    let hull = state.unit(quarry).expect("on the field").pos;
+    state.unit_mut(quarry).expect("on the field").facing = hull.main_direction_to(from);
+
+    assert!(
+        tactics_core::battle::expected_damage(
+            &reg, &state, battery, from, &howitzer, quarry, false
+        ) > 0.0,
+        "while her running gear and her radio are intact the harassment is worth something"
+    );
+
+    let outside: Vec<String> = reg
+        .modules
+        .iter()
+        .filter(|(_, m)| {
+            matches!(
+                m.effect,
+                tactics_core::data::ModuleEffect::Mobility
+                    | tactics_core::data::ModuleEffect::Radio
+            )
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    let u = state.unit_mut(quarry).expect("on the field");
+    for (id, hits) in u.modules.iter_mut() {
+        if outside.contains(id) {
+            *hits = 0;
+        }
+    }
+
+    assert_eq!(
+        tactics_core::battle::expected_damage(
+            &reg, &state, battery, from, &howitzer, quarry, false
+        ),
+        0.0,
+        "with both of them gone the shell has nothing left to reach"
+    );
+    assert!(
+        tactics_core::ai::best_weapon_against(
+            &reg,
+            &state,
+            battery,
+            from,
+            state.unit(quarry).expect("on the field"),
+        )
+        .is_none(),
+        "so the battery is not armed against her at all, and stops firing"
+    );
+}
+
+#[test]
+fn a_bounce_that_achieves_nothing_does_not_hold_the_battle_open() {
+    // The chain reaction behind the same barrage, and the reason one AI
+    // mispricing cost two things rather than one. A bounce used to reset the
+    // stalemate clock on the reading that the guns were still trying — so
+    // shells that could not hurt anybody kept a decided battle breathing for
+    // eight more rounds of wandering.
+    //
+    // Trying is not progress. What holds a battle open now is a gun
+    // *accomplishing* something, and a bounce that accomplishes something
+    // says so in its own event: `ModuleHit` and `CrewHit` are both still on
+    // the list, and overpressure raises them from outside the plate. So the
+    // livelock this clock was written against — two crews neither can kill,
+    // staring at each other forever — is still shut out.
+    let mut reg = registry_wireless();
+    // Guns that strike and never get through, on hulls where blast has
+    // nothing to break: every shot from here to the bell is a bare bounce.
+    for weapon in reg.weapons.values_mut() {
+        weapon.penetration = 0;
+        weapon.ammo.clear();
+    }
+    for module in reg.modules.values_mut() {
+        module.size = 0;
+    }
+    let mut state = duel(&reg, 813);
+    let (west, east) = (UnitId(0), UnitId(1));
+    for (shooter, target) in [(west, east), (east, west)] {
+        state
+            .apply(
+                &reg,
+                &Order::SetFire {
+                    unit: shooter,
+                    fire: FireIntent::Target { target, weapon: 0 },
+                },
+            )
+            .unwrap();
+    }
+
+    let mut bounces = 0;
+    for _ in 0..STALEMATE_ROUNDS * 3 {
+        if state.is_over() {
+            break;
+        }
+        for (_, event) in ticked_round(&reg, &mut state) {
+            match event {
+                BattleEvent::ShotBounced { .. } => bounces += 1,
+                BattleEvent::CrewHit { .. } | BattleEvent::ModuleHit { .. } => {
+                    panic!("this scene has to be bounces and nothing else")
+                }
+                _ => {}
+            }
+        }
+        for (shooter, target) in [(west, east), (east, west)] {
+            let _ = state.apply(
+                &reg,
+                &Order::SetFire {
+                    unit: shooter,
+                    fire: FireIntent::Target { target, weapon: 0 },
+                },
+            );
+        }
+    }
+
+    assert!(
+        bounces > 0,
+        "the guns really are firing and really are bouncing"
+    );
+    assert!(
+        state.is_over(),
+        "and the battle ends anyway: nothing either crew did changed anything"
+    );
+    assert_eq!(
+        state.over.map(|r| r.reason),
+        Some(EndReason::Stalemate),
+        "by the clock rather than by anybody winning it"
+    );
+}
+
+#[test]
 fn a_mod_without_ammunition_keeps_instant_artillery() {
     // Additivity, read as strictly as the gate reads it. Flight time is a
     // rule, but it is a rule about *rounds*, and a mod that declines to
@@ -10446,4 +11583,481 @@ fn a_mod_without_ammunition_keeps_instant_artillery() {
             )),
         "and the shot is over in the tick that fired it, exactly as it always was"
     );
+}
+
+// --- what an order promises (direction step 2) ------------------------------
+
+/// Every order the player can give says what it commits her to, and no two
+/// of them say the same thing.
+///
+/// The complaint this defends against is not hypothetical: `Advance` and
+/// `Assault` move a platoon toward the same hex and score identically, and
+/// the *only* difference between them is one the player could not read
+/// anywhere in the game. A promise that came back empty, or that read the
+/// same for both, would put the game straight back where it was — so this
+/// asserts the property rather than the wording.
+#[test]
+fn every_order_says_what_it_commits_the_platoon_to() {
+    let to = tactics_core::Hex::new(1, 1);
+    let all = [
+        Mission::Advance { to },
+        Mission::Assault { to },
+        Mission::Hold { at: Some(to) },
+        Mission::Recon { toward: to },
+        Mission::Withdraw {
+            via: "east_road".into(),
+        },
+        Mission::Support {
+            formation: "second".into(),
+        },
+    ];
+    let mut seen: Vec<&str> = Vec::new();
+    for mission in &all {
+        let promise = mission.promise();
+        assert!(
+            !promise.is_empty(),
+            "{:?} promises nothing at all",
+            mission.verb()
+        );
+        assert!(
+            !seen.contains(&promise),
+            "two orders make the same promise: {promise}"
+        );
+        seen.push(promise);
+    }
+    // The pair the whole step exists for, named explicitly: an advance stops
+    // for a fight and an assault does not, and a player choosing between the
+    // keys must be able to see that before she presses one.
+    assert_ne!(
+        Mission::Advance { to }.promise(),
+        Mission::Assault { to }.promise(),
+        "the two orders that differ only under fire must not read alike"
+    );
+    // Every verb the menu can list is in the shared table, which is what
+    // stops a UI from inventing a promise the rules never made.
+    for mission in &all {
+        assert!(
+            Mission::vocabulary()
+                .iter()
+                .any(|(verb, promise)| *verb == mission.verb() && *promise == mission.promise()),
+            "{} is missing from the shared vocabulary",
+            mission.verb()
+        );
+    }
+}
+
+/// The per-unit twin says the same kind of thing, because it is the same
+/// decision at a different scale: an ordinary march may break off for cover
+/// and a binding one may not, and both of those are promises.
+#[test]
+fn insisting_on_a_march_promises_something_an_ordinary_one_does_not() {
+    assert_ne!(
+        Latitude::Delegated.promise(),
+        Latitude::Binding.promise(),
+        "the whole value of insisting is that it means something different"
+    );
+    assert!(!Latitude::Delegated.promise().is_empty());
+    assert!(!Latitude::Binding.promise().is_empty());
+}
+
+// --- wounds with teeth (direction step 3) -----------------------------------
+
+/// One medium tank per side on open ground, crewed by name, so a wound
+/// carried in from a previous battle has somewhere to show.
+fn crewed_stage(reg: &DataRegistry, crew: &[&str]) -> (BattleState, UnitId) {
+    let rows = vec!["g".repeat(12), "g".repeat(12), "g".repeat(12)];
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "crewed_stage",
+        "palette": { "g": "grass" },
+        "rows": rows,
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let placements = vec![
+        UnitPlacement {
+            aboard_at: None,
+            at: [1, 1],
+            side: 0,
+            vehicle: "medium_tank".into(),
+            crew: crew.iter().map(|id| (*id).to_string()).collect(),
+            name: Some("Ours".into()),
+            facing: None,
+            formation: None,
+            leads: false,
+        },
+        unit_at([10, 1], 1, "medium_tank", "Theirs"),
+    ];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let state = BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        7,
+    );
+    (state, UnitId(0))
+}
+
+/// Rebuild the same stage with `hurt` marked wounded before the battle opens,
+/// which is what a cadet carried out of last week's fight looks like.
+fn stage_with_a_wounded_girl(
+    reg: &DataRegistry,
+    crew: &[&str],
+    hurt: &[usize],
+) -> (BattleState, UnitId) {
+    let (state, ours) = crewed_stage(reg, crew);
+    // Mark the roster, then rebuild: `who_deploys` reads the roster at spawn,
+    // which is the only moment the question is asked.
+    let mut roster = (*state.roster).clone();
+    let ids: Vec<tactics_core::roster::CadetId> = state.unit(ours).unwrap().crew.clone();
+    for seat in hurt {
+        roster.get_mut(ids[*seat]).unwrap().status =
+            tactics_core::roster::CadetStatus::Wounded { days: 3 };
+    }
+    let rows = vec!["g".repeat(12), "g".repeat(12), "g".repeat(12)];
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "crewed_stage",
+        "palette": { "g": "grass" },
+        "rows": rows,
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let placements = vec![
+        UnitPlacement {
+            aboard_at: None,
+            at: [1, 1],
+            side: 0,
+            vehicle: "medium_tank".into(),
+            crew: crew.iter().map(|id| (*id).to_string()).collect(),
+            name: Some("Ours".into()),
+            facing: None,
+            formation: None,
+            leads: false,
+        },
+        unit_at([10, 1], 1, "medium_tank", "Theirs"),
+    ];
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let crews: Vec<Vec<tactics_core::roster::CadetId>> = vec![ids.clone(), Vec::new()];
+    let state = BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        7,
+    );
+    (state, ours)
+}
+
+/// A cadet who is still recovering does not climb into the tank — and is not
+/// deleted from it either.
+///
+/// Both halves matter. Until this rule existed a wound cost a side nothing
+/// it could see: she deployed, `crew_skill` quietly ignored her, and the
+/// player was never told why her gunnery had gone off. And the campaign
+/// takes the crew list back at the end of a battle, so a cadet *removed* from
+/// the list here would be a cadet removed from her tank for good.
+#[test]
+fn a_girl_in_the_infirmary_does_not_climb_in() {
+    let reg = registry();
+    let crew = ["anka", "mina", "juno"];
+    let (state, ours) = stage_with_a_wounded_girl(&reg, &crew, &[1]);
+    let unit = state.unit(ours).unwrap();
+
+    assert_eq!(
+        unit.crew.len(),
+        3,
+        "she stays on the roll; the campaign hands this list back"
+    );
+    assert_eq!(
+        unit.crew_state.get(1).copied(),
+        Some(tactics_core::battle::CrewCondition::Absent),
+        "the cadet who is still recovering is not aboard: {:?}",
+        unit.crew_state
+    );
+    assert_eq!(
+        state.fighting_crew(unit),
+        2,
+        "two cadets in a three-seat tank"
+    );
+
+    // The seat she is not sitting in is not a wound. A vehicle that deployed
+    // short-handed must not read as one that has already been shot up, or
+    // every withdrawal threshold and every AI kill estimate in the game
+    // would price it as half dead.
+    assert_eq!(
+        state.condition(&reg, unit),
+        1.0,
+        "an empty seat is not damage"
+    );
+    let (_, whole) = state.substance(&reg, unit);
+    let (fresh, _) = crewed_stage(&reg, &crew);
+    let (_, full) = state.substance(&reg, fresh.unit(ours).unwrap());
+    assert_eq!(
+        whole + 2,
+        full,
+        "her seat leaves the reckoning entirely rather than counting as a loss"
+    );
+}
+
+/// ...but a tank whose whole crew is in the infirmary drives out anyway.
+///
+/// The campaign has no pool of replacements to draw on, and a vehicle with
+/// nobody aboard is one that nothing inside can kill — which is the invariant
+/// the anonymous-crew fallback exists to protect. The walking wounded go, and
+/// pay for it by being worth nothing at their stations.
+#[test]
+fn a_crew_with_nobody_fit_goes_out_anyway() {
+    let reg = registry();
+    let crew = ["anka", "mina", "juno"];
+    let (state, ours) = stage_with_a_wounded_girl(&reg, &crew, &[0, 1, 2]);
+    let unit = state.unit(ours).unwrap();
+    assert!(
+        unit.crew_state.is_empty(),
+        "nobody is marked absent when there is nobody else to send: {:?}",
+        unit.crew_state
+    );
+    assert_eq!(state.fighting_crew(unit), 3);
+}
+
+/// A wound taken at her station in a tank that came home is still a wound
+/// when the campaign screen draws.
+///
+/// This is the hole the consequence loop had. The battle tracked every cadet's
+/// condition seat by seat all fight, and the only casualties the campaign
+/// ever heard about were the crews of *destroyed* vehicles — so a gunner
+/// knocked out in the first round of a battle her side won was fit again by
+/// the time anybody could look at her.
+#[test]
+fn a_wound_taken_at_her_station_survives_the_battle() {
+    use tactics_core::battle::CrewCondition;
+    use tactics_core::roster::CasualtyRules;
+
+    let reg = registry();
+    let mut state = OverworldState::from_map(&reg, "frontier", 11).expect("overworld");
+    state.rules = CasualtyRules { permadeath: false };
+    let attacker = state.side_armies(0).next().unwrap().id;
+    let defender = state.side_armies(1).next().unwrap().id;
+    let unit = state.army(attacker).unwrap().units[0].clone();
+    let cadet = unit.crew[0];
+    assert!(state.roster.get(cadet).unwrap().status.is_ready());
+
+    // Her vehicle came home. She did not come home fit.
+    let survivors = vec![(attacker, state.army(attacker).unwrap().units.clone())];
+    let hurt = tactics_core::overworld::CrewLoss {
+        cadet,
+        vehicle: unit.vehicle.clone(),
+        killed_by: None,
+        found: Some(CrewCondition::Out),
+    };
+    state.apply_battle_result(&reg, attacker, defender, &survivors, &[hurt]);
+
+    let status = state.roster.get(cadet).unwrap().status;
+    assert!(
+        !status.is_ready(),
+        "she was carried out of her own tank and the campaign forgot: {status:?}"
+    );
+    assert!(
+        !status.is_permanent(),
+        "permadeath is off, so a station wound is never fatal"
+    );
+    let days = status.days_out().expect("she is coming back");
+    assert!(
+        days > 0,
+        "a wound that keeps her out for no days is no wound"
+    );
+}
+
+/// A grazing hit costs her less than being carried out, and both cost less
+/// than a wreck. The ordering is the rule; the numbers live in mod data.
+#[test]
+fn how_badly_she_was_hurt_decides_how_long_she_is_out() {
+    use rand::SeedableRng;
+    use tactics_core::battle::CrewCondition;
+    use tactics_core::data::Casualties;
+    use tactics_core::roster::{CasualtyRules, CrewFate, resolve_station_fate};
+
+    let table = Casualties::default();
+    let rules = CasualtyRules { permadeath: false };
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(3);
+
+    let days = |fate: CrewFate| match fate {
+        CrewFate::Wounded { days } | CrewFate::Lost { days } => days,
+        _ => 0,
+    };
+    // Averaged over many rolls, because each is a range and a single draw
+    // proves nothing about the ordering.
+    let mean = |found: CrewCondition, rng: &mut rand_chacha::ChaCha8Rng| {
+        let total: u32 = (0..200)
+            .map(|_| days(resolve_station_fate(rules, &table, found, rng)))
+            .sum();
+        total as f64 / 200.0
+    };
+    let grazed = mean(CrewCondition::Wounded, &mut rng);
+    let carried = mean(CrewCondition::Out, &mut rng);
+    assert!(
+        grazed < carried,
+        "being carried out should cost more than being grazed: {grazed} vs {carried}"
+    );
+    // And a cadet who was never in the vehicle takes nothing home from a
+    // battle she did not fight.
+    assert_eq!(
+        resolve_station_fate(rules, &table, CrewCondition::Absent, &mut rng),
+        CrewFate::Unharmed
+    );
+}
+
+/// A campaign map that names the same character in two crews gets her in the
+/// first of them and an anonymous crew in the second.
+///
+/// Found by the after-action screen rather than by reading the code, which is
+/// the point of having built it: `frontier` used to spread ten characters over
+/// eighteen vehicles, so the campaign stamped three separate cadets all called
+/// Rosa Steiner and the report listed the name three times. A roster the player
+/// cannot tell apart is a roster she cannot care about, and that is the entire
+/// premise of having one.
+///
+/// The rule belongs to `from_map`, not to any particular map, so it is fought
+/// out on a fixture that over-subscribes on purpose. `frontier` itself no
+/// longer does — that is
+/// `every_seat_in_the_campaign_belongs_to_a_cadet_of_her_own`.
+#[test]
+fn nobody_crews_two_vehicles_at_once() {
+    let mut reg = registry();
+    let doubled: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "double_booked",
+        "kind": "overworld",
+        "palette": { "p": "plains" },
+        "rows": ["pppp", "pppp"],
+        "sides": [{ "name": "Kuhlmann Academy" }, { "name": "Iron Valkyries" }],
+        "armies": [
+            { "at": [0, 0], "side": 0, "name": "First", "movement": 4, "units": [
+                { "at": [0, 0], "side": 0, "vehicle": "light_tank", "crew": ["anka", "rosa"] },
+                { "at": [0, 0], "side": 0, "vehicle": "light_tank", "crew": ["anka", "rosa"] },
+            ] },
+            { "at": [3, 1], "side": 1, "name": "Theirs", "movement": 4, "units": [
+                { "at": [3, 1], "side": 1, "vehicle": "light_tank", "crew": ["irma"] },
+            ] },
+        ],
+    }))
+    .expect("fixture map");
+    reg.maps.insert(doubled.id.clone(), doubled);
+    let state = OverworldState::from_map(&reg, "double_booked", 13).expect("overworld");
+
+    for side in 0..2u8 {
+        let mut names: Vec<&str> = state.roster.of_side(side).map(|g| g.def.as_str()).collect();
+        let before = names.len();
+        names.sort();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            before,
+            "side {side} enlisted somebody twice: {names:?}"
+        );
+    }
+
+    // ...and the vehicle whose named crew was already taken is not left
+    // crewless, because a vehicle nobody is in is one nothing inside can
+    // kill. It picks up an anonymous crew at the battle, exactly as a
+    // placement that named nobody always has.
+    let crewless = state
+        .side_armies(0)
+        .flat_map(|a| a.units.iter())
+        .filter(|u| u.crew.is_empty())
+        .count();
+    assert_eq!(
+        crewless, 1,
+        "the second vehicle to ask for Anka should be left for an anonymous crew"
+    );
+}
+
+/// Every seat in the campaign's order of battle belongs to a cadet with a name.
+///
+/// Two separate things are pinned here and both are content rules the engine
+/// cannot enforce on a mod's behalf.
+///
+/// **Nobody is named twice**, because the deduplication above is a safety net
+/// rather than a licence: a map that trips it silently hands a vehicle to an
+/// anonymous crew, which is a worse version of what the author asked for.
+///
+/// **Every seat is filled**, because a crew shorter than the chassis is not a
+/// cosmetic gap. Substance is counted per person aboard, so a medium tank
+/// crewed by two named cadets dies roughly twice as fast as the identical tank
+/// crewed by four anonymous ones — naming your characters used to be a
+/// straight penalty. It also makes wounds legible: with the seats full at the
+/// start of a campaign, an empty seat means somebody is in the infirmary and
+/// nothing else.
+#[test]
+fn every_seat_in_the_campaign_belongs_to_a_cadet_of_her_own() {
+    let reg = registry();
+    let state = OverworldState::from_map(&reg, "frontier", 13).expect("overworld");
+
+    for army in &state.armies {
+        for unit in &army.units {
+            let vehicle = reg.vehicle(&unit.vehicle).expect("known chassis");
+            assert_eq!(
+                unit.crew.len(),
+                vehicle.crew_slots.len(),
+                "{} in {} has {} of {} seats filled",
+                unit.vehicle,
+                army.name,
+                unit.crew.len(),
+                vehicle.crew_slots.len()
+            );
+        }
+    }
+}
+
+/// Those anonymous crews stay in the battle they were invented for.
+///
+/// They are enlisted into the *battle's* copy of the roster, so their handles
+/// mean nothing to the campaign; handing them back with the survivors would
+/// leave an army holding ids the academy cannot resolve. Not a crash — every
+/// roster read simply returns nothing — which is exactly the kind of defect
+/// that sits there for months, so it is pinned.
+#[test]
+fn a_battle_does_not_enlist_anybody_into_the_academy() {
+    let reg = registry();
+    let mut state = OverworldState::from_map(&reg, "frontier", 17).expect("overworld");
+    let attacker = state.side_armies(0).next().unwrap().id;
+    let defender = state.side_armies(1).next().unwrap().id;
+
+    // A survivor list of the sort a battle hands back: real cadets, plus a
+    // handle from beyond the end of the campaign's roster, which is what an
+    // anonymous crew member's id looks like from here.
+    let stranger = tactics_core::roster::CadetId(state.roster.len() as u32 + 5);
+    let mut units = state.army(attacker).unwrap().units.clone();
+    units[0].crew.push(stranger);
+    state.apply_battle_result(&reg, attacker, defender, &[(attacker, units)], &[]);
+
+    for unit in &state.army(attacker).unwrap().units {
+        for cadet in &unit.crew {
+            assert!(
+                state.roster.get(*cadet).is_some(),
+                "{cadet:?} is in an army and in nobody's academy"
+            );
+        }
+    }
 }

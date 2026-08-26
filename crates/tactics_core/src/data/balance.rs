@@ -48,14 +48,14 @@ pub struct Balance {
     /// How much worse someone is at a job that is not hers.
     ///
     /// Crews are short-handed far more often than they are complete — the
-    /// school has ten girls and its tanks have four seats each — so somebody
+    /// school has ten cadets and its tanks have four seats each — so somebody
     /// covering an empty gunner's seat is the normal case, not an edge one.
     /// A penalty rather than nothing, because a commander can lay a gun; she
     /// is just not the gunner.
     pub substitution_penalty: i32,
-    /// How big a target one girl is when a penetration rolls what it found
+    /// How big a target one cadet is when a penetration rolls what it found
     /// inside, on the same scale as a module's `size`. At the default 2
-    /// with the standard module set (sizes 3+4+2+1), a four-girl crew is a
+    /// with the standard module set (sizes 3+4+2+1), a four-cadet crew is a
     /// little under half of what there is to hit — which is the CM-shaped
     /// truth of it: most of the inside of a tank is people.
     pub crew_weight: i32,
@@ -70,7 +70,7 @@ pub struct Balance {
     pub brewup_percent: i32,
     /// Percentage points of brew-up chance shaved per point of the
     /// vehicle's `safety` stat — wet stowage, in one number. Safety was
-    /// already the stat for "what a knocked-out vehicle costs the girls
+    /// already the stat for "what a knocked-out vehicle costs the cadets
     /// inside" at the campaign's fate rolls; this makes it matter while
     /// the shooting is still happening, so a vehicle designed around her
     /// crew is measurably harder to torch, not merely gentler afterwards.

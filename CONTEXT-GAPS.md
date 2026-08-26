@@ -201,19 +201,19 @@ tradition.** Written up as a decided section at the top of the page.
 
 That answer closed two of the six questions on its own: the HUD stays austere
 (cuteness concentrates in the academy screens, portraits and barks, not sprayed
-across the interface), and the girls' relationship to the fighting is settled.
+across the interface), and the cadets' relationship to the fighting is settled.
 
 Two consequences worth pulling out, both recorded in the page:
 
 - **The academy layer is now half the tone, not decoration.** The menus and
   roster screens already on TODO carry as much identity as the battle screen,
   so they should not be built as bare utility UI to be prettied later.
-- **The girl-instance refactor got more load-bearing.** Support conversations
-  need persistent per-girl state — who has fought alongside whom, how often —
+- **The cadet-instance refactor got more load-bearing.** Support conversations
+  need persistent per-cadet state — who has fought alongside whom, how often —
   which is the same mutable object wounds and XP need. TODO already ranks it
   first under "Design Decisions to Lock Early"; it now serves two systems.
 - **Crew death gets sharper, not softer.** The more the academy half invests
-  you in a specific girl, the more permadeath costs. Worth deciding before the
+  you in a specific cadet, the more permadeath costs. Worth deciding before the
   VN work rather than after.
 
 **ALSO ANSWERED: the 1960s is the setting, not the equipment list.** Older kit
@@ -232,7 +232,7 @@ damage floor currently says it can.
 ### Still open
 
 Four, all in the page: is the mixed-nationality roster intended; what do we
-actually call the girls; is an artist near-term; and how lethal it is allowed to
+actually call the cadets; is an artist near-term; and how lethal it is allowed to
 look.
 
 ## 6. Two conventions — **still yours**

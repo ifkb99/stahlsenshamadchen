@@ -22,7 +22,13 @@ pub enum AppState {
     Battle,
 }
 
-fn main() {
+/// Returning [`AppExit`] rather than `()` is what lets a failing dev script
+/// fail the process. `App::run` has always handed back an exit status and
+/// this dropped it, so a scripted tour could watch every assertion fail and
+/// still exit 0 — which is worse than having no assertions, because it looks
+/// like a pass. Bevy's `AppExit` implements `Termination`, so returning it
+/// here is the whole fix; a normal run still exits 0.
+fn main() -> AppExit {
     App::new()
         .add_plugins(
             DefaultPlugins
@@ -46,7 +52,7 @@ fn main() {
             devtools::DevToolsPlugin,
         ))
         .add_systems(Update, map_render::reposition_map)
-        .run();
+        .run()
 }
 
 fn primary_window() -> Window {

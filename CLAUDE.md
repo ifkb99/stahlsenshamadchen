@@ -1,12 +1,15 @@
 # CLAUDE.md
 
 Engineering notes for this repo: how it fits together, the invariants worth
-protecting, and the known defects. Gameplay and design work lives in
+protecting, and the known defects. [DIRECTION.md](DIRECTION.md) is the current
+design argument — why the next few chunks are being built at all — and carries
+the live state of that plan. Gameplay and design work lives in
 [TODO.md](TODO.md) — this file is for things that are wrong or fragile in the
 code rather than things not yet built. Where an item is already tracked in
 TODO.md it is cross-referenced, not repeated. Finished work and the reasoning
 behind it lives in [DONE.md](DONE.md); read it before undoing a decision that
-looks arbitrary.
+looks arbitrary. [PARKED.md](PARKED.md) says why code with no callers is
+still in the tree, so that answer does not have to be carried here.
 
 **Start here:** `.claude/skills/tactics-dev/SKILL.md` is the working guide —
 the instruments this project has for answering questions about itself, the
@@ -24,7 +27,19 @@ cargo run --release -p tactics_core --example perf       # hot-path timings
 cargo run --release -p tactics_core --example balance    # what the data does
 cargo run --release -p tactics_core --example balance -- --sim   # ...fought out
 cargo run --release -p tactics_core --example balance -- --sim --points 100  # richer armies
+cargo run --release -p tactics_core --example balance -- --brains --brain-games 64  # which planner
 ```
+
+**The battles run across every core** (`fight_all`, `std::thread::scope`, no
+new dependency). They are genuinely independent — each has its own map,
+state, planners and seeded rng, sharing only the read-only registry — so what
+parallelism could damage is not a battle but a *table*. That is guarded
+rather than hoped for: every battle writes into the slot its seed owns and
+results are folded in seed order, so the printed numbers cannot depend on
+which core finished first. A balance figure that moved with scheduling would
+be worse than a slow one, because it would look exactly like noise. If you
+add a table, fold it in seed order too, and check a run against itself before
+trusting it.
 
 `balance` is the content-iteration loop, and it is built around the kill chain
 rather than around damage. The analytic pass is instant and answers "what did
@@ -35,7 +50,7 @@ drift from the game. It prints P(pen) per gun × round × target × range band,
 expected shots to knock out, shell flight times, and a "worth a look" section
 that judges a gun on blast overmatch as well as penetration. `--sim` fights
 whole battles and adds what killed them (brewed / wrecked / abandoned / crew
-out), what it cost the girls, the ammunition economy, artillery's hit rate on
+out), what it cost the cadets, the ammunition economy, artillery's hit rate on
 occupied ground, the delegation tax, the mustered-forces table and the
 skill-gap table.
 
@@ -105,6 +120,193 @@ to advance: with elimination as the only victory condition, holding the best
 cover on the map is optimal play, and the stalemate rate *rose* as difficulty
 noise fell (11/12 at zero noise). See TODO.md under Design Decisions.
 
+### What a shot is worth, and what keeps a battle open
+
+Both of these are one-line arithmetic with battle-length consequences, and
+both were wrong in the same way: a number that looked reasonable and never
+consulted the thing it was about.
+
+- **`round_worth` is the only shot price in the game, and its blast half
+  reads the struck plate.** It backs the loader's AP-or-HE choice *and* every
+  planner's shot pricing, so the two can never disagree about what a round is
+  for. Blast is priced by `blast_worth`, which is `overpressure`'s twin case
+  for case — plate zero pays its rating outright, overmatch pays the target's
+  remaining substance, and anything else pays one effect roll at
+  `overpressure_chance`, or **nothing at all when no exterior module is left
+  to break**. `blast_overmatches`, `overpressure_chance` and
+  `exterior_modules` are shared between the pricing and the resolver on
+  purpose; if a fourth case appears in one of them and not the other, the
+  gun goes back to firing at a number instead of at a tank. There is
+  deliberately **no blast-to-damage constant** — `points_per_effect` already
+  is one, and the old `BLAST_WORTH = 0.3` is what made a 105 value a heavy
+  tank's glacis exactly as highly as an open-topped carrier's roof.
+- **`ShotProfile::plate` is the listed plate and `effective_armor` is the
+  sloped one.** Blast reads the first because a burst crushing a hull is not
+  defeated by an angle solid shot would skip off. Reaching for
+  `effective_armor` in a blast calculation is the easy mistake here.
+- **The stalemate clock counts accomplishment, not effort.** Hits, breakages,
+  burnings, deaths and departures reset it; **a bounce does not**. That is
+  what stops a gun that cannot hurt anybody from holding a decided battle
+  open — and the anti-livelock intent the list was written for survives
+  anyway, because a bounce that *does* something raises `ModuleHit` or
+  `CrewHit` and those are still counted. Adding an event to that list is
+  adding a way for a battle never to end; do it deliberately.
+
+### The log is a net, not a narrator
+
+Lines are radio traffic: one of ours speaks with her call sign in front of her
+("Anvil 1: moving to the Great Glade"), and anything else is a spot report
+with nobody's voice on it ("Contact — Wotan 3"). It is **presentation only** —
+events carry the same ids, hexes and flags they always did, so `ScriptFacts`,
+the script harness and the replay read exactly what they read before.
+
+Two rules hold it together:
+
+- **`heard_by` is the one filter, and it has two callers that must not
+  drift.** The log filters with it after draining; `drive_ai` filters with it
+  *before queueing*. The second is not tidiness: planning events go through
+  the same paced animation queue as combat, and `accepting_orders` is false
+  while that queue has anything in it — so an event nobody will print still
+  costs the player a beat of not being able to give orders. One `SetOut` per
+  unit put nine of them in front of every planning phase, and the symptom was
+  the infantry tour clicking into a game that was not listening. Anything new
+  that emits events during **planning** must go through this.
+- **Command traffic is a side's own business.** Orders, contact troubles, the
+  radio queue and *where a crew has decided to go* are on her own net;
+  fighting events — shots, spots, wrecks, brew-ups — stay side-blind, because
+  anybody on the field can see them.
+
+### Goals: the seam the AI is meant to be replaced at
+
+`Goal` (`battle/command.rs`) is what one crew means to do — `Take(hex)` or
+`Hold` — kept across rounds and cleared when it finishes. The split around it
+is deliberate and is the thing to preserve:
+
+- **`ai/goal.rs::candidates` is shared knowledge; `GoalChooser` is judgement.**
+  A learned policy replaces the chooser and nothing else, so its action space
+  is five or six statements rather than 1261 hexes, and it inherits pathing,
+  boarding, dismounting, opportunity fire and defiance from an executor that
+  already works. In options-framework terms: candidates are the initiation
+  set, the chooser is the policy over options, `Goal::finished` is the
+  termination condition, and the utility planner is the intra-option policy.
+- **A goal lives on the `Unit`, not in the planner.** `tests/save.rs` forks a
+  battle through a save file and requires the same future; a planner's private
+  memory does not survive that, so a commitment held there would make saving a
+  game change how it is played.
+- **A mission replaces the candidate list; it does not join it.** Letting a
+  mission compete as one candidate among the objectives silently undid step 1
+  of DIRECTION.md — a crew under orders and a crew with none started choosing
+  the same ground, and `a_cut_off_unit_keeps_the_orders_she_had` caught it.
+  **Subordinate initiative is the widening of this list**, by doctrine, and
+  nothing else has to move for it to arrive.
+- **A long march is walked through `movement::step_toward`**, shared with a
+  commander's personal `tasking`. `SetMove` is refused past this round's
+  budget — correct for an order, and the reason the planner only ever *scored*
+  ground it could reach. Two implementations of "closest reachable" would be
+  two answers to where she is going.
+- **One crew per piece of ground**: `candidates` drops a hex a friend is on or
+  already making for. That is the dispersion job the `PLATEAU` tie-break was
+  doing, said once and visibly instead of buried in a sweep.
+- **`IMPATIENCE` prices the drive.** Without it every crew walks to whichever
+  single hex scores highest, which is the queue `PLATEAU` was invented to
+  break up, rebuilt a level higher. It belongs in `mod.json` with the rest of
+  the evaluator's numbers — see TODO.
+- **Difficulty applies to the chooser, not to the tile sweep.** That is what
+  makes it mean something: a worse commander goes to the wrong place, which a
+  player can see and punish, instead of twitching between interchangeable
+  hexes. A per-candidate draw is safe over six meaningful options and was not
+  safe over ninety interchangeable ones — the argmax is the difference.
+
+### Difficulty is a lens, not a lottery
+
+`UtilityPlanner::lean` draws **one** blur per unit per round and applies it as
+a smooth function of where a tile lies relative to her. It replaced an
+independent draw per candidate tile, and the difference is not cosmetic: the
+planner takes an argmax over every reachable tile, so independent draws made
+the winner whichever tile drew luckiest — the maximum of ninety draws from
+±0.5 is about +0.49, against an objective gradient of 0.54 a hex. Three things
+follow that are easy to undo by accident:
+
+- **Do not make it a flat per-unit offset.** That is the obvious reading of
+  "one draw per unit" and it is a no-op: adding the same number to every
+  candidate changes no argmax. It has to vary across tiles and be *smooth*,
+  which is what removes the selection bias while keeping the handicap.
+- **Do not reintroduce a per-tile draw anywhere in `score_tile`'s callers.**
+  The bias scaled with how many tiles a unit could reach, so it silently
+  punished fast vehicles hardest, and it is what the mirrored arena's
+  long-tracked side-B edge turned out to be.
+- **Zero at difficulty 5, exactly**, and
+  `a_side_that_sees_clearly_is_untouched_by_the_blur` pins it. The
+  determinism baseline fights at difficulty 3 and therefore moves when this
+  changes, so that test is the one that can still tell you the noise leaked
+  into a side meant to see the field as it is.
+
+`span` normalises the lean against how far she can actually get, so a
+difficulty level is worth the same to a howitzer as to a recon car.
+
+### Defiance: what a crew does instead
+
+A crew on a rung whose `obeys` is false used to be frozen in every sense —
+she would not advance, would not fall back, and would not break for cover,
+because all three ran through one gate. That is what REVIEW.md's second fun
+tax was: morale narrated a death spiral instead of buying anything.
+
+`DefianceResponse` (`data/morale.rs`) is what she does instead — `Freeze`,
+`Flight`, `Fight` — and the rules around it are small and easy to unpick:
+
+- **The rung decides *that* she defies; her temperament decides *how*.** The
+  mod declares the responses in `morale.defiance`, each naming a `core` and a
+  `base`; the score is `base + core + trait modifiers` and the highest wins,
+  **ties to the earlier entry**. Cores default to `AVERAGE`, so listing
+  `freeze` first is what makes a cadet nobody has written cores for behave
+  exactly as every crew did before this existed. An empty list means freeze,
+  full stop.
+- **Traits reach it through a second effect kind.** `TraitEffect.skill` is now
+  optional and `TraitEffect.defiance` sits beside it, because temperament
+  under fire is not a competence and spelling it as a skill would have meant
+  inventing a cowardice a cadet could be trained in. `reckless`, `craven` and
+  `stolid` are content demonstrating it; the rest is character work.
+- **The senior cadet still fighting decides**, not the best score aboard and
+  not an average. A commander going out hands her temperament to the next
+  woman down along with everything else.
+- **A crew cannot refuse her own decision.** `UnitIntent::own_idea` marks a
+  route the crew laid herself — the drill's dash for cover, and flight.
+  Without it the refusal check picks up a fleeing crew's own path on the next
+  tick, throws it away, lays it again, and she shakes in place forever.
+  Anything new that lays a path from inside the engine sets it; anything that
+  lays one from an *order* clears it.
+- **`Freeze` costs something.** She takes no opportunity fire — `Fight` and
+  `Freeze` are both "stay here" and would otherwise differ in nothing
+  observable. An *ordered* shot still happens: her gun is not broken, her
+  initiative is.
+- **`Fight` turns ambush discipline off**, which is a cost and not a bonus:
+  she spends her concealment on the first shot available rather than the
+  right one.
+- **Rallying reads sight, not the radio.** `recovery_near_leader` is shed by a
+  crew who can see her formation's leader, through `fog::sees` — her own
+  eyes, not `fog.side(..).visible`, which is vacuous because a side always
+  sees its own units' hexes. Contact was the first draft and is wrong twice
+  over: a commander steadies a crew by being visibly still in the fight
+  rather than down a wire, and hanging it on `in_contact` makes a zeroed
+  `command` block differ in deeds from no block at all (a crew with no radio
+  is out of contact under one and not the other), which
+  `a_zeroed_command_block_is_the_game_without_one...` forbids.
+- **Flight goes away from contact, never toward an exit.** A frightened crew
+  reverses out of the fight; she does not navigate to a designated lane
+  twenty hexes off, and the map will not always have edges.
+- **`Event::Defied` replaced `OrderRefused`**, because the old name became a
+  lie the moment a crew could act without having been told anything. It
+  carries what she did and where she went, since a vehicle reversing out of
+  the line with nothing in the log behind it looks like the game
+  malfunctioning.
+
+Worth knowing why the determinism baseline did **not** move for this:
+`river_crossing` has exactly one crew reach `Breaking` across the four seeds,
+Anka's medium tank, and her temperament is `Fight` — which differs from the
+old freeze only in ambush discipline, and she is already spotted by then.
+That is a checkable coincidence, not a guarantee; crewing that map up (TODO)
+would break it.
+
 ### Infantry, passengers and concealment
 
 Infantry are a `VehicleDef` like everything else — `MovementClass::Foot`,
@@ -123,7 +325,7 @@ bite someone editing the code.
   reverse lookup, and it is the only correct way to ask what a carrier is
   carrying.
 - **Shared fate is not optional.** A penetration into a loaded carrier rolls
-  every passenger's girls and troops into the same interior pool, and a
+  every passenger's cadets and troops into the same interior pool, and a
   brew-up burns them. `effect_rolls` is where that happens, and it is shared
   with the plate-zero splash path — change one and you have changed both.
 - **Plate zero is carved out of the overpressure overmatch rule.** Blast ≥
@@ -133,7 +335,7 @@ bite someone editing the code.
   infantry is attrition, brutal but never a single-event erasure.
 - **The troops module means three things at once** and they are easy to
   separate by accident: interior weight (casualty rolls find the sections far
-  more often than the two girls, which is the whole of the "leaders last"
+  more often than the two cadets, which is the whole of the "leaders last"
   model), firepower (`mustered` scales every weapon's damage by hits
   remaining over toughness), and combat effectiveness (at zero the platoon is
   a remnant, alive and pulled hard toward withdrawal).
@@ -173,6 +375,174 @@ bite someone editing the code.
   the assignable postures. A drop-off *short* of the objective was tried as
   a cheaper substitute and measurably lost platoons; the reason is in the
   passenger branch of `ai/utility.rs`.
+
+### Latitude: an order a crew may not set aside
+
+`Latitude` (`battle/command.rs`) is the per-unit twin of the
+`Advance`/`Assault` distinction: `Delegated` is every order this engine has
+ever had — she marches, and breaks off for cover under fire she has had time
+to take in — and `Binding` is "I mean it", which the battle drill does not
+preempt. The player says it with `X` on a selected crew, the same key that
+orders a formation to assault.
+
+**It now qualifies a formation's orders too, and it governs a different thing
+there — read this before "unifying" them.** A crew's latitude answers *will
+she break off for cover*; a formation's answers *may her doctrine discount the
+order at all*, and that is the whole of it:
+
+- **Only the strictness term.** `Formation::latitude` reaches exactly one
+  number, the floor in `mission_value`'s `(1.5 - delegation).clamp(floor,
+  1.5)`, which goes 0.5 → 1.0 under `Binding`. The rule that expresses is
+  **`delegation` may make a subordinate more literal than she was asked to be,
+  never less** — so insisting buys the letter of the order and never more than
+  the letter, and a doctrine already at 1.2 hears nothing new.
+- **It deliberately does not lift the contact damping.** `Advance` and
+  `Assault` differ in that damping and in nothing else, so a binding `Advance`
+  that skipped it would be an exact synonym for `Assault`. The verb answers
+  "will she halt and fight when shot at"; the latitude answers "may her
+  doctrine discount this"; they are orthogonal and they compose. Anyone
+  reaching for `contact_scale` because binding "ought to press on" is about to
+  build the second idiom the whole chunk exists to avoid.
+- **It travels with the mission or it means nothing.** It is on
+  `MissionChange` (an order held on the wire arrives meaning what it meant),
+  in the `CutOff` snapshot (a crew who lost contact soldiers on the orders she
+  was given *as she was given them* — read it through
+  `Formation::latitude_for`, the twin of `mission_for`), and on
+  `Order::SetMission` / `QueueMission`.
+- **It belongs to the orders as a whole, not to one leg.** `plan` is still
+  `VecDeque<Mission>` and an amendment sets the formation's latitude exactly
+  as a replacement does. A plan is one intention; a commander who wants the
+  third leg bound and the first loose countermands when it is time, which is
+  what she would do on the day.
+- The player says it with **Ctrl** on a mission key, composing with Shift's
+  "…and then this". Ctrl rather than a key of its own because `X` is already
+  the assault — the *other* axis — and there is no free key that would not
+  lie.
+
+- **It is read in exactly one place**, the drill gate in `ai/command.rs`. If a
+  second `yields_to_drill()` appears, the model has drifted: latitude buys an
+  order priority over the crew's *own judgment*, never over her nerve. Morale
+  still refuses, `obeys()` is untouched, and a Binding order to a crew who has
+  stopped listening is still not carried out.
+- **It belongs to the destination, not to the cadet.** Set only where
+  `tasking` is set, cleared everywhere `tasking` clears (recall, arrival, a
+  fresh formation mission), and carried in `WaitingOrders` so an order held at
+  the radio arrives meaning what it meant. A radioed order with `to: None` says
+  nothing about the march and must leave latitude alone —
+  `an_order_about_her_gun_says_nothing_about_her_march` pins that.
+- **`Delegated` is the default everywhere and the AI never issues `Binding`**,
+  which is what keeps the determinism baseline valid across this change. If
+  `event_stream.txt` moves when you touch latitude, something has leaked into
+  AI-vs-AI play; do not regenerate it. All four of `ai/command.rs`'s
+  `Order::SetMission` sites spell `Latitude::Delegated` out rather than
+  defaulting it, so that a reader can see it is a decision.
+- **The drill can only preempt from round two.** `radio()` marches her itself
+  the moment the order lands, so on the round she is ordered she is already
+  planned and no planner is consulted. Any test of the drill-versus-order
+  question has to fight a round first — this cost three test drafts, and the
+  reasoning is in
+  `a_binding_march_presses_on_where_an_ordinary_one_takes_cover`.
+- **A deviation must announce itself.** `AiPlanner::last_was_drill` and
+  `Decision::drill` exist so the presentation layer knows which orders were the
+  planner's own idea. The game crate used to guess (keep only units whose
+  formation had no mission) and thereby filtered out the single most important
+  case — a personal march broken off for cover — leaving it silent. A vehicle
+  that moves with no visible order behind it is indistinguishable from a bug;
+  that is the bargain, and it is the whole reason the flag is plumbed rather
+  than inferred.
+
+### What an order promises, and what a battle costs
+
+Two chunks of the DIRECTION.md work that are easy to unpick by accident,
+because both are mostly *words* and words look like they belong in the UI.
+
+- **A mission's promise lives beside the mission, not in the panel.**
+  `Mission::promise()` / `Mission::verb()` / `Mission::vocabulary()` and
+  `Latitude::promise()` are in `battle/command.rs` because a promise is a
+  claim about the rules: whoever changes what `Advance` *does* is then looking
+  straight at the sentence claiming what it does. One `VOCABULARY` table feeds
+  all three accessors and `slot()` is an exhaustive match, so a new mission
+  without a promise fails to compile. The game crate owns the *keys* and joins
+  the two in `order_menu()`; `every_mission_key_has_a_promise` exists because
+  the failure mode of that join is silent — rename a verb in core and the
+  panel simply lists one order fewer.
+- **`CrewCondition::Absent` is "on the roll, not in the vehicle".** A cadet
+  still recovering does not deploy (`BattleState::who_deploys`, read once at
+  spawn). Three things about it are load-bearing:
+  - **Her seat leaves the substance reckoning entirely** — neither numerator
+    nor denominator. Charging it as a loss would make a short-handed tank read
+    as one already shot up, and every withdraw threshold and AI kill estimate
+    in the game would price it that way.
+  - **She stays in `Unit::crew`.** The campaign takes the crew list back at
+    the end of the battle, so a cadet filtered out of it here is a cadet deleted
+    from her tank for good.
+  - **A vehicle nobody fit can crew goes out with the walking wounded.** The
+    campaign has no replacement pool, and a crewless vehicle is one nothing
+    inside can kill — the same invariant the anonymous-crew fallback in
+    `spawn_unit` protects. `crew_state` stays empty in that case, which is
+    also what keeps every scenario battle and every old save byte-identical.
+
+  Ask "is she aboard / is she fighting" through `CrewCondition::aboard()` /
+  `fighting()` rather than matching the variant, or the next state added will
+  be missed by one of `interior()`, `substance()` and `fighting_crew()`.
+- **A wound outlives its battle.** `CrewLoss::found` distinguishes "her
+  vehicle did not come home" (`None`, priced by what killed it through
+  `resolve_crew_fate`) from "she was found like this in a vehicle that did"
+  (`Some(condition)`, priced by `resolve_station_fate` — gentler, never
+  `Lost`, never fatal without permadeath). Before this, the entire in-battle
+  crew model evaporated at the door for every vehicle that survived.
+- **The casualty numbers are `casualties` in `mod.json`** (`data::Casualties`,
+  one-in-effect like `scale` and `balance`). A harsh campaign is a mod.
+- **One cadet, one seat.** `OverworldState::from_map` enlists each character
+  once per academy; a map that names her again crews that vehicle
+  anonymously, and `MapFile::validate_into` warns with the count. `frontier`
+  used to spread ten characters over eighteen vehicles and trip this ten
+  times; the base mod now ships forty-nine and every seat in the campaign is
+  filled, which
+  `every_seat_in_the_campaign_belongs_to_a_cadet_of_her_own` pins. Two things
+  follow. Do not "fix" a future warning by letting one cadet crew three tanks
+  again — the deduplication is a safety net, not a licence. And **a short crew
+  is not cosmetic**: substance counts people aboard, so a partly-named medium
+  tank dies about twice as fast as the identical anonymous-crewed one, which
+  is why the campaign fills its seats and why an empty one now reliably means
+  `CrewCondition::Absent`.
+  **`river_crossing` still carries the old ten and its partial crews**, on
+  purpose: it is the determinism baseline, so crewing it up means regenerating
+  the snapshot. Tracked in TODO.
+- **A battle never enlists anybody into an academy.** The anonymous crew a
+  crewless vehicle gets is stamped into the *battle's* copy of the roster, so
+  its handles mean nothing to the campaign; `apply_battle_result` drops any
+  crew id the campaign roster does not know before writing the survivors
+  back. Without that an army ends up holding ids that resolve to nobody,
+  which is not a crash and therefore sits there.
+
+### The academy roll
+
+`R` on the campaign map opens the roster and `R`/`Esc` closes it —
+`roster_page` in `game/src/overworld.rs`, a free function over plain data for
+the same reason `after_action` is one: a page nobody can see in a diff is a
+page that rots.
+
+- **It is derived every frame and caches nothing.** `Overworld::roster` is a
+  `bool`. A roll holding its own copy of who is wounded is stale exactly when
+  the player opens it, which is after a battle.
+- **A page over the map stops the world.** `pump_events`, `drive_ai` and
+  `handle_input` all bail while it is open, exactly as they do for the muster
+  prompt and the after-action report, and `roster_input` runs *after*
+  `handle_input` because `Esc` also drops the map selection and one keystroke
+  must not do both.
+- **It sets `ScriptFacts::waiting`.** She opened it herself, but `waiting`
+  means "a keystroke goes to a page rather than to the map", which is exactly
+  true — and keeping it the strict complement of `idle` is what stops a tour
+  photographing the map with a panel on top of it.
+- **Availability is worded differently from the after-action report on
+  purpose.** That page reports an event (*wounded today*); this one reports a
+  state (*infirmary, 4 day(s)*). One vocabulary for both would make the roll
+  read as a report the player had already dismissed.
+- **A cadet with no vehicle is still on the roll**, under "Without a vehicle".
+  She survives her tank far more often than not, and a page that only walked
+  the order of battle would drop her from the school on the day she most needs
+  to be on it.
 
 ### Saving
 
@@ -220,6 +590,30 @@ Two things about it are load-bearing:
 - **`run_script` must stay `.after(InputSystems)`.** Bevy clears `just_pressed`
   at the top of `PreUpdate`, so a press injected before that is wiped before
   any handler sees it — the symptom is a click that silently selects nothing.
+- **Scripts wait on the game, not on a stopwatch.** `until <predicate>` and
+  `expect <predicate>` read [`ScriptFacts`], which whichever screen is on
+  publishes for them; a failed `expect`, a timed-out `until` or a degenerate
+  screenshot makes the process exit nonzero, so a tour is a test. Prefer
+  `until idle` over `wait N` for anything that waits on the simulation — a
+  `wait` that guessed short photographs a half-played round and says nothing
+  about it.
+- **Every screen answers for every fact.** `ScriptFacts` is one resource
+  shared by all of them, so a field a publisher leaves alone is still holding
+  the *previous* screen's answer — a script would wait on a muster prompt
+  dismissed two screens ago. The campaign map publishes too now (`turn` as the
+  day, `idle`, `waiting`, `log`); it did not until the after-action report
+  gave it something worth waiting for, and every campaign tour was a
+  stopwatch. `waiting` means "held behind something the player must answer or
+  dismiss" — a muster prompt, an after-action page — and is the complement of
+  `idle`, not a second name for its negation.
+- **`idle` is `Battle::listening`, and both must stay one predicate.** It
+  means "a keystroke would be acted on this frame", which is not the same as
+  "the phase is planning": sprites finishing a walk hold the keyboard, and a
+  side that has committed is done talking. When those drifted apart, `until
+  idle` came true a frame early, four `key Enter` presses advanced the battle
+  by one round, and every screenshot after them described the wrong turn
+  while the script reported success. Anything new that makes `handle_input`
+  refuse a keystroke belongs inside `listening`, not beside it.
 
 Rust edition 2024, resolver 3. `[profile.dev]` builds the workspace at
 `opt-level = 1` and dependencies at 3, because AI search is slow at opt-level 0.
@@ -339,9 +733,22 @@ rule they defend (`unspotted_enemies_still_ambush`).
   wins 29–7 / 28–8 across orientations at 1:1.9–2.1 exchange (B4's
   written success metric was "most battles at visibly better than 1:2"),
   equal-skill pairings sit at parity, and the deterministic 36–0 sweep is
-  gone. Residual, tracked: side B retains a modest edge on the mirrored
-  arena (33–3 vs 23–13 in the 5-vs-3 orientations), suspected
-  resolution-order artifact worth a look in B4's remainder.
+  gone. Re-measured 2026-08-25 after the blast-pricing fix and still
+  standing: **26–10 / 28–8 at 1:1.7–1.9**, and again after difficulty noise
+  became a per-round lean: **28–8 / 9–27 at 1:2.1**, the best recorded.
+  ~~Residual, tracked: side B retains a modest edge on the mirrored
+  arena~~ — **it was not resolution order.** The 5-vs-3 gap paid 24 wins
+  from one end and 32 from the other; once difficulty noise stopped being
+  drawn per candidate tile it pays 20 and 20. The bias scaled with how many
+  tiles a unit could reach, which is what an argmax-over-independent-draws
+  bias does. Note the same change *lowered* how much 5v3 discriminates at
+  all (67%/89% to 56%/56%); the reading is that most of the old figure was
+  the artifact, and that reading is a hypothesis — see DONE.md.
+
+  **Read this table at `--games 36` or not at all.** The default 12 put
+  5v1 at 6–6 and looked like a regression against the numbers above; the
+  same build at 36 gives 26–10. Twelve battles cannot resolve a 70% edge,
+  and the table is the one most often quoted at somebody.
 - **Army-contained unit placements are never validated.**
   `map.rs:962` passes `a.at` (the army's own hex) instead of `u.at` when
   checking each unit inside an `ArmyPlacement`, so a unit's own coordinates are
@@ -433,13 +840,12 @@ rule they defend (`unspotted_enemies_still_ambush`).
   Run it `--release` or the figures are meaningless. Note this supersedes the
   "~39 µs per call on the 768-tile map" figure that used to appear below: that
   map stopped existing when battle maps became the radius-20 hexagon.
-- **MCTS is expensive but no longer impossible.** Was ~35 s per unit order and
-  could not finish a round; the fog work brought it to ~3.3 s per order, and
-  `cargo run --release -p tactics_core --example playthrough` now plays a full
-  32-round battle in ~50 s. Still far too slow to plan a human's turn against,
-  so the shipped scenario still names `utility`. The remaining cost is
-  structural and unchanged: 900 iterations rolling out to depth 20, with every
-  fifth step a `Commit` that runs the enemy's whole planning pass.
+- **MCTS is parked and costs you nothing to ignore.** It measured at parity
+  with the utility planner over 256 controlled battles while costing ~1.8 s
+  an order against 0.05 ms. Nothing ships it and **no planner change owes it
+  a performance budget** — that is the only part of it you need while
+  working. Why, and what would justify reviving it, is in
+  [PARKED.md](PARKED.md).
 - **`reachable()` is O(hexes × units) twice over** — tracked in TODO.md under
   Misc (the occupancy-index item). 32.8 µs per call, which is fine in isolation
   and not fine inside a search that calls it thousands of times.

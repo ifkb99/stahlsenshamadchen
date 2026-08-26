@@ -1,4 +1,4 @@
-# Ballistics — penetration, the girls inside, and the end of hit points
+# Ballistics — penetration, the cadets inside, and the end of hit points
 
 *Written 2026-08-13, after the chain-of-command layer landed. This is the
 design record and build order for the combat-model rewrite: velocity and
@@ -40,8 +40,8 @@ harness can bracket any change with fought-out numbers.
   says so, Combat Mission style. Every system that reads `hp` today is
   rebuilt on condition instead. This was chosen over the incremental
   keep-HP options with eyes open.
-- **Crew hits strike named girls, by station.** A penetration can wound or
-  kill a specific girl mid-battle, and her station degrades immediately:
+- **Crew hits strike named cadets, by station.** A penetration can wound or
+  kill a specific cadet mid-battle, and her station degrades immediately:
   the gunner hit means the gun slows or silences, the driver hit means the
   tank stops maneuvering, the commander hit feeds the succession and morale
   machinery that already exists. Permadeath is a campaign default; this is
@@ -151,9 +151,9 @@ What happens to one fired round, replacing `raw_damage`:
 
 A unit's fighting state is the conjunction of her crew and her modules:
 
-- **Crew:** each girl aboard is fine, wounded, or gone (dead or
+- **Crew:** each cadet aboard is fine, wounded, or gone (dead or
   unconscious — the roster's post-battle fate machinery already
-  distinguishes walking home from not). A wounded girl works her station
+  distinguishes walking home from not). A wounded cadet works her station
   at a penalty; an empty station works barely or not at all. Skills
   already flow through `crew_skill`, so degradation is mostly *removing a
   contributor*, not new arithmetic.
@@ -270,14 +270,14 @@ The B2b model, decided before the first line of it is written:
   computes — into effect rolls: one roll per four points, rounded up, so
   a machine-gun burst that gets into a soft car rolls once and an 88
   through a glacis rolls three or four times. Each roll picks from what
-  is physically inside, weighted by size: every girl aboard is a station
+  is physically inside, weighted by size: every cadet aboard is a station
   of crew-weight (a `balance` knob), every module its declared `size`.
-- **Crew hits strike named girls.** A girl rolled is *wounded* if fine
+- **Crew hits strike named cadets.** A cadet rolled is *wounded* if fine
   and *out* — dead or unconscious, the distinction resolved after the
   battle by the roster's existing fate machinery, worse odds from a
   vehicle that burned — if wounded again; a heavily overmatching round
-  can put her out in one. A wounded girl works her station at a penalty;
-  an out girl's station is covered by the best remaining crew member
+  can put her out in one. A wounded cadet works her station at a penalty;
+  an out cadet's station is covered by the best remaining crew member
   through the substitution rule that already exists (short-handed crews
   are this game's normal case, and the machinery was built for it).
   Every crew hit is an event that names her.
@@ -292,12 +292,12 @@ The B2b model, decided before the first line of it is written:
   fire leaves the remaining rounds unusable, announced as the gun
   running dry.
 - **Brew-up is the catastrophe:** the vehicle is destroyed at once and
-  the girls' fate rolls carry the fire.
+  the cadets' fate rolls carry the fire.
 - **Bail-out is morale, not arithmetic.** Every penetration slams the
   crew with a data-priced pressure spike on top of the hit pressure that
   exists today, and then rolls the same `holds_together` discipline
   check the refusal system uses. A crew that fails abandons: the vehicle
-  is a wreck for scoring, the girls walk home by the existing fate
+  is a wreck for scoring, the cadets walk home by the existing fate
   machinery. This is what keeps time-to-kill honest — real tanks are
   mostly lost because the crew leaves or dies, not because every box is
   ticked — and it makes discipline training visibly be the thing that
@@ -309,7 +309,7 @@ The B2b model, decided before the first line of it is written:
   without consulting the gate at all: a recon car under a 105 is not a
   bounce. Small arms still rattle nobody.
 - **Knocked out is derived, never stored:** brewed, abandoned, or no
-  girl aboard able to fight. Hit points are deleted; a mission-killed
+  cadet aboard able to fight. Hit points are deleted; a mission-killed
   vehicle (gun and tracks gone, crew grimly aboard) is *alive*, which is
   what makes recovering her a future campaign story instead of a
   contradiction. Every hp consumer — evaluator threat and withdraw
@@ -340,7 +340,7 @@ build discovered it needed:
   her at breaking and the dice speak. A one-rung ladder never bails —
   pinned.
 - **An empty crew list is an abstracted crew, not a dead one** — and
-  placements that name no girls now spawn anonymous ones, one per seat,
+  placements that name no cadets now spawn anonymous ones, one per seat,
   trained to average at exactly what the seat demands. Without hit
   points, dying happens to people, and whether a vehicle is mortal must
   not depend on whether a scenario author wrote a roster.
@@ -479,15 +479,15 @@ economy before the instruments can see it is guessing.
 - **The brew-up escape window** — a discipline roll to scramble clear
   of an ammunition fire before the flames, moving some deaths into the
   dramatic "she got out" middle. Deferred deliberately (2026-08-14): the
-  roster's fate machinery already prices a brewed hull against the girls
+  roster's fate machinery already prices a brewed hull against the cadets
   aboard, and an in-battle roll would double-count the fire until that
-  machinery is reworked to receive it. When the girls' life layer gets
+  machinery is reworked to receive it. When the cadets' life layer gets
   its pass, this is the first thing to build into it.
 - **Field repair and recovery** (mobility kills, abandoned vehicles as
   salvage): ties into the engineer/logistics units already in TODO; the
   wreck state lands in B2 either way.
-- **Unbuttoned commanders** (vision vs exposure): wants the girls' trait
-  system (girls.md slice 5) so it can be a personality, not a toggle.
+- **Unbuttoned commanders** (vision vs exposure): wants the cadets' trait
+  system (cadets.md slice 5) so it can be a personality, not a toggle.
 - **Ammo units:** penetration stays in today's abstract armor units; the
   ratio-only rule above means a later data-only pass can relabel the whole
   scale to millimetres without touching code.

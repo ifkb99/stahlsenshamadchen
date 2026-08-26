@@ -11,7 +11,7 @@ this repo has already fooled people.
 
 Read `CLAUDE.md` for architecture and invariants, `TODO.md` for what is left,
 `DONE.md` for why the built things are shaped as they are, and
-`assets/wiki/reference/` for design — especially `girls.md`, which is the model
+`assets/wiki/reference/` for design — especially `cadets.md`, which is the model
 everything about crews hangs off.
 
 ## The four instruments
@@ -103,7 +103,7 @@ on it. Never let `HashMap`/`HashSet` iteration order reach an event stream or
 an AI decision — sort first, or walk `state.units` in id order. This has been
 violated once already and stayed invisible for months.
 
-**Abilities are derived, never stored.** A girl has cores, trained skills and
+**Abilities are derived, never stored.** A cadet has cores, trained skills and
 traits; what she can *do* is computed where it is needed, so terrain,
 suppression and traits arrive as arguments rather than as corrections to a
 cached number. See `data/cores.rs`.

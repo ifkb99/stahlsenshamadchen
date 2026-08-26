@@ -6,7 +6,7 @@
 //! twelve points of Löwe, minus some. That is the model the ballistics
 //! rewrite exists to end. A penetration does not "do damage", it finds
 //! something — the gun, the running gear, the ammunition, the wireless set,
-//! or one of the girls — and what it found decides what the rest of the
+//! or one of the cadets — and what it found decides what the rest of the
 //! battle looks like for that crew. A tank whose tracks are gone still
 //! shoots; a tank whose gun is gone can still drive; a tank whose racks go
 //! up is not in the battle any more.
@@ -68,7 +68,7 @@ pub enum ModuleEffect {
     /// which was flagged as a future when radio hardware landed.
     Radio,
     /// The soldiers themselves — the abstracted mass of a platoon that is not
-    /// one of the named girls. The one effect on this list that is not a
+    /// one of the named cadets. The one effect on this list that is not a
     /// piece of hardware, and it is a module for exactly the reason the
     /// others are: it is a nameable thing inside the unit that a shot can
     /// find and that content decides the size of.
@@ -83,12 +83,12 @@ pub enum ModuleEffect {
     ///   a lucky burst can still find her early, which is where the drama is.
     /// - **Firepower.** Every weapon the unit fires scales its damage by the
     ///   troops fraction — hits remaining over [`ModuleDef::toughness`] — so a
-    ///   platoon at half strength shoots half as hard and the girls alone are
+    ///   platoon at half strength shoots half as hard and the cadets alone are
     ///   nearly harmless. This is why `toughness` on a troops module is
     ///   counted in sections-worth of casualties rather than in the usual one
     ///   or two: it is a strength bar, read as a fraction.
     /// - **Remnant at zero.** At no hits remaining the platoon is not deleted;
-    ///   she is a remnant, the girls still aboard the battle, pulled hard
+    ///   she is a remnant, the cadets still aboard the battle, pulled hard
     ///   towards withdrawal by the condition score she has already wrecked.
     ///   Like a mission-killed tank, a shattered platoon is a story rather
     ///   than a removal from the board.

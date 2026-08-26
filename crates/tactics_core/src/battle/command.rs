@@ -96,6 +96,180 @@ impl FormationId {
     }
 }
 
+/// How much latitude a crew has in carrying out a personal order: whether
+/// she may break it off to keep herself alive.
+///
+/// This is the per-unit twin of the distinction [`Mission::Advance`] and
+/// [`Mission::Assault`] already draw for a whole formation, and it is drawn
+/// for the same reason. A commander who points at a ridge is usually saying
+/// "get there, use your judgment on the way" — and a crew who drives a parade
+/// route through effective fire to keep an appointment is not showing
+/// initiative, she is dying stupidly. But sometimes the ridge is worth the
+/// vehicle, and until now there was no way to say so to one crew. The order
+/// went out, the battle drill quietly overrode it every round, and the
+/// commander watched her tank shelter in a hedge without ever being told why.
+///
+/// So: the same sentence with two prices, and the caller says which one she
+/// is paying. It rides in the order stream rather than living in the UI
+/// because saves, replays and any future external brain have to carry it —
+/// the same argument that makes a mission an [`crate::battle::Order`].
+///
+/// **[`Self::Delegated`] is the default everywhere**, which is what keeps
+/// this additive: an AI side, a mod, a scenario and a save written before
+/// latitude existed all mean exactly the game that was here before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Latitude {
+    /// "Get there." She marches for the ground she was given, and breaks off
+    /// for cover when she is under fire she has had time to take in — the
+    /// battle drill, which every army since 1918 has trained and which this
+    /// engine has always applied. She resumes the march when the shooting
+    /// stops.
+    #[default]
+    Delegated,
+    /// "Get there. I mean it." The drill does not preempt her: she drives on
+    /// through fire and some crews do not arrive. Nothing else changes — she
+    /// still shoots on her arc, still answers her morale, and a crew whose
+    /// rung no longer obeys is exactly as frozen as the rung says. Binding
+    /// buys the order priority over the crew's own judgment, never over her
+    /// nerve.
+    Binding,
+}
+
+impl Latitude {
+    /// Whether an order at this latitude may be set aside by the battle
+    /// drill. Named as a question about the drill rather than a bare bool
+    /// match, because this is the only thing latitude decides and every
+    /// caller should read as though it says so.
+    pub fn yields_to_drill(self) -> bool {
+        self == Self::Delegated
+    }
+
+    /// What marching at this latitude commits a crew to, in one clause —
+    /// the per-unit twin of [`Mission::promise`], and there for exactly the
+    /// same reason. A player choosing between clicking ground and insisting
+    /// on it is making the advance-versus-assault decision one crew at a
+    /// time, and is entitled to read the price of each before she pays it.
+    pub fn promise(self) -> &'static str {
+        match self {
+            Self::Delegated => "she may break off for cover on the way",
+            Self::Binding => "she drives on, and does not stop for cover",
+        }
+    }
+
+    /// The same clause for a *formation's* orders, which commit a different
+    /// thing and therefore have to say a different thing.
+    ///
+    /// What a mission's latitude buys is not the battle drill — that is the
+    /// advance-versus-assault decision and has its own verb — it is whether
+    /// the formation's doctrine may discount the order it was given. A loose
+    /// doctrine currently reads "take the ford" as a suggestion worth about
+    /// four fifths of what a tight one reads it as, which is the complaint
+    /// this chunk answers: a commander's order should not be quietly worth
+    /// less because of who she gave it to.
+    pub fn mission_promise(self) -> &'static str {
+        match self {
+            Self::Delegated => "her doctrine decides how closely to hold to it",
+            Self::Binding => "she holds to the letter of it, whatever her doctrine prefers",
+        }
+    }
+}
+
+/// What one crew means to do next, as opposed to what her formation was
+/// told.
+///
+/// This is the unit of decision the planners work in, and it is deliberately
+/// small: a handful of statements, each stable enough to outlive the round
+/// that produced it. The shape is borrowed from the options framework in
+/// reinforcement learning — an *option* is a temporally extended action with
+/// three parts, and a goal has all three: the set of goals worth considering
+/// is the initiation set ([`crate::ai::goal::candidates`]), the executor that
+/// walks toward one is the policy, and [`Goal::finished`] is the termination
+/// condition.
+///
+/// That is not decoration. It is the seam this codebase is meant to be
+/// replaceable at: a learned policy chooses among a handful of goals, while
+/// pathing, boarding, dismounting, opportunity fire and defiance stay in the
+/// executor where they are already written and already tested. A policy that
+/// had to emit orders directly would be choosing among every hex on a
+/// 1261-tile board and relearning rules the engine already knows.
+///
+/// Lives here rather than in `ai` for two reasons. It is a fact about a unit
+/// in the same family as [`Mission`] and `tasking` — what she is trying to do
+/// — so it belongs where those are; and the presentation layer reads it, so
+/// that a vehicle driving somewhere can say where. It rides on the unit and
+/// therefore through saves, which a planner's private memory would not: that
+/// is not a style preference, it is what `tests/save.rs` requires, since a
+/// battle that forks through a save file has to play the same afterwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Goal {
+    /// Get to this ground and be standing on it. The workhorse: an
+    /// objective, a piece of cover, a firing position, the ground her orders
+    /// named.
+    Take(Hex),
+    /// Stay here and watch. Not the absence of a goal — a crew who has
+    /// decided this piece of ground is where she should be is doing
+    /// something, and the difference matters to anyone reading the log.
+    Hold,
+}
+
+impl Goal {
+    /// Whether this goal is over — achieved, or no longer worth carrying.
+    ///
+    /// The termination condition, and a *list* rather than a threshold on
+    /// purpose. A threshold ("abandon it if something else is now much
+    /// better") re-opens the question every round and needs a number nobody
+    /// can defend; a list can be read, and each entry is a sentence about the
+    /// world rather than about the arithmetic.
+    ///
+    /// `Hold` never finishes on its own. It is ended by the things that end
+    /// every goal from outside — fresh orders, a recall — which is right: a
+    /// crew told to sit somewhere sits there until told otherwise.
+    pub fn finished(
+        &self,
+        state: &crate::battle::BattleState,
+        unit: crate::battle::UnitId,
+    ) -> bool {
+        let Some(me) = state.unit(unit) else {
+            return true;
+        };
+        match self {
+            Self::Hold => false,
+            Self::Take(hex) => {
+                // Arrived.
+                me.pos == *hex
+                    // Or somebody else got there first. Two crews driving for
+                    // one hex is the queue the plateau rule was invented to
+                    // break up, and saying it here says it once instead of
+                    // as a tie-break buried in a sweep.
+                    || state.unit_at(*hex).is_some_and(|u| u.id != unit && u.side == me.side)
+            }
+        }
+    }
+
+    /// How this reads over the radio, given a map that can name its ground.
+    ///
+    /// A phrase rather than a sentence, and in the crew's own voice, because
+    /// the log is traffic rather than narration: the presentation layer puts
+    /// her call sign in front of it. Ground with a name is called by its
+    /// name — "moving to the Great Glade" is what somebody would actually
+    /// say, where a grid reference is what she falls back on when the ground
+    /// has none.
+    pub fn describe(&self, map: &crate::map::HexMap) -> String {
+        match self {
+            Self::Hold => "holding here".to_string(),
+            Self::Take(hex) => match map.objectives().iter().find(|o| o.hexes.contains(hex)) {
+                Some(objective) => format!("moving to {}", objective.name),
+                None => {
+                    let [col, row] = crate::hex_to_offset(*hex);
+                    format!("moving to ({col}, {row})")
+                }
+            },
+        }
+    }
+}
+
 /// What a formation has been told to do, until it is told something else.
 ///
 /// The vocabulary every commander speaks: the built-in brain, the human
@@ -179,7 +353,73 @@ impl Mission {
             Self::Hold { .. } | Self::Withdraw { .. } | Self::Support { .. }
         )
     }
+
+    /// The verb a person would use for this order, one word.
+    pub fn verb(&self) -> &'static str {
+        VOCABULARY[self.slot()].0
+    }
+
+    /// What ordering this commits a formation to, in one clause.
+    ///
+    /// It lives here rather than in the UI because it is a claim about the
+    /// *rules*, and the rules are here. The distinction between an advance
+    /// and an assault is the sharpest example in the game and was, until
+    /// this existed, invisible from the keyboard: both keys move a platoon
+    /// toward ground, one of them stops when somebody shoots, and the player
+    /// who meant the second and pressed the first watched her attack die
+    /// halfway for reasons the game never stated. A promise beside the enum
+    /// is the cheapest possible fix and the one that cannot drift, because
+    /// whoever changes what an order *does* is looking straight at the
+    /// sentence claiming what it does.
+    ///
+    /// Deliberately about consequences rather than mechanism. "Halt and
+    /// fight whatever shoots at you" is something a player can plan around;
+    /// "damped to a quarter on contact" is the same fact written for
+    /// somebody who has read [`crate::ai::Evaluator`].
+    pub fn promise(&self) -> &'static str {
+        VOCABULARY[self.slot()].1
+    }
+
+    /// Every order a commander can give, as verb and promise, in the order a
+    /// briefing would list them.
+    ///
+    /// For a menu of orders that have not been aimed at anything yet — which
+    /// is exactly when a player needs to read what they mean. It shares its
+    /// table with [`Self::verb`] and [`Self::promise`] so a listed order and
+    /// a given one can never say different things.
+    pub fn vocabulary() -> &'static [(&'static str, &'static str)] {
+        VOCABULARY
+    }
+
+    /// Which row of [`VOCABULARY`] describes this order. Written as an
+    /// exhaustive match rather than a discriminant cast so that adding a
+    /// mission without giving it a promise fails to compile.
+    fn slot(&self) -> usize {
+        match self {
+            Self::Advance { .. } => 0,
+            Self::Assault { .. } => 1,
+            Self::Hold { .. } => 2,
+            Self::Recon { .. } => 3,
+            Self::Withdraw { .. } => 4,
+            Self::Support { .. } => 5,
+        }
+    }
 }
+
+/// What each mission verb promises, in the order [`Mission`] declares them.
+///
+/// One table rather than a match arm per accessor, because the two things a
+/// caller wants — "what is this order called" and "what does it commit me
+/// to" — are two columns of one fact and drift the moment they are written
+/// twice.
+const VOCABULARY: &[(&str, &str)] = &[
+    ("advance", "take it, halting to fight what shoots"),
+    ("assault", "take it through fire, and pay for it"),
+    ("hold", "stand fast and hold what you have"),
+    ("reconnoitre", "find them without getting pinned"),
+    ("withdraw", "break contact and leave the field"),
+    ("support", "shoot for them instead of going with them"),
+];
 
 /// One formation with its declaration resolved against the units on the field.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -189,7 +429,7 @@ pub struct Formation {
     /// Which side this formation belongs to. Every member agrees with it —
     /// map validation refuses a formation spanning two sides.
     pub side: u8,
-    /// The girl in charge: the member whose placement said `leads`, else the
+    /// The cadet in charge: the member whose placement said `leads`, else the
     /// first member in declaration order (seniority the map author controls).
     ///
     /// `Option` because a formation can be *left* leaderless — every member
@@ -197,12 +437,12 @@ pub struct Formation {
     /// because a fresh one ever is. A formation with members always starts
     /// with one, and keeps one for as long as anybody is still on the field.
     pub leader: Option<UnitId>,
-    /// The girl who was in command when the battle opened.
+    /// The cadet who was in command when the battle opened.
     ///
     /// Kept beside [`Self::leader`] rather than derived from it because
     /// succession *overwrites* the current leader within a tick of her death,
     /// and a scenario's [`crate::map::LossTrigger::LeaderLost`] is a question
-    /// about the girl the map named — "is the commanding officer dead" — not
+    /// about the cadet the map named — "is the commanding officer dead" — not
     /// about whoever holds the job now. Without this, a decapitation condition
     /// would quietly retarget itself onto the successor the moment it should
     /// have fired.
@@ -228,6 +468,30 @@ pub struct Formation {
     /// accident what a silent map means.
     #[serde(default)]
     pub mission: Option<Mission>,
+    /// The latitude the standing orders were given with: whether the
+    /// formation's own doctrine is allowed to discount them.
+    ///
+    /// The formation-scale half of [`Latitude`], and it governs a different
+    /// thing from the per-unit half on purpose. A crew's latitude answers
+    /// *will she break off for cover*; a formation's answers *may her
+    /// doctrine bend how hard she is pulled toward the ground she was
+    /// given*. The first question already has a formation-scale verb —
+    /// [`Mission::Assault`] is "press on through fire", and giving latitude
+    /// that job too would make a binding [`Mission::Advance`] an exact
+    /// synonym for it. Two idioms for one sentence is the thing this whole
+    /// chunk exists to avoid.
+    ///
+    /// **It belongs to the orders as a whole, not to one leg.** A plan is
+    /// one intention: a commander who wants the third bound and the first
+    /// loose is a commander who countermands when it is time, which is what
+    /// she would do on the day. So an amendment sets it as a replacement
+    /// does, and a promoted leg inherits it.
+    ///
+    /// `#[serde(default)]` — and [`Latitude::Delegated`] is the default — so
+    /// a save, a scenario and an AI side that never say otherwise mean
+    /// exactly the game that was here before.
+    #[serde(default)]
+    pub latitude: Latitude,
     /// The rest of the plan: missions queued behind the standing one, in the
     /// order they will be taken up.
     ///
@@ -286,15 +550,34 @@ pub enum MissionChange {
     /// This mission becomes the standing one and everything queued behind
     /// the old one is off — a countermand replaces the plan, not a line of
     /// it.
-    Replace(Mission),
+    Replace {
+        mission: Mission,
+        /// Carried with the mission rather than applied when it was sent,
+        /// for the same reason [`WaitingOrders`] carries a unit's: an order
+        /// held on the wire has to arrive meaning what it meant when it was
+        /// given, not what the commander happens to mean by the time it
+        /// lands.
+        #[serde(default)]
+        latitude: Latitude,
+    },
     /// This mission joins the end of the plan: "…and then this."
-    Append(Mission),
+    Append {
+        mission: Mission,
+        #[serde(default)]
+        latitude: Latitude,
+    },
 }
 
 impl MissionChange {
     pub fn mission(&self) -> &Mission {
         match self {
-            Self::Replace(mission) | Self::Append(mission) => mission,
+            Self::Replace { mission, .. } | Self::Append { mission, .. } => mission,
+        }
+    }
+
+    pub fn latitude(&self) -> Latitude {
+        match self {
+            Self::Replace { latitude, .. } | Self::Append { latitude, .. } => *latitude,
         }
     }
 }
@@ -307,6 +590,12 @@ pub struct CutOff {
     /// `None`, because being cut off with no orders is its own state: she
     /// fights by her own judgment, exactly as an unmissioned unit does.
     pub orders: Option<Mission>,
+    /// And the latitude they were given with, snapshotted at the same
+    /// moment and for the same reason. `#[serde(default)]` so a save written
+    /// before missions had latitude opens as one where nobody was ever held
+    /// to the letter of anything, which is what it was.
+    #[serde(default)]
+    pub latitude: Latitude,
 }
 
 impl Formation {
@@ -333,6 +622,19 @@ impl Formation {
         match self.out_of_contact.iter().find(|c| c.unit == unit) {
             Some(cut) => cut.orders.as_ref(),
             None => self.mission.as_ref(),
+        }
+    }
+
+    /// The latitude those orders came with — the twin of [`Self::mission_for`]
+    /// and resolved the same way, because an order and how hard it was meant
+    /// travel together or they do not travel at all. A cut-off crew soldiers
+    /// on the orders she was given *as she was given them*; the formation's
+    /// latitude may have changed twice behind her back and she has heard
+    /// none of it.
+    pub fn latitude_for(&self, unit: UnitId) -> Latitude {
+        match self.out_of_contact.iter().find(|c| c.unit == unit) {
+            Some(cut) => cut.latitude,
+            None => self.latitude,
         }
     }
 
@@ -381,6 +683,11 @@ pub struct WaitingOrders {
     /// died — an order to engage a wreck is not an order.
     #[serde(default)]
     pub fire: Option<FireIntent>,
+    /// The latitude the destination was given at, so an order that waited at
+    /// the radio arrives meaning what it meant when it was sent. A commander
+    /// who said "press on" and could not be heard has still said it.
+    #[serde(default)]
+    pub latitude: Latitude,
 }
 
 /// One entry in a side's command picture: an enemy as last *reported*, which
@@ -421,7 +728,7 @@ pub struct CommandState {
     /// became hardware: `out_of_contact` is the first, this is the second.
     #[serde(default)]
     voiceless: Vec<Vec<UnitId>>,
-    /// Radioed orders that have not reached the girl they were meant for,
+    /// Radioed orders that have not reached the cadet they were meant for,
     /// in unit-id order.
     ///
     /// Only [`crate::battle::Order::Radio`] ever fills this — the commander's
@@ -476,6 +783,7 @@ impl CommandState {
                     members: members.into_iter().map(|(id, _)| id).collect(),
                     doctrine: def.doctrine.clone(),
                     mission: None,
+                    latitude: Latitude::default(),
                     plan: std::collections::VecDeque::new(),
                     incoming: None,
                     out_of_contact: Vec::new(),
@@ -523,10 +831,16 @@ impl CommandState {
     /// news — that a mission was given at all — is the caller's
     /// [`crate::battle::Event::MissionAssigned`], because this type has no
     /// business deciding what reaches the log.
-    pub fn set_mission(&mut self, formation: FormationId, mission: Mission) -> bool {
+    pub fn set_mission(
+        &mut self,
+        formation: FormationId,
+        mission: Mission,
+        latitude: Latitude,
+    ) -> bool {
         match self.formations.get_mut(formation.index()) {
             Some(f) => {
                 f.mission = Some(mission);
+                f.latitude = latitude;
                 // Anything still travelling or still queued has been
                 // overtaken by this: a countermand replaces the plan, and
                 // letting an old leg land or begin afterwards would quietly
@@ -539,7 +853,7 @@ impl CommandState {
         }
     }
 
-    /// Every radioed order still waiting for its girl, in unit-id order.
+    /// Every radioed order still waiting for its cadet, in unit-id order.
     /// What the formation panel reads to say "orders waiting" beside her name.
     pub fn waiting(&self) -> &[(UnitId, WaitingOrders)] {
         &self.waiting
@@ -565,6 +879,7 @@ impl CommandState {
         unit: UnitId,
         destination: Option<Hex>,
         fire: Option<FireIntent>,
+        latitude: Latitude,
     ) {
         if !self.waiting.iter().any(|(id, _)| *id == unit) {
             self.waiting.push((unit, WaitingOrders::default()));
@@ -578,6 +893,10 @@ impl CommandState {
             .1;
         if destination.is_some() {
             slot.destination = destination;
+            // Latitude belongs to the destination and travels with it: a
+            // later order that says nothing about where she is going has
+            // said nothing about how hard she is to press either.
+            slot.latitude = latitude;
         }
         if fire.is_some() {
             slot.fire = fire;
@@ -631,7 +950,12 @@ impl CommandState {
     /// standing one, if the formation had nothing to do: an amendment to an
     /// empty plan is simply the first order. Returns whether the formation
     /// exists.
-    pub fn queue_mission(&mut self, formation: FormationId, mission: Mission) -> bool {
+    pub fn queue_mission(
+        &mut self,
+        formation: FormationId,
+        mission: Mission,
+        latitude: Latitude,
+    ) -> bool {
         match self.formations.get_mut(formation.index()) {
             Some(f) => {
                 if f.mission.is_none() {
@@ -639,6 +963,12 @@ impl CommandState {
                 } else {
                     f.plan.push_back(mission);
                 }
+                // An amendment speaks for the whole plan — see the note on
+                // [`Formation::latitude`]. The alternative is a latitude per
+                // leg, which buys a distinction ("take the ford loosely, and
+                // then the ridge come what may") that no commander issues in
+                // one breath and that a countermand already expresses.
+                f.latitude = latitude;
                 true
             }
             None => false,
@@ -704,16 +1034,18 @@ impl BattleState {
             if arrived && let Some((change, _)) = formation.incoming.take() {
                 let mission = change.mission().clone();
                 match change {
-                    MissionChange::Replace(mission) => {
+                    MissionChange::Replace { mission, latitude } => {
                         formation.mission = Some(mission);
+                        formation.latitude = latitude;
                         formation.plan.clear();
                     }
-                    MissionChange::Append(mission) => {
+                    MissionChange::Append { mission, latitude } => {
                         if formation.mission.is_none() {
                             formation.mission = Some(mission);
                         } else {
                             formation.plan.push_back(mission);
                         }
+                        formation.latitude = latitude;
                     }
                 }
                 events.push(Event::MissionReceived {
@@ -724,7 +1056,7 @@ impl BattleState {
         }
     }
 
-    /// Hand command to the next girl in the order of battle wherever the
+    /// Hand command to the next cadet in the order of battle wherever the
     /// leader is off the field.
     ///
     /// **Ungated, and that is the point.** Every other rule in this module
@@ -747,7 +1079,7 @@ impl BattleState {
     /// The successor is worse at the job and no code here makes her so. Every
     /// price the chain of command charges — [`BattleState::mission_delay`] and
     /// the contact radius below — is already read off *the current leader's*
-    /// crew, at the place she is standing, so promoting a girl with a weaker
+    /// crew, at the place she is standing, so promoting a cadet with a weaker
     /// `command` skill lengthens her formation's latencies and promoting one
     /// with weaker `signals` shrinks its net, for free and for the right
     /// reason. Building a separate penalty on top would be pricing the same
@@ -947,7 +1279,7 @@ impl BattleState {
     ///
     /// A formation with nobody left to speak — every member dead or gone — is
     /// entirely out of contact. That is now the only way to reach that state:
-    /// [`Self::pass_command`] runs first and hands the net to the next girl,
+    /// [`Self::pass_command`] runs first and hands the net to the next cadet,
     /// so a leader dying costs her formation a tick of nothing rather than the
     /// rest of the battle in silence.
     ///
@@ -977,7 +1309,7 @@ impl BattleState {
         // `out_of_contact`, and standing orders soldier on where it fails.
         // Upward, along the reversed edges, it answers "whose REPORTS can
         // reach command" — that is `voiceless`, and the picture learns
-        // nothing from a girl who cannot speak: a receiver-only scout must
+        // nothing from a cadet who cannot speak: a receiver-only scout must
         // flag her sighting to somebody with a set, or it dies with her
         // silence. Roots, queues and candidate scans are all in unit-id
         // order, so neither set nor any event can depend on a hash.
@@ -1088,14 +1420,15 @@ impl BattleState {
             let cut_off: Vec<CutOff> = living
                 .iter()
                 .filter(|id| !heard.contains(id))
-                .map(|id| CutOff {
-                    unit: *id,
-                    orders: formation
-                        .out_of_contact
-                        .iter()
-                        .find(|c| c.unit == *id)
-                        .map(|c| c.orders.clone())
-                        .unwrap_or_else(|| formation.mission.clone()),
+                .map(|id| {
+                    let already = formation.out_of_contact.iter().find(|c| c.unit == *id);
+                    CutOff {
+                        unit: *id,
+                        orders: already
+                            .map(|c| c.orders.clone())
+                            .unwrap_or_else(|| formation.mission.clone()),
+                        latitude: already.map_or(formation.latitude, |c| c.latitude),
+                    }
                 })
                 .collect();
             let was = std::mem::replace(

@@ -15,7 +15,7 @@
 //! can still hurt a Löwe from the front.
 //!
 //! The **simulated** pass (`--sim`) fights whole battles and reports what
-//! actually happened — who won, what killed them, what it cost the girls, how
+//! actually happened — who won, what killed them, what it cost the cadets, how
 //! many shells went out. It is slower and noisier, and it is the check at the
 //! end, because the analytic numbers can all look reasonable while the fights
 //! they produce are terrible.
@@ -23,7 +23,7 @@
 //! Both passes are organised around the **kill chain** the ballistics rewrite
 //! installed, because that is now the shape of the game: a round is chambered,
 //! it hits or it does not, it gets through the plate or it does nothing at all,
-//! and what it finds behind the plate is girls and modules rather than a hit
+//! and what it finds behind the plate is cadets and modules rather than a hit
 //! point pool. Every number below therefore comes out of `preview_attack`,
 //! `chambered`, `flight_ticks` and `resolve_round` rather than a formula
 //! written here — the tables are forced through the engine by loading the
@@ -41,17 +41,28 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{
-    AttackPreview, BattleState, EndReason, Event, Order, SideState, UnitId, flight_ticks,
-    preview_attack,
+    AttackPreview, BattleState, EndReason, Event, Order, SideState, UnitId, blast_overmatches,
+    flight_ticks, preview_attack,
 };
 use tactics_core::data::{ArmorFacing, DataRegistry, ModuleEffect, WeaponDef};
 use tactics_core::force;
 use tactics_core::map::{Facing, HexMap, MapFile, MapKind, UnitPlacement};
-use tactics_core::roster::{GirlId, Roster};
+use tactics_core::roster::{CadetId, Roster};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let sim = args.iter().any(|a| a == "--sim");
+    // Opt-in and separately sized, because MCTS costs seconds per order and
+    // would otherwise make the content-iteration loop unusable. Its default
+    // sample is deliberately small: this table answers a yes/no question
+    // about which brain is better, not a balance question about a number.
+    let brains = args.iter().any(|a| a == "--brains");
+    let brain_games: usize = flag(&args, "--brain-games")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(6);
+    let brain_difficulty: u8 = flag(&args, "--brain-difficulty")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
     let games: usize = flag(&args, "--games")
         .and_then(|v| v.parse().ok())
         .unwrap_or(12);
@@ -81,6 +92,9 @@ fn main() {
         delegation_tax(&registry, games);
         mustered_forces(&registry, games, budget);
         skill_gap(&registry, games);
+    }
+    if brains {
+        brains_table(&registry, brain_games, brain_difficulty);
     } else {
         println!("\n(pass --sim to fight {games} battles and see what these numbers do)");
     }
@@ -213,10 +227,10 @@ struct Duels<'r> {
 /// chassis that declares none inherits.
 #[derive(Clone, Copy)]
 struct Facts {
-    /// Full substance complement: two points per girl plus every module's
+    /// Full substance complement: two points per cadet plus every module's
     /// toughness.
     substance: u32,
-    /// Girls aboard — the seats a behind-armor roll can find.
+    /// Cadets aboard — the seats a behind-armor roll can find.
     seats: u32,
     /// Total weight a behind-armor effect roll draws from.
     interior: u32,
@@ -454,7 +468,7 @@ fn roster_table(reg: &DataRegistry) {
         );
     }
     println!(
-        "\n  `substance` is what she is made of — two points per girl plus every\n  \
+        "\n  `substance` is what she is made of — two points per cadet plus every\n  \
          module's toughness — which is what a penetration spends itself against\n  \
          now that there are no hit points. `rounds` is everything in the racks."
     );
@@ -533,7 +547,7 @@ struct KillChain {
 /// The chain, in the order the engine walks it: hit chance, penetration
 /// chance, and then the behind-armor budget — the ledger damage the round
 /// carries, spent as one effect roll per `points_per_effect`, each roll
-/// picking a girl or a module weighted by size. Everything up to and
+/// picking a cadet or a module weighted by size. Everything up to and
 /// including the budget is read off `preview_attack`; what is *modeled* here
 /// is the two catastrophes, because they are rolls rather than expectations:
 /// a rack hit lighting the racks, and blast overmatching a thin skin. Both
@@ -556,13 +570,13 @@ fn kill_chain(
     let pen = shot.pen_chance as f32 / 100.0;
     let rolls = ((shot.damage.max(1) + per_effect - 1) / per_effect) as f32;
     // The same test `behind_armor_effects` makes: double the price of a roll
-    // arriving at once puts a girl straight out instead of wounding her.
+    // arriving at once puts a cadet straight out instead of wounding her.
     let savage = shot.damage >= per_effect * 2;
 
     let interior = facts.interior.max(1) as f32;
     let crew_share = (reg.balance.crew_weight.max(0) as u32 * facts.seats) as f32 / interior;
     // Each roll takes one substance point — a wound, or one module hit — and
-    // a savage roll that lands on a girl takes both of hers at once.
+    // a savage roll that lands on a cadet takes both of hers at once.
     let per_pen = rolls * (1.0 + if savage { crew_share } else { 0.0 });
     let per_shot = hit * pen * per_pen;
 
@@ -628,7 +642,7 @@ fn kill_chain_table(reg: &DataRegistry, duels: &mut Duels) {
                 duels.facts(vehicle),
             ) {
                 (Some(shot), Some(facts)) => {
-                    let overmatch = ammo.blast > 0 && ammo.blast >= facts.thinnest * 2;
+                    let overmatch = ammo.blast > 0 && blast_overmatches(ammo.blast, facts.thinnest);
                     let chain = kill_chain(reg, &shot, facts, weapon, overmatch);
                     if chain.shots.is_finite() && chain.shots < 400.0 {
                         format!("{:.1} ({:.1}r)", chain.shots, chain.rounds)
@@ -746,7 +760,7 @@ fn flags(reg: &DataRegistry, duels: &mut Duels) {
                 .map(|s| s.pen_chance)
                 .max()
                 .unwrap_or(0);
-            let overmatches = best_blast > 0 && best_blast >= facts.thinnest * 2;
+            let overmatches = best_blast > 0 && blast_overmatches(best_blast, facts.thinnest);
             if best_pen == 0 && !overmatches {
                 helpless.push(vehicle.clone());
             }
@@ -932,9 +946,9 @@ fn simulate(reg: &DataRegistry, games: usize) {
         ai.insert(1, planner(reg, seed + 1, "elastic_defense"));
         let mut rounds = 0;
         let mut last_hit: HashMap<UnitId, String> = HashMap::new();
-        // Final state per girl, so a girl wounded and then killed is counted
+        // Final state per cadet, so a cadet wounded and then killed is counted
         // once, as killed.
-        let mut girls: BTreeMap<GirlId, bool> = BTreeMap::new();
+        let mut cadets: BTreeMap<CadetId, bool> = BTreeMap::new();
         for unit in &state.units {
             for (id, count) in &unit.ammo {
                 *t.ammo_aboard.entry(id.clone()).or_default() += count;
@@ -986,8 +1000,8 @@ fn simulate(reg: &DataRegistry, games: usize) {
                             t.shells_bounced += 1;
                         }
                     }
-                    Event::CrewHit { girl, out, .. } => {
-                        let entry = girls.entry(girl).or_insert(false);
+                    Event::CrewHit { cadet, out, .. } => {
+                        let entry = cadets.entry(cadet).or_insert(false);
                         *entry |= out;
                     }
                     Event::Mounted { .. } => t.mounts += 1,
@@ -1029,7 +1043,7 @@ fn simulate(reg: &DataRegistry, games: usize) {
             }
         }
         t.rounds.push(rounds);
-        for out in girls.values() {
+        for out in cadets.values() {
             if *out {
                 t.girls_out += 1;
             } else {
@@ -1143,7 +1157,7 @@ fn simulate(reg: &DataRegistry, games: usize) {
 
     // What actually killed them. The single most useful line in this report
     // after the outcome, because it says which half of the model is doing
-    // the work: fires, blast, nerve, or the girls themselves.
+    // the work: fires, blast, nerve, or the cadets themselves.
     let total_deaths: usize = t.causes.values().sum();
     if total_deaths > 0 {
         print!("  killed by:");
@@ -1156,8 +1170,8 @@ fn simulate(reg: &DataRegistry, games: usize) {
         println!();
     }
     println!(
-        "  crew cost: {:.1} girls wounded and {:.1} out per battle ({} and {} across the\n    \
-         run, by her state at the end — a girl wounded and then killed is counted\n    \
+        "  crew cost: {:.1} cadets wounded and {:.1} out per battle ({} and {} across the\n    \
+         run, by her state at the end — a cadet wounded and then killed is counted\n    \
          once, as out)",
         t.girls_wounded as f32 / games.max(1) as f32,
         t.girls_out as f32 / games.max(1) as f32,
@@ -1655,6 +1669,153 @@ fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
     ))
 }
 
+/// One battle's outcome, reduced to what the tables count.
+struct Outcome {
+    winner: Option<u8>,
+    a_losses: usize,
+    b_losses: usize,
+    rounds: usize,
+}
+
+/// Fight a batch of independent battles across the machine's cores.
+///
+/// They really are independent: each has its own map, its own `BattleState`,
+/// its own planners and its own seeded rng, and they share nothing but the
+/// registry, which is read-only for the whole run. So the only thing
+/// parallelism can damage is the *table*, and it is guarded rather than
+/// hoped for — every battle writes into the slot its seed owns, and the
+/// results are folded in seed order afterwards. A balance figure that moved
+/// depending on which core finished first would be worse than a slow one,
+/// and it would be the kind of wrong that looks like noise.
+///
+/// `std::thread::scope` rather than a work-stealing pool: the batch is known
+/// up front, the battles are within a factor of a few of each other, and it
+/// costs no dependency. Chunked by slice rather than by index so the borrow
+/// checker proves no two threads touch the same slot.
+fn fight_all<T: Send>(
+    reg: &DataRegistry,
+    games: usize,
+    each: impl Fn(&DataRegistry, u64) -> T + Sync,
+) -> Vec<T> {
+    let mut out: Vec<Option<T>> = (0..games).map(|_| None).collect();
+    if games == 0 {
+        return Vec::new();
+    }
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(games);
+    let per = games.div_ceil(threads);
+    std::thread::scope(|scope| {
+        let each = &each;
+        let mut rest = out.as_mut_slice();
+        let mut base = 0usize;
+        while !rest.is_empty() {
+            let take = per.min(rest.len());
+            let (mine, tail) = rest.split_at_mut(take);
+            let start = base;
+            scope.spawn(move || {
+                for (i, slot) in mine.iter_mut().enumerate() {
+                    *slot = Some(each(reg, (start + i) as u64));
+                }
+            });
+            base += take;
+            rest = tail;
+        }
+    });
+    out.into_iter()
+        .map(|o| o.expect("every battle in the batch ran"))
+        .collect()
+}
+
+/// Play one battle between two configured planners on the mirrored arena.
+fn arena_duel(reg: &DataRegistry, seed: u64, a: &AiConfig, b: &AiConfig) -> Option<Outcome> {
+    let mut state = symmetric_arena(reg, 9000 + seed)?;
+    let mut ai = AiDriver::new();
+    for (side, cfg) in [(0u8, a), (1u8, b)] {
+        ai.insert(side, make_battle_planner(cfg, seed * 2 + side as u64, reg));
+    }
+    let mut rounds = 0;
+    while !state.is_over() && rounds < 60 {
+        ai.plan_round(reg, &mut state);
+        state.resolve_round(reg);
+        rounds += 1;
+    }
+    Some(Outcome {
+        winner: state.over.and_then(|r| r.winner),
+        a_losses: state.lost_units().filter(|u| u.side == 0).count(),
+        b_losses: state.lost_units().filter(|u| u.side == 1).count(),
+        rounds,
+    })
+}
+
+/// Which brain is better, controlled.
+///
+/// REVIEW.md read "Kuhlmann won 3/3" as evidence that MCTS beats the utility
+/// planner, and it cannot be: `playthrough` hands side 0 both MCTS *and*
+/// `massed_armor`, on a map whose two sides field different vehicles. Three
+/// candidate explanations, one observation. This fights the same mirrored
+/// arena the skill-gap table uses — identical forces, identical doctrine,
+/// identical difficulty — and varies nothing but which planner is thinking,
+/// in both orientations so that a side-of-the-map effect shows up as a
+/// disagreement between the two rows rather than as a result.
+///
+/// The two same-brain rows are the control and are the first thing to read:
+/// on a mirrored arena they should sit near parity, and how far they miss it
+/// is the noise floor every other row has to beat before it means anything.
+fn brains_table(reg: &DataRegistry, games: usize, difficulty: u8) {
+    heading(&format!(
+        "brains: {games} battles per pairing on the mirrored arena, difficulty {difficulty} both sides"
+    ));
+    println!(
+        "  {:<22} {:>5} {:>5} {:>6} {:>12} {:>12} {:>9}",
+        "pairing (A vs B)", "A won", "B won", "draws", "A lost/game", "B lost/game", "rounds"
+    );
+    for (a, b) in [
+        ("utility", "utility"),
+        ("mcts", "mcts"),
+        ("mcts", "utility"),
+        ("utility", "mcts"),
+    ] {
+        let cfg = |planner: &str| AiConfig {
+            planner: planner.into(),
+            difficulty,
+            doctrine: None,
+        };
+        let (a_cfg, b_cfg) = (cfg(a), cfg(b));
+        let fought = fight_all(reg, games, |reg, seed| {
+            arena_duel(reg, seed, &a_cfg, &b_cfg)
+        });
+
+        let (mut a_wins, mut b_wins, mut draws) = (0, 0, 0);
+        let (mut a_losses, mut b_losses, mut total_rounds) = (0usize, 0usize, 0usize);
+        for outcome in fought.into_iter().flatten() {
+            total_rounds += outcome.rounds;
+            match outcome.winner {
+                Some(0) => a_wins += 1,
+                Some(_) => b_wins += 1,
+                None => draws += 1,
+            }
+            a_losses += outcome.a_losses;
+            b_losses += outcome.b_losses;
+        }
+        let per = |l: usize| l as f32 / games.max(1) as f32;
+        println!(
+            "  {:<22} {a_wins:>5} {b_wins:>5} {draws:>6} {:>12.2} {:>12.2} {:>9.1}",
+            format!("{a} vs {b}"),
+            per(a_losses),
+            per(b_losses),
+            total_rounds as f32 / games.max(1) as f32,
+        );
+    }
+    println!(
+        "\n  the two same-brain rows are the control: read how far they miss\n  \
+         parity first, because that is the noise floor the mixed rows have to\n  \
+         beat. a real difference shows as BOTH mixed rows favouring the same\n  \
+         brain."
+    );
+}
+
 fn skill_gap(reg: &DataRegistry, games: usize) {
     heading(&format!(
         "skill gap: {games} battles per pairing on a mirrored arena — same forces, same doctrine, only execution differs"
@@ -1664,40 +1825,26 @@ fn skill_gap(reg: &DataRegistry, games: usize) {
         "pairing", "A won", "B won", "draws", "A lost/game", "B lost/game", "ratio"
     );
     for (a, b) in [(5, 5), (1, 1), (5, 3), (3, 5), (5, 1), (1, 5)] {
+        let cfg = |difficulty: u8| AiConfig {
+            planner: "utility".into(),
+            difficulty,
+            doctrine: None,
+        };
+        let (a_cfg, b_cfg) = (cfg(a), cfg(b));
+        let fought = fight_all(reg, games, |reg, seed| {
+            arena_duel(reg, seed, &a_cfg, &b_cfg)
+        });
+
         let (mut a_wins, mut b_wins, mut draws) = (0, 0, 0);
         let (mut a_losses, mut b_losses) = (0usize, 0usize);
-        for seed in 0..games as u64 {
-            let Some(mut state) = symmetric_arena(reg, 9000 + seed) else {
-                continue;
-            };
-            let mut ai = AiDriver::new();
-            for (side, diff) in [(0u8, a), (1u8, b)] {
-                ai.insert(
-                    side,
-                    make_battle_planner(
-                        &AiConfig {
-                            planner: "utility".into(),
-                            difficulty: diff,
-                            doctrine: None,
-                        },
-                        seed * 2 + side as u64,
-                        reg,
-                    ),
-                );
-            }
-            let mut rounds = 0;
-            while !state.is_over() && rounds < 60 {
-                ai.plan_round(reg, &mut state);
-                state.resolve_round(reg);
-                rounds += 1;
-            }
-            match state.over.and_then(|r| r.winner) {
+        for outcome in fought.into_iter().flatten() {
+            match outcome.winner {
                 Some(0) => a_wins += 1,
                 Some(_) => b_wins += 1,
                 None => draws += 1,
             }
-            a_losses += state.lost_units().filter(|u| u.side == 0).count();
-            b_losses += state.lost_units().filter(|u| u.side == 1).count();
+            a_losses += outcome.a_losses;
+            b_losses += outcome.b_losses;
         }
         let per = |l: usize| l as f32 / games.max(1) as f32;
         println!(

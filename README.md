@@ -1,7 +1,7 @@
 # Senshamädchen
 
 A hex-based tactics roguelike in Rust + Bevy, inspired by Girls und Panzer,
-Fire Emblem, and Advance Wars: girls in tanks, fog of war, and an overworld
+Fire Emblem, and Advance Wars: cadets in tanks, fog of war, and an overworld
 campaign feeding tactical hex battles.
 
 Battles are simultaneous (WEGO): every side writes orders for all of its
