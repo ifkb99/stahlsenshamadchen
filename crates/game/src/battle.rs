@@ -1184,41 +1184,7 @@ fn pump_events(
     // the electronic-warfare future, not a freebie. Fighting events (shots,
     // spots, wrecks) stay side-blind exactly as before.
     let view_side = battle.view_side();
-    let own = |formation: &str| {
-        battle
-            .state
-            .formations()
-            .iter()
-            .find(|f| f.id == formation)
-            .is_none_or(|f| f.side == view_side)
-    };
-    let own_unit = |unit: &UnitId| {
-        battle
-            .state
-            .units
-            .get(unit.index())
-            .is_none_or(|u| u.side == view_side)
-    };
-    drained.retain(|event| match event {
-        BattleEvent::MissionAssigned { formation, .. }
-        | BattleEvent::MissionReceived { formation, .. }
-        | BattleEvent::MissionCompleted { formation, .. }
-        | BattleEvent::CommandPassed { formation, .. } => own(formation),
-        BattleEvent::OutOfContact { unit }
-        | BattleEvent::ContactRestored { unit }
-        | BattleEvent::OrdersWaiting { unit }
-        | BattleEvent::OrdersDelivered { unit }
-        | BattleEvent::TookCover { unit, .. }
-        | BattleEvent::ContactReported { by: unit, .. } => own_unit(unit),
-        // How much ammunition the enemy has left is her quartermaster's
-        // secret, not something the sound of her gun gives away — and what
-        // is broken or bleeding inside her hull even more so. A brew-up or
-        // a bail-out, by contrast, is visible across the battlefield.
-        BattleEvent::WeaponDry { unit, .. }
-        | BattleEvent::CrewHit { unit, .. }
-        | BattleEvent::ModuleHit { unit, .. } => own_unit(unit),
-        _ => true,
-    });
+    drained.retain(|event| heard_by(&battle.state, view_side, event));
     if drained.is_empty() {
         return;
     }
@@ -1734,6 +1700,55 @@ fn spawn_puff(commands: &mut Commands, at: Hex, rotation: u32, center: Hex, colo
 /// Let every AI side that still owes orders make one decision. Planning is
 /// simultaneous, so this is not a turn: all of them write orders at once and
 /// nothing happens until the last one commits.
+/// Whether this side's net carries this piece of news.
+///
+/// Command traffic is a side's own business: the enemy commander's orders,
+/// her formations' contact troubles, her radio queue and **where her crews
+/// have decided to go** must not read out in the player's log — that is her
+/// net, and listening to it is the electronic-warfare future, not a freebie.
+/// Fighting events — shots, spots, wrecks, brew-ups — stay side-blind,
+/// because they are things anybody on the field can see.
+///
+/// One function, two callers, and they must not drift: the log filters with
+/// it *after* draining, and [`drive_ai`] filters with it *before* queueing.
+/// The second is not tidiness. Planning events go through the same paced
+/// animation queue as combat, and `accepting_orders` is false while that
+/// queue has anything in it — so an event nobody will print still costs the
+/// player a beat of not being able to give orders. One `SetOut` a unit put
+/// nine of them in front of every planning phase, and the symptom was the
+/// infantry tour clicking on a game that was not listening.
+fn heard_by(state: &BattleState, side: u8, event: &BattleEvent) -> bool {
+    let own_formation = |formation: &str| {
+        state
+            .formations()
+            .iter()
+            .find(|f| f.id == formation)
+            .is_none_or(|f| f.side == side)
+    };
+    let own_unit = |unit: &UnitId| state.units.get(unit.index()).is_none_or(|u| u.side == side);
+    match event {
+        BattleEvent::MissionAssigned { formation, .. }
+        | BattleEvent::MissionReceived { formation, .. }
+        | BattleEvent::MissionCompleted { formation, .. }
+        | BattleEvent::CommandPassed { formation, .. } => own_formation(formation),
+        BattleEvent::OutOfContact { unit }
+        | BattleEvent::ContactRestored { unit }
+        | BattleEvent::OrdersWaiting { unit }
+        | BattleEvent::OrdersDelivered { unit }
+        | BattleEvent::TookCover { unit, .. }
+        | BattleEvent::SetOut { unit, .. }
+        | BattleEvent::ContactReported { by: unit, .. } => own_unit(unit),
+        // How much ammunition the enemy has left is her quartermaster's
+        // secret, not something the sound of her gun gives away — and what
+        // is broken or bleeding inside her hull even more so. A brew-up or
+        // a bail-out, by contrast, is visible across the battlefield.
+        BattleEvent::WeaponDry { unit, .. }
+        | BattleEvent::CrewHit { unit, .. }
+        | BattleEvent::ModuleHit { unit, .. } => own_unit(unit),
+        _ => true,
+    }
+}
+
 fn drive_ai(mods: Res<Mods>, mut battle: ResMut<Battle>, movers: Query<&Mover>) {
     if battle.state.is_over() || !battle.anim.is_empty() || !movers.is_empty() {
         return;
@@ -1750,8 +1765,18 @@ fn drive_ai(mods: Res<Mods>, mut battle: ResMut<Battle>, movers: Query<&Mover>) 
         // Planning orders used to be silent, but a mission being assigned is
         // news the log carries; route whatever the orders announced through
         // the same animation queue every other event takes.
+        let side = battle.view_side();
         for decision in decisions {
-            battle.anim.extend(decision.events);
+            // Filtered before it is queued, not after it is drained: an event
+            // the player will never be shown must not cost her a beat of the
+            // paced animation queue, because `accepting_orders` is false
+            // while that queue is not empty.
+            battle.anim.extend(
+                decision
+                    .events
+                    .into_iter()
+                    .filter(|e| heard_by(&battle.state, side, e)),
+            );
         }
     }
 }

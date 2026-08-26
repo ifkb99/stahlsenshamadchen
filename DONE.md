@@ -476,6 +476,34 @@ carries the wording rather than the hex, so the log reads without a map in the
 other hand. This is the first thing this AI has done that is explainable in a
 sentence, which is most of the argument for the layer existing.
 
+**The log became radio traffic.** One of ours speaks with her call sign in
+front of her and says what she is doing; anything else is a spot report with
+nobody's voice on it. Presentation only — the events keep every id, hex and
+flag, so the harness and the replay are untouched, which is the property that
+lets the voice be rewritten again later without checking whether the engine
+still works.
+
+It found a real bug on the first run, and the bug is worth knowing about
+because it will recur. `SetOut` is emitted during the AI's *planning*, and
+`drive_ai` pushed planning events into the same **paced** animation queue that
+combat uses — while `accepting_orders` is false whenever that queue is
+non-empty. One event per unit put nine beats in front of every planning phase,
+and the player simply could not give orders: the infantry tour clicked into a
+game that was not listening, selected nothing, and its unload never happened.
+The fix is that `drive_ai` now filters with `heard_by` *before* queueing
+rather than the log filtering after draining — an event nobody will be shown
+must not cost the player a beat. It is also the fog-correct answer: where an
+enemy crew has decided to go is on her net, not yours.
+
+Worth recording how long that took to find, because the false trails are
+instructive. The dismount worked headlessly on the first try, which ruled out
+the engine; the tour then failed identically at the commit *before* the goal
+layer, which briefly exonerated it — but that run had been given the wrong map
+(the tour names `battle_plains` in its own header and the default battle map
+is no longer `river_crossing`). Two tours were then "failing" for the same
+reason. The lesson is the cheap one: a tour states its map at the top, and
+running it without that is not a test result.
+
 **Saves record which mods were playing.** `SaveGame.mods` stamps id and
 version; mismatched ids are refused (the rules genuinely differ), version drift
 on the same set warns and loads (a content patch must not cost the player their

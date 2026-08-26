@@ -139,6 +139,30 @@ consulted the thing it was about.
   `CrewHit` and those are still counted. Adding an event to that list is
   adding a way for a battle never to end; do it deliberately.
 
+### The log is a net, not a narrator
+
+Lines are radio traffic: one of ours speaks with her call sign in front of her
+("Anvil 1: moving to the Great Glade"), and anything else is a spot report
+with nobody's voice on it ("Contact — Wotan 3"). It is **presentation only** —
+events carry the same ids, hexes and flags they always did, so `ScriptFacts`,
+the script harness and the replay read exactly what they read before.
+
+Two rules hold it together:
+
+- **`heard_by` is the one filter, and it has two callers that must not
+  drift.** The log filters with it after draining; `drive_ai` filters with it
+  *before queueing*. The second is not tidiness: planning events go through
+  the same paced animation queue as combat, and `accepting_orders` is false
+  while that queue has anything in it — so an event nobody will print still
+  costs the player a beat of not being able to give orders. One `SetOut` per
+  unit put nine of them in front of every planning phase, and the symptom was
+  the infantry tour clicking into a game that was not listening. Anything new
+  that emits events during **planning** must go through this.
+- **Command traffic is a side's own business.** Orders, contact troubles, the
+  radio queue and *where a crew has decided to go* are on her own net;
+  fighting events — shots, spots, wrecks, brew-ups — stay side-blind, because
+  anybody on the field can see them.
+
 ### Goals: the seam the AI is meant to be replaced at
 
 `Goal` (`battle/command.rs`) is what one crew means to do — `Take(hex)` or
