@@ -95,6 +95,36 @@ pub struct Balance {
     /// the game has always used — it simply used to be a `/ 2` in
     /// `combat.rs`, where no modder could reach it.
     pub cover_to_hit_percent: i32,
+    /// Percentage points of hit chance lost **per hex** the target has
+    /// crossed this round.
+    ///
+    /// A crossing target is the classic gunnery problem — the lead is a
+    /// guess and the guess is wrong — and until this existed a vehicle that
+    /// spent the round crossing open ground was exactly as hard to hit as
+    /// one sitting hull-down and still.
+    ///
+    /// Per hex rather than a flat charge for having moved at all, and the
+    /// first draft was flat. At this game's scale that reads wrong twice
+    /// over: a hex is 100 m and a round 60 s, so one hex is a walking pace
+    /// and five is thirty km/h, and a flat penalty prices them the same. It
+    /// also throws away the only thing that makes a fast chassis' speed a
+    /// defence rather than merely a way of arriving sooner — which is the
+    /// question the recon car has been losing sixty times a run.
+    pub moving_target_per_hex: i32,
+    /// Percentage points of hit chance lost **per hex** the attacker has
+    /// crossed this round.
+    ///
+    /// Larger than [`Self::moving_target_per_hex`], and deliberately: laying
+    /// a gun from a moving vehicle is harder than tracking a moving one from
+    /// a still one, in a period where almost nothing is stabilised. This is
+    /// the number that makes halting to shoot a decision — a crew who wants
+    /// her round to count stops for it, and pays for the stop in the time
+    /// she spends visible on the same piece of ground.
+    ///
+    /// Uncapped, and the clamp to [`crate::battle::MIN_HIT`] is what stops
+    /// it running away: a vehicle at a full gallop can technically still
+    /// fire, and technically still will not hit anything.
+    pub firing_on_the_move_per_hex: i32,
     /// Percentage points of hit chance lost firing at a tile rather than at
     /// a unit anybody can see.
     ///
@@ -132,6 +162,8 @@ impl Default for Balance {
             brew_safety_percent: 12,
             downhill_bonus: 10,
             cover_to_hit_percent: 50,
+            moving_target_per_hex: 5,
+            firing_on_the_move_per_hex: 8,
             blind_penalty: 40,
             pen_scatter: 15,
         }

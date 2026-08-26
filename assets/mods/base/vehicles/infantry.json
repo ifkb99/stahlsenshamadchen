@@ -15,6 +15,7 @@
         },
         "vision_range": 8,
         "concealment": 40,
+    "profile": -20,
         "radio": "man_pack",
         "weapons": [
             "rifles",
@@ -53,6 +54,7 @@
         },
         "vision_range": 12,
         "concealment": 55,
+    "profile": -30,
         "radio": "man_pack",
         "weapons": [
             "rifles"

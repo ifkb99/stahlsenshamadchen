@@ -120,6 +120,79 @@ to advance: with elimination as the only victory condition, holding the best
 cover on the map is optimal play, and the stalemate rate *rose* as difficulty
 noise fell (11/12 at zero noise). See TODO.md under Design Decisions.
 
+### Before the plate: what a gunner is up against
+
+The far side of a shot is deep — struck hex face, obliquity, an enumerated
+scatter die, the loader's choice of round, an interior weighted by what is
+physically in it. The near side was five lines until the resolver-depth arc
+(`assets/wiki/reference/ballistics.md`, Arc R). `hit_chance_inner` is now
+eight terms and **every one of them is data**: `weapon.accuracy`, range
+falloff, `balance.accuracy(gunnery)`, `balance.downhill_bonus`,
+`balance.cover_against_accuracy`, `vehicle.profile`, the two motion terms,
+the rung's `accuracy`, and `balance.blind_penalty`.
+
+Four things about it are load-bearing.
+
+- **`hit_chance` names a target by id, not by hex.** Half of what makes a
+  shot hard is a fact about *her* — how big she is, whether she is moving —
+  and a bare coordinate answers neither. Every firing path has a real
+  target, blind fire included: shelling a tile resolves against whoever
+  turns out to be standing on it (`fire_at_tile`).
+- **`Unit.moved` is hexes crossed this round, incremented at the single
+  place a unit changes hex** and zeroed in `begin_round`. It is not
+  `move_credit`, which is what she has *left*: a vehicle parked all round
+  and one that just finished a four-hex dash are both out of credit. One
+  increment site is what makes an ordered march, the battle drill's dash
+  for cover and a frightened crew's flight all cost the same accuracy.
+  Zeroing it at `begin_round` is why the planning phase reads zero for
+  everybody, which is the truth — nobody has driven yet.
+- **The motion terms are per hex, not per "she moved".** A hex is 100 m and
+  a round 60 s, so one hex is a walking pace and five is thirty km/h; a flat
+  penalty prices them identically and throws away the only thing that makes
+  a fast chassis' speed a defence rather than a way of arriving sooner.
+  Firing on the move costs more per hex than being the thing fired at,
+  because laying a gun off a moving vehicle is harder than tracking a mover
+  from a stable one — if those ever cross over, halting to shoot has stopped
+  being worth anything.
+- **`hexes_under_way` reads state and never the hypothetical `from`, and
+  this was measured rather than assumed.** A draft counted the distance from
+  her real position to a candidate tile as driving, on the reasonable
+  ground that reaching a tile means crossing to it. The planner scores
+  *ground*, though, and what makes a hill worth taking is the shooting done
+  from it over the rounds she sits there — almost all of it halted.
+  Charging every candidate tile except the one under her tracks put a
+  standing bias on staying put: 36 games gave **three stalemates where the
+  baseline had none, at 15.9 rounds against 13.6**. That is precisely the
+  pathology land objectives exist to remove, rebuilt one accuracy term
+  lower down. Dropping the branch restored 13.6 rounds and zero stalemates
+  with the terms fully live.
+
+Two more distinctions worth keeping straight:
+
+- **`profile` is about being hit; `concealment` is about being found.** One
+  reaches the gunner's arithmetic, the other scales a spotter's range. A
+  platoon in the open has been seen and is still thirty people lying in a
+  field. `profile` is deliberately not derived from armour, capacity or
+  class, so a mod can describe a lightly armoured but enormous vehicle.
+  It is zero on every armoured chassis in the base mod, which is what makes
+  the infantry numbers attributable to this one field.
+- **Suppression is a number on a morale rung, not a second fear system.**
+  Pressure is already collected in one place (`apply_pressure`) and already
+  walks a ladder the mod declares, so what being shot at costs a gunner is
+  `MoraleRung::accuracy`. Additivity falls out for free: a one-rung ladder,
+  or one whose rungs say nothing about accuracy, has no suppression at all
+  and needs no `if` in Rust to switch off.
+
+The instrument for all of this is `balance`'s **`to hit`** table, the twin of
+the penetration table: every cell is `hit_breakdown` against a medium tank on
+open grass, with the attacker's motion shown as a gradient (1/3/5 hexes)
+rather than one "moving" column, because the gradient *is* the rule. The
+roster table gained a `profile` column and `--sim` reports what share of
+shots were laid from a vehicle under way — a resolver term nobody's guns ever
+meet is a term that changed nothing. `Event::ShotFired` carries `moving`
+beside `blind` and `opportunity` for the same reason, and so the log can say
+why.
+
 ### What a shot is worth, and what keeps a battle open
 
 Both of these are one-line arithmetic with battle-length consequences, and

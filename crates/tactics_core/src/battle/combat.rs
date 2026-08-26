@@ -46,14 +46,20 @@ pub const MIN_HIT: i32 = 5;
 pub const MAX_HIT: i32 = 95;
 
 /// Hit chance percentage, clamped to [`MIN_HIT`]..=[`MAX_HIT`].
-/// `from` is passed explicitly so AI can evaluate hypothetical positions.
+///
+/// `from` is passed explicitly so AI can evaluate hypothetical positions;
+/// the target is named by id rather than by hex because half of what makes
+/// a shot hard is a fact about *her* — how big she is and whether she is
+/// moving — and a bare coordinate cannot answer either. Every path that
+/// fires has a real target, including blind fire, which shells a tile and
+/// hits whoever turns out to be standing on it.
 pub fn hit_chance(
     registry: &DataRegistry,
     state: &BattleState,
     attacker: UnitId,
     from: Hex,
     weapon: &WeaponDef,
-    target_pos: Hex,
+    target: UnitId,
     blind: bool,
 ) -> i32 {
     // The no-op closure compiles away, keeping this the allocation-free
@@ -64,7 +70,7 @@ pub fn hit_chance(
         attacker,
         from,
         weapon,
-        target_pos,
+        target,
         blind,
         |_, _| {},
     )
@@ -83,6 +89,14 @@ pub enum HitFactor<'a> {
     Downhill,
     /// Cover from the terrain the target occupies.
     Cover { terrain: &'a str },
+    /// How big the target is, as her chassis declares it.
+    Profile { vehicle: &'a str },
+    /// The target has driven this round, and how far.
+    TargetMoving { hexes: u32 },
+    /// The attacker is under way as the shot goes off, and how far.
+    OnTheMove { hexes: u32 },
+    /// The attacker's crew is being shot at, and it shows.
+    Suppressed { rung: &'a str },
     /// Firing at a tile rather than a spotted unit.
     Blind,
 }
@@ -101,6 +115,20 @@ impl HitFactor<'_> {
             HitFactor::Gunnery => "Crew gunnery".to_string(),
             HitFactor::Downhill => "Firing downhill".to_string(),
             HitFactor::Cover { terrain } => format!("{terrain} cover"),
+            HitFactor::Profile { vehicle } => format!("{vehicle} profile"),
+            HitFactor::TargetMoving { hexes } => {
+                format!(
+                    "Target under way ({})",
+                    scale.format_distance(*hexes as i32)
+                )
+            }
+            HitFactor::OnTheMove { hexes } => {
+                format!(
+                    "Firing on the move ({})",
+                    scale.format_distance(*hexes as i32)
+                )
+            }
+            HitFactor::Suppressed { rung } => format!("Crew {}", rung.to_lowercase()),
             HitFactor::Blind => "Blind fire".to_string(),
         }
     }
@@ -134,7 +162,7 @@ pub fn hit_breakdown(
     attacker: UnitId,
     from: Hex,
     weapon: &WeaponDef,
-    target_pos: Hex,
+    target: UnitId,
     blind: bool,
 ) -> HitBreakdown {
     let mut modifiers = Vec::new();
@@ -144,7 +172,7 @@ pub fn hit_breakdown(
         attacker,
         from,
         weapon,
-        target_pos,
+        target,
         blind,
         |factor, delta| {
             if delta != 0 {
@@ -173,13 +201,17 @@ fn hit_chance_inner(
     attacker: UnitId,
     from: Hex,
     weapon: &WeaponDef,
-    target_pos: Hex,
+    target: UnitId,
     blind: bool,
     mut note: impl FnMut(HitFactor<'_>, i32),
 ) -> i32 {
     let Some(att) = state.unit(attacker) else {
         return 0;
     };
+    let Some(tgt) = state.unit(target) else {
+        return 0;
+    };
+    let target_pos = tgt.pos;
     let mut chance = weapon.accuracy;
 
     let dist = from.distance_to(target_pos).max(1);
@@ -211,12 +243,63 @@ fn hit_chance_inner(
         );
         chance += cover;
     }
+    if let Some(vehicle) = registry.vehicle(&tgt.vehicle)
+        && vehicle.profile != 0
+    {
+        note(
+            HitFactor::Profile {
+                vehicle: &vehicle.name,
+            },
+            vehicle.profile,
+        );
+        chance += vehicle.profile;
+    }
+    if tgt.moved > 0 {
+        let moving = -registry.balance.moving_target_per_hex * tgt.moved as i32;
+        note(HitFactor::TargetMoving { hexes: tgt.moved }, moving);
+        chance += moving;
+    }
+    let under_way = hexes_under_way(att);
+    if under_way > 0 {
+        let cost = -registry.balance.firing_on_the_move_per_hex * under_way as i32;
+        note(HitFactor::OnTheMove { hexes: under_way }, cost);
+        chance += cost;
+    }
+    let rung = registry.morale.rung(att.pressure);
+    if rung.accuracy != 0 {
+        note(HitFactor::Suppressed { rung: &rung.name }, rung.accuracy);
+        chance += rung.accuracy;
+    }
     if blind {
         let blind_penalty = registry.balance.blind_penalty;
         note(HitFactor::Blind, -blind_penalty);
         chance -= blind_penalty;
     }
     chance.clamp(MIN_HIT, MAX_HIT)
+}
+
+/// How many hexes of driving stand behind this shot: what she has actually
+/// crossed this round, and deliberately nothing about `from`.
+///
+/// A draft of this counted the distance from her real position to the
+/// hypothetical `from` as well, on the reasoning that reaching a tile means
+/// driving to it and a shot from there is therefore a shot on the move. It
+/// is a defensible sentence and it was measurably the wrong rule. The
+/// planner scores *ground*, not this tick's shot: what makes a hill worth
+/// taking is the shooting she will do from it over the rounds she sits
+/// there, and almost all of that is done halted. Charging every candidate
+/// tile except the one under her tracks put a standing bias on staying
+/// exactly where she was — 36 games: three stalemates appeared where the
+/// baseline had none, and battles ran 13.6 rounds to 15.9. Objectives were
+/// built to stop the AI having no reason to advance; this was quietly
+/// rebuilding that reason to sit still, one accuracy term lower down.
+///
+/// So the term reads state and only state. In the resolver that is exactly
+/// right — she has driven what she has driven. In the planner it reads zero
+/// during the planning phase, which is also exactly right, because nobody
+/// has driven yet.
+fn hexes_under_way(attacker: &super::Unit) -> u32 {
+    attacker.moved
 }
 
 /// The round a weapon would put downrange right now.
@@ -915,16 +998,16 @@ pub fn expected_damage(
     target: UnitId,
     blind: bool,
 ) -> f32 {
-    let Some(tgt) = state.unit(target) else {
+    if state.unit(target).is_none() {
         return 0.0;
-    };
+    }
     let Some(round) = best_round_against(registry, state, attacker, weapon, target) else {
         return 0.0;
     };
     let Some(profile) = shot_profile(registry, state, weapon, &round, from, target) else {
         return 0.0;
     };
-    let p = hit_chance(registry, state, attacker, from, weapon, tgt.pos, blind) as f32 / 100.0;
+    let p = hit_chance(registry, state, attacker, from, weapon, target, blind) as f32 / 100.0;
     p * round_worth(registry, state, target, &profile, round.ammo)
 }
 
@@ -1023,7 +1106,7 @@ pub fn preview_attack(
 
     let distance = att.pos.distance_to(tgt.pos);
     let in_range = (weapon.range[0] as i32..=weapon.range[1] as i32).contains(&distance);
-    let hit = hit_breakdown(registry, state, attacker, att.pos, weapon, tgt.pos, blind);
+    let hit = hit_breakdown(registry, state, attacker, att.pos, weapon, target, blind);
     // A dry gun previews honestly: the round is named as missing and every
     // consequence of it is zero, which tells the player exactly why the
     // shot she is hovering cannot happen.
@@ -1070,7 +1153,9 @@ pub fn preview_attack(
                         .unwrap_or(0);
                     CounterPreview {
                         weapon_name: w.name.clone(),
-                        hit_chance: hit_chance(registry, state, target, tgt.pos, w, att.pos, false),
+                        hit_chance: hit_chance(
+                            registry, state, target, tgt.pos, w, attacker, false,
+                        ),
                         damage,
                     }
                 })
@@ -1127,8 +1212,8 @@ fn resolve_shot(
     opportunity: bool,
     events: &mut Vec<Event>,
 ) {
-    let (att_pos, tgt_pos) = match (state.unit(attacker), state.unit(target)) {
-        (Some(a), Some(t)) => (a.pos, t.pos),
+    let (att_pos, tgt_pos, moving) = match (state.unit(attacker), state.unit(target)) {
+        (Some(a), Some(t)) => (a.pos, t.pos, a.moved > 0),
         _ => return,
     };
     events.push(Event::ShotFired {
@@ -1138,9 +1223,10 @@ fn resolve_shot(
         weapon: weapon.id.clone(),
         blind,
         opportunity,
+        moving,
     });
 
-    let chance = hit_chance(registry, state, attacker, att_pos, weapon, tgt_pos, blind);
+    let chance = hit_chance(registry, state, attacker, att_pos, weapon, target, blind);
     let roll = state.rng.random_range(0..100);
     if roll >= chance {
         events.push(Event::ShotMissed {
@@ -1830,6 +1916,7 @@ fn fire_at_unit(
                 weapon: weapon.id.clone(),
                 blind: false,
                 opportunity,
+                moving: state.unit(attacker).is_some_and(|a| a.moved > 0),
             });
             state.shells.push(shell);
         }
@@ -1889,6 +1976,7 @@ fn fire_at_tile(
             weapon: weapon.id.clone(),
             blind: true,
             opportunity: false,
+            moving: state.unit(attacker).is_some_and(|a| a.moved > 0),
         });
         state.shells.push(shell);
     } else {
@@ -1904,6 +1992,7 @@ fn fire_at_tile(
                     weapon: weapon.id.clone(),
                     blind: true,
                     opportunity: false,
+                    moving: state.unit(attacker).is_some_and(|a| a.moved > 0),
                 });
                 events.push(Event::ShotMissed { attacker, at });
             }

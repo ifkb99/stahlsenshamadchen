@@ -189,6 +189,28 @@ pub struct VehicleDef {
     /// infantry chunk's business.
     #[serde(default)]
     pub concealment: u32,
+    /// How big a target she is, in percentage points of an attacker's hit
+    /// chance. Negative is harder to hit.
+    ///
+    /// The twin of [`Self::concealment`] and easy to confuse with it, so:
+    /// concealment is about being *found* and scales a spotter's range;
+    /// profile is about being *hit* once found, and reaches the gunner's
+    /// arithmetic. A platoon in the open has been seen and is still thirty
+    /// men lying in a field, which is why the two have to be separate
+    /// numbers rather than one "hard to deal with" stat.
+    ///
+    /// Deliberately not derived from armour, capacity or class. How big a
+    /// thing is and how thick it is are different facts, and inferring one
+    /// from the other would take away a mod's ability to describe a lightly
+    /// armoured but enormous vehicle — which is most self-propelled
+    /// artillery ever built.
+    ///
+    /// Zero by default and zero on every vehicle in the base mod, so armour
+    /// fights armour exactly as it did before this existed; the infantry
+    /// chassis are the only ones that declare it, which is what makes their
+    /// effect on the balance tables attributable to this one number.
+    #[serde(default)]
+    pub profile: i32,
     /// How many units she lifts, in whole units.
     ///
     /// Deliberately counted in units rather than in seats. A rifle platoon is

@@ -770,7 +770,7 @@ fn hit_breakdown_explains_the_same_number_hit_chance_returns() {
             attacker.id,
             attacker.pos,
             weapon,
-            target.pos,
+            target.id,
             blind,
         );
         let breakdown = tactics_core::battle::hit_breakdown(
@@ -779,7 +779,7 @@ fn hit_breakdown_explains_the_same_number_hit_chance_returns() {
             attacker.id,
             attacker.pos,
             weapon,
-            target.pos,
+            target.id,
             blind,
         );
         assert_eq!(
@@ -3662,6 +3662,19 @@ fn breaking(reg: &DataRegistry) -> u32 {
         .at_pressure
 }
 
+/// The seed the flight stage is fought on.
+///
+/// Shared by the two tests below because it is one stage, and it is a
+/// constant because it is *staging* rather than the rule: `flight_stage` is a
+/// single duel, so on most seeds the gun behind her gets through on the
+/// opening round and her crew bails, which proves nothing either way. It
+/// moved from 61/62 to 84 when the resolver-depth arc changed what a shot at
+/// a moving vehicle is worth and shifted every roll after the first. If it
+/// has to move again, scan for a seed on which she survives to be watched —
+/// never weaken what is asserted about her, which is the part that is not
+/// staging.
+const FLIGHT_SEED: u64 = 84;
+
 #[test]
 fn a_frightened_crew_reverses_out_of_contact() {
     // The review's second fun tax, and the shape of the defect was worse than
@@ -3674,7 +3687,7 @@ fn a_frightened_crew_reverses_out_of_contact() {
     // not navigating.
     let mut reg = registry_wireless();
     always(&mut reg, "flight");
-    let mut state = flight_stage(&reg, 61);
+    let mut state = flight_stage(&reg, FLIGHT_SEED);
     state.units[0].pressure = breaking(&reg);
 
     let before = state.unit(UnitId(0)).expect("on the field").pos;
@@ -3705,7 +3718,7 @@ fn a_crew_cannot_refuse_the_decision_she_made_herself() {
     // this was built to remove.
     let mut reg = registry_wireless();
     always(&mut reg, "flight");
-    let mut state = flight_stage(&reg, 62);
+    let mut state = flight_stage(&reg, FLIGHT_SEED);
     state.units[0].pressure = breaking(&reg);
     let enemy = state.unit(UnitId(1)).expect("on the field").pos;
 
@@ -4184,6 +4197,7 @@ fn a_gentle_mod_has_girls_who_never_refuse() {
             name: "Steady".into(),
             at_pressure: 0,
             obeys: true,
+            accuracy: 0,
         }],
         ..reg.morale.clone()
     };
@@ -6892,7 +6906,15 @@ fn a_binding_march_presses_on_where_an_ordinary_one_takes_cover() {
     // which direction — not which particular hedge the drill happens to
     // like, which is a tuning detail that should be free to move without
     // failing this.
-    const SEED: u64 = 62;
+    // The seed is staging, not the rule, and it moved once already: the
+    // resolver-depth arc made a crossing target harder to hit, so the gun
+    // watching the road stopped killing her on the opening round, she closed
+    // to two hexes, and the gun's own battle drill took it into the woods —
+    // leaving `second_round_plan` with no threat left to stage. 42 is the
+    // nearest seed where the gun stays on the road and the comparison below
+    // is the only thing being measured. If it moves again, scan for another
+    // rather than weakening what is asserted.
+    const SEED: u64 = 42;
     let reg = registry_wireless();
     let (delegated_from, delegated_to, delegated_took_cover) = {
         let (state, crew) = marching_under_fire(&reg, Latitude::Delegated, SEED);
@@ -8974,6 +8996,7 @@ fn a_one_rung_ladder_never_abandons_anything() {
         name: "Steady".into(),
         at_pressure: 0,
         obeys: true,
+        accuracy: 0,
     }];
     let mut state = duel(&reg, 405);
     commit_all(&reg, &mut state);
