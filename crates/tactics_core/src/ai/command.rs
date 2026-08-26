@@ -22,7 +22,7 @@
 //! exists to say; making it clever belongs to the willingness work, not to
 //! the plumbing.
 
-use super::{AiConfig, AiPlanner, Evaluator, difficulty_noise, next_unplanned_unit, threatened};
+use super::{AiConfig, AiPlanner, Evaluator, next_unplanned_unit, threatened};
 use crate::battle::{BattleState, FireIntent, Formation, FormationId, Mission, Order};
 use crate::data::{DataRegistry, DoctrineDef};
 use crate::map::{Objective, ObjectiveKind};
@@ -69,6 +69,12 @@ fn drill_doctrine(data: &DataRegistry) -> DoctrineDef {
             withdraw_threshold: 0.5,
             initiative: 0.5,
             delegation: 0.5,
+            // A crew taking cover under fire is choosing a hex she can reach
+            // this round, so there is no road to price and nobody to be
+            // beaten to it by. Zero says that rather than leaving a reader to
+            // work out that the terms cannot bite.
+            route_caution: 0.0,
+            contest_aversion: 0.0,
         })
 }
 
@@ -143,7 +149,7 @@ impl SideCommand {
             fallback: UtilityPlanner::from_config(config, seed ^ 0xC0FF_EE00, data),
             drill: UtilityPlanner::new(
                 Evaluator::new(drill_doctrine(data)),
-                difficulty_noise(config.difficulty),
+                config.difficulty,
                 seed ^ 0xD811_0000,
             ),
             side_doctrine: None,
@@ -211,7 +217,7 @@ impl SideCommand {
                 index,
                 UtilityPlanner::new(
                     Evaluator::new(doctrine),
-                    difficulty_noise(self.config.difficulty),
+                    self.config.difficulty,
                     // Distinct stream per formation, or two platoons under
                     // the same noise level would blunder identically.
                     self.seed ^ ((index as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)),

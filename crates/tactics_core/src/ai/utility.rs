@@ -112,16 +112,26 @@ pub struct UtilityPlanner {
     /// Uniform noise amplitude added to every candidate score. Difficulty,
     /// not doctrine.
     pub noise: f32,
+    /// How much of the goal chooser's deeper reasoning this commander does.
+    /// Difficulty's other half — see [`super::difficulty_foresight`].
+    pub foresight: f32,
     rng: ChaCha8Rng,
     /// Orders decided for a unit but not yet handed out.
     pending: VecDeque<Order>,
 }
 
 impl UtilityPlanner {
-    pub fn new(evaluator: Evaluator, noise: f32, seed: u64) -> Self {
+    /// A planner for one doctrine at one difficulty.
+    ///
+    /// Difficulty rather than a noise amplitude, which is what this used to
+    /// take: there are two numbers derived from a difficulty level now and a
+    /// caller who passed one of them and forgot the other would get a
+    /// commander who misjudges the map but reads all of it, which is nobody.
+    pub fn new(evaluator: Evaluator, difficulty: u8, seed: u64) -> Self {
         Self {
             evaluator,
-            noise,
+            noise: difficulty_noise(difficulty),
+            foresight: super::difficulty_foresight(difficulty),
             rng: ChaCha8Rng::seed_from_u64(seed),
             pending: VecDeque::new(),
         }
@@ -130,7 +140,7 @@ impl UtilityPlanner {
     pub fn from_config(config: &AiConfig, seed: u64, data: &DataRegistry) -> Self {
         Self::new(
             Evaluator::new(resolve_doctrine(config, data)),
-            difficulty_noise(config.difficulty),
+            config.difficulty,
             seed,
         )
     }
@@ -138,11 +148,7 @@ impl UtilityPlanner {
     /// A planner with the balanced default doctrine, for callers that only
     /// care about skill: MCTS uses this for its policy opponent.
     pub fn with_difficulty(difficulty: u8, seed: u64) -> Self {
-        Self::new(
-            Evaluator::new(Default::default()),
-            difficulty_noise(difficulty),
-            seed,
-        )
+        Self::new(Evaluator::new(Default::default()), difficulty, seed)
     }
 
     /// Whoever is walking toward `carrier` to get aboard her, if anybody.
@@ -486,6 +492,7 @@ impl UtilityPlanner {
                 let mut chooser = goal::UtilityChooser {
                     evaluator: &self.evaluator,
                     noise: self.noise,
+                    foresight: self.foresight,
                     rng: &mut self.rng,
                 };
                 chooser.choose(registry, state, unit, &options)

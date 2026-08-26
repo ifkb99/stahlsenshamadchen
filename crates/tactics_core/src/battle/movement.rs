@@ -278,6 +278,110 @@ pub fn along_the_bearing(step: Hex, bearing: Hex) -> i32 {
     step.x * bearing.x + step.y * bearing.y + z(step) * z(bearing)
 }
 
+/// Every road out of where a crew is standing, to as far as she cares to
+/// look: the cheapest terrain cost to each hex, and the hex she would have
+/// come from.
+///
+/// The many-destinations twin of [`path_to`], and different from it in the
+/// three ways a plan is different from an order.
+///
+/// - **Many destinations at once.** A goal chooser asks about a handful of
+///   places, and a Dijkstra that answers all of them costs less than one A*
+///   per candidate — which is what this replaced, at five to ten times the
+///   price of a planned order.
+/// - **No occupancy.** Neither friends nor spotted enemies block. Where
+///   everybody is standing *now* will not hold for the several rounds this
+///   march takes, so treating a tank parked on the bridge as a wall would
+///   make the bridge unreachable and the ground a crew most wants invisible.
+///   The opposition reaches the decision as danger along the way instead,
+///   which is a cost rather than a refusal, and the leg-by-leg
+///   [`step_toward`] still respects every one of them when she actually
+///   drives. A happy consequence: the inner loop touches terrain only, so
+///   unlike [`reachable`] this is not O(hexes x units).
+/// - **A horizon rather than a budget.** An order naming ground beyond this
+///   round's movement is refused, which is right for an order; a goal three
+///   rounds off is an ordinary thing to intend. The caller says how many
+///   rounds of driving are worth pricing, and ground beyond that is simply
+///   absent — a road nobody would take is not worth the tiles it costs to
+///   find.
+#[derive(Debug, Clone, Default)]
+pub struct Roads {
+    cost: HashMap<Hex, u32>,
+    from: HashMap<Hex, Hex>,
+    start: Hex,
+}
+
+impl Roads {
+    /// Terrain cost of the cheapest road to `hex`, if one was found inside
+    /// the horizon.
+    pub fn cost(&self, hex: Hex) -> Option<u32> {
+        self.cost.get(&hex).copied()
+    }
+
+    /// The road itself, start tile first.
+    ///
+    /// Walked back through the predecessors, so it is the same road the cost
+    /// was measured along. Which of two equally cheap roads that is comes
+    /// from the heap order in [`roads`], whose last key is a coordinate for
+    /// the reason [`step_toward`]'s is: the map is a `HashMap` and the answer
+    /// has to be total. See [`along_the_bearing`] for why that is a residue
+    /// worth watching rather than a bug — `balance --only skill` on the
+    /// mirrored arena is the instrument that would catch it growing teeth.
+    pub fn path(&self, hex: Hex) -> Option<Vec<Hex>> {
+        if !self.cost.contains_key(&hex) {
+            return None;
+        }
+        let mut out = vec![hex];
+        let mut at = hex;
+        while at != self.start {
+            at = *self.from.get(&at)?;
+            out.push(at);
+        }
+        out.reverse();
+        Some(out)
+    }
+}
+
+/// Price every road out of `id`'s hex, out to `rounds` rounds of driving.
+pub fn roads(registry: &DataRegistry, state: &BattleState, id: UnitId, rounds: u32) -> Roads {
+    let Some(unit) = state.unit(id) else {
+        return Roads::default();
+    };
+    let (class, max_climb) = unit_movement(registry, unit);
+    let horizon =
+        move_points(registry, &state.roster, unit, state.terrain_at(unit.pos)).max(1) * rounds;
+
+    let mut out = Roads {
+        start: unit.pos,
+        ..Roads::default()
+    };
+    out.cost.insert(unit.pos, 0);
+    let mut heap = BinaryHeap::new();
+    heap.push((Reverse(0u32), unit.pos.x, unit.pos.y));
+
+    while let Some((Reverse(cost), x, y)) = heap.pop() {
+        let hex = Hex::new(x, y);
+        if out.cost.get(&hex).is_some_and(|&c| c < cost) {
+            continue;
+        }
+        for next in hex.all_neighbors() {
+            let Some(step) = edge_cost(registry, &state.map, class, max_climb, hex, next) else {
+                continue;
+            };
+            let total = cost + step;
+            if total > horizon {
+                continue;
+            }
+            if out.cost.get(&next).is_none_or(|&c| total < c) {
+                out.cost.insert(next, total);
+                out.from.insert(next, hex);
+                heap.push((Reverse(total), next.x, next.y));
+            }
+        }
+    }
+    out
+}
+
 /// Cheapest path for `unit` to `to`, if it exists within this turn's budget.
 /// Returns the path including the start tile, plus its total cost.
 pub fn path_to(

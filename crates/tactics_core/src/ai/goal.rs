@@ -24,7 +24,7 @@
 //! knowing which of them moved the numbers, which is the attribution problem
 //! that has already cost this project a day.
 
-use crate::battle::{BattleState, Goal, Mission, UnitId};
+use crate::battle::{BattleState, Goal, Mission, Roads, Unit, UnitId, roads};
 use crate::data::DataRegistry;
 use crate::map::ObjectiveKind;
 use hexx::Hex;
@@ -46,6 +46,17 @@ use rand_chacha::ChaCha8Rng;
 /// with the rest of the evaluator's numbers — see TODO — and is a constant
 /// here for the same reason those still are.
 const IMPATIENCE: f32 = 0.35;
+
+/// How many rounds of driving the chooser bothers to price a road for.
+///
+/// At `IMPATIENCE` a sixth round of driving costs two points, which is most
+/// of a good objective, so ground further off than this is ground she is not
+/// going to pick however cheap the road turns out to be. Stopping the walk
+/// there is most of what makes pricing every road affordable: the horizon is
+/// a few hundred tiles of a 1261-tile map rather than all of it. Anything
+/// beyond it falls back to the crow flight, which is what the chooser used
+/// for everything before it could see a road at all.
+const HORIZON: u32 = 6;
 
 /// The goals worth considering for this crew right now.
 ///
@@ -208,16 +219,157 @@ pub trait GoalChooser {
     ) -> Goal;
 }
 
-/// The hand-written chooser: doctrine-weighted value of being there, less
-/// what the drive costs.
+/// The road to one goal, as facts rather than as a price.
 ///
-/// Note what it does *not* do. It does not look at the route, or at what
-/// might happen on the way, or at what the enemy will do about it. Those are
-/// the things a search or a learned policy would add, and leaving them out is
-/// what keeps this cheap enough to run for every unit every time a goal
-/// finishes.
+/// Deliberately un-weighted: what a commander *makes* of these is a question
+/// about her, and [`UtilityChooser`] answers it with her doctrine and her
+/// foresight. Keeping the two apart is what lets a poor commander read the
+/// same map and get less out of it.
+#[derive(Debug, Clone, Copy)]
+struct Drive {
+    /// Rounds of driving if the map were flat and empty — the crow flight,
+    /// which is the whole of what the chooser knew before this existed.
+    crow: f32,
+    /// Rounds of driving over the real ground. Equal to `crow` where there is
+    /// no road at all inside the horizon.
+    road: f32,
+    /// What share of that road is walked where something that can shoot her
+    /// can see her, 0..=1.
+    exposed: f32,
+    /// Rounds the nearest enemy who can already be seen would need to reach
+    /// the same ground. Infinite when nobody can be seen.
+    theirs: f32,
+}
+
+/// What the drive to `to` looks like from this crew's hex, given roads
+/// already priced.
+///
+/// `roads` ignores who is standing where (see [`crate::battle::roads`]): a
+/// march takes several rounds and the field will not hold still for it, so
+/// the opposition is priced as *danger along the way* rather than as a wall.
+fn drive(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    roads: &Roads,
+    guns: &[(Hex, i32)],
+    to: Hex,
+    speed: f32,
+) -> Drive {
+    let Some(me) = state.unit(unit) else {
+        return Drive {
+            crow: 0.0,
+            road: 0.0,
+            exposed: 0.0,
+            theirs: f32::INFINITY,
+        };
+    };
+    let crow = me.pos.distance_to(to) as f32 / speed;
+    // Terrain cost is in movement points and `speed` is points a round, so
+    // this is rounds. Ground with no road inside the horizon is priced at the
+    // horizon or the crow flight, whichever is further — "further than I have
+    // looked", which is the honest reading and the pessimistic one.
+    //
+    // The first draft fell back to the crow flight alone and had it exactly
+    // backwards: the ground with no road inside the horizon is the ground
+    // whose road is *longest*, so pricing it as the crow flies made the far
+    // bank of an unfordable river the nearest thing on the map. It is still a
+    // discount rather than a refusal — a crew who can see no way round may
+    // very well be wrong about that, and something may open up before she
+    // gets there.
+    let road = match roads.cost(to) {
+        Some(cost) => cost as f32 / speed,
+        None => crow.max(HORIZON as f32),
+    };
+
+    let exposed = match (guns.is_empty(), roads.path(to)) {
+        (false, Some(path)) => {
+            let seen = path
+                .iter()
+                .filter(|hex| {
+                    guns.iter().any(|(from, reach)| {
+                        from.distance_to(**hex) <= *reach && state.sight.clear(*from, **hex)
+                    })
+                })
+                .count();
+            seen as f32 / path.len().max(1) as f32
+        }
+        _ => 0.0,
+    };
+
+    // Crow flight for the enemy on purpose: what her terrain costs are is not
+    // something this crew knows, and guessing precisely would be a worse lie
+    // than guessing roughly.
+    let theirs = super::visible_enemies(state, me.side)
+        .into_iter()
+        .map(|enemy| {
+            let speed = registry
+                .vehicle(&enemy.vehicle)
+                .map(|v| v.movement.points.max(1))
+                .unwrap_or(1) as f32;
+            enemy.pos.distance_to(to) as f32 / speed
+        })
+        .fold(f32::INFINITY, f32::min);
+
+    Drive {
+        crow,
+        road,
+        exposed,
+        theirs,
+    }
+}
+
+/// The farthest this crew's guns reach, in hexes.
+///
+/// A gate on the exposure count rather than a shot price: what is being asked
+/// is "could she be shot at from there", and a weapon that cannot reach the
+/// hex answers no whatever it would do if it could. Pricing the shot properly
+/// is [`super::best_weapon_against`]'s job and it is far too expensive to run
+/// for every hex of every candidate road.
+fn longest_shot(registry: &DataRegistry, unit: &Unit) -> i32 {
+    registry
+        .vehicle(&unit.vehicle)
+        .map(|v| {
+            v.weapons
+                .iter()
+                .filter_map(|w| registry.weapon(w))
+                .map(|w| w.range[1] as i32)
+                .max()
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+}
+
+/// The hand-written chooser: doctrine-weighted value of being there, less
+/// what the drive costs — the road, the fire along it, and whether it is
+/// hers to take when she arrives.
+///
+/// Note what it still does *not* do. It has no model of what the enemy does
+/// next beyond where she stands now, no notion of what her own side is
+/// doing elsewhere, and no memory of what happened last time. Those are what
+/// a search or a learned policy would add; leaving them out is what keeps
+/// this cheap enough to run for every crew every time a goal finishes.
 pub struct UtilityChooser<'a> {
     pub evaluator: &'a super::Evaluator,
+    /// How much of the deeper reasoning this commander actually does, 0..=1.
+    ///
+    /// Difficulty's second half, and the half that makes deepening this
+    /// chooser worth anything. The blur below models a commander who reads
+    /// the map and misjudges it; foresight models one who does not read all
+    /// of it — she sees the objective and the distance to it as the crow
+    /// flies, and not the river in between, nor the gun covering the open
+    /// ground, nor that the enemy is nearer to the bridge than she is.
+    ///
+    /// It has to be a separate axis from the blur, because more terms make
+    /// the blur matter *less*: a value function that separates a good goal
+    /// from a bad one more sharply is one a blurred commander still ranks
+    /// correctly. Deepening the chooser and leaving difficulty as noise alone
+    /// would have made difficulty mean less rather than more, which is the
+    /// opposite of what this is for.
+    ///
+    /// Zero is exactly the chooser before any of it: crow flight, no road, no
+    /// fire on the way, nobody racing her for the ground. One is all of it.
+    pub foresight: f32,
     /// Difficulty, as it applies to judgement rather than to fidgeting.
     ///
     /// This is where the blur belongs now, and moving it here is most of what
@@ -250,6 +402,18 @@ impl GoalChooser for UtilityChooser<'_> {
             .vehicle(&me.vehicle)
             .map(|v| v.movement.points.max(1))
             .unwrap_or(1) as f32;
+        // Priced once for the whole list rather than once per candidate.
+        // Every goal is a place to drive from the same hex, so one Dijkstra
+        // answers all of them — and the A* per candidate this replaced cost
+        // five to ten times as much per planned order.
+        let roads = roads(registry, state, unit, HORIZON);
+        // Who could shoot at the march, and from how far. Fog-honest: a crew
+        // cannot route around a gun nobody has seen, and letting her would
+        // leak the enemy's whole order of battle into her pathfinding.
+        let guns: Vec<(Hex, i32)> = super::visible_enemies(state, me.side)
+            .into_iter()
+            .map(|enemy| (enemy.pos, longest_shot(registry, enemy)))
+            .collect();
         let mut best: Option<(f32, Goal)> = None;
         for goal in candidates {
             let hex = match goal {
@@ -257,13 +421,35 @@ impl GoalChooser for UtilityChooser<'_> {
                 Goal::Take(hex) => *hex,
             };
             let worth = self.evaluator.score_tile(registry, state, unit, hex).score;
-            let rounds = me.pos.distance_to(hex) as f32 / speed;
+            let drive = drive(registry, state, unit, &roads, &guns, hex, speed);
+            let doctrine = &self.evaluator.doctrine;
+            let sight = self.foresight.clamp(0.0, 1.0);
             let blur = if self.noise > 0.0 {
                 self.rng.random_range(-self.noise..self.noise)
             } else {
                 0.0
             };
-            let value = worth - IMPATIENCE * rounds + blur;
+            // How long the drive looks to *her*. A commander with no
+            // foresight prices it as the crow flies — "it is only over
+            // there" — and finds the river when she gets to it; one with all
+            // of it reads the ground. Blended rather than switched, so a
+            // difficulty level in between is a commander who half-reads the
+            // map rather than one who flips a coin about it.
+            let rounds = drive.crow * (1.0 - sight) + drive.road * sight;
+            // The two things she may not notice at all. Both are in rounds
+            // and both are priced per round, so they read against each other
+            // and against `IMPATIENCE` with no conversion to remember: the
+            // part of the march spent under a gun, and the wait for ground
+            // somebody else gets to first. Doctrine says how much she minds;
+            // foresight says whether she sees it; either at zero is the
+            // chooser before it could see a road at all.
+            let exposed = rounds * drive.exposed * sight;
+            let late = (rounds - drive.theirs).max(0.0) * sight;
+            let value = worth
+                - IMPATIENCE * rounds
+                - doctrine.route_caution * exposed
+                - doctrine.contest_aversion * late
+                + blur;
             // Strictly greater, so ties go to the earlier candidate and the
             // list's order is the tie-break. That is why `candidates` is
             // ordered rather than gathered.

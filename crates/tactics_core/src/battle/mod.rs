@@ -34,8 +34,8 @@ pub use command::{
 };
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
-    along_the_bearing, destination_blocked, edge_cost as movement_edge_cost, move_points, path_to,
-    reachable, step_toward,
+    Roads, along_the_bearing, destination_blocked, edge_cost as movement_edge_cost, move_points,
+    path_to, reachable, roads, step_toward,
 };
 pub use orders::{Event, FireIntent, Order, OrderError, UnitIntent};
 

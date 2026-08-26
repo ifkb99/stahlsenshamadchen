@@ -418,6 +418,40 @@ pub struct DoctrineDef {
     /// Reserved for chain of command: how much a commander devolves
     /// decisions to subordinates.
     pub delegation: f32,
+    /// What a round of the march spent in front of an enemy gun is worth
+    /// avoiding, in the same points a piece of ground is scored in.
+    ///
+    /// The goal chooser prices the *road* to a goal, not only the goal: how
+    /// long the drive takes over real terrain, and what share of it is walked
+    /// where something that can shoot her can see her. This is the price of
+    /// that share. Set beside `IMPATIENCE` (0.35 a round) rather than beside
+    /// an objective's worth: at 0.8 an elastic-defence crew will spend two
+    /// extra rounds going the covered way round, and at 0.2 massed armour
+    /// takes the direct road and expects to trade.
+    ///
+    /// Defaulted to a competent value rather than to zero, for the same
+    /// reason [`Self::objective_value`] is: a doctrine written before the
+    /// chooser could see a road must not silently become one that marches
+    /// down the open one. The off switch for this whole family of terms is
+    /// difficulty — at difficulty 1 a commander's foresight is zero and none
+    /// of them is read at all, which is exactly the chooser as it stood.
+    pub route_caution: f32,
+    /// What arriving a round later than the enemy is worth, per round late,
+    /// when choosing which ground to march for.
+    ///
+    /// The cheapest possible answer to "what will the enemy do about it": if
+    /// somebody who can already be seen is nearer to that bridge than she is,
+    /// she will not have it to herself when she gets there. It is deliberately
+    /// a discount and never a veto — a doctrine that refused every contested
+    /// objective would be a doctrine that never fights for anything, which is
+    /// precisely the stalemate the objectives were introduced to end.
+    ///
+    /// Fog-honest: only spotted enemies count, so this cannot tell a crew
+    /// about ground she has no business knowing is threatened.
+    ///
+    /// Defaulted like [`Self::route_caution`], and turned off by the same
+    /// switch: a commander with no foresight never asks the question.
+    pub contest_aversion: f32,
 }
 
 fn default_objective_value() -> f32 {
@@ -443,6 +477,15 @@ impl Default for DoctrineDef {
             withdraw_threshold: 0.7,
             initiative: 0.5,
             delegation: 0.5,
+            // Competent, not zero. A doctrine that says nothing about the
+            // road is a doctrine with no opinion about it, and the opinion
+            // every real one holds is that being shot at on the way there is
+            // worth going round for. Set beside `IMPATIENCE` (0.35 a round):
+            // at 0.6 the balanced doctrine will spend most of an extra round
+            // to take a covered approach, and half a round to reach ground
+            // before the enemy does.
+            route_caution: 0.6,
+            contest_aversion: 0.3,
         }
     }
 }

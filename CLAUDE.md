@@ -541,6 +541,82 @@ is deliberate and is the thing to preserve:
   hexes. A per-candidate draw is safe over six meaningful options and was not
   safe over ninety interchangeable ones — the argmax is the difference.
 
+### The road, not the crow flight
+
+The goal chooser priced a march as `distance / speed`, which on a map with a
+river in it is not a small error: the far bank is five hexes away and twenty
+hexes of driving, and a crew who cannot tell the difference marches at the
+water. It also knew nothing about what happens on the way there, or about who
+else wants the same ground. `UtilityChooser` now prices all three, and every
+one of them is read off one Dijkstra.
+
+- **`battle::roads` is the road-pricing twin of `path_to`**, and differs from
+  it in the three ways a plan differs from an order: many destinations at
+  once, a *horizon* in rounds rather than this round's budget, and **no
+  occupancy at all**. Neither friends nor spotted enemies block. A march takes
+  several rounds and the field will not hold still for it, so treating a tank
+  parked on the bridge as a wall would make the bridge unreachable and the
+  ground a crew most wants invisible; the opposition is a cost along the way
+  instead, and `step_toward` still respects every vehicle on the field when
+  she actually drives. A happy consequence: the inner loop touches terrain
+  only, so unlike `reachable` it is **not O(hexes × units)**.
+- **One Dijkstra for the whole candidate list, not an A* per candidate.** The
+  first draft did the latter and cost five to ten times as much per planned
+  order. Every goal is a place to drive from the same hex.
+- **Ground with no road inside the horizon is priced at the horizon**, not at
+  the crow flight. The first draft fell back to the crow flight and had it
+  exactly backwards — the ground with no road inside the horizon is the ground
+  whose road is *longest*, so that fallback made the far bank of an unfordable
+  river the nearest thing on the map.
+- **`DoctrineDef::route_caution` and `contest_aversion` default to competent
+  values, not to zero**, for the reason `objective_value` does: a doctrine
+  written before the chooser could see a road must not silently become one
+  that marches down the open one. The off switch for the whole family is
+  difficulty, below.
+- **The route terms are a tie-break between comparable goals, not a veto.**
+  Measured on a staged map, an objective that offers a shot at a visible tank
+  is worth about seven points more to stand on than one that does not, against
+  route costs of one or two — so any test of these terms has to stage goals
+  that are worth roughly the same, and the ones in `tests/engine.rs` say so in
+  their stage assertions. Reaching for a bigger coefficient instead would make
+  a crew who refuses every contested objective, which is the stalemate
+  objectives were introduced to end.
+
+### Difficulty has two axes now
+
+`difficulty_noise` is misjudging what she has read. `difficulty_foresight` is
+not having read it: at 0 (difficulty 1) she sees the objective and how far off
+it is *as the crow flies*, and not the river in between, nor the gun covering
+the open ground, nor that the enemy is nearer to the bridge than she is. It
+scales the blend between the crow flight and the road, and it gates both
+doctrine terms above.
+
+The second axis is not decoration, and this is the part to keep hold of:
+**more terms make the blur matter less.** A value function that separates a
+good goal from a bad one more sharply is one a blurred commander still ranks
+correctly, so deepening the chooser while leaving difficulty as noise alone
+would have made difficulty mean *less*. Anything else added to the chooser
+should ask which axis it belongs to.
+
+Zero at difficulty 1 is exactly the chooser as it stood before it could price
+a road, so the weakest commander plays the game the AI has always played and
+every level above her is an addition. `UtilityPlanner::new` therefore takes a
+difficulty rather than a noise amplitude — a caller who passed one of the two
+derived numbers and forgot the other would get a commander who misjudges the
+map but reads all of it, which is nobody.
+
+What this did to the measured skill gap is **almost nothing**: on the mirrored
+arena at 8 seeds × 36 battles, 5-over-1 went 62.8% → 64.2% and 5-over-3 54.3%
+→ 54.8%, both inside the noise at 576 battles a row. The arena is a radius-10
+hexagon with a handful of forest hexes and no objectives worth arguing about,
+so it has almost nothing for a road-reader to be better at. That is an
+instrument limitation rather than a result about the terms — the three tests
+in `tests/engine.rs` (`a_commander_who_reads_the_ground_goes_where_the_road_goes`,
+`a_road_under_a_gun_is_worth_going_round`,
+`ground_the_enemy_reaches_first_is_worth_less_marching_for`) are what actually
+pin them, each isolating one term by holding the other two at zero. A
+terrain-varied arena is the next instrument this question wants.
+
 ### Difficulty is a lens, not a lottery
 
 `UtilityPlanner::lean` draws **one** blur per unit per round and applies it as
@@ -1316,10 +1392,10 @@ rule they defend (`unspotted_enemies_still_ambush`).
 
   | | |
   | --- | --- |
-  | round resolution | 1.87 ms (1.36–2.57 across seeds) |
-  | `reachable()` per call | 24.6 µs |
-  | `unit_vision` per unit, cold | 74.9 µs |
-  | utility order | 0.05 ms |
+  | round resolution | 1.36 ms (1.05–1.80 across seeds) |
+  | `reachable()` per call | 26.5 µs |
+  | `unit_vision` per unit, cold | 71.8 µs |
+  | utility order | 0.17 ms |
   | mcts order, difficulty 3 / 4 | 1.84 s / 4.24 s |
 
   Utility order was 0.03 ms until the evaluator started pricing danger as a
@@ -1327,17 +1403,25 @@ rule they defend (`unspotted_enemies_still_ambush`).
   candidate tile. Anything added to `score_tile` is paid for at that rate —
   it is the hottest function the AI has.
 
-  Round resolution was 1.07 ms until detection rolls landed, and the same
-  binary with `balance.detection_certain_percent` at 100 — the rule switched
-  off — still measures 1.30. **The spotting pass is not where that went**: over
-  the same benchmark the rule *lowers* the number of fog recomputes (545 → 454)
-  and of cold field-of-view computations (322 → 305), and `search` runs about
-  2.4 times a round. The same raycasting work with the same call count costing
-  more points at where the units are standing when they do it — contact comes
-  later, so more of the measured eight rounds are spent with everybody alive
-  and looking across open ground. That is a hypothesis nobody has confirmed;
-  it is the first thing to check if this number becomes a problem, and the
-  shadowcasting FOV work in TODO is what would move it.
+  Utility order was 0.04 ms until the goal chooser learned to price a road,
+  which is one Dijkstra out to `HORIZON` rounds per crew per goal chosen —
+  and only when a goal *finishes*, so the benchmark's figure (every crew
+  choosing at once, on the first round) is the worst case rather than the
+  usual one. An A* per candidate instead of one Dijkstra for the list cost
+  0.21–0.42 ms, which is what the shape is for.
+
+  Round resolution has been an unstable number lately and the history is worth
+  keeping. It was 1.07 ms; detection rolls took it to 1.87, and the deepened
+  goal chooser brought it back to 1.36 — the chooser is *outside* the timed
+  region, so what changed is the battle: crews pick ground they can actually
+  drive to and spend fewer ticks milling. The detection half was never
+  attributed. Over the same benchmark that rule *lowers* the number of fog
+  recomputes (545 → 454) and of cold field-of-view computations (322 → 305)
+  and `search` runs about 2.4 times a round, so the spotting pass is not where
+  it went; the leading guess is that the same raycasting happens with the units
+  standing further apart in open ground. Nobody has confirmed it. It is the
+  first thing to check if this number becomes a problem, and the shadowcasting
+  FOV work in TODO is what would move it.
 
   Run it `--release` or the figures are meaningless. Note this supersedes the
   "~39 µs per call on the 768-tile map" figure that used to appear below: that

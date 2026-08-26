@@ -531,6 +531,233 @@ fn nobody_searches_for_what_is_plainly_in_front_of_her() {
     );
 }
 
+/// A doctrine with one field changed, so a test about the goal chooser's
+/// terms can hold every other appetite still.
+fn doctrine_with(
+    reg: &DataRegistry,
+    id: &str,
+    edit: impl FnOnce(&mut tactics_core::data::DoctrineDef),
+) -> tactics_core::data::DoctrineDef {
+    let mut doctrine = reg.doctrine(id).expect("base doctrine").clone();
+    edit(&mut doctrine);
+    doctrine
+}
+
+#[test]
+fn a_commander_who_reads_the_ground_goes_where_the_road_goes() {
+    // The chooser priced a march as the crow flies, which on a map with a
+    // river in it is not a small error: the far bank is five hexes away and
+    // twenty-odd hexes of driving, and a crew who cannot tell the difference
+    // marches at the water.
+    //
+    // Two objectives worth the same. One is across a river reach with the
+    // only crossing at the bottom of the map; the other is straight down her
+    // own bank. As the crow flies the far one is nearer. By road it is not.
+    let reg = seen(registry_wireless());
+    let mut rows: Vec<&str> = vec!["gggwgggg"; 15];
+    // The one crossing, at the bottom of the map.
+    rows.push("gggggggg");
+    let state = goal_battle(
+        &reg,
+        &rows,
+        serde_json::json!([
+            { "id": "far_bank", "name": "The Far Bank", "at": [[5, 0]], "value": 2 },
+            { "id": "down_river", "name": "Down River", "at": [[0, 8]], "value": 2 },
+        ]),
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "Chooser"),
+            // Off at the other end of the map and out of sight: a visible
+            // enemy is worth several points of shot and several more of
+            // advance, which would swamp the thing being measured.
+            unit_at([7, 15], 1, "medium_tank", "Somebody"),
+        ],
+        11,
+    );
+    assert!(
+        state.fog.side(0).spotted.is_empty(),
+        "the stage needs no enemy in sight — this is a test about ground"
+    );
+    let far = tactics_core::offset_to_hex(5, 0);
+    let down = tactics_core::offset_to_hex(0, 8);
+    let me = state.units[0].pos;
+    // The stage, stated rather than assumed. Without both halves the test
+    // proves nothing about which of the two the chooser read.
+    assert!(
+        me.distance_to(far) < me.distance_to(down),
+        "the far bank has to be nearer as the crow flies: {} against {}",
+        me.distance_to(far),
+        me.distance_to(down)
+    );
+    let roads = tactics_core::battle::roads(&reg, &state, UnitId(0), 12);
+    let (far_road, down_road) = (
+        roads.cost(far).expect("reachable the long way round"),
+        roads.cost(down).expect("reachable straight down the bank"),
+    );
+    assert!(
+        far_road > down_road,
+        "and much further by road: {far_road} against {down_road}"
+    );
+
+    // Route caution and contest aversion are switched off, so the only thing
+    // foresight can be reading here is how long the drive is.
+    let doctrine = doctrine_with(&reg, "massed_armor", |d| {
+        d.route_caution = 0.0;
+        d.contest_aversion = 0.0;
+    });
+    assert_eq!(
+        goal_with_foresight(&reg, &state, UnitId(0), doctrine.clone(), 0.0),
+        Some(tactics_core::battle::Goal::Take(far)),
+        "a commander who reads a straight line off the map marches at the river"
+    );
+    assert_eq!(
+        goal_with_foresight(&reg, &state, UnitId(0), doctrine, 1.0),
+        Some(tactics_core::battle::Goal::Take(down)),
+        "one who reads the ground takes the objective she can drive to"
+    );
+}
+
+#[test]
+fn a_road_under_a_gun_is_worth_going_round() {
+    // The second thing the chooser could not see: what happens on the way.
+    // Two objectives the same distance off by roads that cost the same, and
+    // one of those roads is walked in front of a tank. A doctrine that minds,
+    // in the hands of a commander with the foresight to notice, takes the
+    // other one.
+    //
+    // The timber is what makes the difference a fact about the *route*
+    // rather than about the destination: it breaks the sight line along the
+    // northern road without changing what either objective is worth.
+    let reg = seen(registry_wireless());
+    // The wood is crossed cheaply at its western end and expensively
+    // everywhere else, so the road behind it is a *single* cheapest road
+    // rather than one of several ties — the chooser prices the road the
+    // pathfinder actually found, and a tie would leave which one to chance.
+    let rows = [
+        "ggggggggg",
+        "rffffffff",
+        "ggggggggg",
+        "gggggffff",
+        "ggggggggg",
+    ];
+    let state = goal_battle(
+        &reg,
+        &rows,
+        serde_json::json!([
+            { "id": "open_road", "name": "Down the Open Road", "at": [[8, 2]], "value": 8 },
+            { "id": "behind_the_wood", "name": "Behind the Wood", "at": [[8, 0]], "value": 8 },
+        ]),
+        vec![
+            unit_at([0, 2], 0, "medium_tank", "Chooser"),
+            // Parked south-west behind her, watching the open ground and
+            // blind to everything north of the treeline. Behind rather than
+            // beside the southern objective, so that the two objectives are
+            // worth the same to stand on — one of them offering a shot at
+            // her would be worth several times what the road is.
+            unit_at([2, 4], 1, "medium_tank", "The Gun"),
+        ],
+        11,
+    );
+    let open = tactics_core::offset_to_hex(8, 2);
+    let covered = tactics_core::offset_to_hex(8, 0);
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "she has to be able to see the gun to route around it"
+    );
+    let roads = tactics_core::battle::roads(&reg, &state, UnitId(0), 12);
+    assert!(
+        roads.cost(covered) >= roads.cost(open),
+        "the covered road must not also be the shorter one, or the test would \
+         pass for the wrong reason: {:?} against {:?}",
+        roads.cost(covered),
+        roads.cost(open)
+    );
+
+    // Massed armour, whose low `cover_value` keeps the treeline itself from
+    // outbidding both objectives, carrying elastic defence's appetite for
+    // the covered road. Contest aversion off: the two objectives are about
+    // equally far from the one enemy on the field, but leaving it in would
+    // mean the test could pass for a second reason.
+    let doctrine = doctrine_with(&reg, "massed_armor", |d| {
+        d.route_caution = 1.2;
+        d.contest_aversion = 0.0;
+    });
+    assert_eq!(
+        goal_with_foresight(&reg, &state, UnitId(0), doctrine.clone(), 0.0),
+        Some(tactics_core::battle::Goal::Take(open)),
+        "a commander who does not look at the road takes the first one offered"
+    );
+    assert_eq!(
+        goal_with_foresight(&reg, &state, UnitId(0), doctrine, 1.0),
+        Some(tactics_core::battle::Goal::Take(covered)),
+        "one who does takes the road the gun cannot see"
+    );
+}
+
+#[test]
+fn ground_the_enemy_reaches_first_is_worth_less_marching_for() {
+    // The third thing: what the enemy will do about it. Two objectives, and
+    // a tank already sitting a hex from one of them — she will not have that
+    // one to herself when she arrives, and a commander who has noticed goes
+    // for the other.
+    //
+    // Isolated by comparing the same battle under two values of the one
+    // term, so `score_tile` is identical in both runs and the only thing that
+    // can have moved the answer is the arithmetic under test. That matters
+    // here more than in the tests above: an enemy beside an objective makes
+    // that objective worth *more* to an aggressive doctrine, because there is
+    // something to shoot from it, so the contested ground starts ahead.
+    let reg = seen(registry_wireless());
+    let rows = ["ggggggggg"; 9];
+    let state = goal_battle(
+        &reg,
+        &rows,
+        serde_json::json!([
+            { "id": "contested", "name": "The Contested Hill", "at": [[8, 4]], "value": 8 },
+            { "id": "open_ground", "name": "The Open Ground", "at": [[4, 8]], "value": 8 },
+        ]),
+        vec![
+            unit_at([0, 4], 0, "medium_tank", "Chooser"),
+            unit_at([7, 4], 1, "medium_tank", "Already There"),
+        ],
+        11,
+    );
+    let contested = tactics_core::offset_to_hex(8, 4);
+    let open = tactics_core::offset_to_hex(4, 8);
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "she has to be able to see who she is racing"
+    );
+    let me = state.units[0].pos;
+    let them = state.units[1].pos;
+    assert!(
+        them.distance_to(contested) < me.distance_to(contested),
+        "the stage needs the enemy nearer to the contested ground"
+    );
+
+    let racing = |aversion: f32| {
+        goal_with_foresight(
+            &reg,
+            &state,
+            UnitId(0),
+            doctrine_with(&reg, "massed_armor", |d| {
+                d.route_caution = 0.0;
+                d.contest_aversion = aversion;
+            }),
+            1.0,
+        )
+    };
+    assert_eq!(
+        racing(0.0),
+        Some(tactics_core::battle::Goal::Take(contested)),
+        "a commander who does not ask marches at the ground with a tank on it"
+    );
+    assert_eq!(
+        racing(3.0),
+        Some(tactics_core::battle::Goal::Take(open)),
+        "one who does takes the ground that will still be empty when she gets there"
+    );
+}
+
 #[test]
 fn elevation_blocks_and_grants_line_of_sight() {
     let reg = registry();
@@ -1761,6 +1988,82 @@ fn two_side_battle(
         std::sync::Arc::new(roster),
         seed,
     )
+}
+
+/// A battle on a hand-drawn map that declares ground worth holding.
+///
+/// The twin of [`two_side_battle`] for tests about the *goal* layer, which
+/// needs somewhere to go: a crew with no objectives has two candidates — the
+/// tile this round's sweep picked, and standing still — and neither of them
+/// says anything about how she chose. Distinct from `objective_battle`
+/// further down, which draws its own one-row map and is about scoring rather
+/// than about choosing.
+fn goal_battle(
+    reg: &DataRegistry,
+    rows: &[&str],
+    objectives: serde_json::Value,
+    placements: Vec<UnitPlacement>,
+    seed: u64,
+) -> BattleState {
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "goal_map",
+        "palette": { "g": "grass", "f": "forest", "w": "water", "r": "road" },
+        "rows": rows,
+        "objectives": objectives,
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    )
+}
+
+/// What ground this planner sends `unit` to, with the blur switched off and
+/// foresight set by hand.
+///
+/// Difficulty is two numbers now and a test about one of them must hold the
+/// other still: at difficulty 1 a commander both misjudges the map and does
+/// not read it, and a test that changed difficulty would not know which of
+/// the two moved its answer.
+fn goal_with_foresight(
+    reg: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    doctrine: tactics_core::data::DoctrineDef,
+    foresight: f32,
+) -> Option<tactics_core::battle::Goal> {
+    let mut planner = UtilityPlanner::new(Evaluator::new(doctrine), 5, 99);
+    planner.foresight = foresight;
+    let mut state = state.clone();
+    loop {
+        let order = planner.next_order(reg, &state, 0);
+        if let Order::SetGoal { unit: who, goal } = order
+            && who == unit
+        {
+            return Some(goal);
+        }
+        if matches!(order, Order::Commit { .. }) {
+            return None;
+        }
+        state.apply(reg, &order).ok()?;
+    }
 }
 
 fn unit_at(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> UnitPlacement {
@@ -5747,7 +6050,7 @@ fn plan_one(
     }
     let mut planner = UtilityPlanner::new(
         Evaluator::new(reg.doctrine("massed_armor").expect("base doctrine").clone()),
-        0.0,
+        5,
         seed,
     );
     loop {
@@ -7647,6 +7950,8 @@ fn a_formation_keeps_its_interval_and_its_sight_lines() {
         withdraw_threshold: 0.5,
         initiative: 0.5,
         delegation: 0.5,
+        route_caution: 0.0,
+        contest_aversion: 0.0,
     });
     let score = |col: i32| {
         evaluator
@@ -8664,6 +8969,8 @@ fn support_holds_her_at_overwatch_distance() {
         withdraw_threshold: 0.5,
         initiative: 0.5,
         delegation: 0.5,
+        route_caution: 0.0,
+        contest_aversion: 0.0,
     });
     let score = |col: i32| {
         evaluator
@@ -10325,6 +10632,8 @@ fn risk_score(reg: &DataRegistry, state: &BattleState, unit: UnitId, tile: [i32;
         withdraw_threshold: 0.0,
         initiative: 0.5,
         delegation: 0.5,
+        route_caution: 0.0,
+        contest_aversion: 0.0,
     });
     evaluator
         .score_tile(

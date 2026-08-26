@@ -186,6 +186,37 @@ pub fn difficulty_noise(difficulty: u8) -> f32 {
     }
 }
 
+/// How much of the goal chooser's deeper reasoning a commander at this
+/// difficulty actually does, 0..=1.
+///
+/// The twin of [`difficulty_noise`] and the answer to a real problem with it:
+/// blur alone gets *less* discriminating as the thing being blurred gets
+/// better, because a value function that separates a good goal from a bad one
+/// more sharply is one a blurred commander still ranks correctly. Deepening
+/// the chooser while leaving difficulty as noise would therefore have made
+/// difficulty matter less.
+///
+/// So the two axes say different things about a bad commander. Noise is
+/// misjudging what she has read; foresight is not having read it — she sees
+/// the objective and how far off it is as the crow flies, and not the river
+/// in between, nor the gun covering the open ground, nor that the enemy is
+/// nearer to the bridge than she is. Both kinds of error are ones a player
+/// can watch happen and punish, which is the whole standard difficulty is
+/// held to here.
+///
+/// Zero at difficulty 1 is exactly the chooser as it stood before it could
+/// price a road, so the weakest commander plays the game the AI has always
+/// played and every level above her is an addition.
+pub fn difficulty_foresight(difficulty: u8) -> f32 {
+    match difficulty.clamp(1, 5) {
+        1 => 0.0,
+        2 => 0.25,
+        3 => 0.5,
+        4 => 0.8,
+        _ => 1.0,
+    }
+}
+
 /// Enemies of `side` that its fog currently allows it to target.
 pub fn visible_enemies(state: &BattleState, side: u8) -> Vec<&Unit> {
     let fog = state.fog.side(side);

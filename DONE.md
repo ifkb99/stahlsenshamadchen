@@ -556,6 +556,45 @@ core: 256 battles took four minutes, where the first attempt at a quarter of
 that sample had been framed as an overnight job and produced six battles a
 pairing, which said nothing at all.
 
+**The goal chooser reads the road.** It priced a march as `distance / speed`
+and knew nothing about what happened on the way or about who else wanted the
+ground. It now prices the real terrain cost (`battle::roads`, one Dijkstra out
+to a horizon in rounds, shared by the whole candidate list), the share of that
+road a spotted gun can see (`DoctrineDef::route_caution`), and how many rounds
+later than the nearest visible enemy she would arrive (`contest_aversion`).
+
+Four things in it were wrong first:
+
+- **An A* per candidate** costs five to ten times a planned order. Every goal
+  is a place to drive from the same hex, so one Dijkstra answers all of them.
+- **Falling back to the crow flight** for ground with no road inside the
+  horizon is exactly backwards: that ground is the ground whose road is
+  longest, so the fallback made the far bank of an unfordable river the
+  nearest thing on the map. It is priced at the horizon instead.
+- **Occupancy has no business in a road.** A march takes rounds and the field
+  does not hold still; a tank parked on the bridge is not a wall, it is a
+  reason to expect a fight. Leaving units out also keeps the inner loop off
+  the O(hexes × units) scan that `reachable` still pays.
+- **Deepening a chooser makes a blur matter less**, which is the opposite of
+  what deepening it was for. A value function that separates a good goal from
+  a bad one more sharply is one a blurred commander still ranks correctly. So
+  difficulty gained a second axis, `difficulty_foresight`: noise is misjudging
+  what she has read, foresight is not having read it. At difficulty 1 it is
+  zero and the chooser is exactly what it was, which makes every level above
+  an addition.
+
+And the measurement that did not come: on the mirrored arena the skill gap
+barely moved (5-over-1 62.8% → 64.2%, 5-over-3 54.3% → 54.8% at 8 seeds × 36
+battles, both inside the noise). The arena has a handful of forest hexes and
+no objectives worth arguing about, so there is nothing there for a road-reader
+to be better at — an instrument limitation, and the reason the three terms are
+pinned by staged tests that isolate one apiece instead. Staging those turned
+up the thing to remember about all of them: an objective offering a shot at a
+visible tank is worth about seven points more to stand on than one that is
+not, against route costs of one or two. These are tie-breaks between
+comparable goals, and a coefficient big enough to overrule a destination would
+be a doctrine that refuses every contested objective.
+
 **Being looked at is no longer being seen.** Spotting keeps its geometry —
 line of sight, range, and `VehicleDef::concealment` shortening a spotter's
 reach against one target — and finding somebody inside your own field of view
