@@ -120,6 +120,154 @@ to advance: with elimination as the only victory condition, holding the best
 cover on the map is optimal play, and the stalemate rate *rose* as difficulty
 noise fell (11/12 at zero noise). See TODO.md under Design Decisions.
 
+### Before the plate: what a gunner is up against
+
+The far side of a shot is deep — struck hex face, obliquity, an enumerated
+scatter die, the loader's choice of round, an interior weighted by what is
+physically in it. The near side was five lines until the resolver-depth arc
+(`assets/wiki/reference/ballistics.md`, Arc R). `hit_chance_inner` is now
+eight terms and **every one of them is data**: `weapon.accuracy`, range
+falloff, `balance.accuracy(gunnery)`, `balance.downhill_bonus`,
+`balance.cover_against_accuracy`, `vehicle.profile`, the two motion terms,
+the rung's `accuracy`, and `balance.blind_penalty`.
+
+Four things about it are load-bearing.
+
+- **`hit_chance` names a target by id, not by hex.** Half of what makes a
+  shot hard is a fact about *her* — how big she is, whether she is moving —
+  and a bare coordinate answers neither. Every firing path has a real
+  target, blind fire included: shelling a tile resolves against whoever
+  turns out to be standing on it (`fire_at_tile`).
+- **`Unit.moved` is hexes crossed this round, incremented at the single
+  place a unit changes hex** and zeroed in `begin_round`. It is not
+  `move_credit`, which is what she has *left*: a vehicle parked all round
+  and one that just finished a four-hex dash are both out of credit. One
+  increment site is what makes an ordered march, the battle drill's dash
+  for cover and a frightened crew's flight all cost the same accuracy.
+  Zeroing it at `begin_round` is why the planning phase reads zero for
+  everybody, which is the truth — nobody has driven yet.
+- **The motion terms are per hex, not per "she moved".** A hex is 100 m and
+  a round 60 s, so one hex is a walking pace and five is thirty km/h; a flat
+  penalty prices them identically and throws away the only thing that makes
+  a fast chassis' speed a defence rather than a way of arriving sooner.
+  Firing on the move costs more per hex than being the thing fired at,
+  because laying a gun off a moving vehicle is harder than tracking a mover
+  from a stable one — if those ever cross over, halting to shoot has stopped
+  being worth anything.
+- **`hexes_under_way` reads state and never the hypothetical `from`, and
+  this was measured rather than assumed.** A draft counted the distance from
+  her real position to a candidate tile as driving, on the reasonable
+  ground that reaching a tile means crossing to it. The planner scores
+  *ground*, though, and what makes a hill worth taking is the shooting done
+  from it over the rounds she sits there — almost all of it halted.
+  Charging every candidate tile except the one under her tracks put a
+  standing bias on staying put: 36 games gave **three stalemates where the
+  baseline had none, at 15.9 rounds against 13.6**. That is precisely the
+  pathology land objectives exist to remove, rebuilt one accuracy term
+  lower down. Dropping the branch restored 13.6 rounds and zero stalemates
+  with the terms fully live.
+
+Two more distinctions worth keeping straight:
+
+- **`profile` is about being hit; `concealment` is about being found.** One
+  reaches the gunner's arithmetic, the other scales a spotter's range. A
+  platoon in the open has been seen and is still thirty people lying in a
+  field. `profile` is deliberately not derived from armour, capacity or
+  class, so a mod can describe a lightly armoured but enormous vehicle.
+  It is zero on every armoured chassis in the base mod, which is what makes
+  the infantry numbers attributable to this one field.
+- **Suppression is a number on a morale rung, not a second fear system.**
+  Pressure is already collected in one place (`apply_pressure`) and already
+  walks a ladder the mod declares, so what being shot at costs a gunner is
+  `MoraleRung::accuracy`. Additivity falls out for free: a one-rung ladder,
+  or one whose rungs say nothing about accuracy, has no suppression at all
+  and needs no `if` in Rust to switch off.
+
+**Dispersion is a different fact from flight time, and the shell carries
+both.** `ShellInFlight` has `at` (the map reference the gunner laid on) and
+`impact` (where the round comes down), rolled from `WeaponDef.dispersion` —
+a percentage of the range flown — when the shot is fired, because that is
+when the barrel, the charge and the lay stop being adjustable. Four things
+about it:
+
+- **Flight time models the target moving; dispersion models the gun.** Until
+  this existed a shell aimed at a *parked* vehicle arrived on her with
+  certainty, because the only inaccuracy modelled was the ticks she had to
+  be elsewhere. There is still deliberately **no hit roll for a shell** — a
+  round that comes down on an occupied hex hits what is on it, and adding a
+  blind-fire penalty on top would price the same scatter twice.
+- **A percentage of the range flown, not a flat radius**, because dispersion
+  grows with range — which is the whole reason a battery registers before
+  firing for effect. The base howitzer's 4% is exact at 300 m, one hex at
+  2 km, two at 4 km.
+- **The draw falls off toward the edge.** A ring at radius two holds twice
+  the hexes of a ring at radius one, so drawing a hex uniformly from the
+  disc would put most shells on the rim and almost none on the aiming point.
+  `scatter` takes the smaller of two ring rolls, then walks `hexx`'s own
+  ring order and indexes it — a pure function of coordinates, unlike
+  iterating a set, which is the mistake this project has already made once.
+- **`shell_lands` resolves against `impact` everywhere** — the direct
+  occupant, the splashed neighbours, and `ShellLanded`'s own hex. Displacing
+  the impact buys nothing if the burst still resolves against the aim, and
+  the event reporting the impact is what lets a player see her own battery
+  walk off the target instead of concluding the game moved her enemy.
+  `impact` is deliberately not `#[serde(default)]`: the default would be
+  `Hex::ZERO`, so an old save's airborne shells would come down on the map
+  corner — a silent wrong answer where refusing to load is the loud one.
+
+### Behind the plate: how far through is through
+
+The pipeline in `ballistics.md` always had three outcomes — clean
+penetration, partial penetration, bounce — and B2b shipped two, so a round
+that scraped through a plate spent exactly the budget of one that vastly
+overmatched it. That is the flattening the whole no-hit-points model exists
+to avoid, one layer further in: it makes the *margin* of a penetration mean
+nothing, and margin is most of what separates a gun that can just about
+manage a target from one that eats it.
+
+- **`penetration_roll` returns a share, not a bool.** `None` is a bounce;
+  `Some(share)` is how much of its budget the round spends inside,
+  interpolated by `Balance::penetration_share` from
+  `partial_penetration_percent` at exactly parity up to 1.0 at
+  `clean_penetration_percent`. Linear rather than a step, so there is no
+  cliff for a marginal shot to sit on and no threshold a modder discovers by
+  bisection. `clean_penetration_percent: 100` is the game before the band
+  existed, which is the additivity contract, and it is checked the strong
+  way: the previous chunk's event stream passes byte-identical.
+- **The analytic twin enumerates what the die samples**, exactly as
+  `penetration_chance` and `penetration_roll` already did for the gate.
+  `penetration_share(balance, pen, armor, scatter)` averages the share over
+  the scatter outcomes that get through, and `round_worth` multiplies by it.
+  Once a marginal penetration is worth less, "did it get through" is no
+  longer enough to price a shot with, and a planner without this trades a
+  certainty for a technicality.
+- **`ShotHit::damage` is what was spent, not what the datasheet says.** The
+  share is rolled once, in `resolve_impact`, and handed to
+  `behind_armor_effects` as `spent` — which is also what `savage` now reads,
+  so a round that broke up on the plate does not get the overmatch that
+  skips "wounded". It replaced the whole `ShotProfile` parameter there,
+  which is the tell that the profile was only ever consulted for that
+  number.
+
+Tuning note, because the shape of it will recur: at a floor of 40% the band
+swung the doctrine table to 25-11 and the tank destroyer to 99 kills — the
+rule was right and the number was loud. 55% keeps the rule visible (TD 88
+kills against 76 before the band) at 19-17, which is the parity the other
+chunks held.
+
+The instrument for all of this is `balance`'s **`to hit`** table, the twin of
+the penetration table: every cell is `hit_breakdown` against a medium tank on
+open grass, with the attacker's motion shown as a gradient (1/3/5 hexes)
+rather than one "moving" column, because the gradient *is* the rule. The
+roster table gained a `profile` column and `--sim` reports what share of
+shots were laid from a vehicle under way — a resolver term nobody's guns ever
+meet is a term that changed nothing. `Event::ShotFired` carries `moving`
+beside `blind` and `opportunity` for the same reason, and so the log can say
+why. The shell-flight table gained a `spread` column beside `target moves`,
+which is the two facts side by side. And a penetration cell reading `52·66%`
+gets through half the time and spends two thirds of its budget when it does;
+a bare number is a round with margin to spare.
+
 ### What a shot is worth, and what keeps a battle open
 
 Both of these are one-line arithmetic with battle-length consequences, and

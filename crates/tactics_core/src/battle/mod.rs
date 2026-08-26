@@ -26,7 +26,7 @@ mod orders;
 pub use combat::{
     AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, MAX_HIT, MIN_HIT,
     ShellInFlight, blast_overmatches, expected_damage, flight_ticks, hit_breakdown, hit_chance,
-    preview_attack, struck_facing, weapon_ready,
+    penetration_chance, penetration_share, preview_attack, struck_facing, weapon_ready,
 };
 pub use command::{
     CommandState, Contact, CutOff, Formation, FormationId, Goal, Latitude, Mission, MissionChange,
@@ -152,6 +152,22 @@ pub struct Unit {
     /// Movement accrued but not yet spent, in `cost * ticks_per_round`
     /// units. Integer so resolution stays bit-for-bit reproducible.
     pub move_credit: u32,
+    /// Hexes crossed so far this round, zeroed when the next one is planned.
+    ///
+    /// The resolver knows [`Self::move_credit`], which is what she has left
+    /// to spend, and that is not the same question: a vehicle parked all
+    /// round and one that has just finished a four-hex dash can both be out
+    /// of credit. This is what actually happened, and both ends of a shot
+    /// read it — a crossing target is harder to hit, and a gun laid from a
+    /// moving vehicle is harder to lay.
+    ///
+    /// On the unit rather than in the planner for the reason `goal` is:
+    /// `tests/save.rs` forks a battle through a save file and requires the
+    /// same future, which private planner memory would not survive. Zeroed
+    /// in `begin_round`, so during the planning phase it reads zero for
+    /// everybody — which is the truth, since nobody has driven yet.
+    #[serde(default)]
+    pub moved: u32,
     /// Ticks until each weapon can fire again, indexed like the vehicle's
     /// weapon list. Carries across rounds, so a slow gun caught mid-reload
     /// stays mid-reload.
@@ -791,6 +807,7 @@ impl BattleState {
             intent: UnitIntent::default(),
             planned: false,
             move_credit: 0,
+            moved: 0,
             cooldowns: vec![0; vehicle.weapons.len()],
             // She drives out with what her chassis is written to carry. A
             // vehicle that declares no stowage spawns with an empty map,

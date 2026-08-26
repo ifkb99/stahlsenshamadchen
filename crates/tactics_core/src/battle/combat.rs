@@ -3,7 +3,8 @@
 
 use super::{BattleState, Event, FireIntent, Unit, UnitId, fog, stats};
 use crate::data::{
-    AmmoClass, AmmoDef, ArmorFacing, DamageType, DataRegistry, Scale, TerrainDef, WeaponDef,
+    AmmoClass, AmmoDef, ArmorFacing, Balance, DamageType, DataRegistry, Scale, TerrainDef,
+    WeaponDef,
 };
 use hexx::Hex;
 use rand::RngExt;
@@ -46,14 +47,20 @@ pub const MIN_HIT: i32 = 5;
 pub const MAX_HIT: i32 = 95;
 
 /// Hit chance percentage, clamped to [`MIN_HIT`]..=[`MAX_HIT`].
-/// `from` is passed explicitly so AI can evaluate hypothetical positions.
+///
+/// `from` is passed explicitly so AI can evaluate hypothetical positions;
+/// the target is named by id rather than by hex because half of what makes
+/// a shot hard is a fact about *her* — how big she is and whether she is
+/// moving — and a bare coordinate cannot answer either. Every path that
+/// fires has a real target, including blind fire, which shells a tile and
+/// hits whoever turns out to be standing on it.
 pub fn hit_chance(
     registry: &DataRegistry,
     state: &BattleState,
     attacker: UnitId,
     from: Hex,
     weapon: &WeaponDef,
-    target_pos: Hex,
+    target: UnitId,
     blind: bool,
 ) -> i32 {
     // The no-op closure compiles away, keeping this the allocation-free
@@ -64,7 +71,7 @@ pub fn hit_chance(
         attacker,
         from,
         weapon,
-        target_pos,
+        target,
         blind,
         |_, _| {},
     )
@@ -83,6 +90,14 @@ pub enum HitFactor<'a> {
     Downhill,
     /// Cover from the terrain the target occupies.
     Cover { terrain: &'a str },
+    /// How big the target is, as her chassis declares it.
+    Profile { vehicle: &'a str },
+    /// The target has driven this round, and how far.
+    TargetMoving { hexes: u32 },
+    /// The attacker is under way as the shot goes off, and how far.
+    OnTheMove { hexes: u32 },
+    /// The attacker's crew is being shot at, and it shows.
+    Suppressed { rung: &'a str },
     /// Firing at a tile rather than a spotted unit.
     Blind,
 }
@@ -101,6 +116,20 @@ impl HitFactor<'_> {
             HitFactor::Gunnery => "Crew gunnery".to_string(),
             HitFactor::Downhill => "Firing downhill".to_string(),
             HitFactor::Cover { terrain } => format!("{terrain} cover"),
+            HitFactor::Profile { vehicle } => format!("{vehicle} profile"),
+            HitFactor::TargetMoving { hexes } => {
+                format!(
+                    "Target under way ({})",
+                    scale.format_distance(*hexes as i32)
+                )
+            }
+            HitFactor::OnTheMove { hexes } => {
+                format!(
+                    "Firing on the move ({})",
+                    scale.format_distance(*hexes as i32)
+                )
+            }
+            HitFactor::Suppressed { rung } => format!("Crew {}", rung.to_lowercase()),
             HitFactor::Blind => "Blind fire".to_string(),
         }
     }
@@ -134,7 +163,7 @@ pub fn hit_breakdown(
     attacker: UnitId,
     from: Hex,
     weapon: &WeaponDef,
-    target_pos: Hex,
+    target: UnitId,
     blind: bool,
 ) -> HitBreakdown {
     let mut modifiers = Vec::new();
@@ -144,7 +173,7 @@ pub fn hit_breakdown(
         attacker,
         from,
         weapon,
-        target_pos,
+        target,
         blind,
         |factor, delta| {
             if delta != 0 {
@@ -173,13 +202,17 @@ fn hit_chance_inner(
     attacker: UnitId,
     from: Hex,
     weapon: &WeaponDef,
-    target_pos: Hex,
+    target: UnitId,
     blind: bool,
     mut note: impl FnMut(HitFactor<'_>, i32),
 ) -> i32 {
     let Some(att) = state.unit(attacker) else {
         return 0;
     };
+    let Some(tgt) = state.unit(target) else {
+        return 0;
+    };
+    let target_pos = tgt.pos;
     let mut chance = weapon.accuracy;
 
     let dist = from.distance_to(target_pos).max(1);
@@ -197,11 +230,12 @@ fn hit_chance_inner(
     chance += gunnery;
 
     if elevation_at(state, from) > elevation_at(state, target_pos) {
-        note(HitFactor::Downhill, 10);
-        chance += 10;
+        let downhill = registry.balance.downhill_bonus;
+        note(HitFactor::Downhill, downhill);
+        chance += downhill;
     }
     if let Some(terrain) = terrain_at(registry, state, target_pos) {
-        let cover = -(terrain.cover / 2);
+        let cover = -registry.balance.cover_against_accuracy(terrain.cover);
         note(
             HitFactor::Cover {
                 terrain: &terrain.name,
@@ -210,11 +244,63 @@ fn hit_chance_inner(
         );
         chance += cover;
     }
+    if let Some(vehicle) = registry.vehicle(&tgt.vehicle)
+        && vehicle.profile != 0
+    {
+        note(
+            HitFactor::Profile {
+                vehicle: &vehicle.name,
+            },
+            vehicle.profile,
+        );
+        chance += vehicle.profile;
+    }
+    if tgt.moved > 0 {
+        let moving = -registry.balance.moving_target_per_hex * tgt.moved as i32;
+        note(HitFactor::TargetMoving { hexes: tgt.moved }, moving);
+        chance += moving;
+    }
+    let under_way = hexes_under_way(att);
+    if under_way > 0 {
+        let cost = -registry.balance.firing_on_the_move_per_hex * under_way as i32;
+        note(HitFactor::OnTheMove { hexes: under_way }, cost);
+        chance += cost;
+    }
+    let rung = registry.morale.rung(att.pressure);
+    if rung.accuracy != 0 {
+        note(HitFactor::Suppressed { rung: &rung.name }, rung.accuracy);
+        chance += rung.accuracy;
+    }
     if blind {
-        note(HitFactor::Blind, -40);
-        chance -= 40;
+        let blind_penalty = registry.balance.blind_penalty;
+        note(HitFactor::Blind, -blind_penalty);
+        chance -= blind_penalty;
     }
     chance.clamp(MIN_HIT, MAX_HIT)
+}
+
+/// How many hexes of driving stand behind this shot: what she has actually
+/// crossed this round, and deliberately nothing about `from`.
+///
+/// A draft of this counted the distance from her real position to the
+/// hypothetical `from` as well, on the reasoning that reaching a tile means
+/// driving to it and a shot from there is therefore a shot on the move. It
+/// is a defensible sentence and it was measurably the wrong rule. The
+/// planner scores *ground*, not this tick's shot: what makes a hill worth
+/// taking is the shooting she will do from it over the rounds she sits
+/// there, and almost all of that is done halted. Charging every candidate
+/// tile except the one under her tracks put a standing bias on staying
+/// exactly where she was — 36 games: three stalemates appeared where the
+/// baseline had none, and battles ran 13.6 rounds to 15.9. Objectives were
+/// built to stop the AI having no reason to advance; this was quietly
+/// rebuilding that reason to sit still, one accuracy term lower down.
+///
+/// So the term reads state and only state. In the resolver that is exactly
+/// right — she has driven what she has driven. In the planner it reads zero
+/// during the planning phase, which is also exactly right, because nobody
+/// has driven yet.
+fn hexes_under_way(attacker: &super::Unit) -> u32 {
+    attacker.moved
 }
 
 /// The round a weapon would put downrange right now.
@@ -369,7 +455,12 @@ fn round_worth(
     ammo: Option<&AmmoDef>,
 ) -> f32 {
     let blast = ammo.map(|a| a.blast).unwrap_or(0).max(0);
-    profile.pen_chance * profile.damage as f32
+    // The penetration half is chance times what a penetration is *worth*,
+    // and since the partial band landed those are two different numbers: a
+    // round that only ever scrapes through a plate spends a fraction of its
+    // budget when it does, and a planner that priced it as a clean hit would
+    // trade a certainty for a technicality.
+    profile.pen_chance * profile.pen_share * profile.damage as f32
         + (1.0 - profile.pen_chance) * blast_worth(registry, state, target, profile.plate, blast)
 }
 
@@ -590,8 +681,28 @@ pub struct ShellInFlight {
     /// arrival. The battery may be dead by the time it matters, so the
     /// position travels with the shell rather than being looked up.
     pub from: Hex,
-    /// The ground it was aimed at.
+    /// The ground it was aimed at — the map reference the gunner laid on.
     pub at: Hex,
+    /// The ground it actually comes down on.
+    ///
+    /// Rolled when the shot is fired, because that is when the barrel, the
+    /// charge and the lay stop being adjustable; a shell in the air is not
+    /// still deciding where to go. Equal to [`Self::at`] whenever the piece
+    /// declares no `dispersion`, which is every mod written before this
+    /// existed.
+    ///
+    /// Kept separate rather than folded into `at` so the log can tell the
+    /// truth twice over: `ShotFired` reports where the battery aimed and
+    /// `ShellLanded` reports where the round arrived, and a player watching
+    /// her own artillery walk off the target can see it happen instead of
+    /// concluding the game moved her enemy.
+    ///
+    /// Deliberately **not** `#[serde(default)]`. A default would be
+    /// `Hex::ZERO`, so a save written before this field existed would bring
+    /// its airborne shells down on the map's origin — a silent wrong answer
+    /// on a corner of the field, which is the worst of the three ways this
+    /// could go. Refusing to load such a save is the loud one.
+    pub impact: Hex,
     /// Absolute tick it comes down on: `round * ticks_per_round + tick`, the
     /// same clock [`super::SideFog::spotted_since`] runs on.
     pub lands: u64,
@@ -629,7 +740,7 @@ pub fn flight_ticks(scale: &Scale, velocity: u32, hexes: i32) -> u64 {
 /// rounds that a mod actually wrote down go up in the air.
 fn shell_in_flight(
     registry: &DataRegistry,
-    state: &BattleState,
+    state: &mut BattleState,
     attacker: UnitId,
     weapon: &WeaponDef,
     round: &Round<'_>,
@@ -642,14 +753,65 @@ fn shell_in_flight(
     let from = state.unit(attacker)?.pos;
     let lands = state.absolute_tick(registry)
         + flight_ticks(&registry.scale, ammo.velocity, from.distance_to(at));
+    let impact = scatter(registry, state, weapon, from, at);
     Some(ShellInFlight {
         attacker,
         ammo: ammo.id.clone(),
         weapon: weapon.id.clone(),
         from,
         at,
+        impact,
         lands,
     })
+}
+
+/// Where a shell laid on `at` from `from` actually comes down.
+///
+/// The radius is the piece's `dispersion` as a percentage of the range
+/// flown, converted through the scale so that the number in the mod file is
+/// about metres and not about this game's hex size. Zero radius returns the
+/// aimed hex, which is both the common case and the additivity contract.
+///
+/// The draw is deliberately not uniform over the disc. A ring at radius two
+/// holds twice the hexes of a ring at radius one, so drawing a hex uniformly
+/// would put most shells on the rim and almost none on the aiming point —
+/// the opposite of what a dispersion pattern looks like. Taking the smaller
+/// of two rolls for the ring gives a distribution that falls off toward the
+/// edge, which is the cheapest honest shape: nothing here needs to be a
+/// Gaussian, it needs to be densest where the gunner aimed.
+///
+/// The ring is then walked in `hexx`'s own order and indexed, which is a
+/// pure function of the coordinates and therefore safe for the event stream
+/// — unlike iterating a set, which is the mistake this project has already
+/// made once.
+fn scatter(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    weapon: &WeaponDef,
+    from: Hex,
+    at: Hex,
+) -> Hex {
+    if weapon.dispersion == 0 {
+        return at;
+    }
+    let flown = registry.scale.meters(from.distance_to(at).max(0));
+    let spread = flown * weapon.dispersion as f32 / 100.0;
+    let radius = (spread / registry.scale.hex_meters).round() as i32;
+    if radius <= 0 {
+        return at;
+    }
+    let a = state.rng.random_range(0..=radius);
+    let b = state.rng.random_range(0..=radius);
+    let ring = a.min(b);
+    if ring == 0 {
+        return at;
+    }
+    let hexes: Vec<Hex> = at.ring(ring as u32).collect();
+    if hexes.is_empty() {
+        return at;
+    }
+    let index = state.rng.random_range(0..hexes.len());
+    hexes[index]
 }
 
 /// Bring down every shell whose time has come, in the order they were fired.
@@ -710,9 +872,12 @@ fn shell_lands(
     shell: &ShellInFlight,
     events: &mut Vec<Event>,
 ) {
+    // The impact, not the aim. A player watching her own battery walk off
+    // the target is entitled to see where the round actually arrived, and
+    // everything below resolves against the ground it hit.
     events.push(Event::ShellLanded {
         attacker: shell.attacker,
-        at: shell.at,
+        at: shell.impact,
         ammo: shell.ammo.clone(),
     });
     // Content can go away underneath a shell — a mod reloaded, a save opened
@@ -724,7 +889,7 @@ fn shell_lands(
     };
     let round = Round::loaded(ammo, weapon);
 
-    let direct = state.unit_at(shell.at).map(|u| u.id);
+    let direct = state.unit_at(shell.impact).map(|u| u.id);
     if let Some(target) = direct {
         resolve_impact(
             registry,
@@ -742,7 +907,7 @@ fn shell_lands(
     // sequence in every replay — `all_neighbors` is fixed, but which of them
     // are occupied is not something the event stream should learn from.
     let mut splashed: Vec<UnitId> = shell
-        .at
+        .impact
         .all_neighbors()
         .into_iter()
         .filter_map(|hex| state.unit_at(hex).map(|u| u.id))
@@ -765,7 +930,7 @@ fn shell_lands(
             blast /= 2;
         }
         if blast > 0 {
-            overpressure(registry, state, id, blast, shell.at, events);
+            overpressure(registry, state, id, blast, shell.impact, events);
         }
     }
 }
@@ -833,18 +998,69 @@ pub fn penetration_chance(pen: f32, armor: f32, scatter: i32) -> f32 {
     through as f32 / (2 * s + 1) as f32
 }
 
-/// One fired round against one plate: the sampled twin of
-/// [`penetration_chance`], sharing its comparison verbatim.
-fn penetration_roll(state: &mut BattleState, pen: f32, armor: f32, scatter: i32) -> bool {
+/// The share of its budget a penetration is expected to spend, averaged over
+/// exactly the outcomes that get through.
+///
+/// The second half of the same finite count [`penetration_chance`] performs,
+/// and it exists for the same reason: once a marginal penetration spends
+/// less than a clean one, "did it get through" stops being enough for a
+/// planner to price a shot with. A gun that only ever scrapes through a
+/// plate and one that overmatches it are now different guns, and the AI has
+/// to be able to see that or it will happily trade a certainty for a
+/// technicality.
+///
+/// Returns 1.0 when nothing gets through, so a caller multiplying by it
+/// alongside [`penetration_chance`] gets zero either way.
+pub fn penetration_share(balance: &Balance, pen: f32, armor: f32, scatter: i32) -> f32 {
     if armor <= 0.0 {
-        return true;
+        // Nothing to overmatch: an unarmored bed is beaten outright.
+        return 1.0;
     }
     if pen <= 0.0 {
-        return false;
+        return 1.0;
+    }
+    let s = scatter.max(0);
+    let mut through = 0;
+    let mut total = 0.0;
+    for r in -s..=s {
+        let rolled = pen * (100 + r) as f32 / 100.0;
+        if rolled >= armor {
+            through += 1;
+            total += balance.penetration_share(rolled / armor);
+        }
+    }
+    if through == 0 {
+        return 1.0;
+    }
+    total / through as f32
+}
+
+/// One fired round against one plate: the sampled twin of
+/// [`penetration_chance`], sharing its comparison verbatim.
+///
+/// Returns the share of its budget the round spends inside — `None` for a
+/// bounce. A penetration that only just beat the plate is breaking up on it
+/// and pays [`Balance::penetration_share`]; one with margin in hand pays
+/// everything. The comparison is ratio-based, never an absolute margin, so
+/// the abstract armor units can still be relabelled to millimetres by
+/// editing data alone.
+fn penetration_roll(
+    balance: &Balance,
+    state: &mut BattleState,
+    pen: f32,
+    armor: f32,
+    scatter: i32,
+) -> Option<f32> {
+    if armor <= 0.0 {
+        return Some(1.0);
+    }
+    if pen <= 0.0 {
+        return None;
     }
     let s = scatter.max(0);
     let r = state.rng.random_range(-s..=s);
-    pen * (100 + r) as f32 >= armor * 100.0
+    let rolled = pen * (100 + r) as f32 / 100.0;
+    (rolled >= armor).then(|| balance.penetration_share(rolled / armor))
 }
 
 /// Everything about one prospective shot that armor decides: which plate,
@@ -861,6 +1077,15 @@ pub struct ShotProfile {
     pub effective_armor: f32,
     /// Probability the chambered round defeats it, 0..=1.
     pub pen_chance: f32,
+    /// Of the outcomes that *do* get through, the share of the round's
+    /// budget they spend inside on average, 0..=1.
+    ///
+    /// Beside `pen_chance` rather than folded into it, because they answer
+    /// different questions and a player is owed both: "will it get through"
+    /// and "and then what". Folding them would also make a marginal
+    /// penetration indistinguishable from a less likely clean one, which is
+    /// exactly the distinction the band was added to make.
+    pub pen_share: f32,
     /// Ledger damage if it penetrates. Cover and elevation deliberately do
     /// not scale this any more: they already price themselves into the hit
     /// chance, and a round that is through the plate is through — the tree
@@ -893,6 +1118,12 @@ pub fn shot_profile(
         plate,
         effective_armor,
         pen_chance: penetration_chance(pen, effective_armor, registry.balance.pen_scatter),
+        pen_share: penetration_share(
+            &registry.balance,
+            pen,
+            effective_armor,
+            registry.balance.pen_scatter,
+        ),
         damage: round.damage,
     })
 }
@@ -913,16 +1144,16 @@ pub fn expected_damage(
     target: UnitId,
     blind: bool,
 ) -> f32 {
-    let Some(tgt) = state.unit(target) else {
+    if state.unit(target).is_none() {
         return 0.0;
-    };
+    }
     let Some(round) = best_round_against(registry, state, attacker, weapon, target) else {
         return 0.0;
     };
     let Some(profile) = shot_profile(registry, state, weapon, &round, from, target) else {
         return 0.0;
     };
-    let p = hit_chance(registry, state, attacker, from, weapon, tgt.pos, blind) as f32 / 100.0;
+    let p = hit_chance(registry, state, attacker, from, weapon, target, blind) as f32 / 100.0;
     p * round_worth(registry, state, target, &profile, round.ammo)
 }
 
@@ -952,8 +1183,19 @@ pub struct AttackPreview {
     pub ammo: Option<String>,
     /// Chance the round defeats the plate it would strike, as a percent.
     pub pen_chance: i32,
-    /// Damage a *penetrating* hit would deal. A hit that does not get
-    /// through deals nothing at all.
+    /// Of the penetrations that happen, the percentage of the round's budget
+    /// they spend inside on average.
+    ///
+    /// 100 means every way through this plate is a clean one; anything less
+    /// says the round is marginal here and will sometimes break up on the
+    /// armour. Worth showing beside [`Self::pen_chance`] rather than folded
+    /// into it, because "it will get through eight times in ten, and half of
+    /// those barely" is a different tactical picture from a flat number, and
+    /// it is the picture that tells a player to work round to the flank.
+    pub pen_share: i32,
+    /// Damage a *penetrating* hit would deal, before the partial-penetration
+    /// band takes its cut. A hit that does not get through deals nothing at
+    /// all.
     pub damage: i32,
     /// Which armour arc the shot lands on.
     pub facing: ArmorFacing,
@@ -1021,7 +1263,7 @@ pub fn preview_attack(
 
     let distance = att.pos.distance_to(tgt.pos);
     let in_range = (weapon.range[0] as i32..=weapon.range[1] as i32).contains(&distance);
-    let hit = hit_breakdown(registry, state, attacker, att.pos, weapon, tgt.pos, blind);
+    let hit = hit_breakdown(registry, state, attacker, att.pos, weapon, target, blind);
     // A dry gun previews honestly: the round is named as missing and every
     // consequence of it is zero, which tells the player exactly why the
     // shot she is hovering cannot happen.
@@ -1030,16 +1272,17 @@ pub fn preview_attack(
         .as_ref()
         .and_then(|r| shot_profile(registry, state, weapon, r, att.pos, target));
     let facing = struck_facing(tgt.pos, tgt.facing, att.pos);
-    let (pen_chance, damage, effective_armor) = profile
+    let (pen_chance, pen_share, damage, effective_armor) = profile
         .as_ref()
         .map(|p| {
             (
                 (p.pen_chance * 100.0).round() as i32,
+                (p.pen_share * 100.0).round() as i32,
                 p.damage,
                 p.effective_armor.round() as i32,
             )
         })
-        .unwrap_or((0, 0, tgt_vehicle.armor.value(facing).max(0)));
+        .unwrap_or((0, 100, 0, tgt_vehicle.armor.value(facing).max(0)));
     let ammo = round.as_ref().map(|r| match r.ammo {
         Some(a) => a.name.clone(),
         None => weapon.name.clone(),
@@ -1068,7 +1311,9 @@ pub fn preview_attack(
                         .unwrap_or(0);
                     CounterPreview {
                         weapon_name: w.name.clone(),
-                        hit_chance: hit_chance(registry, state, target, tgt.pos, w, att.pos, false),
+                        hit_chance: hit_chance(
+                            registry, state, target, tgt.pos, w, attacker, false,
+                        ),
                         damage,
                     }
                 })
@@ -1096,6 +1341,7 @@ pub fn preview_attack(
         hit,
         ammo,
         pen_chance,
+        pen_share,
         damage,
         facing,
         effective_armor,
@@ -1125,8 +1371,8 @@ fn resolve_shot(
     opportunity: bool,
     events: &mut Vec<Event>,
 ) {
-    let (att_pos, tgt_pos) = match (state.unit(attacker), state.unit(target)) {
-        (Some(a), Some(t)) => (a.pos, t.pos),
+    let (att_pos, tgt_pos, moving) = match (state.unit(attacker), state.unit(target)) {
+        (Some(a), Some(t)) => (a.pos, t.pos, a.moved > 0),
         _ => return,
     };
     events.push(Event::ShotFired {
@@ -1136,9 +1382,10 @@ fn resolve_shot(
         weapon: weapon.id.clone(),
         blind,
         opportunity,
+        moving,
     });
 
-    let chance = hit_chance(registry, state, attacker, att_pos, weapon, tgt_pos, blind);
+    let chance = hit_chance(registry, state, attacker, att_pos, weapon, target, blind);
     let roll = state.rng.random_range(0..100);
     if roll >= chance {
         events.push(Event::ShotMissed {
@@ -1185,12 +1432,13 @@ fn resolve_impact(
         return;
     };
     let pen = round.pen_at(from.distance_to(tgt_pos), weapon.range);
-    if !penetration_roll(
+    let Some(share) = penetration_roll(
+        &registry.balance,
         state,
         pen,
         profile.effective_armor,
         registry.balance.pen_scatter,
-    ) {
+    ) else {
         events.push(Event::ShotBounced {
             attacker,
             target,
@@ -1206,7 +1454,7 @@ fn resolve_impact(
             overpressure(registry, state, target, ammo.blast, from, events);
         }
         return;
-    }
+    };
 
     let damage_type = round.damage_type().unwrap_or(weapon.damage_type);
     if let Some(tgt) = state.unit_mut(target) {
@@ -1216,13 +1464,18 @@ fn resolve_impact(
         // very different days for the cadets inside.
         tgt.last_hit_by = Some(damage_type);
     }
+    // The damage reported is what this particular round actually spends,
+    // not what the datasheet says it could: a shell that broke up on the
+    // plate and one that came through cleanly are different events, and the
+    // log, the ledger and the campaign's fate rolls all read this number.
+    let spent = ((profile.damage as f32 * share).round() as i32).max(1);
     events.push(Event::ShotHit {
         attacker,
         target,
-        damage: profile.damage,
+        damage: spent,
         facing: profile.facing,
     });
-    behind_armor_effects(registry, state, round, &profile, target, events);
+    behind_armor_effects(registry, state, round, spent, target, events);
 }
 
 /// What one cadet or one module weighs when a penetration rolls what it
@@ -1346,19 +1599,25 @@ fn behind_armor_effects(
     registry: &DataRegistry,
     state: &mut BattleState,
     round: &Round<'_>,
-    profile: &ShotProfile,
+    // What this round actually put inside, after the partial-penetration
+    // band has had its say. Passed rather than re-derived: the share was
+    // rolled once in `resolve_impact`, and a second place computing it
+    // would be a second answer to one question. It replaced the whole
+    // `ShotProfile` here, which is the tell that the profile was only ever
+    // consulted for this number.
+    spent: i32,
     target: UnitId,
     events: &mut Vec<Event>,
 ) {
     let per_effect = registry.balance.points_per_effect.max(1);
-    let rolls = (profile.damage.max(1) + per_effect - 1) / per_effect;
+    let rolls = (spent.max(1) + per_effect - 1) / per_effect;
     // Triple the price of a roll arriving in one round is the overmatch
     // that skips "wounded": an 88 or a 105 in the lap has no light
     // version, a 75 does. The threshold was double, which put every gun on
     // the field over it — B5's crew-cost table read 0.1 wounded to 3.0 out
     // per battle, meaning the dramatic middle state effectively never
     // happened and a cadet's first hit was almost always her last.
-    let savage = profile.damage >= per_effect * 3;
+    let savage = spent >= per_effect * 3;
     effect_rolls(
         registry,
         state,
@@ -1828,6 +2087,7 @@ fn fire_at_unit(
                 weapon: weapon.id.clone(),
                 blind: false,
                 opportunity,
+                moving: state.unit(attacker).is_some_and(|a| a.moved > 0),
             });
             state.shells.push(shell);
         }
@@ -1887,6 +2147,7 @@ fn fire_at_tile(
             weapon: weapon.id.clone(),
             blind: true,
             opportunity: false,
+            moving: state.unit(attacker).is_some_and(|a| a.moved > 0),
         });
         state.shells.push(shell);
     } else {
@@ -1902,6 +2163,7 @@ fn fire_at_tile(
                     weapon: weapon.id.clone(),
                     blind: true,
                     opportunity: false,
+                    moving: state.unit(attacker).is_some_and(|a| a.moved > 0),
                 });
                 events.push(Event::ShotMissed { attacker, at });
             }

@@ -58,6 +58,7 @@
         "accuracy": 55,
         "accuracy_falloff": 0,
         "indirect": true,
+        "dispersion": 4,
         "reload_ticks": 6
     }
 ]

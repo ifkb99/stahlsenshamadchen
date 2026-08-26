@@ -112,6 +112,20 @@ pub struct MoraleRung {
     /// looks alarming and behaves fine, or the reverse.
     #[serde(default = "yes")]
     pub obeys: bool,
+    /// Percentage points of hit chance a crew standing on this rung loses.
+    ///
+    /// Suppression, and deliberately *not* a second fear system: pressure is
+    /// already collected in one place and already walks this ladder, so what
+    /// being shot at costs a gunner is a number on the rung she is driven
+    /// to rather than a parallel counter with its own decay. The additivity
+    /// rule falls out of that for free — a mod with one rung has no
+    /// suppression at all, and the zero default means a ladder written
+    /// before this existed shoots exactly as it always did.
+    ///
+    /// Negative by convention; nothing forbids a mod from declaring a rung
+    /// where fear sharpens somebody up.
+    #[serde(default)]
+    pub accuracy: i32,
 }
 
 fn yes() -> bool {
@@ -208,18 +222,21 @@ impl Default for MoraleRules {
                     name: "Steady".into(),
                     at_pressure: 0,
                     obeys: true,
+                    accuracy: 0,
                 },
                 MoraleRung {
                     id: "wavering".into(),
                     name: "Wavering".into(),
                     at_pressure: 6,
                     obeys: true,
+                    accuracy: -10,
                 },
                 MoraleRung {
                     id: "breaking".into(),
                     name: "Breaking".into(),
                     at_pressure: 12,
                     obeys: false,
+                    accuracy: -20,
                 },
             ],
             hit: 3,
@@ -263,6 +280,7 @@ impl MoraleRules {
                     name: "Steady".into(),
                     at_pressure: 0,
                     obeys: true,
+                    accuracy: 0,
                 })
             })
     }
@@ -319,6 +337,7 @@ mod tests {
                 name: "Steady".into(),
                 at_pressure: 0,
                 obeys: true,
+                accuracy: 0,
             }],
             ..MoraleRules::default()
         };

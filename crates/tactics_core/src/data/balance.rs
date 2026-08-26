@@ -22,13 +22,16 @@ use serde::{Deserialize, Serialize};
 
 /// Per-point value of each crew stat.
 ///
-/// Two different kinds of number live here, which is worth reading carefully
-/// before adding a third. [`Self::vision_per_awareness`] and
+/// Three different kinds of number live here, and which kind a new field is
+/// decides how it must be written. [`Self::vision_per_observation`] and
 /// [`Self::speed_per_driving`] are *percentages of the vehicle's base*, since
 /// what a sharp-eyed commander buys you depends on what they are looking
-/// through. [`Self::accuracy_per_gunnery`] is *percentage points of hit
-/// chance*, because hit chance is already a 0..=100 quantity with no base to
-/// scale against.
+/// through. [`Self::accuracy_per_gunnery`], [`Self::downhill_bonus`] and
+/// [`Self::blind_penalty`] are *percentage points of hit chance*, because hit
+/// chance is already a 0..=100 quantity with no base to scale against. And
+/// [`Self::cover_to_hit_percent`] is a *percentage of a rating declared
+/// elsewhere* — the terrain's own `cover` — which is the kind to reach for
+/// when a number's job is to say how much of somebody else's number counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Balance {
@@ -75,6 +78,90 @@ pub struct Balance {
     /// the shooting is still happening, so a vehicle designed around her
     /// crew is measurably harder to torch, not merely gentler afterwards.
     pub brew_safety_percent: i32,
+    /// Percentage points of hit chance gained for shooting downhill.
+    ///
+    /// One number rather than a per-level slope because what height buys a
+    /// gunner is mostly the first level of it: she can see the whole
+    /// vehicle instead of whatever the intervening ground has left of it.
+    /// Stacking it per elevation step would make a mountain battery
+    /// unmissable, which is not what standing above somebody is worth.
+    pub downhill_bonus: i32,
+    /// What fraction of a terrain's `cover` rating is subtracted from hit
+    /// chance, as a percent.
+    ///
+    /// Cover is declared once per terrain and spends itself in two places:
+    /// here, and in how hard the tile is to see into. At the default 50 a
+    /// town's cover of 40 is twenty points of accuracy, which is the number
+    /// the game has always used — it simply used to be a `/ 2` in
+    /// `combat.rs`, where no modder could reach it.
+    pub cover_to_hit_percent: i32,
+    /// Percentage points of hit chance lost **per hex** the target has
+    /// crossed this round.
+    ///
+    /// A crossing target is the classic gunnery problem — the lead is a
+    /// guess and the guess is wrong — and until this existed a vehicle that
+    /// spent the round crossing open ground was exactly as hard to hit as
+    /// one sitting hull-down and still.
+    ///
+    /// Per hex rather than a flat charge for having moved at all, and the
+    /// first draft was flat. At this game's scale that reads wrong twice
+    /// over: a hex is 100 m and a round 60 s, so one hex is a walking pace
+    /// and five is thirty km/h, and a flat penalty prices them the same. It
+    /// also throws away the only thing that makes a fast chassis' speed a
+    /// defence rather than merely a way of arriving sooner — which is the
+    /// question the recon car has been losing sixty times a run.
+    pub moving_target_per_hex: i32,
+    /// Percentage points of hit chance lost **per hex** the attacker has
+    /// crossed this round.
+    ///
+    /// Larger than [`Self::moving_target_per_hex`], and deliberately: laying
+    /// a gun from a moving vehicle is harder than tracking a moving one from
+    /// a still one, in a period where almost nothing is stabilised. This is
+    /// the number that makes halting to shoot a decision — a crew who wants
+    /// her round to count stops for it, and pays for the stop in the time
+    /// she spends visible on the same piece of ground.
+    ///
+    /// Uncapped, and the clamp to [`crate::battle::MIN_HIT`] is what stops
+    /// it running away: a vehicle at a full gallop can technically still
+    /// fire, and technically still will not hit anything.
+    pub firing_on_the_move_per_hex: i32,
+    /// Percentage points of hit chance lost firing at a tile rather than at
+    /// a unit anybody can see.
+    ///
+    /// Deliberately large. Blind fire is shelling a map reference, and the
+    /// only reason it is worth doing at all is that a shell landing on
+    /// ground is still a shell landing on ground — which is why artillery,
+    /// whose whole trade is exactly that, is the weapon this number is
+    /// really about.
+    pub blind_penalty: i32,
+    /// The overmatch, as a percent of the armor beaten, at which a
+    /// penetration delivers everything it has.
+    ///
+    /// The pipeline was always written with three outcomes — clean
+    /// penetration, partial penetration, bounce — and the outcome engine
+    /// shipped with two, so a round that scraped through the plate spent
+    /// exactly the same budget inside as one that vastly overmatched it.
+    /// That is the flattening the whole no-hit-points model exists to
+    /// avoid, one layer further in: it makes the *margin* of a penetration
+    /// mean nothing, which is most of what distinguishes a gun that can
+    /// just about manage a target from one that eats it.
+    ///
+    /// At the default 130 a round needs three tenths in hand to do its
+    /// worst; below that it is breaking up on the plate and paying
+    /// [`Self::partial_penetration_percent`] of its budget, interpolated so
+    /// there is no step for a modder to tune against. Setting it to 100 is
+    /// the game before this existed — every penetration is clean — which is
+    /// the additivity contract.
+    pub clean_penetration_percent: i32,
+    /// What a round that only just gets through spends inside, as a percent
+    /// of its full budget.
+    ///
+    /// Spall and fragments rather than the whole energy dump: something came
+    /// through and it is still dangerous, but the crew are being hit by
+    /// pieces of their own armour rather than by the round. Read at exactly
+    /// the point of penetration and interpolated up to full at
+    /// [`Self::clean_penetration_percent`]. 100 disables the band.
+    pub partial_penetration_percent: i32,
     /// Round-to-round penetration variance, as a percent.
     ///
     /// No two shells leave the same barrel identically, and armor plate is
@@ -101,6 +188,13 @@ impl Default for Balance {
             points_per_effect: 4,
             brewup_percent: 60,
             brew_safety_percent: 12,
+            downhill_bonus: 10,
+            cover_to_hit_percent: 50,
+            moving_target_per_hex: 5,
+            firing_on_the_move_per_hex: 8,
+            clean_penetration_percent: 130,
+            partial_penetration_percent: 55,
+            blind_penalty: 40,
             pen_scatter: 15,
         }
     }
@@ -151,6 +245,41 @@ impl Balance {
         Self::scaled(base, self.speed_per_driving, Self::margin(driving))
     }
 
+    /// What share of its budget a penetration at this `overmatch` — the
+    /// rolled penetration over the armor it beat — actually spends inside.
+    ///
+    /// One function, called by the resolver and by the analytic twin the AI
+    /// plans on, for the same reason `penetration_chance` and
+    /// `penetration_roll` enumerate one comparison: a planner that prices a
+    /// marginal shot as a clean one is a planner being lied to, and this is
+    /// the arithmetic both of them have to agree about.
+    ///
+    /// Linear between the two numbers rather than a step, so there is no
+    /// cliff for a marginal shot to sit on and no threshold a modder has to
+    /// discover by bisection.
+    pub fn penetration_share(&self, overmatch: f32) -> f32 {
+        let clean = self.clean_penetration_percent.max(100) as f32 / 100.0;
+        let partial = self.partial_penetration_percent.clamp(0, 100) as f32 / 100.0;
+        if overmatch >= clean || clean <= 1.0 {
+            return 1.0;
+        }
+        if overmatch <= 1.0 {
+            return partial;
+        }
+        partial + (1.0 - partial) * (overmatch - 1.0) / (clean - 1.0)
+    }
+
+    /// How many percentage points of hit chance a terrain's `cover` rating
+    /// takes off a shot into it.
+    ///
+    /// Integer arithmetic, truncating, because this feeds a hit chance that
+    /// has to be reproducible bit for bit — and because the divisor it
+    /// replaced truncated too, which is what let this become data without
+    /// moving a single number.
+    pub fn cover_against_accuracy(&self, cover: i32) -> i32 {
+        cover * self.cover_to_hit_percent / 100
+    }
+
     /// Hit chance change, in percentage points, for a crew shooting at
     /// `gunnery`. Negative for a crew worse than ordinary.
     pub fn accuracy(&self, gunnery: i32) -> i32 {
@@ -183,6 +312,80 @@ mod tests {
         assert_eq!(balance.vision(12, crate::data::AVERAGE), 12);
         assert_eq!(balance.speed(7, crate::data::AVERAGE), 7);
         assert_eq!(balance.accuracy(crate::data::AVERAGE), 0);
+    }
+
+    #[test]
+    fn cover_costs_a_shot_exactly_what_the_old_divisor_charged() {
+        // The three hit-chance constants moved out of `combat.rs` at their
+        // shipped values, and this is the arithmetic half of the proof that
+        // nothing moved with them: the divisor truncated toward zero and so
+        // does the percentage, for every cover rating a terrain can declare.
+        let balance = Balance::default();
+        for cover in 0..=100 {
+            assert_eq!(
+                balance.cover_against_accuracy(cover),
+                cover / 2,
+                "cover {cover}"
+            );
+        }
+        assert_eq!(balance.downhill_bonus, 10);
+        assert_eq!(balance.blind_penalty, 40);
+    }
+
+    #[test]
+    fn a_mod_that_names_no_cover_rule_still_has_one() {
+        // Every field here is `#[serde(default)]` through the struct-level
+        // attribute, so a mod written before these numbers existed inherits
+        // the game it was tuned against rather than a zeroed one — in which
+        // cover would buy nothing and blind fire would be free.
+        let balance: Balance = serde_json::from_str("{}").expect("empty block");
+        assert_eq!(balance, Balance::default());
+    }
+
+    #[test]
+    fn a_round_with_margin_in_hand_does_its_worst_and_a_marginal_one_does_not() {
+        let balance = Balance::default();
+        let floor = balance.partial_penetration_percent as f32 / 100.0;
+        let clean = balance.clean_penetration_percent as f32 / 100.0;
+
+        // The two ends, and they are the whole statement: beating a plate by
+        // nothing spends the floor, beating it by the clean margin spends
+        // everything, and there is no way to spend more than everything.
+        assert!((balance.penetration_share(1.0) - floor).abs() < 1e-6);
+        assert!((balance.penetration_share(clean) - 1.0).abs() < 1e-6);
+        assert!((balance.penetration_share(10.0) - 1.0).abs() < 1e-6);
+
+        // Monotone in between, with no step for a marginal shot to sit on.
+        let mut previous = 0.0;
+        for step in 0..=20 {
+            let overmatch = 1.0 + (clean - 1.0) * step as f32 / 20.0;
+            let share = balance.penetration_share(overmatch);
+            assert!(
+                share >= previous - 1e-6,
+                "share must never fall as the margin grows: {share} after {previous}"
+            );
+            assert!((floor - 1e-6..=1.0 + 1e-6).contains(&share));
+            previous = share;
+        }
+    }
+
+    #[test]
+    fn a_band_that_starts_at_parity_is_the_game_without_one() {
+        // Additivity: `clean_penetration_percent: 100` says every way through
+        // is a clean way through, which is what the outcome engine did before
+        // the band existed — and needs no `if` in Rust to arrange.
+        let balance = Balance {
+            clean_penetration_percent: 100,
+            partial_penetration_percent: 55,
+            ..Balance::default()
+        };
+        for overmatch in [1.0, 1.01, 1.5, 4.0] {
+            assert_eq!(
+                balance.penetration_share(overmatch),
+                1.0,
+                "overmatch {overmatch}"
+            );
+        }
     }
 
     #[test]

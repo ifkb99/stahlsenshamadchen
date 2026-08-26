@@ -42,7 +42,7 @@ use std::io::Write;
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{
     AttackPreview, BattleState, EndReason, Event, Order, SideState, UnitId, blast_overmatches,
-    flight_ticks, preview_attack,
+    flight_ticks, hit_breakdown, preview_attack,
 };
 use tactics_core::data::{ArmorFacing, DataRegistry, ModuleEffect, WeaponDef};
 use tactics_core::force;
@@ -83,6 +83,7 @@ fn main() {
 
     let mut duels = Duels::new(&registry);
     roster_table(&registry);
+    hit_table(&registry);
     penetration_table(&registry, &mut duels);
     kill_chain_table(&registry, &mut duels);
     flight_table(&registry);
@@ -445,8 +446,8 @@ fn two_unit_field(
 fn roster_table(reg: &DataRegistry) {
     heading("vehicles");
     println!(
-        "{:<16} {:>12} {:>9} {:>9} {:>8} {:>6} {:>5} {:>9}",
-        "id", "armour F/S/R", "substance", "speed", "sight", "safety", "cost", "rounds"
+        "{:<16} {:>12} {:>9} {:>9} {:>8} {:>6} {:>7} {:>5} {:>9}",
+        "id", "armour F/S/R", "substance", "speed", "sight", "safety", "profile", "cost", "rounds"
     );
     for id in vehicle_ids(reg) {
         let v = &reg.vehicles[&id];
@@ -456,13 +457,18 @@ fn roster_table(reg: &DataRegistry) {
             + reg.modules_for(v).iter().map(|m| m.toughness).sum::<u32>();
         let rounds: u32 = v.stowage.values().sum();
         println!(
-            "{:<16} {:>12} {:>9} {:>9} {:>8} {:>6} {:>5} {:>9}",
+            "{:<16} {:>12} {:>9} {:>9} {:>8} {:>6} {:>7} {:>5} {:>9}",
             id,
             format!("{}/{}/{}", v.armor.front, v.armor.side, v.armor.rear),
             substance,
             reg.scale.format_speed(v.movement.points),
             reg.scale.format_distance(v.vision_range as i32),
             v.safety,
+            if v.profile == 0 {
+                "-".to_string()
+            } else {
+                format!("{:+}", v.profile)
+            },
             v.cost,
             rounds,
         );
@@ -470,8 +476,131 @@ fn roster_table(reg: &DataRegistry) {
     println!(
         "\n  `substance` is what she is made of — two points per cadet plus every\n  \
          module's toughness — which is what a penetration spends itself against\n  \
-         now that there are no hit points. `rounds` is everything in the racks."
+         now that there are no hit points. `rounds` is everything in the racks.\n  \
+         `profile` is percentage points off an attacker's hit chance — how big\n  \
+         a target she is, which is a different question from how hard she is\n  \
+         to find (that is `concealment`, and it scales the spotter's range)."
     );
+}
+
+/// What the gunner is up against before the plate is ever consulted.
+///
+/// The twin of the penetration table, and it exists because the arc that
+/// added these terms is an argument that the number in front of the plate
+/// deserves the same scrutiny as the number behind it. Every cell is
+/// `hit_breakdown` — the resolver's own arithmetic, listening in — against a
+/// medium tank on open grass, so the columns differ in exactly one thing
+/// each and the reader is comparing circumstances rather than terrain.
+///
+/// The states are stamped onto real units rather than modelled: `moved` is
+/// the field the resolver reads, and `pressure` is set to the rung's own
+/// threshold, so a column labelled "breaking" is a crew the morale ladder
+/// would actually call breaking.
+fn hit_table(reg: &DataRegistry) {
+    heading("to hit: what the gunner is up against, P(hit) %");
+    // A representative target: the hit half does not read armour at all, so
+    // the only thing the target contributes is her profile, and that gets a
+    // section of its own below.
+    const TARGET: &str = "medium_tank";
+    let rungs: Vec<(String, u32)> = reg
+        .morale
+        .rungs
+        .iter()
+        .filter(|r| r.accuracy != 0)
+        .map(|r| (r.name.to_lowercase(), r.at_pressure))
+        .collect();
+    // The attacker's own motion is shown as a gradient rather than as one
+    // "moving" column, because the penalty is per hex and the whole point of
+    // that shape is that a crawl and a dash are different decisions.
+    const BOUNDS: [u32; 3] = [1, 3, 5];
+    const TARGET_BOUND: u32 = 3;
+    print!("{:<24} {:>10} {:>8}", "gun", "range", "halted");
+    for hexes in BOUNDS {
+        print!(" {:>8}", format!("moves {hexes}h"));
+    }
+    print!(" {:>8}", format!("tgt {TARGET_BOUND}h"));
+    for (name, _) in &rungs {
+        print!(" {:>10}", name);
+    }
+    print!(" {:>8}", "blind");
+    println!();
+
+    let mut guns: Vec<&String> = reg.weapons.values().map(|w| &w.id).collect();
+    guns.sort();
+    for gun in guns {
+        let Some(weapon) = reg.weapon(gun) else {
+            continue;
+        };
+        for (label, dist) in ["near", "mid", "max"].into_iter().zip(bands(weapon)) {
+            // Each cell rebuilds the field, because each one stamps a
+            // different state onto the units and a shared state would leak
+            // one column into the next.
+            let chance = |moved_attacker: u32, moved_target: u32, pressure: u32, blind: bool| {
+                let mut state =
+                    two_unit_field(reg, gun_carrier(reg, gun)?, TARGET, Facing::West, dist)?;
+                let weapon_index = reg
+                    .vehicle(&state.units[0].vehicle)?
+                    .weapons
+                    .iter()
+                    .position(|w| w == gun)?;
+                state.units[0].moved = moved_attacker;
+                state.units[0].pressure = pressure;
+                state.units[1].moved = moved_target;
+                let w = reg.weapon(&reg.vehicle(&state.units[0].vehicle)?.weapons[weapon_index])?;
+                Some(
+                    hit_breakdown(
+                        reg,
+                        &state,
+                        UnitId(0),
+                        state.units[0].pos,
+                        w,
+                        UnitId(1),
+                        blind,
+                    )
+                    .total,
+                )
+            };
+            let cell = |v: Option<i32>| match v {
+                Some(n) => format!("{n}"),
+                None => "-".to_string(),
+            };
+            print!("{:<24} {:>10}", short(gun), format!("{label} {dist}h"));
+            print!(" {:>8}", cell(chance(0, 0, 0, false)));
+            for hexes in BOUNDS {
+                print!(" {:>8}", cell(chance(hexes, 0, 0, false)));
+            }
+            print!(" {:>8}", cell(chance(0, TARGET_BOUND, 0, false)));
+            for (_, at) in &rungs {
+                print!(" {:>10}", cell(chance(0, 0, *at, false)));
+            }
+            print!(" {:>8}", cell(chance(0, 0, 0, true)));
+            println!();
+        }
+    }
+    println!(
+        "\n  every cell is `hit_breakdown` against a {TARGET} on open grass,\n  \
+         clamped to {}..={}% like the roll it feeds. `moves Nh` is the gun's\n  \
+         own vehicle having crossed N hexes this round and `tgt {TARGET_BOUND}h` is the\n  \
+         target having done so — the same `moved` field the resolver reads,\n  \
+         and the reason a crawl and a dash are priced differently. The crew\n  \
+         columns set pressure to that rung's own threshold rather than naming\n  \
+         a number here; a mod whose rungs cost no accuracy prints none.",
+        tactics_core::battle::MIN_HIT,
+        tactics_core::battle::MAX_HIT,
+    );
+}
+
+/// The vehicle the tables fire this gun from: sorted, so the choice of
+/// platform cannot move between runs.
+fn gun_carrier<'r>(reg: &'r DataRegistry, weapon: &str) -> Option<&'r str> {
+    let mut carriers: Vec<&String> = reg
+        .vehicles
+        .values()
+        .filter(|v| v.weapons.iter().any(|w| w == weapon))
+        .map(|v| &v.id)
+        .collect();
+    carriers.sort();
+    carriers.first().map(|s| s.as_str())
 }
 
 /// The penetration gate, gun by gun and round by round: the odds of getting
@@ -511,7 +640,19 @@ fn penetration_table(reg: &DataRegistry, duels: &mut Duels) {
             print!("{:<26}", format!("  {label}  {dist} hex"));
             for vehicle in &vehicles {
                 match duels.shot(&weapon_id, &ammo_id, vehicle, arc, dist) {
-                    Some(shot) => print!("{:>12}", shot.pen_chance),
+                    // Two numbers where there used to be one, and the second
+                    // is the whole of the partial-penetration band: a gun
+                    // that gets through eight times in ten and barely on
+                    // most of them is a different gun from one that gets
+                    // through eight times in ten and eats the target every
+                    // time. Suppressed at 100 so the common case — a round
+                    // with real margin — still reads as a single figure.
+                    Some(shot) if shot.pen_share >= 100 => {
+                        print!("{:>12}", shot.pen_chance)
+                    }
+                    Some(shot) => {
+                        print!("{:>12}", format!("{}·{}%", shot.pen_chance, shot.pen_share))
+                    }
                     None => print!("{:>12}", "-"),
                 }
             }
@@ -521,7 +662,11 @@ fn penetration_table(reg: &DataRegistry, duels: &mut Duels) {
     println!(
         "\n  every cell is `preview_attack`'s own pen chance with that round forced\n  \
          into the racks, so it is the number the AI plans on and the die the\n  \
-         resolver throws. `-` means no vehicle in the roster carries that gun."
+         resolver throws. `-` means no vehicle in the roster carries that gun.\n  \
+         A cell reading `70·62%` gets through seven times in ten and spends\n  \
+         only 62% of its budget when it does — it is beating that plate by a\n  \
+         margin too thin to do its worst, which is the partial-penetration\n  \
+         band. A bare number is a round with room to spare."
     );
     let legacy = legacy_guns(reg);
     if !legacy.is_empty() {
@@ -677,8 +822,8 @@ fn flight_table(reg: &DataRegistry) {
     }
     heading("shell flight: how much warning the ground gets");
     println!(
-        "{:<26} {:>10} {:>8} {:>8} {:>14}",
-        "gun / round", "range", "ticks", "seconds", "target moves"
+        "{:<26} {:>10} {:>8} {:>8} {:>14} {:>12}",
+        "gun / round", "range", "ticks", "seconds", "target moves", "spread"
     );
     // What the quickest thing on the field covers while the shell is up: the
     // lead an artillery order has to guess, in the only unit that matters.
@@ -700,13 +845,23 @@ fn flight_table(reg: &DataRegistry) {
             let ticks = flight_ticks(&reg.scale, ammo.velocity, dist);
             let seconds = reg.scale.seconds(ticks as u32);
             let hexes = fastest as f32 * ticks as f32 / reg.scale.ticks_per_round as f32;
+            // The gun's own error, in the same units the mod writes it in:
+            // a percentage of the range flown, resolved through the scale
+            // into the hexes the resolver will actually displace by.
+            let spread = reg.scale.meters(dist) * weapon.dispersion as f32 / 100.0;
+            let radius = (spread / reg.scale.hex_meters).round() as i32;
             println!(
-                "{:<26} {:>10} {:>8} {:>8} {:>14}",
+                "{:<26} {:>10} {:>8} {:>8} {:>14} {:>12}",
                 format!("{weapon_id} / {ammo_id}"),
                 format!("{label} {dist}h"),
                 ticks,
                 format!("{seconds:.0}s"),
                 format!("{hexes:.1} hex"),
+                if weapon.dispersion == 0 {
+                    "exact".to_string()
+                } else {
+                    format!("{spread:.0} m / {radius} hex")
+                },
             );
         }
     }
@@ -714,7 +869,10 @@ fn flight_table(reg: &DataRegistry) {
         "\n  a shell is aimed at ground, so `target moves` is how far the quickest\n  \
          vehicle in the roster ({}) travels before it lands — the lead an\n  \
          artillery order has to guess, and the reason standing still is the\n  \
-         mistake it historically was.",
+         mistake it historically was. `spread` is the piece's own dispersion\n  \
+         at that range, and the hex radius the resolver displaces the impact\n  \
+         by: a different fact from the lead, and the one that decides whether\n  \
+         a shell aimed at somebody standing perfectly still arrives on her.",
         reg.scale.format_speed(fastest)
     );
 }
@@ -870,6 +1028,12 @@ struct Tally {
     kills: HashMap<String, usize>,
     deaths: HashMap<String, usize>,
     shots: u32,
+    /// Of those shots, the ones laid from a vehicle that had driven this
+    /// round. The arc that added the motion terms is a claim about how much
+    /// of the shooting happens under way, and this is the number that
+    /// settles it: a resolver term nobody's guns ever meet is a term that
+    /// changed nothing.
+    shots_on_the_move: u32,
     hits: u32,
     bounces: u32,
     misses: u32,
@@ -968,7 +1132,12 @@ fn simulate(reg: &DataRegistry, games: usize) {
             for event in state.resolve_round(reg) {
                 let landed = std::mem::take(&mut shell_from);
                 match event {
-                    Event::ShotFired { .. } => t.shots += 1,
+                    Event::ShotFired { moving, .. } => {
+                        t.shots += 1;
+                        if moving {
+                            t.shots_on_the_move += 1;
+                        }
+                    }
                     Event::ShellLanded { attacker, .. } => {
                         t.shells += 1;
                         shell_from = Some(attacker);
@@ -1115,6 +1284,11 @@ fn simulate(reg: &DataRegistry, games: usize) {
             t.bounces,
             t.misses,
             elsewhere,
+        );
+        println!(
+            "    {} of those shots ({:.0}%) were laid from a vehicle under way",
+            t.shots_on_the_move,
+            100.0 * t.shots_on_the_move as f32 / t.shots as f32,
         );
     }
     let mut arcs: Vec<_> = t.hits_by_arc.iter().collect();

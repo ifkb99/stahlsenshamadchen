@@ -191,6 +191,16 @@ pub enum Event {
         /// Fired on the unit's own initiative rather than at an ordered
         /// target: overwatch, or an answer to being shot at.
         opportunity: bool,
+        /// The gun was laid from a vehicle under way this round.
+        ///
+        /// A flag beside `blind` and `opportunity` because it is the same
+        /// kind of fact — a circumstance of the shot that the player is
+        /// entitled to see in the log and the balance harness is entitled
+        /// to count. Everything it costs is already priced into the hit
+        /// chance; this only says so out loud, so that "half my shots
+        /// missed" can be answered with *why*.
+        #[serde(default)]
+        moving: bool,
     },
     /// A shell fired one or more ticks ago has arrived on the ground it was
     /// aimed at.
@@ -1661,6 +1671,12 @@ impl BattleState {
                 }
                 let unit = self.unit_mut(id).expect("alive above");
                 unit.move_credit -= price;
+                // Counted here, at the one place a unit changes hex, so that
+                // every way of getting somewhere — an order, the battle
+                // drill, a crew running away — costs the same accuracy. A
+                // second increment anywhere else would mean two answers to
+                // whether she is under way.
+                unit.moved += 1;
                 let facing = unit.pos.neighbor_direction(next);
                 unit.pos = next;
                 if let Some(dir) = facing {
@@ -1900,6 +1916,7 @@ impl BattleState {
             unit.intent = UnitIntent::default();
             unit.planned = false;
             unit.move_credit = 0;
+            unit.moved = 0;
         }
         self.phase = Phase::Planning {
             committed: vec![false; self.sides.len()],

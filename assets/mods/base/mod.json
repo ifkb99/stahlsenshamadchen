@@ -19,7 +19,14 @@
     "vision_per_observation": 5,
     "pen_scatter": 15,
     "brewup_percent": 60,
-    "brew_safety_percent": 12
+    "brew_safety_percent": 12,
+    "downhill_bonus": 10,
+    "cover_to_hit_percent": 50,
+    "blind_penalty": 40,
+    "moving_target_per_hex": 5,
+    "firing_on_the_move_per_hex": 8,
+    "clean_penetration_percent": 130,
+    "partial_penetration_percent": 55
   },
   "casualties": {
     "harm_kinetic": 55,
@@ -463,13 +470,15 @@
         "id": "wavering",
         "name": "Wavering",
         "at_pressure": 6,
-        "obeys": true
+        "obeys": true,
+        "accuracy": -10
       },
       {
         "id": "breaking",
         "name": "Breaking",
         "at_pressure": 12,
-        "obeys": false
+        "obeys": false,
+        "accuracy": -20
       }
     ],
     "defiance": [
