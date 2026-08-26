@@ -19,7 +19,10 @@
     "vision_per_observation": 5,
     "pen_scatter": 15,
     "brewup_percent": 60,
-    "brew_safety_percent": 12
+    "brew_safety_percent": 12,
+    "downhill_bonus": 10,
+    "cover_to_hit_percent": 50,
+    "blind_penalty": 40
   },
   "casualties": {
     "harm_kinetic": 55,

@@ -459,6 +459,119 @@ narration, HUD polish, perf additions — is untouched.
 Order: B0 → B1 → B2 → B3/B5 in parallel → B4 last, because tuning an
 economy before the instruments can see it is guessing.
 
+## Arc R: deepening the resolver (2026-08-25)
+
+The B-chunks left the resolver lopsided, and the shape of the lopsidedness
+is worth stating plainly because it is the whole argument for this arc.
+**Everything after the shell arrives is deep and everything before it is
+five lines.** A round that lands consults the struck hex face, the arc's
+plate, obliquity, an enumerated scatter die, the round the loader chose
+for that particular target, the interior's crew stations and modules by
+size, the rack's volatility and how full it is, and the vehicle's safety.
+A round that is *aimed* consults base accuracy, range, gunnery, one flat
+bonus for shooting downhill, half the terrain's cover, and a flat penalty
+for blind fire. That is it.
+
+Item 1 of the pipeline above says "to-hit is kept — it was never the
+problem", and in B1 that was true: the floor was the problem, and
+re-opening two systems at once would have left nothing attributable. It
+is not true any more. Three things it does not know are now visibly
+wrong:
+
+- **Every target is the same size.** A rifle platoon dispersed across a
+  hundred metres of timber is hit exactly as often as a Löwe. The
+  mustered-forces table has infantry losing 36–0 at equal points and the
+  first suspect has always been employment, but a platoon that is as easy
+  to hit as a heavy tank is not being asked to fight the war infantry
+  actually fights.
+- **Nothing about motion reaches the gun.** A vehicle that spent the round
+  crossing open ground is as hard to hit as one hull-down and still; a
+  gun firing on the move shoots as well as one that halted. In a period
+  where almost nothing is stabilised, that is not a rounding error, and
+  it is the term that makes *stopping to shoot* a decision rather than a
+  free action.
+- **Being shot at costs nothing but nerve.** `apply_pressure` already
+  collects a tick's fear in one place, and its own comment names
+  suppression as the next thing to arrive there. Today pressure walks the
+  morale ladder and nothing else; a crew being shelled lays her gun as
+  well as a crew at peace.
+
+Three of the five terms are also bare integers in Rust — `+10` downhill,
+`cover / 2`, `-40` blind — which is the same design smell `balance` was
+created to remove.
+
+### The rule this arc is built under
+
+Every term added here is **additive, and its absence is exactly today's
+game**. That is not a slogan, it is the acceptance test: R0 ships the
+constants as data with their current values and the event-stream baseline
+must come out byte-identical, and every later chunk must reduce to the
+same baseline when its coefficients are zeroed. This is the
+difficulty-as-a-mod rule (see above) and it is also the only way an arc
+of three chunks stays attributable — a chunk whose "off" setting does not
+reproduce the previous chunk's numbers has a bug in it, and the baseline
+will say so before the balance table has to.
+
+The second rule is the one B1 discovered and paid for twice: **whatever
+the resolver rolls, the AI's analytic twin must enumerate.** `hit_chance`
+is already shared between the planner and the shot, which is why the
+motion and profile terms go *into* it rather than beside it. Anything
+that reads the world at fire time and not at plan time makes the planner
+a liar.
+
+### R1. Before the plate
+
+The hit half, in one chunk because the three terms share one seam and
+splitting them would mean three baseline regenerations for one idea.
+
+- **Profile.** A `profile` on `VehicleDef`, percentage points of hit
+  chance, defaulting to zero — which is today's game on every chassis
+  written so far. Infantry go negative (dispersed, prone, small);
+  nothing needs to go positive for the mechanism to be right, though a
+  tall self-propelled gun is the obvious content answer if the table asks
+  for one. Deliberately *not* derived from armour or capacity: how big a
+  thing is and how thick it is are different facts, and inferring one
+  from the other is how a mod loses the ability to describe a lightly
+  armoured but enormous vehicle.
+- **Motion.** Two terms, one for each end of the shot. A target who moved
+  this round is harder to hit; an attacker who moved is worse at hitting.
+  Both need per-round movement state on `Unit` — the resolver knows
+  `move_credit` but not whether it was spent — and both must survive a
+  save fork, so it is unit state and not planner memory, by the same
+  argument that put `Goal` on the unit.
+- **Suppression.** Pressure already exists and already walks a ladder
+  declared in `morale`; the accuracy penalty is a coefficient *on the
+  rung*, not a second fear system. A mod with one rung has no
+  suppression, which is the gentle game, which is the rule.
+
+Harness: the analytic pass gains a **hit table** — the same shape as the
+penetration table, P(hit) per gun against each target across range bands
+and firing states — because the arc's whole claim is that the number
+before the plate deserves the same scrutiny as the number after it. The
+sim's gunnery line already counts misses; it gains the split by cause.
+
+### R2. What a shell does to ground
+
+Area and indirect fire, which B3 gave a flight time and a landing hex and
+nothing else. Scatter on the aimed hex (a shell aimed at a tile does not
+arrive at that tile), artillery lead against a target's observed heading
+— which wants the target-track memory the command layer has been
+circling — and smoke as the round type the schema has always been able to
+carry but the fog interaction has not. Ordered after R1 because a miss
+distribution is easier to reason about once the hit half is honest, and
+because artillery's own to-hit is the blind-fire penalty this arc is
+about to make into data.
+
+### R3. Behind the plate
+
+Texture on the effect rolls: spall directionality, and the partial
+penetration band the pipeline above describes but B2b collapsed into a
+single clean-or-nothing gate. Exterior weak points stay ruled out (see
+Open questions) — this is depth *inside*, where the designer's ruling
+already says the interesting half lives. Last because it is the half
+that is already deep, and because the two chunks in front of it change
+what the effect rolls are being handed.
+
 ## Open questions, carried deliberately
 
 - **Hit location inside a facing** (hull vs turret, weak points): ruled

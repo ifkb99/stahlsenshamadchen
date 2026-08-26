@@ -22,13 +22,16 @@ use serde::{Deserialize, Serialize};
 
 /// Per-point value of each crew stat.
 ///
-/// Two different kinds of number live here, which is worth reading carefully
-/// before adding a third. [`Self::vision_per_awareness`] and
+/// Three different kinds of number live here, and which kind a new field is
+/// decides how it must be written. [`Self::vision_per_observation`] and
 /// [`Self::speed_per_driving`] are *percentages of the vehicle's base*, since
 /// what a sharp-eyed commander buys you depends on what they are looking
-/// through. [`Self::accuracy_per_gunnery`] is *percentage points of hit
-/// chance*, because hit chance is already a 0..=100 quantity with no base to
-/// scale against.
+/// through. [`Self::accuracy_per_gunnery`], [`Self::downhill_bonus`] and
+/// [`Self::blind_penalty`] are *percentage points of hit chance*, because hit
+/// chance is already a 0..=100 quantity with no base to scale against. And
+/// [`Self::cover_to_hit_percent`] is a *percentage of a rating declared
+/// elsewhere* — the terrain's own `cover` — which is the kind to reach for
+/// when a number's job is to say how much of somebody else's number counts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Balance {
@@ -75,6 +78,32 @@ pub struct Balance {
     /// the shooting is still happening, so a vehicle designed around her
     /// crew is measurably harder to torch, not merely gentler afterwards.
     pub brew_safety_percent: i32,
+    /// Percentage points of hit chance gained for shooting downhill.
+    ///
+    /// One number rather than a per-level slope because what height buys a
+    /// gunner is mostly the first level of it: she can see the whole
+    /// vehicle instead of whatever the intervening ground has left of it.
+    /// Stacking it per elevation step would make a mountain battery
+    /// unmissable, which is not what standing above somebody is worth.
+    pub downhill_bonus: i32,
+    /// What fraction of a terrain's `cover` rating is subtracted from hit
+    /// chance, as a percent.
+    ///
+    /// Cover is declared once per terrain and spends itself in two places:
+    /// here, and in how hard the tile is to see into. At the default 50 a
+    /// town's cover of 40 is twenty points of accuracy, which is the number
+    /// the game has always used — it simply used to be a `/ 2` in
+    /// `combat.rs`, where no modder could reach it.
+    pub cover_to_hit_percent: i32,
+    /// Percentage points of hit chance lost firing at a tile rather than at
+    /// a unit anybody can see.
+    ///
+    /// Deliberately large. Blind fire is shelling a map reference, and the
+    /// only reason it is worth doing at all is that a shell landing on
+    /// ground is still a shell landing on ground — which is why artillery,
+    /// whose whole trade is exactly that, is the weapon this number is
+    /// really about.
+    pub blind_penalty: i32,
     /// Round-to-round penetration variance, as a percent.
     ///
     /// No two shells leave the same barrel identically, and armor plate is
@@ -101,6 +130,9 @@ impl Default for Balance {
             points_per_effect: 4,
             brewup_percent: 60,
             brew_safety_percent: 12,
+            downhill_bonus: 10,
+            cover_to_hit_percent: 50,
+            blind_penalty: 40,
             pen_scatter: 15,
         }
     }
@@ -151,6 +183,17 @@ impl Balance {
         Self::scaled(base, self.speed_per_driving, Self::margin(driving))
     }
 
+    /// How many percentage points of hit chance a terrain's `cover` rating
+    /// takes off a shot into it.
+    ///
+    /// Integer arithmetic, truncating, because this feeds a hit chance that
+    /// has to be reproducible bit for bit — and because the divisor it
+    /// replaced truncated too, which is what let this become data without
+    /// moving a single number.
+    pub fn cover_against_accuracy(&self, cover: i32) -> i32 {
+        cover * self.cover_to_hit_percent / 100
+    }
+
     /// Hit chance change, in percentage points, for a crew shooting at
     /// `gunnery`. Negative for a crew worse than ordinary.
     pub fn accuracy(&self, gunnery: i32) -> i32 {
@@ -183,6 +226,34 @@ mod tests {
         assert_eq!(balance.vision(12, crate::data::AVERAGE), 12);
         assert_eq!(balance.speed(7, crate::data::AVERAGE), 7);
         assert_eq!(balance.accuracy(crate::data::AVERAGE), 0);
+    }
+
+    #[test]
+    fn cover_costs_a_shot_exactly_what_the_old_divisor_charged() {
+        // The three hit-chance constants moved out of `combat.rs` at their
+        // shipped values, and this is the arithmetic half of the proof that
+        // nothing moved with them: the divisor truncated toward zero and so
+        // does the percentage, for every cover rating a terrain can declare.
+        let balance = Balance::default();
+        for cover in 0..=100 {
+            assert_eq!(
+                balance.cover_against_accuracy(cover),
+                cover / 2,
+                "cover {cover}"
+            );
+        }
+        assert_eq!(balance.downhill_bonus, 10);
+        assert_eq!(balance.blind_penalty, 40);
+    }
+
+    #[test]
+    fn a_mod_that_names_no_cover_rule_still_has_one() {
+        // Every field here is `#[serde(default)]` through the struct-level
+        // attribute, so a mod written before these numbers existed inherits
+        // the game it was tuned against rather than a zeroed one — in which
+        // cover would buy nothing and blind fire would be free.
+        let balance: Balance = serde_json::from_str("{}").expect("empty block");
+        assert_eq!(balance, Balance::default());
     }
 
     #[test]

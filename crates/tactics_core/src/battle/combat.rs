@@ -197,11 +197,12 @@ fn hit_chance_inner(
     chance += gunnery;
 
     if elevation_at(state, from) > elevation_at(state, target_pos) {
-        note(HitFactor::Downhill, 10);
-        chance += 10;
+        let downhill = registry.balance.downhill_bonus;
+        note(HitFactor::Downhill, downhill);
+        chance += downhill;
     }
     if let Some(terrain) = terrain_at(registry, state, target_pos) {
-        let cover = -(terrain.cover / 2);
+        let cover = -registry.balance.cover_against_accuracy(terrain.cover);
         note(
             HitFactor::Cover {
                 terrain: &terrain.name,
@@ -211,8 +212,9 @@ fn hit_chance_inner(
         chance += cover;
     }
     if blind {
-        note(HitFactor::Blind, -40);
-        chance -= 40;
+        let blind_penalty = registry.balance.blind_penalty;
+        note(HitFactor::Blind, -blind_penalty);
+        chance -= blind_penalty;
     }
     chance.clamp(MIN_HIT, MAX_HIT)
 }
