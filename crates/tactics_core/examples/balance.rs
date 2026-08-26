@@ -640,7 +640,19 @@ fn penetration_table(reg: &DataRegistry, duels: &mut Duels) {
             print!("{:<26}", format!("  {label}  {dist} hex"));
             for vehicle in &vehicles {
                 match duels.shot(&weapon_id, &ammo_id, vehicle, arc, dist) {
-                    Some(shot) => print!("{:>12}", shot.pen_chance),
+                    // Two numbers where there used to be one, and the second
+                    // is the whole of the partial-penetration band: a gun
+                    // that gets through eight times in ten and barely on
+                    // most of them is a different gun from one that gets
+                    // through eight times in ten and eats the target every
+                    // time. Suppressed at 100 so the common case — a round
+                    // with real margin — still reads as a single figure.
+                    Some(shot) if shot.pen_share >= 100 => {
+                        print!("{:>12}", shot.pen_chance)
+                    }
+                    Some(shot) => {
+                        print!("{:>12}", format!("{}·{}%", shot.pen_chance, shot.pen_share))
+                    }
                     None => print!("{:>12}", "-"),
                 }
             }
@@ -650,7 +662,11 @@ fn penetration_table(reg: &DataRegistry, duels: &mut Duels) {
     println!(
         "\n  every cell is `preview_attack`'s own pen chance with that round forced\n  \
          into the racks, so it is the number the AI plans on and the die the\n  \
-         resolver throws. `-` means no vehicle in the roster carries that gun."
+         resolver throws. `-` means no vehicle in the roster carries that gun.\n  \
+         A cell reading `70·62%` gets through seven times in ten and spends\n  \
+         only 62% of its budget when it does — it is beating that plate by a\n  \
+         margin too thin to do its worst, which is the partial-penetration\n  \
+         band. A bare number is a round with room to spare."
     );
     let legacy = legacy_guns(reg);
     if !legacy.is_empty() {

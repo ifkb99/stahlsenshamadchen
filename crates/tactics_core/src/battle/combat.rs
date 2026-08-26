@@ -3,7 +3,8 @@
 
 use super::{BattleState, Event, FireIntent, Unit, UnitId, fog, stats};
 use crate::data::{
-    AmmoClass, AmmoDef, ArmorFacing, DamageType, DataRegistry, Scale, TerrainDef, WeaponDef,
+    AmmoClass, AmmoDef, ArmorFacing, Balance, DamageType, DataRegistry, Scale, TerrainDef,
+    WeaponDef,
 };
 use hexx::Hex;
 use rand::RngExt;
@@ -454,7 +455,12 @@ fn round_worth(
     ammo: Option<&AmmoDef>,
 ) -> f32 {
     let blast = ammo.map(|a| a.blast).unwrap_or(0).max(0);
-    profile.pen_chance * profile.damage as f32
+    // The penetration half is chance times what a penetration is *worth*,
+    // and since the partial band landed those are two different numbers: a
+    // round that only ever scrapes through a plate spends a fraction of its
+    // budget when it does, and a planner that priced it as a clean hit would
+    // trade a certainty for a technicality.
+    profile.pen_chance * profile.pen_share * profile.damage as f32
         + (1.0 - profile.pen_chance) * blast_worth(registry, state, target, profile.plate, blast)
 }
 
@@ -992,18 +998,69 @@ pub fn penetration_chance(pen: f32, armor: f32, scatter: i32) -> f32 {
     through as f32 / (2 * s + 1) as f32
 }
 
-/// One fired round against one plate: the sampled twin of
-/// [`penetration_chance`], sharing its comparison verbatim.
-fn penetration_roll(state: &mut BattleState, pen: f32, armor: f32, scatter: i32) -> bool {
+/// The share of its budget a penetration is expected to spend, averaged over
+/// exactly the outcomes that get through.
+///
+/// The second half of the same finite count [`penetration_chance`] performs,
+/// and it exists for the same reason: once a marginal penetration spends
+/// less than a clean one, "did it get through" stops being enough for a
+/// planner to price a shot with. A gun that only ever scrapes through a
+/// plate and one that overmatches it are now different guns, and the AI has
+/// to be able to see that or it will happily trade a certainty for a
+/// technicality.
+///
+/// Returns 1.0 when nothing gets through, so a caller multiplying by it
+/// alongside [`penetration_chance`] gets zero either way.
+pub fn penetration_share(balance: &Balance, pen: f32, armor: f32, scatter: i32) -> f32 {
     if armor <= 0.0 {
-        return true;
+        // Nothing to overmatch: an unarmored bed is beaten outright.
+        return 1.0;
     }
     if pen <= 0.0 {
-        return false;
+        return 1.0;
+    }
+    let s = scatter.max(0);
+    let mut through = 0;
+    let mut total = 0.0;
+    for r in -s..=s {
+        let rolled = pen * (100 + r) as f32 / 100.0;
+        if rolled >= armor {
+            through += 1;
+            total += balance.penetration_share(rolled / armor);
+        }
+    }
+    if through == 0 {
+        return 1.0;
+    }
+    total / through as f32
+}
+
+/// One fired round against one plate: the sampled twin of
+/// [`penetration_chance`], sharing its comparison verbatim.
+///
+/// Returns the share of its budget the round spends inside — `None` for a
+/// bounce. A penetration that only just beat the plate is breaking up on it
+/// and pays [`Balance::penetration_share`]; one with margin in hand pays
+/// everything. The comparison is ratio-based, never an absolute margin, so
+/// the abstract armor units can still be relabelled to millimetres by
+/// editing data alone.
+fn penetration_roll(
+    balance: &Balance,
+    state: &mut BattleState,
+    pen: f32,
+    armor: f32,
+    scatter: i32,
+) -> Option<f32> {
+    if armor <= 0.0 {
+        return Some(1.0);
+    }
+    if pen <= 0.0 {
+        return None;
     }
     let s = scatter.max(0);
     let r = state.rng.random_range(-s..=s);
-    pen * (100 + r) as f32 >= armor * 100.0
+    let rolled = pen * (100 + r) as f32 / 100.0;
+    (rolled >= armor).then(|| balance.penetration_share(rolled / armor))
 }
 
 /// Everything about one prospective shot that armor decides: which plate,
@@ -1020,6 +1077,15 @@ pub struct ShotProfile {
     pub effective_armor: f32,
     /// Probability the chambered round defeats it, 0..=1.
     pub pen_chance: f32,
+    /// Of the outcomes that *do* get through, the share of the round's
+    /// budget they spend inside on average, 0..=1.
+    ///
+    /// Beside `pen_chance` rather than folded into it, because they answer
+    /// different questions and a player is owed both: "will it get through"
+    /// and "and then what". Folding them would also make a marginal
+    /// penetration indistinguishable from a less likely clean one, which is
+    /// exactly the distinction the band was added to make.
+    pub pen_share: f32,
     /// Ledger damage if it penetrates. Cover and elevation deliberately do
     /// not scale this any more: they already price themselves into the hit
     /// chance, and a round that is through the plate is through — the tree
@@ -1052,6 +1118,12 @@ pub fn shot_profile(
         plate,
         effective_armor,
         pen_chance: penetration_chance(pen, effective_armor, registry.balance.pen_scatter),
+        pen_share: penetration_share(
+            &registry.balance,
+            pen,
+            effective_armor,
+            registry.balance.pen_scatter,
+        ),
         damage: round.damage,
     })
 }
@@ -1111,8 +1183,19 @@ pub struct AttackPreview {
     pub ammo: Option<String>,
     /// Chance the round defeats the plate it would strike, as a percent.
     pub pen_chance: i32,
-    /// Damage a *penetrating* hit would deal. A hit that does not get
-    /// through deals nothing at all.
+    /// Of the penetrations that happen, the percentage of the round's budget
+    /// they spend inside on average.
+    ///
+    /// 100 means every way through this plate is a clean one; anything less
+    /// says the round is marginal here and will sometimes break up on the
+    /// armour. Worth showing beside [`Self::pen_chance`] rather than folded
+    /// into it, because "it will get through eight times in ten, and half of
+    /// those barely" is a different tactical picture from a flat number, and
+    /// it is the picture that tells a player to work round to the flank.
+    pub pen_share: i32,
+    /// Damage a *penetrating* hit would deal, before the partial-penetration
+    /// band takes its cut. A hit that does not get through deals nothing at
+    /// all.
     pub damage: i32,
     /// Which armour arc the shot lands on.
     pub facing: ArmorFacing,
@@ -1189,16 +1272,17 @@ pub fn preview_attack(
         .as_ref()
         .and_then(|r| shot_profile(registry, state, weapon, r, att.pos, target));
     let facing = struck_facing(tgt.pos, tgt.facing, att.pos);
-    let (pen_chance, damage, effective_armor) = profile
+    let (pen_chance, pen_share, damage, effective_armor) = profile
         .as_ref()
         .map(|p| {
             (
                 (p.pen_chance * 100.0).round() as i32,
+                (p.pen_share * 100.0).round() as i32,
                 p.damage,
                 p.effective_armor.round() as i32,
             )
         })
-        .unwrap_or((0, 0, tgt_vehicle.armor.value(facing).max(0)));
+        .unwrap_or((0, 100, 0, tgt_vehicle.armor.value(facing).max(0)));
     let ammo = round.as_ref().map(|r| match r.ammo {
         Some(a) => a.name.clone(),
         None => weapon.name.clone(),
@@ -1257,6 +1341,7 @@ pub fn preview_attack(
         hit,
         ammo,
         pen_chance,
+        pen_share,
         damage,
         facing,
         effective_armor,
@@ -1347,12 +1432,13 @@ fn resolve_impact(
         return;
     };
     let pen = round.pen_at(from.distance_to(tgt_pos), weapon.range);
-    if !penetration_roll(
+    let Some(share) = penetration_roll(
+        &registry.balance,
         state,
         pen,
         profile.effective_armor,
         registry.balance.pen_scatter,
-    ) {
+    ) else {
         events.push(Event::ShotBounced {
             attacker,
             target,
@@ -1368,7 +1454,7 @@ fn resolve_impact(
             overpressure(registry, state, target, ammo.blast, from, events);
         }
         return;
-    }
+    };
 
     let damage_type = round.damage_type().unwrap_or(weapon.damage_type);
     if let Some(tgt) = state.unit_mut(target) {
@@ -1378,13 +1464,18 @@ fn resolve_impact(
         // very different days for the cadets inside.
         tgt.last_hit_by = Some(damage_type);
     }
+    // The damage reported is what this particular round actually spends,
+    // not what the datasheet says it could: a shell that broke up on the
+    // plate and one that came through cleanly are different events, and the
+    // log, the ledger and the campaign's fate rolls all read this number.
+    let spent = ((profile.damage as f32 * share).round() as i32).max(1);
     events.push(Event::ShotHit {
         attacker,
         target,
-        damage: profile.damage,
+        damage: spent,
         facing: profile.facing,
     });
-    behind_armor_effects(registry, state, round, &profile, target, events);
+    behind_armor_effects(registry, state, round, spent, target, events);
 }
 
 /// What one cadet or one module weighs when a penetration rolls what it
@@ -1508,19 +1599,25 @@ fn behind_armor_effects(
     registry: &DataRegistry,
     state: &mut BattleState,
     round: &Round<'_>,
-    profile: &ShotProfile,
+    // What this round actually put inside, after the partial-penetration
+    // band has had its say. Passed rather than re-derived: the share was
+    // rolled once in `resolve_impact`, and a second place computing it
+    // would be a second answer to one question. It replaced the whole
+    // `ShotProfile` here, which is the tell that the profile was only ever
+    // consulted for this number.
+    spent: i32,
     target: UnitId,
     events: &mut Vec<Event>,
 ) {
     let per_effect = registry.balance.points_per_effect.max(1);
-    let rolls = (profile.damage.max(1) + per_effect - 1) / per_effect;
+    let rolls = (spent.max(1) + per_effect - 1) / per_effect;
     // Triple the price of a roll arriving in one round is the overmatch
     // that skips "wounded": an 88 or a 105 in the lap has no light
     // version, a 75 does. The threshold was double, which put every gun on
     // the field over it — B5's crew-cost table read 0.1 wounded to 3.0 out
     // per battle, meaning the dramatic middle state effectively never
     // happened and a cadet's first hit was almost always her last.
-    let savage = profile.damage >= per_effect * 3;
+    let savage = spent >= per_effect * 3;
     effect_rolls(
         registry,
         state,

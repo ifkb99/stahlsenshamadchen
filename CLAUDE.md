@@ -215,6 +215,46 @@ about it:
   `Hex::ZERO`, so an old save's airborne shells would come down on the map
   corner — a silent wrong answer where refusing to load is the loud one.
 
+### Behind the plate: how far through is through
+
+The pipeline in `ballistics.md` always had three outcomes — clean
+penetration, partial penetration, bounce — and B2b shipped two, so a round
+that scraped through a plate spent exactly the budget of one that vastly
+overmatched it. That is the flattening the whole no-hit-points model exists
+to avoid, one layer further in: it makes the *margin* of a penetration mean
+nothing, and margin is most of what separates a gun that can just about
+manage a target from one that eats it.
+
+- **`penetration_roll` returns a share, not a bool.** `None` is a bounce;
+  `Some(share)` is how much of its budget the round spends inside,
+  interpolated by `Balance::penetration_share` from
+  `partial_penetration_percent` at exactly parity up to 1.0 at
+  `clean_penetration_percent`. Linear rather than a step, so there is no
+  cliff for a marginal shot to sit on and no threshold a modder discovers by
+  bisection. `clean_penetration_percent: 100` is the game before the band
+  existed, which is the additivity contract, and it is checked the strong
+  way: the previous chunk's event stream passes byte-identical.
+- **The analytic twin enumerates what the die samples**, exactly as
+  `penetration_chance` and `penetration_roll` already did for the gate.
+  `penetration_share(balance, pen, armor, scatter)` averages the share over
+  the scatter outcomes that get through, and `round_worth` multiplies by it.
+  Once a marginal penetration is worth less, "did it get through" is no
+  longer enough to price a shot with, and a planner without this trades a
+  certainty for a technicality.
+- **`ShotHit::damage` is what was spent, not what the datasheet says.** The
+  share is rolled once, in `resolve_impact`, and handed to
+  `behind_armor_effects` as `spent` — which is also what `savage` now reads,
+  so a round that broke up on the plate does not get the overmatch that
+  skips "wounded". It replaced the whole `ShotProfile` parameter there,
+  which is the tell that the profile was only ever consulted for that
+  number.
+
+Tuning note, because the shape of it will recur: at a floor of 40% the band
+swung the doctrine table to 25-11 and the tank destroyer to 99 kills — the
+rule was right and the number was loud. 55% keeps the rule visible (TD 88
+kills against 76 before the band) at 19-17, which is the parity the other
+chunks held.
+
 The instrument for all of this is `balance`'s **`to hit`** table, the twin of
 the penetration table: every cell is `hit_breakdown` against a medium tank on
 open grass, with the attacker's motion shown as a gradient (1/3/5 hexes)
@@ -224,7 +264,9 @@ shots were laid from a vehicle under way — a resolver term nobody's guns ever
 meet is a term that changed nothing. `Event::ShotFired` carries `moving`
 beside `blind` and `opportunity` for the same reason, and so the log can say
 why. The shell-flight table gained a `spread` column beside `target moves`,
-which is the two facts side by side.
+which is the two facts side by side. And a penetration cell reading `52·66%`
+gets through half the time and spends two thirds of its budget when it does;
+a bare number is a round with margin to spare.
 
 ### What a shot is worth, and what keeps a battle open
 

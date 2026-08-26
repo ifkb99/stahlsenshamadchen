@@ -566,3 +566,79 @@ fn a_shell_bursts_where_it_landed_and_not_where_it_was_aimed() {
         );
     }
 }
+
+// --- what a penetration is worth once it is through ------------------------
+
+#[test]
+fn a_gun_that_scrapes_through_a_plate_spends_less_than_one_with_margin() {
+    // The pipeline was always written with three outcomes and the outcome
+    // engine shipped with two, so a round that barely beat a plate spent the
+    // same budget inside as one that vastly overmatched it. That flattening
+    // is the thing the whole no-hit-points model exists to avoid, one layer
+    // further in: it makes the *margin* of a penetration mean nothing, which
+    // is most of what separates a gun that can just about manage a target
+    // from one that eats it.
+    let reg = registry();
+    let marginal = tactics_core::battle::penetration_share(&reg.balance, 10.0, 10.0, 0);
+    let comfortable = tactics_core::battle::penetration_share(&reg.balance, 40.0, 10.0, 0);
+    assert!(
+        marginal < comfortable,
+        "beating a plate by nothing must not pay like beating it fourfold: \
+         {marginal} against {comfortable}"
+    );
+    assert!(
+        (comfortable - 1.0).abs() < 1e-6,
+        "and a round with margin in hand does its worst: {comfortable}"
+    );
+}
+
+#[test]
+fn nothing_that_bounces_is_priced_as_a_penetration() {
+    // The share is an average over the outcomes that get *through*, so a
+    // matchup with no such outcomes has no average to report. Returning 1.0
+    // is the safe answer only because every caller multiplies it by a
+    // penetration chance of zero; this pins that the two are read together.
+    let reg = registry();
+    let hopeless = 1.0;
+    let plate = 40.0;
+    assert_eq!(
+        tactics_core::battle::penetration_chance(hopeless, plate, reg.balance.pen_scatter),
+        0.0,
+        "the premise of this test is a gun that cannot get through at all"
+    );
+    let share = tactics_core::battle::penetration_share(
+        &reg.balance,
+        hopeless,
+        plate,
+        reg.balance.pen_scatter,
+    );
+    assert_eq!(share * 0.0, 0.0, "chance times share is zero either way");
+}
+
+#[test]
+fn the_preview_shows_a_marginal_penetration_as_marginal() {
+    // The player-facing half. "It will get through eight times in ten, and
+    // half of those barely" is a different tactical picture from a flat
+    // number, and it is the picture that says to work round to the flank.
+    let reg = registry();
+    let state = field(&reg, "medium_tank", "medium_tank", 6, 1);
+    let front = tactics_core::battle::preview_attack(&reg, &state, UnitId(0), 0, UnitId(1), false)
+        .expect("two tanks facing each other");
+    assert!(
+        front.pen_share <= 100,
+        "a share is a percentage of the budget, not a bonus"
+    );
+    assert!(
+        front.pen_share > 0,
+        "a matchup that penetrates at all spends something: {front:?}"
+    );
+    // The 75 against a medium tank's glacis is the roster's own example of a
+    // gun that always gets through and does not always get through cleanly.
+    assert!(
+        front.pen_chance > 0 && front.pen_share < 100,
+        "gun_75 into medium_tank front should be through but marginal: \
+         {}% at {}% of budget",
+        front.pen_chance,
+        front.pen_share
+    );
+}

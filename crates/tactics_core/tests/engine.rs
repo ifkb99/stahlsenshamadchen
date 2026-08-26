@@ -6823,6 +6823,27 @@ fn marching_under_fire(reg: &DataRegistry, latitude: Latitude, seed: u64) -> (Ba
         state.fog.side(0).spotted.contains(&UnitId(1)),
         "the stage needs her to see the danger she is being asked to drive past"
     );
+    // The gun is *ordered* to watch the road, and that is staging rather than
+    // decoration. A crew with a fire order is on deliberate overwatch and the
+    // battle drill will not touch her (see CLAUDE.md under Defiance); without
+    // the order the gun is an idle crew who gets threatened as the tank closes
+    // and takes cover in the woods on her own initiative, which leaves
+    // `second_round_plan` with no threat left to stage. That cost this test two
+    // reseeds across the resolver-depth arc before the cause was clear: the
+    // fragility was never the seed, it was a stage whose furniture could walk
+    // away.
+    state
+        .apply(
+            reg,
+            &Order::SetFire {
+                unit: UnitId(1),
+                fire: FireIntent::Target {
+                    target: crew,
+                    weapon: 0,
+                },
+            },
+        )
+        .expect("a gun may always be told what to watch");
     state
         .apply(
             reg,
@@ -6906,15 +6927,15 @@ fn a_binding_march_presses_on_where_an_ordinary_one_takes_cover() {
     // which direction — not which particular hedge the drill happens to
     // like, which is a tuning detail that should be free to move without
     // failing this.
-    // The seed is staging, not the rule, and it moved once already: the
-    // resolver-depth arc made a crossing target harder to hit, so the gun
-    // watching the road stopped killing her on the opening round, she closed
-    // to two hexes, and the gun's own battle drill took it into the woods —
-    // leaving `second_round_plan` with no threat left to stage. 42 is the
-    // nearest seed where the gun stays on the road and the comparison below
-    // is the only thing being measured. If it moves again, scan for another
-    // rather than weakening what is asserted.
-    const SEED: u64 = 42;
+    // The seed is staging, not the rule. It is 4 rather than the original 62
+    // because the resolver-depth arc changed what a shot is worth twice over;
+    // `marching_under_fire` now also *orders* the gun to watch the road,
+    // which is the fix that should stop this from recurring — the fragility
+    // was never the seed, it was a stage whose furniture could walk away.
+    // What the seed still decides is whether she lives through the opening
+    // round, and if that has to move again, scan for another rather than
+    // weakening what is asserted below.
+    const SEED: u64 = 4;
     let reg = registry_wireless();
     let (delegated_from, delegated_to, delegated_took_cover) = {
         let (state, crew) = marching_under_fire(&reg, Latitude::Delegated, SEED);
