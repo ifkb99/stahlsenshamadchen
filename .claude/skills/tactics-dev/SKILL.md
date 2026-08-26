@@ -24,7 +24,7 @@ messages** — that is the house style and it is why claims here are checkable.
 | --- | --- |
 | What did that data change do? | `cargo run --release -p tactics_core --example balance` — instant analytic tables. `-- --sim` fights whole battles. |
 | What does that number do *that the old one did not*? | `balance -- --sim --games 36 --sweep <path>=<a,b,c>` — every value at once, with a table of differences. `--set` for a single run, `--help` for the paths. |
-| How much of that difference was the dice? | `balance -- --sim --games 36 --sweep seed=1000,2000,3000` — the same game, sampled. Read a difference against this before believing it. |
+| How much of that difference was the dice? | `balance -- --sim --games 36 --sweep seed=0,1000,2000` — the same game, sampled. Every fought-out table moves together. Read a difference against this before believing it. |
 | Did behaviour change, and did I mean it? | `cargo test -p tactics_core --test determinism` |
 | Is it still fast? | `cargo run --release -p tactics_core --example perf` |
 | What does it look like? | `STAHL_PRESENT=immediate STAHL_DEBUG=1 STAHL_BATTLE=river_crossing STAHL_SCRIPT=scripts/dev/battle-tour.txt cargo run -p stahlsenshamädchen` |

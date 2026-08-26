@@ -47,7 +47,7 @@
 //! ballistics rewrite met both: a revert that was never made, and a difference
 //! well inside the noise of the sample read as a result anyway. A sweep runs
 //! every value at once, folds each one's battles in seed order, and prints the
-//! baseline on the row above the difference — and `--sweep seed=1000,2000` in
+//! baseline on the row above the difference — and `--sweep seed=0,1000` in
 //! the same table is what the noise floor looks like, so a difference can be
 //! held against it instead of against an intuition.
 //!
@@ -55,7 +55,7 @@
 //! # what does the partial-penetration floor do?
 //! balance --sim --games 36 --sweep balance.partial_penetration_percent=40,55,70
 //! # ...and how much of that was the dice?
-//! balance --sim --games 36 --sweep seed=1000,2000,3000
+//! balance --sim --games 36 --sweep seed=0,1000,2000
 //! # two versions of the content, rather than two numbers in one version
 //! balance --sim --sweep mods=assets/mods,../old/assets/mods
 //! ```
@@ -106,20 +106,24 @@ fn main() {
     let budget: i32 = flag(&args, "--points")
         .and_then(|v| v.parse().ok())
         .unwrap_or(60);
-    // The base of the fought-out pass's seeds. Exposed because two runs of
-    // the same configuration at different seeds are two *samples*, and the
-    // honest way to ask whether a difference between variants is real is to
-    // re-draw it — which needs the seeds to be somebody's choice rather than
-    // a constant buried in a function.
+    // How far to shift every table's battles. An offset rather than a base,
+    // so that 0 — the default — is exactly the sample every number this
+    // project has quoted was measured on, and any other value moves all four
+    // fought-out tables together. Exposed because two runs of the same
+    // configuration at different seeds are two *samples*, and the honest way
+    // to ask whether a difference between variants is real is to re-draw it,
+    // which needs the seeds to be somebody's choice rather than a constant
+    // buried in a function.
     let seed: u64 = flag(&args, "--seed")
         .and_then(|v| v.parse().ok())
-        .unwrap_or(1000);
+        .unwrap_or(0);
     if let Some(n) = flag(&args, "--jobs").and_then(|v| v.parse::<usize>().ok()) {
         JOBS.store(n.max(1), std::sync::atomic::Ordering::Relaxed);
     }
     let cfg = Run {
         games,
         seed,
+        budget,
         sim,
         verbose: args.iter().any(|a| a == "--verbose"),
         csv: args.iter().any(|a| a == "--csv"),
@@ -173,9 +177,9 @@ fn main() {
     flags(&registry, &mut duels);
     if sim {
         simulate(&registry, games, seed);
-        delegation_tax(&registry, games);
-        mustered_forces(&registry, games, budget);
-        skill_gap(&registry, games);
+        for grid in fought_grids(&registry, &cfg, seed) {
+            print_grid(&grid);
+        }
     }
     if brains {
         brains_table(&registry, brain_games, brain_difficulty);
@@ -193,8 +197,9 @@ what to run
   --sim                  fight whole battles as well as previewing shots
   --games N              battles in the fought-out pass (default 12; read the
                          doctrine table at 36 or not at all)
-  --seed N               base seed for those battles (default 1000). Two runs
-                         at different seeds are two samples of the same game.
+  --seed N               shift every table's battles by N (default 0, the
+                         sample this project's numbers were measured on). Two
+                         runs at different seeds are two samples of one game.
   --points N             requisition budget per side in the mustered table (60)
   --brains               which planner is better; --brain-games, --brain-difficulty
 
@@ -225,7 +230,7 @@ examples
   --sim --sweep weapon.howitzer_105.dispersion=0,4,8 --jobs 4
   --set balance.moving_target_per_hex=0 --set balance.firing_on_the_move_per_hex=0
   --sim --sweep mods=assets/mods,../old/assets/mods
-  --sim --sweep seed=1000,2000,3000 --games 36      # what is the noise floor?";
+  --sim --sweep seed=0,1000,2000 --games 36         # what is the noise floor?";
 
 /// Every occurrence of a repeatable `--flag value`.
 fn flag_all<'a>(args: &'a [String], name: &str) -> Vec<&'a str> {
@@ -1223,6 +1228,21 @@ fn battle_maps(reg: &DataRegistry) -> Vec<&str> {
     ids
 }
 
+/// Where each table's battles start counting, before `--seed` is added.
+///
+/// Distinct blocks so that two tables in one run never fight literally the
+/// same battle and then agree with each other for that reason. The values are
+/// the constants each table was born with, kept exactly so that `--seed 0` —
+/// the default — is the run every number this project has quoted was measured
+/// on. `--seed N` shifts all four together, which is what makes sweeping the
+/// seed a sample of the whole report rather than of one table in it.
+const FOUGHT_SEED: u64 = 1000;
+const DELEGATION_SEED: u64 = 1000;
+const MUSTER_SEED: u64 = 4000;
+/// The skill-gap table's own block is zero: `arena_duel` adds its 9000 itself,
+/// and moving that would change the planner seeds rather than only the ground.
+const ARENA_SEED: u64 = 0;
+
 /// Which ground this battle is fought on. Keyed on the seed rather than the
 /// game index so the pairing of map to battle survives changing `--games`.
 fn map_for<'a>(maps: &[&'a str], seed: u64) -> &'a str {
@@ -1285,7 +1305,9 @@ impl Tally {
 /// Fight a batch of battles and account for all of them together.
 fn fight_out(reg: &DataRegistry, games: usize, seed: u64) -> Tally {
     let maps = battle_maps(reg);
-    let fought = fight_all(reg, games, |reg, game| fight_one(reg, &maps, seed + game));
+    let fought = fight_all(reg, games, |reg, game| {
+        fight_one(reg, &maps, FOUGHT_SEED + seed + game)
+    });
     let mut t = Tally::default();
     for one in &fought {
         t.merge(one);
@@ -1663,120 +1685,152 @@ fn planner_with(
 /// brain has learned anything about what a grenadier section is for, it
 /// shows as fewer taxis and platoons lost in the rows below the control
 /// than in the control itself.
-fn delegation_tax(reg: &DataRegistry, games: usize) {
-    let maps = battle_maps(reg);
-    heading(&format!(
-        "delegation tax: {games} battles per pairing across {}, opponent held constant",
-        maps.join(", ")
-    ));
-    // Read off the chassis rather than named: a taxi is anything that lifts
-    // somebody and a foot unit is anything that walks, so a mod's own
-    // transports and its own infantry land in these columns unasked.
-    let taxi = |unit: &tactics_core::battle::Unit| {
-        reg.vehicle(&unit.vehicle).is_some_and(|v| v.capacity > 0)
-    };
-    let afoot = |unit: &tactics_core::battle::Unit| {
-        reg.vehicle(&unit.vehicle)
-            .is_some_and(|v| v.movement.class == tactics_core::data::MovementClass::Foot)
-    };
-    let run = |p0: &str, p1: &str| -> Delegation {
-        let (mut wins_massed, mut wins_elastic, mut draws) = (0, 0, 0);
-        let mut rounds_total = 0u32;
-        let (mut taxis_lost, mut foot_lost, mut foot_shots) = (0usize, 0usize, 0usize);
-        for game in 0..games {
-            let seed = 1000 + game as u64;
-            let mut state = BattleState::from_map(reg, map_for(&maps, seed), seed).expect("battle");
-            let mut ai = AiDriver::new();
-            ai.insert(0, planner_with(reg, seed, p0, "massed_armor"));
-            ai.insert(1, planner_with(reg, seed + 1, p1, "elastic_defense"));
-            let mut rounds = 0;
-            while !state.is_over() && rounds < 60 {
-                ai.plan_round(reg, &mut state);
-                for event in &state.resolve_round(reg) {
-                    if let Event::ShotFired { attacker, .. } = event
-                        && state
-                            .units
-                            .get(attacker.index())
-                            .is_some_and(|u| u.side == 0 && afoot(u))
-                    {
-                        foot_shots += 1;
-                    }
-                }
-                rounds += 1;
-            }
-            rounds_total += rounds;
-            // Side 0 only, always — the side whose planner the middle row
-            // swaps. Counting both sides would average the commanded force
-            // together with its flat opponent and hide exactly the
-            // difference the table is asking about.
-            taxis_lost += state
-                .lost_units()
-                .filter(|u| u.side == 0 && taxi(u))
-                .count();
-            foot_lost += state
-                .lost_units()
-                .filter(|u| u.side == 0 && afoot(u))
-                .count();
-            match state.over.and_then(|r| r.winner) {
-                Some(0) => wins_massed += 1,
-                Some(1) => wins_elastic += 1,
-                _ => draws += 1,
-            }
-        }
-        Delegation {
-            wins_massed,
-            wins_elastic,
-            draws,
-            rounds: rounds_total as f32 / games.max(1) as f32,
-            taxis_lost,
-            foot_lost,
-            foot_shots,
-        }
-    };
-    let flat = run("utility", "utility");
-    let massed_cmd = run("command", "utility");
-    let elastic_cmd = run("utility", "command");
-
-    println!(
-        "  {:<24} {:>6} {:>8} {:>6} {:>7} {:>7} {:>7} {:>7}",
-        "pairing", "massed", "elastic", "draws", "rounds", "taxis", "platoons", "shots"
-    );
-    for (name, t) in [
-        ("both flat", &flat),
-        ("massed under command", &massed_cmd),
-        ("elastic under command", &elastic_cmd),
-    ] {
-        println!(
-            "  {:<24} {:>6} {:>8} {:>6} {:>7.1} {:>7} {:>7} {:>7}",
-            name,
-            t.wins_massed,
-            t.wins_elastic,
-            t.draws,
-            t.rounds,
-            t.taxis_lost,
-            t.foot_lost,
-            t.foot_shots
-        );
-    }
-    println!(
-        "\n  a side's tax is its win drop against the same flat opponent when it\n  \
-         fights through missions instead; zero is the target.\n\n  \
-         the last three columns are always side 0's — carriers lost, foot units\n  \
-         lost, and rounds fired by anybody on their feet — so the middle row is\n  \
-         the commanded force and the two rows around it are the same force flat."
-    );
-}
-
-/// One row of [`delegation_tax`]: who won, how long it took, and what the
-/// infantry made of it.
+/// What one battle contributed to the delegation table.
+///
+/// Every field is a count, including `rounds`, which is a total rather than a
+/// mean so that folding stays addition — the mean is taken once, at the end,
+/// where the number of battles is known. A mean folded into a mean would be a
+/// different number depending on how the battles were split across cores.
+#[derive(Default, Clone, Copy)]
 struct Delegation {
     wins_massed: usize,
     wins_elastic: usize,
     draws: usize,
-    rounds: f32,
+    rounds: u32,
     taxis_lost: usize,
     foot_lost: usize,
     foot_shots: usize,
+}
+
+impl Delegation {
+    fn merge(&mut self, o: &Self) {
+        self.wins_massed += o.wins_massed;
+        self.wins_elastic += o.wins_elastic;
+        self.draws += o.draws;
+        self.rounds += o.rounds;
+        self.taxis_lost += o.taxis_lost;
+        self.foot_lost += o.foot_lost;
+        self.foot_shots += o.foot_shots;
+    }
+}
+
+/// Read off the chassis rather than named: a taxi is anything that lifts
+/// somebody and a foot unit is anything that walks, so a mod's own transports
+/// and its own infantry land in these columns unasked.
+fn is_taxi(reg: &DataRegistry, unit: &tactics_core::battle::Unit) -> bool {
+    reg.vehicle(&unit.vehicle).is_some_and(|v| v.capacity > 0)
+}
+
+fn is_afoot(reg: &DataRegistry, unit: &tactics_core::battle::Unit) -> bool {
+    reg.vehicle(&unit.vehicle)
+        .is_some_and(|v| v.movement.class == tactics_core::data::MovementClass::Foot)
+}
+
+fn delegation_battle(
+    reg: &DataRegistry,
+    maps: &[&str],
+    seed: u64,
+    p0: &str,
+    p1: &str,
+) -> Delegation {
+    let mut d = Delegation::default();
+    let mut state = BattleState::from_map(reg, map_for(maps, seed), seed).expect("battle");
+    let mut ai = AiDriver::new();
+    ai.insert(0, planner_with(reg, seed, p0, "massed_armor"));
+    ai.insert(1, planner_with(reg, seed + 1, p1, "elastic_defense"));
+    let mut rounds = 0;
+    while !state.is_over() && rounds < 60 {
+        ai.plan_round(reg, &mut state);
+        for event in &state.resolve_round(reg) {
+            if let Event::ShotFired { attacker, .. } = event
+                && state
+                    .units
+                    .get(attacker.index())
+                    .is_some_and(|u| u.side == 0 && is_afoot(reg, u))
+            {
+                d.foot_shots += 1;
+            }
+        }
+        rounds += 1;
+    }
+    d.rounds = rounds;
+    // Side 0 only, always — the side whose planner the middle row swaps.
+    // Counting both sides would average the commanded force together with its
+    // flat opponent and hide exactly the difference the table is asking about.
+    d.taxis_lost = state
+        .lost_units()
+        .filter(|u| u.side == 0 && is_taxi(reg, u))
+        .count();
+    d.foot_lost = state
+        .lost_units()
+        .filter(|u| u.side == 0 && is_afoot(reg, u))
+        .count();
+    match state.over.and_then(|r| r.winner) {
+        Some(0) => d.wins_massed += 1,
+        Some(1) => d.wins_elastic += 1,
+        _ => d.draws += 1,
+    }
+    d
+}
+
+fn delegation_tax(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
+    let maps = battle_maps(reg);
+    let run = |p0: &str, p1: &str| -> Delegation {
+        let fought = fight_all(reg, games, |reg, game| {
+            delegation_battle(reg, &maps, DELEGATION_SEED + seed + game, p0, p1)
+        });
+        let mut total = Delegation::default();
+        for one in &fought {
+            total.merge(one);
+        }
+        total
+    };
+    let per = games.max(1) as f64;
+    let rows = [
+        ("both flat", run("utility", "utility")),
+        ("massed under command", run("command", "utility")),
+        ("elastic under command", run("utility", "command")),
+    ]
+    .into_iter()
+    .map(|(name, t)| {
+        (
+            name.to_string(),
+            vec![
+                t.wins_massed as f64,
+                t.wins_elastic as f64,
+                t.draws as f64,
+                t.rounds as f64 / per,
+                t.taxis_lost as f64,
+                t.foot_lost as f64,
+                t.foot_shots as f64,
+            ],
+        )
+    })
+    .collect();
+
+    Grid {
+        title: format!(
+            "delegation tax: {games} battles per pairing across {}, opponent held constant",
+            maps.join(", ")
+        ),
+        preamble: Vec::new(),
+        row_head: "pairing",
+        columns: vec![
+            col("massed", 0),
+            col("elastic", 0),
+            col("draws", 0),
+            col("rounds", 1),
+            col("taxis", 0),
+            col("platoons", 0),
+            col("shots", 0),
+        ],
+        rows,
+        note: "\n  a side's tax is its win drop against the same flat opponent when it\n  \
+               fights through missions instead; zero is the target.\n\n  \
+               the last three columns are always side 0's — carriers lost, foot units\n  \
+               lost, and rounds fired by anybody on their feet — so the middle row is\n  \
+               the commanded force and the two rows around it are the same force flat.",
+    }
 }
 
 /// Does skill win cleanly? Identical forces, identical doctrine, and the only
@@ -1822,11 +1876,58 @@ struct Delegation {
 /// preferred hardware is underpriced — which is exactly the signal this table
 /// exists to raise, and exactly what a shopping algorithm that optimised for
 /// value-per-point would have hidden.
-fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32) {
-    heading(&format!(
-        "mustered forces: {games} battles per pairing, {budget} points a side, each doctrine buying its own army"
-    ));
+/// What one mustered-arena battle contributed. Counts, so folding is addition
+/// — see [`Delegation`], which says why that matters here.
+#[derive(Default, Clone, Copy)]
+struct Muster {
+    a_wins: usize,
+    b_wins: usize,
+    draws: usize,
+    rounds: u32,
+    a_points_lost: i32,
+}
 
+fn muster_battle(
+    reg: &DataRegistry,
+    seed: u64,
+    flip: bool,
+    a: &(&str, Vec<String>),
+    b: &(&str, Vec<String>),
+) -> Muster {
+    let mut m = Muster::default();
+    let (west, east) = if flip { (&b.1, &a.1) } else { (&a.1, &b.1) };
+    let (west_doctrine, east_doctrine) = if flip { (b.0, a.0) } else { (a.0, b.0) };
+    let Some(mut state) = muster_arena(reg, seed, west, east) else {
+        return m;
+    };
+    let mut ai = AiDriver::new();
+    ai.insert(0, planner(reg, seed, west_doctrine));
+    ai.insert(1, planner(reg, seed + 1, east_doctrine));
+    let mut rounds = 0;
+    while !state.is_over() && rounds < 60 {
+        ai.plan_round(reg, &mut state);
+        state.resolve_round(reg);
+        rounds += 1;
+    }
+    m.rounds = rounds;
+    // A is whichever end she deployed on this game, so the tallies follow the
+    // flip rather than the side number.
+    let a_side = if flip { 1u8 } else { 0u8 };
+    m.a_points_lost = state
+        .lost_units()
+        .filter(|u| u.side == a_side)
+        .filter_map(|u| reg.vehicle(&u.vehicle))
+        .map(|v| v.cost)
+        .sum::<i32>();
+    match state.over.and_then(|r| r.winner) {
+        Some(s) if s == a_side => m.a_wins += 1,
+        Some(_) => m.b_wins += 1,
+        None => m.draws += 1,
+    }
+    m
+}
+
+fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32, seed: u64) -> Grid {
     let doctrines = ["massed_armor", "elastic_defense", "recon_pull"];
     let forces: Vec<(&str, Vec<String>)> = doctrines
         .iter()
@@ -1836,13 +1937,13 @@ fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32) {
         })
         .collect();
 
-    println!("  the shopping lists:");
+    let mut preamble = vec!["  the shopping lists:".to_string()];
     for (id, army) in &forces {
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
         for vehicle in army {
             *counts.entry(vehicle.as_str()).or_default() += 1;
         }
-        println!(
+        preamble.push(format!(
             "    {:<16} {:>3} pts, {} units — {}",
             id,
             force::cost_of(reg, army),
@@ -1852,75 +1953,60 @@ fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32) {
                 .map(|(v, n)| format!("{n}x {v}"))
                 .collect::<Vec<_>>()
                 .join(", ")
-        );
+        ));
     }
 
-    println!(
-        "\n  {:<34} {:>6} {:>6} {:>6} {:>7} {:>9}",
-        "pairing (A vs B)", "A won", "B won", "draws", "rounds", "A pts lost"
-    );
-    for (i, (a_id, a_force)) in forces.iter().enumerate() {
-        for (b_id, b_force) in forces.iter().skip(i + 1) {
-            // Both orientations, summed: the arena is mirror-symmetric but
-            // resolution order is not, and side B has held a measured edge on
-            // this ground since the plateau rule went in.
-            let (mut a_wins, mut b_wins, mut draws) = (0, 0, 0);
-            let (mut rounds_total, mut a_points_lost) = (0u32, 0i32);
-            for game in 0..games {
-                let seed = 4000 + game as u64;
-                let flip = game % 2 == 1;
-                let (west, east) = if flip {
-                    (b_force, a_force)
-                } else {
-                    (a_force, b_force)
-                };
-                let (west_doctrine, east_doctrine) =
-                    if flip { (*b_id, *a_id) } else { (*a_id, *b_id) };
-                let Some(mut state) = muster_arena(reg, seed, west, east) else {
-                    continue;
-                };
-                let mut ai = AiDriver::new();
-                ai.insert(0, planner(reg, seed, west_doctrine));
-                ai.insert(1, planner(reg, seed + 1, east_doctrine));
-                let mut rounds = 0;
-                while !state.is_over() && rounds < 60 {
-                    ai.plan_round(reg, &mut state);
-                    state.resolve_round(reg);
-                    rounds += 1;
-                }
-                rounds_total += rounds;
-                // A is whichever end she deployed on this game, so the
-                // tallies follow the flip rather than the side number.
-                let a_side = if flip { 1u8 } else { 0u8 };
-                a_points_lost += state
-                    .lost_units()
-                    .filter(|u| u.side == a_side)
-                    .filter_map(|u| reg.vehicle(&u.vehicle))
-                    .map(|v| v.cost)
-                    .sum::<i32>();
-                match state.over.and_then(|r| r.winner) {
-                    Some(s) if s == a_side => a_wins += 1,
-                    Some(_) => b_wins += 1,
-                    None => draws += 1,
-                }
+    let per = games.max(1) as f64;
+    let mut rows = Vec::new();
+    for (i, a) in forces.iter().enumerate() {
+        for b in forces.iter().skip(i + 1) {
+            // Both orientations, alternating game by game: the arena is
+            // mirror-symmetric but resolution order is not, and side B has
+            // held a measured edge on this ground since the plateau rule
+            // went in.
+            let fought = fight_all(reg, games, |reg, game| {
+                muster_battle(reg, MUSTER_SEED + seed + game, game % 2 == 1, a, b)
+            });
+            let mut t = Muster::default();
+            for one in &fought {
+                t.a_wins += one.a_wins;
+                t.b_wins += one.b_wins;
+                t.draws += one.draws;
+                t.rounds += one.rounds;
+                t.a_points_lost += one.a_points_lost;
             }
-            println!(
-                "  {:<34} {:>6} {:>6} {:>6} {:>7.1} {:>9.1}",
-                format!("{a_id} vs {b_id}"),
-                a_wins,
-                b_wins,
-                draws,
-                rounds_total as f32 / games.max(1) as f32,
-                a_points_lost as f32 / games.max(1) as f32,
-            );
+            rows.push((
+                format!("{} vs {}", a.0, b.0),
+                vec![
+                    t.a_wins as f64,
+                    t.b_wins as f64,
+                    t.draws as f64,
+                    t.rounds as f64 / per,
+                    t.a_points_lost as f64 / per,
+                ],
+            ));
         }
     }
-    println!(
-        "\n  each pairing alternates ends game by game, so neither column is a\n  \
-         statement about deployment. `A pts lost` is the requisition value of\n  \
-         A's dead per battle — what the win cost, in the same currency the\n  \
-         army was bought with."
-    );
+
+    Grid {
+        title: format!(
+            "mustered forces: {games} battles per pairing, {budget} points a side, each doctrine buying its own army"
+        ),
+        preamble,
+        row_head: "pairing (A vs B)",
+        columns: vec![
+            col("A won", 0),
+            col("B won", 0),
+            col("draws", 0),
+            col("rounds", 1),
+            col("A pts lost", 1),
+        ],
+        rows,
+        note: "\n  each pairing alternates ends game by game, so neither column is a\n  \
+               statement about deployment. `A pts lost` is the requisition value of\n  \
+               A's dead per battle — what the win cost, in the same currency the\n  \
+               army was bought with.",
+    }
 }
 
 /// The skill-gap arena, filled with two bought armies instead of the mirrored
@@ -2216,14 +2302,8 @@ fn brains_table(reg: &DataRegistry, games: usize, difficulty: u8) {
     );
 }
 
-fn skill_gap(reg: &DataRegistry, games: usize) {
-    heading(&format!(
-        "skill gap: {games} battles per pairing on a mirrored arena — same forces, same doctrine, only execution differs"
-    ));
-    println!(
-        "  {:<12} {:>5} {:>5} {:>6} {:>12} {:>12} {:>8}",
-        "pairing", "A won", "B won", "draws", "A lost/game", "B lost/game", "ratio"
-    );
+fn skill_gap(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
+    let mut rows = Vec::new();
     for (a, b) in [(5, 5), (1, 1), (5, 3), (3, 5), (5, 1), (1, 5)] {
         let cfg = |difficulty: u8| AiConfig {
             planner: "utility".into(),
@@ -2231,8 +2311,8 @@ fn skill_gap(reg: &DataRegistry, games: usize) {
             doctrine: None,
         };
         let (a_cfg, b_cfg) = (cfg(a), cfg(b));
-        let fought = fight_all(reg, games, |reg, seed| {
-            arena_duel(reg, seed, &a_cfg, &b_cfg)
+        let fought = fight_all(reg, games, |reg, game| {
+            arena_duel(reg, ARENA_SEED + seed + game, &a_cfg, &b_cfg)
         });
 
         let (mut a_wins, mut b_wins, mut draws) = (0, 0, 0);
@@ -2246,32 +2326,51 @@ fn skill_gap(reg: &DataRegistry, games: usize) {
             a_losses += outcome.a_losses;
             b_losses += outcome.b_losses;
         }
-        let per = |l: usize| l as f32 / games.max(1) as f32;
-        println!(
-            "  {:<12} {:>5} {:>5} {:>6} {:>12.2} {:>12.2} {:>8}",
+        let per = |l: usize| l as f64 / games.max(1) as f64;
+        rows.push((
             format!("{a} vs {b}"),
-            a_wins,
-            b_wins,
-            draws,
-            per(a_losses),
-            per(b_losses),
-            format!(
-                "1:{:.1}",
+            vec![
+                a_wins as f64,
+                b_wins as f64,
+                draws as f64,
+                per(a_losses),
+                per(b_losses),
+                // B's losses per A's loss, as a number rather than the
+                // `1:2.1` this used to print, so that a sweep can subtract
+                // it. The note still says which way round it reads.
                 if a_losses > 0 {
-                    b_losses as f32 / a_losses as f32
+                    b_losses as f64 / a_losses as f64
                 } else {
-                    f32::INFINITY
-                }
-            ),
-        );
-        // Each pairing is a few hundred battles' worth of planning; print it
-        // as it finishes rather than making the reader wait for the block.
+                    f64::INFINITY
+                },
+            ],
+        ));
+        // Each pairing is a few hundred battles' worth of planning; let it
+        // out as it finishes rather than making the reader wait for the block.
         let _ = std::io::stdout().flush();
     }
-    println!(
-        "\n  ratio is B's losses per A's loss: a side that wins by outfighting\n  \
-         rather than by outlasting shows it here, not in the win column."
-    );
+
+    Grid {
+        title: format!(
+            "skill gap: {games} battles per pairing on a mirrored arena — same forces, same doctrine, only execution differs"
+        ),
+        preamble: Vec::new(),
+        row_head: "pairing",
+        columns: vec![
+            col("A won", 0),
+            col("B won", 0),
+            col("draws", 0),
+            col("A lost", 2),
+            col("B lost", 2),
+            col("B per A", 1),
+        ],
+        rows,
+        note: "\n  `A lost` and `B lost` are vehicles per battle. `B per A` is B's losses\n  \
+               for each of A's: a side that wins by outfighting rather than by\n  \
+               outlasting shows it there, not in the win column.\n\n  \
+               read this table at --games 36 or not at all. Twelve battles cannot\n  \
+               resolve a 70% edge, and this is the table most often quoted at somebody.",
+    }
 }
 
 // --- the same game, more than once ----------------------------------------
@@ -2989,6 +3088,37 @@ fn sweep(axes: &[Axis], base: &[Override], root: &std::path::Path, cfg: &Run) {
     if cfg.csv {
         csv(&labels, &digests);
     }
+
+    // The three that fight their own battles, laid out the same way. They run
+    // after the digest rather than beside it because each is already parallel
+    // inside itself, and because the digest is the table somebody watching the
+    // run is waiting for.
+    // The variant's own seed, not the run's: a `--sweep seed=` axis has to move
+    // these tables too, or the row it adds is a sample of the fought-out pass
+    // alone sitting under three tables that never moved — which reads as three
+    // tables nothing can move.
+    let grids: Vec<Vec<Grid>> = plan
+        .iter()
+        .zip(&registries)
+        .map(|(v, reg)| fought_grids(reg, cfg, v.seed.unwrap_or(cfg.seed)))
+        .collect();
+    for i in 0..grids.first().map(Vec::len).unwrap_or(0) {
+        let column: Vec<Grid> = grids.iter().map(|g| g[i].clone()).collect();
+        compare_grids(&labels, &column);
+    }
+}
+
+/// The three tables that fight battles but are not the fought-out pass.
+///
+/// One list, called by both the single run and the sweep, because the failure
+/// mode of two lists is a table that quietly stops being swept the day it is
+/// added to one of them.
+fn fought_grids(reg: &DataRegistry, cfg: &Run, seed: u64) -> Vec<Grid> {
+    vec![
+        delegation_tax(reg, cfg.games, seed),
+        mustered_forces(reg, cfg.games, cfg.budget, seed),
+        skill_gap(reg, cfg.games, seed),
+    ]
 }
 
 fn label_of(v: &Variant) -> &str {
@@ -3034,10 +3164,180 @@ fn quoted(text: &str) -> String {
     format!("\"{}\"", text.replace('"', "\"\""))
 }
 
+/// A table reduced to what a sweep can lay beside another copy of itself:
+/// named rows, named columns, numbers.
+///
+/// The three tables under `--sim` that are not the fought-out pass each ask a
+/// question about the *shape* of the game rather than about one shot, and each
+/// used to be a `println!` per row with its own format string. That is fine
+/// for reading once and useless for comparing, which is the whole of why they
+/// build one of these now: a table that knows what its columns are can be laid
+/// beside another copy of itself, and one that only knows how to print itself
+/// cannot. Anything added here gets sweeping for free; anything that goes on
+/// printing itself does not.
+#[derive(Clone)]
+struct Grid {
+    title: String,
+    /// Lines printed above the table — a shopping list, a caveat. Compared
+    /// across variants too, because a mod change that alters what a doctrine
+    /// *buys* has already answered the question before a shot is fired.
+    preamble: Vec<String>,
+    /// What a row is.
+    row_head: &'static str,
+    columns: Vec<GridColumn>,
+    rows: Vec<(String, Vec<f64>)>,
+    /// Prose printed under it: what the reader is looking at, and what would
+    /// make it wrong.
+    note: &'static str,
+}
+
+#[derive(Clone)]
+struct GridColumn {
+    head: &'static str,
+    dp: usize,
+}
+
+fn col(head: &'static str, dp: usize) -> GridColumn {
+    GridColumn { head, dp }
+}
+
+impl GridColumn {
+    fn width(&self) -> usize {
+        self.head.len().max(6)
+    }
+
+    fn cell(&self, v: f64) -> String {
+        format!("{:.*}", self.dp, v)
+    }
+}
+
+impl Grid {
+    fn label_width(&self) -> usize {
+        self.rows
+            .iter()
+            .map(|(n, _)| n.len())
+            .chain(std::iter::once(self.row_head.len()))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The row of this grid that goes by `name`, if it has one. Matched by
+    /// name rather than by position because a swept mod tree may not produce
+    /// the same rows at all, and lining up row three with row three when one
+    /// of them is missing would compare two different pairings silently.
+    fn row(&self, name: &str) -> Option<&[f64]> {
+        self.rows
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, cells)| cells.as_slice())
+    }
+}
+
+fn print_grid(g: &Grid) {
+    heading(&g.title);
+    for line in &g.preamble {
+        println!("{line}");
+    }
+    if !g.preamble.is_empty() {
+        println!();
+    }
+    let w = g.label_width();
+    print!("  {:<w$}", g.row_head);
+    for c in &g.columns {
+        print!(" {:>width$}", c.head, width = c.width());
+    }
+    println!();
+    for (name, cells) in &g.rows {
+        print!("  {name:<w$}");
+        for (c, v) in g.columns.iter().zip(cells) {
+            print!(" {:>width$}", c.cell(*v), width = c.width());
+        }
+        println!();
+    }
+    println!("{}", g.note);
+}
+
+/// The same grid from every variant, stacked so the differences are adjacent.
+///
+/// The baseline's numbers are printed and everybody else's are printed as
+/// deltas from them, rather than four rows of absolute figures with the
+/// subtraction left to the reader. A row of `·` therefore means what it means
+/// everywhere else in this harness: nothing these battles could see moved.
+fn compare_grids(labels: &[String], grids: &[Grid]) {
+    let (Some(base), Some(base_label)) = (grids.first(), labels.first()) else {
+        return;
+    };
+    heading(&format!("{} — per variant", base.title));
+
+    // A preamble is part of the answer when it differs: a swept mod tree can
+    // change what a doctrine buys, and that is a result about the content, not
+    // a caption on one.
+    if grids.iter().any(|g| g.preamble != base.preamble) {
+        for (label, g) in labels.iter().zip(grids) {
+            println!("  [{label}]");
+            for line in &g.preamble {
+                println!("  {line}");
+            }
+        }
+        println!();
+    } else {
+        for line in &base.preamble {
+            println!("{line}");
+        }
+        if !base.preamble.is_empty() {
+            println!();
+        }
+    }
+
+    let w = base.label_width();
+    let vw = labels.iter().map(|l| l.len()).max().unwrap_or(7).max(7);
+    print!("  {:<w$} {:<vw$}", base.row_head, "variant");
+    for c in &base.columns {
+        print!(" {:>width$}", c.head, width = c.width());
+    }
+    println!();
+
+    for (name, cells) in &base.rows {
+        for (i, (label, g)) in labels.iter().zip(grids).enumerate() {
+            let head = if i == 0 { name.as_str() } else { "" };
+            print!("  {head:<w$} {label:<vw$}");
+            match g.row(name) {
+                None => print!("  (this variant has no such row)"),
+                Some(theirs) => {
+                    let mut moved = false;
+                    for (j, c) in base.columns.iter().enumerate() {
+                        let v = theirs.get(j).copied().unwrap_or(0.0);
+                        let text = if i == 0 {
+                            c.cell(v)
+                        } else {
+                            let delta = v - cells.get(j).copied().unwrap_or(0.0);
+                            moved |= delta.abs() >= 0.5 / 10f64.powi(c.dp as i32);
+                            signed(delta, c.dp)
+                        };
+                        print!(" {:>width$}", text, width = c.width());
+                    }
+                    if i > 0 && !moved {
+                        print!("   <- the same");
+                    }
+                }
+            }
+            println!();
+        }
+    }
+    println!(
+        "\n  the first line of each {} is `{base_label}`; the rest are differences\n  \
+         from it, and a line of `·` is a variant these battles could not tell\n  \
+         apart from the baseline.",
+        base.row_head
+    );
+    println!("{}", base.note);
+}
+
 /// What one invocation of the fought-out pass was asked for.
 struct Run {
     games: usize,
     seed: u64,
+    budget: i32,
     sim: bool,
     verbose: bool,
     csv: bool,

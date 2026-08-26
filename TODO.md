@@ -149,6 +149,17 @@ stalemate, so there is finally a baseline to measure a rewrite against.
 - cadet progression: xp, leveling, skills. fire emblem is a stated inspiration and this is the emotional engine of the genre. sketch the shape early since it lives on the cadet-instance model
 - basic requisition flow: vehicle costs, side funds, and income all exist but nothing spends money until academy mode. a minimal buy/reinforce loop shouldn't wait for the 4x layer
 ### Balance
+- **the skill-gap table's magnitudes are one draw, and CLAUDE.md quotes them
+  as facts** (measured 2026-08-26, `--sim --games 36 --sweep
+  seed=0,1000,2000,3000`). Difficulty 5 against difficulty 1 pays 23–27 wins
+  from one end and 23–32 from the other across four seeds with nothing else
+  changed, at exchange ratios from 1:1.25 to 1:2.5; the equal-skill rows that
+  section calls parity range 16–20 to 12–24. The direction is stable and the
+  claim survives — what does not survive is quoting `28–8 at 1:2.1` as the
+  build's number. Either the table wants more battles per pairing before it
+  is quoted (it is a mirrored arena, so it is cheap: 36 pairings ran in 3.7 s
+  wall), or the quoted figures want replacing with a seed-swept range. The
+  second is the honest one and is nearly free now.
 - **infantry lose badly at their asking price** (measured 2026-08-14, first
   run of the mustered-forces table): given 60 points, elastic defence buys
   seven mixed units — two rifle platoons, two scout sections, their rides, a
@@ -203,11 +214,6 @@ stalemate, so there is finally a baseline to measure a rewrite against.
 - music, engine sounds, gun reports. even placeholder sfx changes game feel enormously
 - cadet voice barks — cheap characterization for the cute side of the identity
 ### Tooling
-- the sweep compares the **fought-out digest only**. The doctrine tax,
-  mustered forces and skill-gap tables still print once per run, so a change
-  aimed at one of those has to be read with `--verbose` and two screens of
-  scrollback — the exact loop `--sweep` exists to end, one table over. Each
-  wants the same treatment: a digest struct, a fold, and a row.
 - replay viewer: save the seed + order stream and re-watch. nearly free with the deterministic sim (the same intents replay tick for tick), doubles as a balance tool
 - the game crate is barely tested: 120 tests, 5 of them in `crates/game`, and four of those are devtools/iso unit tests. `nobody_deploys_onto_their_own_way_off_the_map` is the first real one and it caught a battle-ending bug on its first run, which is the argument for more. `finish_battle`'s survivor accounting and the `apply_battle_result` wiring still have no coverage, and that is the seam where campaign state can corrupt silently. a headless test that runs a field battle end to end and checks the roster afterwards would cover most of it
 

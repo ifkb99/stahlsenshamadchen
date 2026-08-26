@@ -87,10 +87,22 @@ Three things about it are worth knowing before reaching for it:
   tank destroyer's kills between 74 and 89 and the mean battle length by 1.1
   rounds, which is larger than several differences this project has quoted as
   results.
-- **The sweep compares the fought-out digest only** — outcome, length,
-  gunnery, artillery, crew cost, and kills/losses per chassis. The doctrine
-  tax, mustered forces and skill-gap tables still print once per run;
-  `--verbose` prints each variant's full report if that is what you need.
+- **The sweep compares every table that fights battles.** The fought-out
+  digest — outcome, length, gunnery, artillery, crew cost, kills and losses
+  per chassis — and then the delegation tax, mustered forces and the skill
+  gap, each printed with the baseline's numbers on the first line of a row
+  and everybody else's as differences from it. Those three go through `Grid`
+  (named rows, named columns, numbers) and `fought_grids`, which is one list
+  called by both the single run and the sweep: a table that prints itself
+  cannot be compared, and a table added to only one of those two lists would
+  quietly stop being swept. `--verbose` still prints each variant's full
+  analytic pass and full fought-out report.
+- **`--seed` is an offset, not a base.** Zero is the sample every number this
+  project has quoted was measured on; any other value shifts all four
+  fought-out tables together, which is what makes sweeping it a re-draw of
+  the whole report rather than of one table in it. The per-table constants it
+  is added to (`FOUGHT_SEED`, `DELEGATION_SEED`, `MUSTER_SEED`, `ARENA_SEED`)
+  are the ones each table was born with, kept for exactly that reason.
 
 `balance` is the content-iteration loop, and it is built around the kill chain
 rather than around damage. The analytic pass is instant and answers "what did
@@ -948,6 +960,19 @@ rule they defend (`unspotted_enemies_still_ambush`).
   5v1 at 6–6 and looked like a regression against the numbers above; the
   same build at 36 gives 26–10. Twelve battles cannot resolve a 70% edge,
   and the table is the one most often quoted at somebody.
+
+  **And read every figure above as one draw.** Measured 2026-08-26, once the
+  harness could sweep the seed: four seeds at `--games 36`, nothing else
+  changed, put difficulty 5 against difficulty 1 at **23–27 wins from one end
+  and 23–32 from the other**, with the exchange ratio between 1:1.25 and
+  1:2.5. The *direction* is solid — 5 beats 1 on every seed in both
+  orientations, which is the claim the table exists to support — but the
+  specific pairs quoted in this section (26–10 / 28–8, 1:1.7–1.9, 1:2.1) sit
+  at the top of that band and are not the build's value, they are one sample
+  of it. The same sweep puts the two *equal-skill* rows, which this section
+  calls parity, anywhere from 16–20 to 12–24. Before quoting a number from
+  here at anybody, or reading a change in one as a result, re-draw it:
+  `balance -- --sim --games 36 --sweep seed=0,1000,2000,3000`.
 - **Army-contained unit placements are never validated.**
   `map.rs:962` passes `a.at` (the army's own hex) instead of `u.at` when
   checking each unit inside an `ArmyPlacement`, so a unit's own coordinates are
