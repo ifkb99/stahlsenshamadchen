@@ -68,6 +68,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
+use tactics_core::Hex;
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{
     AttackPreview, BattleState, EndReason, Event, Order, SideState, UnitId, blast_overmatches,
@@ -224,7 +225,8 @@ what to run
   --points N             requisition budget per side in the mustered table (60)
   --brains               which planner is better; --brain-games, --brain-difficulty
   --only A,B             print only these tables. One of: roster, hit, pen,
-                         kills, flight, flags, sim, delegation, mustered, skill
+                         kills, flight, flags, sim, delegation, mustered,
+                         skill, ground
 
 which game
   --mods DIR             mod tree to load (default assets/mods)
@@ -1276,6 +1278,7 @@ const MUSTER_SEED: u64 = 4000;
 /// The skill-gap table's own block is zero: `arena_duel` adds its 9000 itself,
 /// and moving that would change the planner seeds rather than only the ground.
 const ARENA_SEED: u64 = 0;
+const GROUND_SEED: u64 = 7000;
 
 /// Which ground this battle is fought on. Keyed on the seed rather than the
 /// game index so the pairing of map to battle survives changing `--games`.
@@ -2068,19 +2071,19 @@ fn muster_arena(
 ) -> Option<BattleState> {
     let map = arena_map()?;
     let mut placements = Vec::new();
+    // Deliberately dense, and deliberately the same shape for both armies:
+    // these forces differ in size — that is the interesting part — and a
+    // spacing rule that scaled with the count would hand the smaller army more
+    // room as a hidden bonus. Every hex is one of `arena_deployment`'s mirror
+    // pairs walked outward, so the n-th vehicle of one army stands exactly
+    // where the n-th of the other's reflection would.
+    let pairs = muster_deployment(west.len().max(east.len()));
     for (side, army) in [(0u8, west), (1u8, east)] {
         for (i, vehicle) in army.iter().enumerate() {
-            // A column down the deployment edge, spilling into the next
-            // column inward once eleven rows are used. Deliberately dense:
-            // these forces differ in size — that is the interesting part —
-            // and a spacing rule that scaled with the count would hand the
-            // smaller army more room as a hidden bonus.
-            let column = (i / 11) as i32;
-            let y = 1 + (i % 11) as i32;
-            let x = if side == 0 { 2 - column } else { 22 + column };
+            let Some((w, e)) = pairs.get(i) else { continue };
             placements.push(UnitPlacement {
                 aboard_at: None,
-                at: [x, y],
+                at: tactics_core::hex_to_offset(if side == 0 { *w } else { *e }),
                 side,
                 vehicle: vehicle.clone(),
                 crew: Vec::new(),
@@ -2113,15 +2116,143 @@ fn muster_arena(
     ))
 }
 
-fn arena_map() -> Option<HexMap> {
-    let width = 25usize;
-    let mut rows = Vec::new();
-    for _ in 0..13 {
-        let mut row: Vec<char> = "g".repeat(width).chars().collect();
-        row[8] = 'f';
-        row[16] = 'f';
-        rows.push(row.into_iter().collect::<String>());
+/// Enough mirror-paired standing room for an army of `wanted` vehicles.
+///
+/// Walks outward from the arena's own deployment line: the four hexes of
+/// `arena_deployment`, then the ring of hexes one step further from the middle,
+/// and so on. Sorted at every step so the order is a property of the geometry
+/// and not of a hash.
+fn muster_deployment(wanted: usize) -> Vec<(Hex, Hex)> {
+    let centre = arena_centre();
+    let mut out = arena_deployment();
+    let mut ring = 8i32;
+    while out.len() < wanted && ring <= ARENA_RADIUS as i32 {
+        let mut wests: Vec<Hex> = (-(ring)..=ring)
+            .map(|k| centre + Hex::new(-ring, k))
+            .filter(|h| h.distance_to(centre) <= ARENA_RADIUS as i32)
+            .collect();
+        wests.sort_by_key(|h| (h.y, h.x));
+        for w in wests {
+            if out.iter().all(|(a, _)| *a != w) {
+                out.push((w, arena_mirror(w)));
+            }
+        }
+        ring += 1;
     }
+    out
+}
+
+// --- the arena ------------------------------------------------------------
+//
+// The skill-gap and brains tables want ground that is worth nothing to either
+// side, because they are measuring execution and a ground advantage in the
+// arena is a confound rather than a result. That is a harder thing to build
+// than it looks, and the first version of this got it wrong in a way nobody
+// noticed for months: it was written as 25x13 rows of ASCII with forest at
+// columns 8 and 16, which is symmetric *as text*, and the odd-r offset
+// conversion shears text into hexes. Measured on the map it actually produced,
+// side A had nine forest hexes within six of its deployment and side B had
+// four, and side B went on to win 56.6% of 1152 equal-skill battles.
+//
+// So the arena is now built in hex space, and its symmetry is structural
+// rather than checked: a hexagon is closed under point reflection through its
+// own centre for the same reason a circle is, every feature is declared once
+// and mirrored, and `tests/arena.rs` asserts all of it. A map whose halves
+// have to be *compared* to know they match is a map that will drift.
+
+/// The arena's radius in hexes. Ten gives 331 tiles, near enough the 325 the
+/// sheared version had that the tables cost the same to run.
+const ARENA_RADIUS: u32 = 10;
+
+/// Where the arena's centre sits in the map file's offset grid. Any value does;
+/// this one keeps every column and row non-negative so the rows are printable.
+const ARENA_CENTRE: [i32; 2] = [15, 10];
+
+fn arena_centre() -> Hex {
+    tactics_core::offset_to_hex(ARENA_CENTRE[0], ARENA_CENTRE[1])
+}
+
+/// The point reflection that swaps the arena's two ends.
+///
+/// One function, used by the terrain, the objectives, the deployment and the
+/// test, so there is no second opinion about what "the other side" means.
+pub fn arena_mirror(h: Hex) -> Hex {
+    arena_centre() * 2 - h
+}
+
+/// Declare something on one side and get it on both.
+fn mirrored(seeds: impl IntoIterator<Item = Hex>) -> Vec<Hex> {
+    let mut out = Vec::new();
+    for h in seeds {
+        out.push(h);
+        out.push(arena_mirror(h));
+    }
+    out.sort_by_key(|h| (h.x, h.y));
+    out.dedup();
+    out
+}
+
+/// The timber: one belt three hexes short of the middle, and its mirror.
+///
+/// A line of constant axial x rather than a column of the text grid, which is
+/// the specific mistake being corrected — a text column is a diagonal in hex
+/// space and its two copies are not the same shape.
+fn arena_woods() -> Vec<Hex> {
+    let c = arena_centre();
+    mirrored((-3..=3).map(move |k| c + Hex::new(-4, k)))
+}
+
+/// Where each side forms up: four hexes seven out from the middle, and their
+/// mirrors. Side 0 takes the first of each pair.
+fn arena_deployment() -> Vec<(Hex, Hex)> {
+    let c = arena_centre();
+    [-3i32, -1, 1, 3]
+        .into_iter()
+        .map(move |k| {
+            let west = c + Hex::new(-7, k);
+            (west, arena_mirror(west))
+        })
+        .collect()
+}
+
+/// The ground worth holding: the middle hex and the two either side of it
+/// along one axis, which is a set the reflection maps onto itself.
+fn arena_objective() -> Vec<Hex> {
+    let c = arena_centre();
+    vec![c + Hex::new(0, -1), c, c + Hex::new(0, 1)]
+}
+
+fn arena_map() -> Option<HexMap> {
+    let centre = arena_centre();
+    let woods: std::collections::HashSet<Hex> = arena_woods().into_iter().collect();
+
+    // A bounding box on the offset grid wide enough for the hexagon. The
+    // shear costs half a column per row, so the columns have to stretch by
+    // the radius as well as by itself.
+    let radius = ARENA_RADIUS as i32;
+    let rows: Vec<String> = (0..=ARENA_CENTRE[1] + radius)
+        .map(|row| {
+            (0..=ARENA_CENTRE[0] + radius + radius / 2 + 1)
+                .map(|col| {
+                    let hex = tactics_core::offset_to_hex(col, row);
+                    // A space is "no tile here", which is how a sparse
+                    // `HexMap` spells the outside of a shape.
+                    if hex.distance_to(centre) > radius {
+                        ' '
+                    } else if woods.contains(&hex) {
+                        'f'
+                    } else {
+                        'g'
+                    }
+                })
+                .collect()
+        })
+        .collect();
+
+    let objective: Vec<[i32; 2]> = arena_objective()
+        .into_iter()
+        .map(tactics_core::hex_to_offset)
+        .collect();
     let file: MapFile = serde_json::from_value(serde_json::json!({
         "id": "skill_arena",
         "kind": "battle",
@@ -2132,14 +2263,61 @@ fn arena_map() -> Option<HexMap> {
             {
                 "id": "center",
                 "name": "The Crossroads",
-                "at": [[12, 5], [12, 6], [12, 7]],
+                "at": objective,
                 "value": 2
             }
         ],
         "victory_score": 30,
     }))
     .ok()?;
-    HexMap::from_map_file(&file).ok()
+    let map = HexMap::from_map_file(&file).ok()?;
+    assert_arena_is_mirrored(&map);
+    Some(map)
+}
+
+/// Refuse to hand back an arena that is not the mirror it claims to be.
+///
+/// A runtime check rather than a test, because the thing being defended is a
+/// *claim in a table heading*: `skill gap: ... on a mirrored arena`. The first
+/// version of this arena was asymmetric for months — nine forest hexes within
+/// six of one deployment against four of the other — and no test failed,
+/// because there was no test, because the symmetry was believed rather than
+/// asserted. It costs about a microsecond per run of a table that fights
+/// hundreds of battles, and every number the skill-gap and brains tables print
+/// depends on it being true.
+fn assert_arena_is_mirrored(map: &HexMap) {
+    let tiles: std::collections::HashMap<Hex, &str> =
+        map.iter().map(|(h, t)| (h, t.terrain.as_str())).collect();
+    for (hex, terrain) in &tiles {
+        let mirror = arena_mirror(*hex);
+        match tiles.get(&mirror) {
+            None => panic!("the arena has {hex:?} but not its mirror {mirror:?}"),
+            Some(other) => assert_eq!(
+                terrain, other,
+                "the arena is '{terrain}' at {hex:?} and '{other}' at its mirror {mirror:?}"
+            ),
+        }
+    }
+    for objective in map.objectives() {
+        for hex in &objective.hexes {
+            assert!(
+                objective.hexes.contains(&arena_mirror(*hex)),
+                "objective `{}` holds {hex:?} but not its mirror",
+                objective.id
+            );
+        }
+    }
+    for (west, east) in arena_deployment() {
+        assert_eq!(
+            arena_mirror(west),
+            east,
+            "the deployment pair {west:?}/{east:?} are not mirrors"
+        );
+        assert!(
+            tiles.contains_key(&west) && tiles.contains_key(&east),
+            "the deployment pair {west:?}/{east:?} is not on the map"
+        );
+    }
 }
 
 fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
@@ -2147,16 +2325,19 @@ fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
 
     let roster_of = ["medium_tank", "medium_tank", "tank_destroyer", "light_tank"];
     let mut placements = Vec::new();
-    for (i, vehicle) in roster_of.iter().enumerate() {
-        let y = (3 + i * 2) as i32;
-        for (side, x) in [(0u8, 2i32), (1u8, 22i32)] {
+    // The i-th vehicle of each side stands on the i-th mirror pair, so the two
+    // forces are one force and its reflection. `arena_deployment` is the only
+    // thing that knows where that is, which is what stops the two halves from
+    // being written down twice and drifting.
+    for ((west, east), vehicle) in arena_deployment().into_iter().zip(roster_of) {
+        for (side, hex) in [(0u8, west), (1u8, east)] {
             placements.push(UnitPlacement {
                 aboard_at: None,
-                at: [x, y],
+                at: tactics_core::hex_to_offset(hex),
                 side,
                 vehicle: vehicle.to_string(),
                 crew: Vec::new(),
-                name: Some(format!("{vehicle} {i}")),
+                name: Some(format!("{vehicle} {side}")),
                 facing: None,
                 formation: None,
                 leads: false,
@@ -3277,6 +3458,211 @@ fn sweep(axes: &[Axis], base: &[Override], root: &std::path::Path, cfg: &Run) {
     }
 }
 
+/// What one battle said about the ground it was fought on.
+#[derive(Default, Clone, Copy)]
+struct Ground {
+    /// Wins by whoever deployed on side 0's ground, and on side 1's. With the
+    /// orders of battle exchanged half the time, the difference between these
+    /// two is the *ground* and nothing else.
+    west: usize,
+    east: usize,
+    draws: usize,
+    /// Wins by the order of battle the map ships as side 0's, and as side 1's,
+    /// counted across both ends. The difference between *these* two is the
+    /// force, with the ground cancelled the same way.
+    ob0: usize,
+    ob1: usize,
+    rounds: u32,
+    /// Set when the two sides field different numbers of vehicles, so the
+    /// exchange could not be made and the row is measuring both effects at
+    /// once. Reported rather than hidden.
+    unswappable: bool,
+}
+
+/// One of a shipped map's battles, optionally with the two armies exchanged.
+///
+/// The exchange keeps every deployment hex exactly where the map put it and
+/// swaps only *which vehicles stand on them*, pairing the two sides' placements
+/// by index. That is the whole trick and it is why this table can separate two
+/// things a single battle cannot: fight a map both ways round and the ground
+/// stays put while the force moves.
+///
+/// Crews are stamped fresh rather than taken from the map, because a crew named
+/// for a medium tank has no business in a light one once the armies trade
+/// places. So these battles are anonymously crewed and their casualties are
+/// not comparable with the fought-out pass — which is fine, the question here
+/// is only who won.
+fn map_battle(reg: &DataRegistry, id: &str, seed: u64, swap: bool) -> Option<BattleState> {
+    let file = reg.map(id)?;
+    let map = HexMap::from_map_file(file).ok()?;
+    let sides: Vec<SideState> = file
+        .sides
+        .iter()
+        .map(|s| SideState {
+            name: s.name.clone(),
+            ai: s.ai.clone(),
+        })
+        .collect();
+    let mut placements = file.units.clone();
+    if swap {
+        let zero: Vec<usize> = (0..placements.len())
+            .filter(|i| placements[*i].side == 0)
+            .collect();
+        let one: Vec<usize> = (0..placements.len())
+            .filter(|i| placements[*i].side == 1)
+            .collect();
+        for (a, b) in zero.iter().zip(&one) {
+            let there = placements[*b].vehicle.clone();
+            let here = std::mem::replace(&mut placements[*a].vehicle, there);
+            placements[*b].vehicle = here;
+        }
+    }
+    let (roster, crews) = Roster::stamp_for(reg, &placements);
+    Some(BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    ))
+}
+
+fn ground_battle(reg: &DataRegistry, id: &str, seed: u64, swap: bool) -> Ground {
+    let mut g = Ground::default();
+    let counts = reg.map(id).map(|f| {
+        (
+            f.units.iter().filter(|u| u.side == 0).count(),
+            f.units.iter().filter(|u| u.side == 1).count(),
+        )
+    });
+    g.unswappable = counts.is_some_and(|(a, b)| a != b);
+    if swap && g.unswappable {
+        return g;
+    }
+    let Some(mut state) = map_battle(reg, id, seed, swap) else {
+        return g;
+    };
+    let mut ai = AiDriver::new();
+    // The same doctrine and the same difficulty on both sides, which is the
+    // point: two doctrines here would put a third variable in a table that
+    // exists to separate two.
+    ai.insert(0, planner(reg, seed, "massed_armor"));
+    ai.insert(1, planner(reg, seed + 1, "massed_armor"));
+    let mut rounds = 0;
+    while !state.is_over() && rounds < 60 {
+        ai.plan_round(reg, &mut state);
+        state.resolve_round(reg);
+        rounds += 1;
+    }
+    g.rounds = rounds;
+    // Side 0 holds the map's own order of battle unless they were exchanged.
+    let (side0_ob, side1_ob) = if swap { (1, 0) } else { (0, 1) };
+    match state.over.and_then(|r| r.winner) {
+        Some(0) => {
+            g.west += 1;
+            if side0_ob == 0 {
+                g.ob0 += 1
+            } else {
+                g.ob1 += 1
+            }
+        }
+        Some(_) => {
+            g.east += 1;
+            if side1_ob == 0 {
+                g.ob0 += 1
+            } else {
+                g.ob1 += 1
+            }
+        }
+        None => g.draws += 1,
+    }
+    g
+}
+
+/// What each battlefield is worth to the side that deploys on it.
+///
+/// A map favouring one end is not a bug — ground *is* strategy, and a scenario
+/// where one side holds the ridge is a scenario about holding a ridge. What is
+/// a bug is not knowing which of your maps do it or by how much, because then
+/// every other number measured on them carries an unlabelled term. This table
+/// is that label.
+///
+/// It separates the ground from the order of battle by fighting each map twice
+/// per seed with the two armies exchanged between the ends. Summed that way,
+/// `west`/`east` differ only by the ground and `OB-0`/`OB-1` differ only by the
+/// force — the other effect cancels in each. On `battle_plains` and
+/// `battle_forest` the two orders of battle are already identical, so their
+/// `OB` columns are a control that should read level whatever the ground does.
+fn ground_bias(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
+    let maps = battle_maps(reg);
+    let rows = maps
+        .iter()
+        .map(|id| {
+            let jobs: Vec<(u64, bool)> = (0..games as u64)
+                .flat_map(|g| [(g, false), (g, true)])
+                .collect();
+            let fought = run_all(&jobs, |&(g, swap)| {
+                ground_battle(reg, id, GROUND_SEED + seed + g, swap)
+            });
+            let mut t = Ground::default();
+            for one in &fought {
+                t.west += one.west;
+                t.east += one.east;
+                t.draws += one.draws;
+                t.ob0 += one.ob0;
+                t.ob1 += one.ob1;
+                t.rounds += one.rounds;
+                t.unswappable |= one.unswappable;
+            }
+            let fights = (t.west + t.east + t.draws).max(1) as f64;
+            (
+                format!("{id}{}", if t.unswappable { " *" } else { "" }),
+                vec![
+                    t.west as f64,
+                    t.east as f64,
+                    t.draws as f64,
+                    t.ob0 as f64,
+                    t.ob1 as f64,
+                    t.rounds as f64 / fights,
+                ],
+            )
+        })
+        .collect();
+
+    Grid {
+        title: format!(
+            "ground: {} battles per map, each fought both ways round with the two armies exchanged",
+            games * 2
+        ),
+        preamble: Vec::new(),
+        row_head: "map",
+        columns: vec![
+            col("west won", 0),
+            col("east won", 0),
+            col("draws", 0),
+            col("OB-0 won", 0),
+            col("OB-1 won", 0),
+            col("rounds", 1),
+        ],
+        rows,
+        note: format!(
+            "\n  `west`/`east` is which END of the map won, summed over both arrangements,\n  \
+             so the armies cancel and what is left is the ground. `OB-0`/`OB-1` is which\n  \
+             ORDER OF BATTLE won, summed over both ends, so the ground cancels and what is\n  \
+             left is the force. A map is allowed to favour an end — ground is strategy —\n  \
+             and this says which of them do and by how much.\n\n  \
+             a row marked `*` fields different numbers of vehicles per side, so the armies\n  \
+             could not be exchanged and its columns still carry both effects together.\n  \
+             crews are anonymous here (a crew named for a medium tank cannot follow it\n  \
+             into a light one), so the casualties are not comparable with the fought-out\n  \
+             pass; the winner is.{}",
+            level_note(games * 2)
+        ),
+    }
+}
+
 /// The three tables that fight battles but are not the fought-out pass.
 ///
 /// One list, called by both the single run and the sweep, because the failure
@@ -3292,6 +3678,9 @@ fn fought_grids(reg: &DataRegistry, cfg: &Run, seed: u64, budget: i32) -> Vec<Gr
     }
     if cfg.only.wants("skill") {
         out.push(skill_gap(reg, cfg.games, seed));
+    }
+    if cfg.only.wants("ground") {
+        out.push(ground_bias(reg, cfg.games, seed));
     }
     out
 }
@@ -3605,6 +3994,7 @@ const TABLES: &[&str] = &[
     "delegation",
     "mustered",
     "skill",
+    "ground",
 ];
 
 impl Only {

@@ -168,8 +168,14 @@ pub fn reachable(registry: &DataRegistry, state: &BattleState, id: UnitId) -> Ha
 /// implementations of that would be two answers to *where is she going*, and
 /// the replay would only agree with one of them.
 ///
-/// Deterministic tiebreak on coordinates: two equally close hexes must pick
-/// the same one on every machine.
+/// Three keys, in order, and **every one of them is a distance or a cost**.
+/// That is not tidiness, it is the whole correctness argument, and it was
+/// bought expensively — see [`along_the_bearing`].
+///
+/// 1. Get as close to the destination as this round's movement allows.
+/// 2. Among those, spend the least getting there. A driver would, and it
+///    leaves her the most credit for whatever the rest of the round asks.
+/// 3. Among *those*, stay on the bearing she is driving.
 pub fn step_toward(
     registry: &DataRegistry,
     state: &BattleState,
@@ -177,10 +183,59 @@ pub fn step_toward(
     destination: Hex,
 ) -> Option<Hex> {
     let pos = state.unit(id)?.pos;
+    let bearing = destination - pos;
     reachable(registry, state, id)
-        .into_keys()
-        .min_by_key(|h| (destination.distance_to(*h), h.x, h.y))
+        .into_iter()
+        .min_by_key(|(hex, cost)| {
+            (
+                destination.distance_to(*hex),
+                *cost,
+                -along_the_bearing(*hex - pos, bearing),
+                // Last, and only ever a coin flip off the line of advance:
+                // `reachable` is a `HashMap`, so the three keys above being
+                // non-total made the winner depend on hash order. That is the
+                // one bug this engine has already shipped once, and
+                // `two_runs_in_one_process_agree_with_each_other` caught it
+                // within a minute of it being reintroduced here.
+                hex.x,
+                hex.y,
+            )
+        })
+        .map(|(hex, _)| hex)
         .filter(|step| *step != pos)
+}
+
+/// How much of `step` goes the way `bearing` points: the cube dot product.
+///
+/// This exists because the tiebreak it serves used to read `(h.x, h.y)`, and
+/// that is a **compass** direction. Smallest x is west, so on every tie every
+/// crew in the game drifted west — which pulls a side attacking east backwards
+/// and a side attacking west forwards. It was worth about three points of win
+/// rate to whichever side was advancing westward, and it hid for months inside
+/// a "mirrored" arena because the arena was not mirrored either and the two
+/// faults pointed the same way. `balance --only skill` measures what is left.
+///
+/// The rule that replaced it: **a tiebreak may only read quantities a
+/// reflection preserves.** Distances and terrain costs qualify. A dot product
+/// of two differences qualifies, because a point reflection negates both and
+/// the product is unchanged. A coordinate does not, and no total order on
+/// coordinates can — a reflection maps the least element to the greatest, so
+/// asking for "the smallest" is asking which way is west. Anything added to
+/// the key in `step_toward` has to pass that test.
+///
+/// A residue is unavoidable and is deliberately left where it does no harm.
+/// Two hexes at equal distance, equal cost and equal bearing are mirror images
+/// of each other *within* one crew's own choice, and the coordinate key still
+/// sitting at the bottom of the sort picks between them. It has to: `reachable`
+/// returns a `HashMap`, so a key that is not a total order makes the answer
+/// depend on hash iteration order, which is the one bug this engine has
+/// already shipped. What matters is that the compass now decides only a
+/// left-or-right choice *off* the line of advance rather than a
+/// forward-or-backward one, so it cannot accumulate into an edge for an end
+/// of the map.
+pub fn along_the_bearing(step: Hex, bearing: Hex) -> i32 {
+    let z = |h: Hex| -h.x - h.y;
+    step.x * bearing.x + step.y * bearing.y + z(step) * z(bearing)
 }
 
 /// Cheapest path for `unit` to `to`, if it exists within this turn's budget.

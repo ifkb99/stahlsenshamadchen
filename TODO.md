@@ -88,6 +88,36 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 - overall start menu to pick gamemode, settings menu, choose campaign submenu, activate mods, etc
 ### Units
 - apc/ifv, can carry infantry that can dismount
+- **more than one unit to a hex** (MVP). A hex is 100 m, and a hex holding one
+  vehicle is why a section arrives as a queue and why the AI spends movement
+  going around its own friends. The mechanical part is small — occupancy is
+  read through **one** function, `unit_at`, and CLAUDE.md already forbids
+  scanning `units` yourself precisely so this kind of change lands in one
+  place. `unit_at` becomes "who is on this hex" plural, and the callers split
+  into two kinds: the ones asking *is there room* (movement, `passable`,
+  `destination_blocked`) want a capacity rule, and the ones asking *who is
+  here* (targeting, spotting, splash) want the list. The passenger filter
+  (`aboard.is_none()`) stays exactly where it is and gets inherited by both.
+  Wants a capacity per terrain or per hex — a wood holding three platoons and
+  a bridge holding one is the interesting version, and it is data.
+
+  The part the designer flagged as the real work is **shooting at a stack**:
+  `fire_at_tile` already resolves against "whoever turns out to be standing on
+  the hex" and would now have to pick, `hit_chance` names a target by id so it
+  needs one, and blast/splash already walks neighbours and would find several
+  bodies per hex. Three sub-questions, none of them free: who a direct shot
+  finds when several are there (weight by `profile`? by what the gunner can
+  see?), whether a stack is *easier* to hit as a whole (it should be), and
+  whether splash into a stack rolls once per unit or once per hex. Each is a
+  rule the resolver has to state rather than fall into — see the ballistics
+  arc's habit of pricing a thing exactly once.
+
+  Two things it interacts with that are easy to miss. **Ambush and
+  concealment**: a stack in cover is more to spot, so `concealment` scaling
+  the spotter's range wants a stack term or a wood full of infantry becomes
+  invisible in bulk. And **`reachable()`** is already O(hexes x units) twice
+  over (see Misc); a capacity check inside `passable` makes that worse unless
+  the occupancy index in that item lands first, so do them together.
 
 ## Mid Term Goals
 - separate engine from game if needed. I want to use this for a roguelike in the future. (mostly already true: tactics_core has no bevy dependency, the rng is seeded ChaCha8, BattleState is Clone for search branching, and the boundary really is intents-in/events-out. what is left is that VehicleDef/ArmorSpec/MovementSpec are tank-shaped — and those live behind the registry in data/defs.rs, so the seam is where it should be)
@@ -149,28 +179,35 @@ stalemate, so there is finally a baseline to measure a rewrite against.
 - cadet progression: xp, leveling, skills. fire emblem is a stated inspiration and this is the emotional engine of the genre. sketch the shape early since it lives on the cadet-instance model
 - basic requisition flow: vehicle costs, side funds, and income all exist but nothing spends money until academy mode. a minimal buy/reinforce loop shouldn't wait for the 4x layer
 ### Balance
-- **side B wins 56.6% of equal-skill battles on the mirrored arena**
-  (measured 2026-08-26, 16 seeds × `--games 36` = 1152 battles, the skill-gap
-  table's `the ends` row: 494–652, same direction on 14 of 16 seeds). CLAUDE.md
-  and DONE.md both had this struck through as fixed by the per-round
-  difficulty lean; it was not — that fix removed a *different* bias, the one
-  that scaled with reachable-tile count, and "20 and 20" was one draw of a
-  figure that ranges 16–27. The arena is mirror-symmetric and a battle is not,
-  so **resolution order is the first place to look**: within a tick, side 0's
-  movement and fire resolve before side 1's, and a tick is 5 s. Two things
-  follow. It taxes every reading of that table, which is why the table now
-  prints `both ends` rows that add the two orientations and cancel it — quote
-  those. And if it is resolution order, it is a *game* problem and not an
-  instrument one: a player who deploys on the wrong side of `river_crossing`
-  is paying it too.
-  A first reading of that, now that the budget is sweepable
-  (`--only mustered --sweep points=60,100`): at 100 points every doctrine buys
-  armour — elastic defence picks up a heavy tank and a tank destroyer beside
-  its platoons — and goes from 0–12 to 8–4 against recon pull. So part of the
-  answer is that 60 points is a budget at which only massed armour can afford
-  a coherent force, and elastic defence is being priced out of the vehicles
-  its doctrine wants rather than being bad at using infantry. Read at 12
-  battles, which is inside the band; re-draw before acting on it.
+- ~~**side B wins 56.6% of equal-skill battles on the mirrored arena**~~ fixed
+  2026-08-26. Three faults pointing the same way, none of them the resolution
+  order this note kept naming: the arena was sheared by the offset conversion
+  and was never a mirror, and two tiebreaks read `(x, y)` — a *compass* — so
+  every crew in the game edged west wherever the real keys tied. 42.9% -> 49.2%
+  of 2304 equal-skill battles, and round one on the symmetric arena at equal
+  skill is now mirrored 8 of 8. The general rule is in CLAUDE.md's invariants;
+  the account is under "Difficulty is inverted in practice".
+- **two of the three battle maps favour an end, and nobody decided that**
+  (measured 2026-08-26, `--only ground`, 72 battles a map with the armies
+  exchanged between the ends so the force cancels). `battle_forest` pays the
+  west 50-22 and `battle_plains` pays the east 29-43; a level pairing at 72
+  battles wanders 28-44, so both are real. `river_crossing`'s ground is level
+  (42-30) but its two orders of battle are not: 26-46 to the side fielding the
+  tank destroyer instead of the artillery.
+  **This is a content question, not a bug.** Ground advantage is strategy and
+  a map is allowed to have it — what it must not be is unlabelled, because
+  `balance --sim` samples all three maps and every number it prints carries
+  the term. Two things to decide. Whether each map's tilt is the one intended
+  (a river crossing *should* favour the defender; does `battle_plains` mean to
+  favour its east?), and whether `river_crossing`'s force gap is deliberate,
+  since it is the determinism baseline and its 26-46 is quoted implicitly
+  every time the fought-out pass is read. Re-measure any change with
+  `--only ground --sweep seed=0,1000,2000`.
+- **difficulty 5 over difficulty 3 barely discriminates**: 51.9% of 2304
+  battles (+1.8 sd) against 61.1% for 5-over-1. Not a bias — the bias is gone
+  — but it is the measurement behind "the goal chooser is shallow" under
+  Immediate Goals, and it is the number that item should be judged against
+  when somebody deepens the chooser.
 - **infantry lose badly at their asking price** (measured 2026-08-14, first
   run of the mustered-forces table): given 60 points, elastic defence buys
   seven mixed units — two rifle platoons, two scout sections, their rides, a

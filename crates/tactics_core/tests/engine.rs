@@ -1561,6 +1561,125 @@ fn unit_at(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> UnitPlacement {
     }
 }
 
+/// A hexagon of open grass, so that "the same problem from the other end" is
+/// a thing that exists.
+///
+/// A hexagon rather than a rectangle of text because the offset conversion
+/// *shears* text: a rectangle of ASCII is symmetric on the page and is not
+/// symmetric on the map, which is a mistake this project has already made
+/// once and paid for (see `a_march_is_the_same_march_from_either_end`). A
+/// hexagon is closed under point reflection through its own centre for the
+/// same reason a circle is.
+fn open_hexagon(reg: &DataRegistry, radius: i32, placements: Vec<UnitPlacement>) -> BattleState {
+    let centre = tactics_core::offset_to_hex(radius + radius / 2, radius);
+    let rows: Vec<String> = (0..=2 * radius)
+        .map(|row| {
+            (0..=2 * radius + radius / 2 + 1)
+                .map(|col| {
+                    if tactics_core::offset_to_hex(col, row).distance_to(centre) > radius {
+                        ' '
+                    } else {
+                        'g'
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    let borrowed: Vec<&str> = rows.iter().map(String::as_str).collect();
+    two_side_battle(reg, &borrowed, placements, 1)
+}
+
+/// Driving from A to B and driving from B to A are the same problem reflected,
+/// and the engine has to answer them the same way.
+///
+/// This is the regression test for a bias that cost this project months of
+/// misread balance numbers. `movement::step_toward` used to break ties with
+/// `(h.x, h.y)` — and smallest x is *west*, so wherever two hexes were equally
+/// close to the destination every crew in the game edged west. That is
+/// forwards for a side attacking west and backwards for a side attacking east,
+/// so it was worth real points to whichever end of a map was on the east; the
+/// mirrored arena that was supposed to detect exactly this had the same fault
+/// in its own terrain and the two pointed the same way.
+///
+/// The rule it enforces: **a tiebreak may only read quantities a reflection
+/// preserves.** Distances and terrain costs qualify; a dot product of two
+/// differences qualifies, because a reflection negates both; a coordinate does
+/// not, and no total order on coordinates can — a reflection maps the least
+/// element to the greatest, so asking for the smallest is asking which way is
+/// west.
+#[test]
+fn a_march_is_the_same_march_from_either_end() {
+    let reg = registry();
+    let radius = 6;
+    let centre = tactics_core::offset_to_hex(radius + radius / 2, radius);
+    let mirror = |h: tactics_core::Hex| centre * 2 - h;
+
+    // Off both axes on purpose: a destination straight ahead has one closest
+    // reachable hex and never reaches the tiebreak at all.
+    let west = centre + tactics_core::Hex::new(-5, 1);
+    let goal_west = centre + tactics_core::Hex::new(3, -2);
+    let state = open_hexagon(
+        &reg,
+        radius,
+        vec![
+            unit_at(tactics_core::hex_to_offset(west), 0, "medium_tank", "West"),
+            unit_at(
+                tactics_core::hex_to_offset(mirror(west)),
+                1,
+                "medium_tank",
+                "East",
+            ),
+        ],
+    );
+
+    let theirs = reachable(&reg, &state, UnitId(0)).len();
+    assert!(
+        theirs > 1,
+        "the stage is pointless if she cannot go anywhere: {theirs} tiles"
+    );
+
+    let a = tactics_core::battle::step_toward(&reg, &state, UnitId(0), goal_west)
+        .expect("west has somewhere to go");
+    let b = tactics_core::battle::step_toward(&reg, &state, UnitId(1), mirror(goal_west))
+        .expect("east has somewhere to go");
+    assert_eq!(
+        a,
+        mirror(b),
+        "west stepped to {a:?} and east to {b:?}, whose mirror is {:?} — the same \
+         problem from the other end got a different answer",
+        mirror(b)
+    );
+}
+
+/// The projection a tiebreak is allowed to read, and why it is allowed.
+#[test]
+fn a_reflection_leaves_a_bearing_alone_and_turns_a_coordinate_around() {
+    use tactics_core::Hex;
+    use tactics_core::battle::along_the_bearing;
+    let centre = Hex::new(4, -7);
+    let mirror = |h: Hex| centre * 2 - h;
+    for step in [Hex::new(1, 0), Hex::new(-2, 3), Hex::new(0, -4)] {
+        for bearing in [Hex::new(5, -1), Hex::new(-3, -2)] {
+            // A reflection negates both differences, so their product stands.
+            assert_eq!(
+                along_the_bearing(step, bearing),
+                along_the_bearing(-step, -bearing),
+                "the bearing projection must survive a reflection"
+            );
+        }
+    }
+    // And the thing that does not: whichever hex has the smaller x, its
+    // mirror has the larger. This is the whole reason a coordinate cannot be
+    // a tiebreak, stated as an assertion rather than as a comment.
+    let (lo, hi) = (Hex::new(-3, 1), Hex::new(2, 1));
+    assert!(lo.x < hi.x);
+    assert!(
+        mirror(lo).x > mirror(hi).x,
+        "a reflection reverses a coordinate order, which is what made `min_by_key` \
+         on `h.x` a compass"
+    );
+}
+
 /// Two medium tanks three hexes apart in the open, in plain sight of each
 /// other. Unit 0 is West, unit 1 is East.
 fn duel(reg: &DataRegistry, seed: u64) -> BattleState {

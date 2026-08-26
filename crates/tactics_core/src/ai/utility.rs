@@ -10,11 +10,14 @@ use super::goal::{self, GoalChooser};
 use super::{
     AiConfig, AiPlanner, Evaluator, difficulty_noise, next_unplanned_unit, resolve_doctrine,
 };
-use crate::battle::{BattleState, FireIntent, Order, UnitId, reachable, step_toward};
+use crate::battle::{
+    BattleState, FireIntent, Order, UnitId, along_the_bearing, reachable, step_toward,
+};
 use crate::data::DataRegistry;
 use hexx::Hex;
 use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use std::cmp::Reverse;
 use std::collections::VecDeque;
 
 /// The best tile found for one unit, and the shot that came with it.
@@ -415,11 +418,38 @@ impl UtilityPlanner {
         // conserves movement for ground that is actually better, and is
         // what a crew would do: nobody drives across a field to park on
         // identical grass.
+        //
+        // The two keys after distance replaced `(tile.x, tile.y)`, which was
+        // a **compass**: smallest x is west, so where the first key tied every
+        // crew in the game edged west, which is forwards for a side attacking
+        // west and backwards for one attacking east. On the mirrored arena
+        // that is worth points to whichever end is on the east — it is the
+        // same bug as the one this comment describes, one layer up, and it
+        // survived the fix because the fix only changed which tile *wins*, not
+        // how a tie between winners breaks. The rule now, here and in
+        // `step_toward`: **a tiebreak may only read quantities a reflection
+        // preserves.** Distances do. A score does. A dot product of two
+        // differences does, because a reflection negates both. A coordinate
+        // does not, and no total order on coordinates can.
         const PLATEAU: f32 = 0.3;
+        let facing = Hex::from(state.unit(unit).map(|u| u.facing).unwrap_or_default());
         let best = scored
             .into_iter()
             .filter(|(_, s, _)| *s >= top - PLATEAU)
-            .min_by_key(|(tile, _, _)| (pos.distance_to(*tile), tile.x, tile.y))
+            .min_by_key(|(tile, score, _)| {
+                (
+                    pos.distance_to(*tile),
+                    // Among tiles equally near, the better one. The plateau
+                    // rule is about not *driving* for a tiny gain; it was
+                    // never about declining one that costs nothing.
+                    Reverse((score * 1000.0) as i32),
+                    // And among those, the one furthest the way she is already
+                    // looking — which is at the enemy, because that is where
+                    // `face_units_at_enemies` pointed her and where every
+                    // shot since has kept her.
+                    -along_the_bearing(*tile - pos, facing),
+                )
+            })
             .map(|(tile, _, attack)| Choice { dest: tile, attack });
 
         let (best_dest, attack) = match best {

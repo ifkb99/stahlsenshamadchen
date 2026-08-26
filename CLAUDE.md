@@ -108,8 +108,27 @@ Three things about it are worth knowing before reaching for it:
   unasked because the alternative is remembering to work it out.
   `--absolute` switches the variant lines from differences to their own
   values, which is what reading a *range* wants.
+- **`ground` says what each battlefield is worth to the end that deploys on
+  it**, which is worth knowing rather than worth removing: a scenario where one
+  side holds the ridge is a scenario about holding a ridge. It separates the
+  ground from the order of battle by fighting every map twice per seed **with
+  the two armies exchanged between the ends** — placements stay exactly where
+  the map put them and only the vehicles standing on them swap — so summed that
+  way `west`/`east` differ only by the ground and `OB-0`/`OB-1` differ only by
+  the force. Its own control is built in: `battle_plains` and `battle_forest`
+  ship *identical* orders of battle, so their `OB` columns must read level
+  whatever the ground does, and they do (36–36 and 37–35).
+
+  First reading, 72 battles a map: **`battle_forest` favours the west 50–22 and
+  `battle_plains` favours the east 29–43**, both well outside the 28–44 band a
+  level pairing wanders in. `river_crossing`'s *ground* is level at 42–30, but
+  its two orders of battle are not — 26–46 to the side with the tank destroyer.
+  Whether those are the ground the designer meant is a content question, now in
+  TODO; what matters here is that every other number measured on those maps
+  carries the term, and it used to carry it unlabelled.
 - **`--only <tables>` prints just the ones named** (`roster`, `hit`, `pen`,
-  `kills`, `flight`, `flags`, `sim`, `delegation`, `mustered`, `skill`).
+  `kills`, `flight`, `flags`, `sim`, `delegation`, `mustered`, `skill`,
+  `ground`).
   `--sim` runs four tables that fight battles, and paying for the other three
   while iterating on one is the kind of friction that ends in the instrument
   not being run at all. Sixteen seeds of the skill-gap table alone take about
@@ -932,6 +951,22 @@ Consequences that are easy to violate by accident:
   `spotted_enemy_at` exists so callers do not reach for `unit_at` and leak.
 - **Damage lands during a tick; death is reaped at the end of it.** That is what
   lets two crews kill each other simultaneously. Do not make `reap` eager.
+- **A tiebreak may only read quantities a reflection preserves.** Distances
+  and terrain costs qualify. A dot product of two differences qualifies,
+  because a point reflection negates both and the product is unchanged. **A
+  coordinate does not**, and no total order on coordinates can — a reflection
+  maps the least element to the greatest, so asking for "the smallest x" is
+  asking which way is west, and every crew in the game then edges that way
+  wherever the real keys tie. That is forwards for a side attacking west and
+  backwards for one attacking east, so it pays points to whichever end of the
+  map is on the east. It shipped twice, in `movement::step_toward` and in the
+  utility planner's plateau argmax, and cost about two points of win rate
+  between them. Where a *total* order is still needed for determinism — and it
+  is, because `reachable` returns a `HashMap` — put the coordinate key last,
+  behind every invariant key, so the compass decides only a left-or-right
+  choice off the line of advance. `a_march_is_the_same_march_from_either_end`
+  and `a_reflection_leaves_a_bearing_alone_and_turns_a_coordinate_around`
+  guard it.
 - **`alive` and "standing on a hex" are two different questions.** `alive`
   goes false when she is destroyed *and* when she drives off by an exit, so
   classify outcomes with `surviving_units()` / `lost_units()` or a successful
@@ -993,18 +1028,41 @@ rule they defend (`unspotted_enemies_still_ambush`).
   better than 1:2"; against difficulty 1 the exchange reaches that on some
   seeds and not on others.
 
-  **Side B still holds an edge on the mirrored arena, and it is not small.**
-  The table's `the ends` row adds the two *equal-skill* pairings, so its two
-  win columns are worth-of-being-A against worth-of-being-B and nothing
-  else: **494–652, side B on 56.6% of 1152 battles**, in the same direction
-  on 14 of the 16 seeds. An earlier version of this note struck that
-  residual through on the strength of the 5-vs-3 row paying "20 and 20"
-  once — one draw of a figure that ranges 16–27. What *was* real about that
-  fix is its mechanism: difficulty noise drawn per candidate tile gave a bias
-  that scaled with how many tiles a unit could reach, which is what an
-  argmax-over-independent-draws bias does, and removing it was right. It did
-  not remove this. Tracked in TODO under Balance; the arena is symmetric and
-  a battle is not, so resolution order is the first place to look.
+  ~~**Side B holds an edge on the mirrored arena.**~~ **Found and fixed
+  2026-08-26, and it was three faults pointing the same way — none of them
+  resolution order, which is where this note kept saying to look.**
+
+  | | side A's share of equal-skill battles |
+  | --- | --- |
+  | as it stood | **42.9%** (494–652 of 1152), −4.8 sd |
+  | arena rebuilt symmetric | 45.6% |
+  | `step_toward` tiebreak fixed | 46.4% |
+  | planner argmax tiebreak fixed | **49.2%** (1133–1169 of 2304), −0.8 sd |
+
+  1. **The arena was not mirrored.** It was written as 25×13 rows of ASCII
+     with forest at columns 8 and 16 — symmetric *as text* — and the odd-r
+     offset conversion shears text into hexes. On the map it actually
+     produced, six of 325 tiles had no mirror at all, 24 disagreed with their
+     mirror on terrain, and side A had **nine** forest hexes within six of its
+     deployment against side B's **four**. It is now a radius-10 hexagon whose
+     every feature is declared once and reflected, and `arena_map` asserts
+     that before handing it back.
+  2. **and 3. Two coordinate tiebreaks**, in `movement::step_toward` and in
+     the plateau argmax above. The general rule they broke is in the
+     invariants section: a tiebreak may only read quantities a reflection
+     preserves.
+
+  The proof that it is *structurally* gone rather than merely smaller: on the
+  symmetric arena, with difficulty 5 both sides (where the blur is exactly
+  zero) and the same planner seed, round one now produces **eight of eight
+  mirrored decisions and positions**. Before the tiebreak fixes the goals
+  matched and three of four positions did not — the planner agreed and the
+  march did not, which is what pointed at `step_toward`.
+
+  What the fixes did **not** do is make difficulty matter more. Skill still
+  tells strongly at the extreme — 5-over-1 pays 61.1% (+10.6 sd) — while
+  5-over-3 pays 51.9%, which is +1.8 sd and therefore barely anything. That is
+  the shallow-goal-chooser item in TODO, not a bias.
 
   **Read this table at `--games 36` or not at all**, and re-draw it before
   quoting it — `--only skill --sweep seed=0,1000,2000,3000` costs about
