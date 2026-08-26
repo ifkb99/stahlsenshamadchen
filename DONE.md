@@ -504,6 +504,42 @@ is no longer `river_crossing`). Two tours were then "failing" for the same
 reason. The lesson is the cheap one: a tour states its map at the top, and
 running it without that is not a test result.
 
+**MCTS is parked, on evidence.** REVIEW.md read "Kuhlmann won 3/3" as a sign
+that MCTS beat the utility planner, and it could not be: `playthrough` gave
+side 0 both MCTS *and* `massed_armor`, on a map whose sides field different
+vehicles. Three candidate explanations, one observation.
+
+`balance --brains` separates them — the mirrored arena, same forces, same
+doctrine, same difficulty, both orientations, only the brain differs. At 64
+battles a pairing:
+
+| pairing (A vs B) | A won | B won | draws |
+| --- | --- | --- | --- |
+| utility vs utility | 33 | 31 | 0 |
+| mcts vs mcts | 31 | 33 | 0 |
+| mcts vs utility | 29 | 34 | 1 |
+| utility vs mcts | 28 | 35 | 1 |
+
+**MCTS 64, utility 62, out of 128.** Parity. The controls are what make that
+believable: both same-brain rows land within two games of even, so the noise
+floor is about ±3, and a real difference would have had to clear it in *both*
+mixed rows. Neither does — both favour whichever side is B, by an amount well
+inside a coin's spread.
+
+So a planner costing ~1.8 s an order plays no better than one costing 0.05
+ms. The likeliest reason is worth recording because it generalises: MCTS's
+rollout policy **is** the utility planner, so it searches a tree whose leaves
+are evaluated by the thing it is trying to beat. A search is only as good as
+what it searches toward, and 900 iterations of a mediocre evaluator buys
+almost nothing over asking that evaluator once. If MCTS is ever revived, the
+evaluator is the thing to improve first — which is the same conclusion the
+goal chooser reached from the other end.
+
+Note the A/B was only answerable because the tables now fight across every
+core: 256 battles took four minutes, where the first attempt at a quarter of
+that sample had been framed as an overnight job and produced six battles a
+pairing, which said nothing at all.
+
 **Saves record which mods were playing.** `SaveGame.mods` stamps id and
 version; mismatched ids are refused (the rules genuinely differ), version drift
 on the same set warns and loads (a content patch must not cost the player their

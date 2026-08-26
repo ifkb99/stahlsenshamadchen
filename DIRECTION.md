@@ -177,7 +177,7 @@ Ordered by spark per hour, not by dependency.
 | 2 | Say what a verb means before it is pressed | **done** |
 | 3 | Close the consequence loop | **done**, roster screen open |
 | 4 | Fix the fun taxes REVIEW.md found | **done**, bar the A/B |
-| 5 | Park a layer (MCTS) | A/B instrument built, sample too small |
+| 5 | Park a layer (MCTS) | **answered: it is not better. Park it** |
 
 ### 1. Orders mean what they say
 
@@ -459,14 +459,34 @@ MCTS is ~3.3 s per order and ships unused; the scenario names `utility`. It is
 maintenance surface with no role. Either it becomes the enemy brain or it goes
 on ice, deliberately and in writing.
 
-`balance --brains` is the instrument that settles it: the mirrored arena the
+`balance --brains` is the instrument that settled it: the mirrored arena the
 skill-gap table uses, same forces, same doctrine, same difficulty, varying
-only which planner is thinking, in both orientations. First run, 6 battles a
-pairing at difficulty 3, **says nothing** — both same-brain control rows came
-in 2–4 and both mixed rows 4–2, i.e. every row favoured whichever side it was
-rather than whichever brain. Six battles cannot resolve this; the run wants
-20+ a pairing and MCTS costs about a minute a battle, so it is an overnight
-job rather than an afternoon one.
+only which planner is thinking, in both orientations. **256 battles at 64 a
+pairing, difficulty 3, 2026-08-25:**
+
+| pairing (A vs B) | A won | B won | draws |
+| --- | --- | --- | --- |
+| utility vs utility | 33 | 31 | 0 |
+| mcts vs mcts | 31 | 33 | 0 |
+| mcts vs utility | 29 | 34 | 1 |
+| utility vs mcts | 28 | 35 | 1 |
+
+**MCTS 64 wins, utility 62, out of 128 mixed battles. That is parity.** The
+controls are the reason to believe it: both same-brain rows came in within
+two games of even, so the noise floor is about ±3 and a real difference would
+have had to clear it in *both* mixed rows. Neither row favours a brain —
+both favour whichever side is B, by an amount (69 of 128 combined) that is
+inside one standard deviation of a coin.
+
+So MCTS is ~1.8 s per order against the utility planner's 0.05 ms, roughly
+thirty thousand times the cost, and it does not win. **It goes on ice.** The
+verdict rather than the code: the module still compiles and its tests still
+run, but nothing ships it, no planner change owes it a budget, and anybody
+proposing to revive it starts from this table. The likeliest reason it fails
+is worth writing down — its rollout policy *is* the utility planner, so it
+searches a tree whose leaves are evaluated by the thing it is trying to beat,
+and 900 iterations of that buys very little over asking the evaluator once.
+A search is only as good as what it is searching toward.
 
 ## The word, and the school roll
 
@@ -589,6 +609,13 @@ when somebody sweeps it, and a sweep needs an instrument.
   earlier in the session, it had by the end of it. Do not conclude from one
   degenerate capture that the harness is broken — run `battle-tour.txt` and
   check, which is what settled it in both directions.
+- **2026-08-25** — step 5 is answered, and the answer is no. MCTS and the
+  utility planner are at parity over 256 controlled battles (64–62), with
+  same-brain control rows within two games of even, so the noise floor is
+  small enough to trust it. Parked in writing. Worth keeping: the A/B only
+  became answerable because the balance tables now fight across all cores —
+  the run took four minutes where the first attempt at a *quarter* of the
+  sample was framed as an overnight job.
 - **2026-08-25** — the planner has goals, and the goal chooser is the seam a
   learned policy would replace: candidates are shared knowledge, choosing is
   judgement, and the executor keeps every rule it already knows. Two things

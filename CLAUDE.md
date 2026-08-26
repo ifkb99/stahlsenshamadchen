@@ -839,6 +839,18 @@ rule they defend (`unspotted_enemies_still_ambush`).
   Run it `--release` or the figures are meaningless. Note this supersedes the
   "~39 µs per call on the 768-tile map" figure that used to appear below: that
   map stopped existing when battle maps became the radius-20 hexagon.
+- **MCTS is parked, and the table that parked it is worth reading before
+  reviving it.** `balance --brains` fights the mirrored arena — same forces,
+  same doctrine, same difficulty, only the planner differs, both
+  orientations. At 64 battles a pairing: **MCTS 64 wins, utility 62, out of
+  128 mixed battles**, with both same-brain control rows inside two games of
+  even. It costs ~1.8 s an order against 0.05 ms and does not win. The
+  likeliest reason is structural: MCTS's rollout policy *is* the utility
+  planner, so it searches a tree whose leaves are scored by the thing it is
+  trying to beat. A search is only as good as what it searches toward, and
+  900 iterations of that buys almost nothing. It still compiles and its tests
+  still run; nothing ships it, and no planner change owes it a performance
+  budget.
 - **MCTS is expensive but no longer impossible.** Was ~35 s per unit order and
   could not finish a round; the fog work brought it to ~3.3 s per order, and
   `cargo run --release -p tactics_core --example playthrough` now plays a full
