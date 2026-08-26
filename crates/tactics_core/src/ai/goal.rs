@@ -62,7 +62,7 @@ const IMPATIENCE: f32 = 0.35;
 /// then the fallback — because a chooser that breaks ties by position in this
 /// list must break them the same way on every machine.
 pub fn candidates(
-    _registry: &DataRegistry,
+    registry: &DataRegistry,
     state: &BattleState,
     unit: UnitId,
     mission: Option<&Mission>,
@@ -111,7 +111,7 @@ pub fn candidates(
         // in whatever does the scoring, which is where this problem lived
         // before and where it was hard to see.
         for hex in &objective.hexes {
-            if claimed_by_another(state, unit, *hex) {
+            if claimed_by_another(registry, state, unit, *hex) {
                 continue;
             }
             push(*hex);
@@ -144,18 +144,52 @@ fn ordered_ground(mission: &Mission) -> Option<Hex> {
     }
 }
 
-/// Whether a friendly crew other than this one is standing on, or already
-/// making for, this hex.
-fn claimed_by_another(state: &BattleState, unit: UnitId, hex: Hex) -> bool {
+/// Whether this hex is already somebody else's, counting both the crews
+/// standing on it and the ones driving for it.
+///
+/// This used to be "is any friend on it or making for it", which was the
+/// dispersion rule the plateau tie-break was quietly doing, said once and
+/// visibly. Capacity made that statement too strong: a hex is 100 m across,
+/// a wood holds five footprints, and a platoon that cannot pick the timber
+/// its own carrier is sitting in has no way to *use* the ground. So the rule
+/// is now the same one the engine enforces — is there room — and on terrain
+/// that declares no capacity it collapses back to one crew per hex, exactly
+/// as before.
+///
+/// A passenger is skipped: her `pos` mirrors her carrier's, so counting her
+/// would charge the hex twice for one vehicle.
+fn claimed_by_another(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    hex: Hex,
+) -> bool {
     let Some(me) = state.unit(unit) else {
         return false;
     };
-    state.units.iter().any(|u| {
-        u.alive
-            && u.id != unit
-            && u.side == me.side
-            && (u.pos == hex || u.goal == Some(Goal::Take(hex)))
-    })
+    let taken: u32 = state
+        .units
+        .iter()
+        .filter(|u| u.alive && u.id != unit && u.side == me.side)
+        .filter(|u| (u.aboard.is_none() && u.pos == hex) || u.goal == Some(Goal::Take(hex)))
+        .filter_map(|u| registry.vehicle(&u.vehicle))
+        .map(|v| v.footprint())
+        .sum();
+    if taken == 0 {
+        return false;
+    }
+    let capacity = state
+        .terrain_at(hex)
+        .and_then(|id| registry.terrain(id))
+        .and_then(|t| t.capacity);
+    let Some(capacity) = capacity else {
+        return true;
+    };
+    let mine = registry
+        .vehicle(&me.vehicle)
+        .map(|v| v.footprint())
+        .unwrap_or(1);
+    taken + mine > capacity.max(mine)
 }
 
 /// Picks one goal from the candidates. **The replaceable half.**

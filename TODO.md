@@ -88,36 +88,37 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 - overall start menu to pick gamemode, settings menu, choose campaign submenu, activate mods, etc
 ### Units
 - apc/ifv, can carry infantry that can dismount
-- **more than one unit to a hex** (MVP). A hex is 100 m, and a hex holding one
-  vehicle is why a section arrives as a queue and why the AI spends movement
-  going around its own friends. The mechanical part is small — occupancy is
-  read through **one** function, `unit_at`, and CLAUDE.md already forbids
-  scanning `units` yourself precisely so this kind of change lands in one
-  place. `unit_at` becomes "who is on this hex" plural, and the callers split
-  into two kinds: the ones asking *is there room* (movement, `passable`,
-  `destination_blocked`) want a capacity rule, and the ones asking *who is
-  here* (targeting, spotting, splash) want the list. The passenger filter
-  (`aboard.is_none()`) stays exactly where it is and gets inherited by both.
-  Wants a capacity per terrain or per hex — a wood holding three platoons and
-  a bridge holding one is the interesting version, and it is data.
-
-  The part the designer flagged as the real work is **shooting at a stack**:
-  `fire_at_tile` already resolves against "whoever turns out to be standing on
-  the hex" and would now have to pick, `hit_chance` names a target by id so it
-  needs one, and blast/splash already walks neighbours and would find several
-  bodies per hex. Three sub-questions, none of them free: who a direct shot
-  finds when several are there (weight by `profile`? by what the gunner can
-  see?), whether a stack is *easier* to hit as a whole (it should be), and
-  whether splash into a stack rolls once per unit or once per hex. Each is a
-  rule the resolver has to state rather than fall into — see the ballistics
-  arc's habit of pricing a thing exactly once.
-
-  Two things it interacts with that are easy to miss. **Ambush and
-  concealment**: a stack in cover is more to spot, so `concealment` scaling
-  the spotter's range wants a stack term or a wood full of infantry becomes
-  invisible in bulk. And **`reachable()`** is already O(hexes x units) twice
-  over (see Misc); a capacity check inside `passable` makes that worse unless
-  the occupancy index in that item lands first, so do them together.
+- ~~**more than one unit to a hex** (MVP)~~ built 2026-08-26.
+  `VehicleDef.footprint` against `TerrainDef.capacity`, opt-in per terrain so
+  clearing the capacities in data reproduces the old game exactly. The rules
+  and the traps are in CLAUDE.md under "Two crews on one hex"; the designer's
+  shot-at-a-stack question was answered as **the gunner aims and only a miss
+  is a lottery** (`balance.stray_percent`, weighted by `presence` = 100 +
+  profile).
+- **stacking has a mechanism and no reason.** Crews share ground in 69 of
+  ~460 rounds, the deepest stack anywhere is 2, and strays therefore fire 5
+  times in 1055 misses — the rule is live and almost never met, which is what
+  `balance.blind_penalty` turned out to be and is worth fixing before more is
+  built on it. **Nothing in the evaluator values sharing ground**: a hex with
+  room in it scores exactly what an empty one does, so the only reason anybody
+  ever stacks is a platoon dismounting where her carrier stands. Two candidate
+  levers, both in `Evaluator::score_tile` and both data-shaped rather than
+  Rust-shaped: cover is worth more to two crews than to one (a wood that hides
+  a platoon *and* its taxi is better ground than one that hides either), and
+  mutual support — a friend on the same hex is a friend who cannot be flanked
+  away from you. Measure with `--only sim` and read `crews shared ground in N
+  round(s)` and the stray count; both are printed for exactly this reason.
+  Note the interaction already measured: infantry survival fell 79 -> 65 of 96
+  when stacking landed, because they dismount more and stand where the
+  shooting is, and **that is not the strays** (64 survive with
+  `stray_percent: 0`). Anything that makes the AI stack *more* will push that
+  further, so re-read the infantry pricing item below at the same time.
+- **capacity has no per-hex override and no vision or spotting term.** A wood
+  full of infantry is currently exactly as easy to find as a wood with one
+  section in it, because `concealment` scales a spotter's range per *target*
+  and knows nothing about how many are there. A stack should be easier to
+  spot and easier to shell — the shell half already works, since
+  `shell_lands` resolves against every occupant.
 
 ## Mid Term Goals
 - separate engine from game if needed. I want to use this for a roguelike in the future. (mostly already true: tactics_core has no bevy dependency, the rng is seeded ChaCha8, BattleState is Clone for search branching, and the boundary really is intents-in/events-out. what is left is that VehicleDef/ArmorSpec/MovementSpec are tank-shaped — and those live behind the registry in data/defs.rs, so the seam is where it should be)

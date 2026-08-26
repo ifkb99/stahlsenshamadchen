@@ -78,11 +78,14 @@ pub fn edge_cost_for(
 /// moving side has not spotted do NOT block here — bumping into one mid-path
 /// is the ambush case, resolved by [`super::BattleState::apply`].
 fn passable(state: &BattleState, unit: &Unit, hex: Hex) -> bool {
-    match state.unit_at(hex) {
-        None => true,
-        Some(other) if other.side == unit.side => true,
-        Some(other) => !state.fog.side(unit.side).spotted.contains(&other.id),
-    }
+    // Crowding is deliberately not consulted: a hex being full is a reason
+    // not to *stop* there, not a reason a tank cannot drive across it. That
+    // distinction is the whole difference between this and
+    // [`destination_blocked`], and collapsing them would make a wood holding
+    // three platoons into a wall.
+    !state.occupants(hex).any(|other| {
+        other.side != unit.side && state.fog.side(unit.side).spotted.contains(&other.id)
+    })
 }
 
 /// Whether `unit` is barred from *finishing* its move on `hex`.
@@ -94,23 +97,60 @@ fn passable(state: &BattleState, unit: &Unit, hex: Hex) -> bool {
 /// — the order is accepted and resolves as an ambush. Refusing it instead
 /// would announce that someone is standing there, which is the fog leaking
 /// through the pathfinder.
-pub fn destination_blocked(state: &BattleState, unit: &Unit, hex: Hex) -> bool {
-    let occupied = match state.unit_at(hex) {
-        None => false,
-        Some(other) if other.id == unit.id => false,
-        Some(other) if other.side == unit.side => true,
-        Some(other) => state.fog.side(unit.side).spotted.contains(&other.id),
-    };
-    occupied || claimed_by_friend(state, unit, hex)
+pub fn destination_blocked(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: &Unit,
+    hex: Hex,
+) -> bool {
+    // A spotted enemy is a wall whatever the capacity says: two sides do not
+    // share a hex, and refusing here tells the moving side nothing it cannot
+    // already see. An unspotted one still does not block — that order is
+    // accepted and resolves as an ambush.
+    if state.occupants(hex).any(|other| {
+        other.side != unit.side && state.fog.side(unit.side).spotted.contains(&other.id)
+    }) {
+        return true;
+    }
+    // Friends are a question of room rather than of presence now. On terrain
+    // that declares no capacity `room_for` says "one crew, whatever size",
+    // which is the rule this line used to spell out itself.
+    !state.room_for(registry, unit, hex) || claimed_by_friend(registry, state, unit, hex)
 }
 
 /// Whether a friendly unit's orders already send it to `hex` this round.
-fn claimed_by_friend(state: &BattleState, unit: &Unit, hex: Hex) -> bool {
-    state
+fn claimed_by_friend(registry: &DataRegistry, state: &BattleState, unit: &Unit, hex: Hex) -> bool {
+    // A claim takes up room exactly as a vehicle already parked there does,
+    // and for the same reason: by the time she arrives the other crew will be
+    // standing on it. Counting *claims* rather than refusing on the first one
+    // is what lets a section be ordered into a wood together — the old rule
+    // sent the second crew somewhere else no matter how much space was left.
+    let claimed: u32 = state
         .units
         .iter()
         .filter(|other| other.alive && other.id != unit.id && other.side == unit.side)
-        .any(|other| !other.intent.path.is_empty() && other.planned_destination() == hex)
+        .filter(|other| !other.intent.path.is_empty() && other.planned_destination() == hex)
+        .filter_map(|other| registry.vehicle(&other.vehicle))
+        .map(|v| v.footprint())
+        .sum();
+    if claimed == 0 {
+        return false;
+    }
+    let capacity = state
+        .terrain_at(hex)
+        .and_then(|id| registry.terrain(id))
+        .and_then(|t| t.capacity);
+    let Some(capacity) = capacity else {
+        // No declared capacity is the old rule: one crew to a hex, so any
+        // claim at all is somebody else's ground.
+        return true;
+    };
+    let mine = registry
+        .vehicle(&unit.vehicle)
+        .map(|v| v.footprint())
+        .unwrap_or(1);
+    let standing = state.crowding(registry, hex);
+    standing + claimed + mine > capacity.max(mine)
 }
 
 /// All tiles the unit can end its move on, with the cheapest cost to reach
@@ -152,7 +192,7 @@ pub fn reachable(registry: &DataRegistry, state: &BattleState, id: UnitId) -> Ha
         }
     }
 
-    best.retain(|hex, _| !destination_blocked(state, unit, *hex));
+    best.retain(|hex, _| !destination_blocked(registry, state, unit, *hex));
     best
 }
 
@@ -250,7 +290,7 @@ pub fn path_to(
     if to == unit.pos {
         return Some((vec![unit.pos], 0));
     }
-    if destination_blocked(state, unit, to) {
+    if destination_blocked(registry, state, unit, to) {
         return None;
     }
     let (class, max_climb) = unit_movement(registry, unit);

@@ -1213,6 +1213,16 @@ struct Tally {
     hits: u32,
     bounces: u32,
     misses: u32,
+    /// Misses that found somebody else standing on the target's hex. Stacking
+    /// is worth nothing unless crews actually share ground, and the stray rule
+    /// is worth nothing unless misses land among them — these three numbers are
+    /// the check that neither is a term nobody in the game ever meets, which is
+    /// what `balance.blind_penalty` turned out to be.
+    strays: u32,
+    /// Rounds that opened with somebody sharing a hex, and the largest stack
+    /// seen anywhere in the run.
+    stacked_rounds: u32,
+    deepest_stack: usize,
     hits_by_arc: HashMap<String, u32>,
     /// What actually ended each vehicle, by the flag she died carrying.
     causes: BTreeMap<&'static str, usize>,
@@ -1326,6 +1336,9 @@ impl Tally {
         self.hits += other.hits;
         self.bounces += other.bounces;
         self.misses += other.misses;
+        self.strays += other.strays;
+        self.stacked_rounds += other.stacked_rounds;
+        self.deepest_stack = self.deepest_stack.max(other.deepest_stack);
         self.girls_wounded += other.girls_wounded;
         self.girls_out += other.girls_out;
         self.racks_destroyed += other.racks_destroyed;
@@ -1395,6 +1408,20 @@ fn fight_one(reg: &DataRegistry, maps: &[&str], seed: u64) -> Tally {
         // immediately. Watching the next event is how artillery gets
         // credited without the resolver having to say so twice.
         let mut shell_from: Option<UnitId> = None;
+        {
+            // A census at the top of every round: how deep did anybody stack?
+            // Taken from state rather than from events because sharing a hex is
+            // a *state* and nothing announces it.
+            let mut per_hex: BTreeMap<(i32, i32), usize> = BTreeMap::new();
+            for unit in state.units.iter().filter(|u| u.alive && u.aboard.is_none()) {
+                *per_hex.entry((unit.pos.x, unit.pos.y)).or_default() += 1;
+            }
+            let deepest = per_hex.values().copied().max().unwrap_or(0);
+            if deepest > 1 {
+                t.stacked_rounds += 1;
+            }
+            t.deepest_stack = t.deepest_stack.max(deepest);
+        }
         for event in state.resolve_round(reg) {
             let landed = std::mem::take(&mut shell_from);
             match event {
@@ -1428,6 +1455,7 @@ fn fight_one(reg: &DataRegistry, maps: &[&str], seed: u64) -> Tally {
                     }
                 }
                 Event::ShotMissed { .. } => t.misses += 1,
+                Event::ShotStrayed { .. } => t.strays += 1,
                 Event::ShotBounced { attacker, .. } => {
                     t.bounces += 1;
                     if landed == Some(attacker) {
@@ -1558,6 +1586,15 @@ fn report(t: &Tally, games: usize) {
             "    {} of those shots ({:.0}%) were laid from a vehicle under way",
             t.shots_on_the_move,
             100.0 * t.shots_on_the_move as f32 / t.shots as f32,
+        );
+        println!(
+            "    {} of the {} misses ({:.0}%) still found somebody sharing the target's\n    \
+             hex; crews shared ground in {} round(s) and the deepest stack was {}",
+            t.strays,
+            t.misses,
+            100.0 * t.strays as f32 / t.misses.max(1) as f32,
+            t.stacked_rounds,
+            t.deepest_stack,
         );
     }
     let mut arcs: Vec<_> = t.hits_by_arc.iter().collect();
@@ -2833,7 +2870,15 @@ fn patch_json(
             // A number where a string was, or a string where a list was, is
             // caught here rather than by `from_value` below, because serde's
             // message names the Rust type and this one names the path.
-            if !cur.is_null() && std::mem::discriminant(&*cur) != std::mem::discriminant(&new) {
+            // `null` is always allowed: clearing an optional field is a real
+            // thing to want, and `--set terrain.forest.capacity=null` is how
+            // you switch a rule off in data to check that its absence is the
+            // game you had before it — which is the additivity test this whole
+            // project leans on.
+            if !cur.is_null()
+                && !new.is_null()
+                && std::mem::discriminant(&*cur) != std::mem::discriminant(&new)
+            {
                 return Err(format!(
                     "`{path}` holds {cur}, and {new} is a different kind of value"
                 ));

@@ -634,6 +634,92 @@ bite someone editing the code.
   a cheaper substitute and measurably lost platoons; the reason is in the
   passenger branch of `ai/utility.rs`.
 
+### Two crews on one hex
+
+A hex is 100 m across, and until this arc exactly one crew could stand on it.
+That is why a section arrived as a queue and why the AI spent movement driving
+around its own friends. Stacking is `VehicleDef.footprint` against
+`TerrainDef.capacity`, and the parts that will bite someone editing this are
+these:
+
+- **Capacity is `Option<u32>` and `None` is not `1`.** A terrain that declares
+  nothing keeps the rule this engine shipped with — *one crew, whatever size
+  she is* — which is not the same statement as "one footprint". The latter
+  would refuse a medium tank onto grass the moment anything declared a
+  footprint of 2, which is an additivity break disguised as a default. So
+  stacking is opt-in per terrain, and clearing the base mod's capacities in
+  data reproduces the old game exactly: `--set balance.stray_percent=0` with
+  every `terrain.*.capacity=null` gives 0 stacked rounds, deepest stack 1, 0
+  strays and the infantry survival it had before. Footprint has the mirror
+  rule and reads through `VehicleDef::footprint()`, where zero means one —
+  the same field-versus-accessor trap as `WeaponDef::reload`.
+- **`occupants` is the honest question and `unit_at` is a convenience.** The
+  singular now returns whoever comes first in id order and is for a mouse
+  click or a HUD line. Occupancy goes through `room_for`; who a shot or a
+  burst finds is *everybody*. The passenger filter lives in `occupants` alone,
+  so both inherit it.
+- **`room_for` is fog-aware, and this is not an approximation.** An enemy the
+  moving side has not spotted **takes up no room**, because an order refused
+  for a full hex announces that somebody is standing there. The move resolves
+  as an ambush instead, and two crews can therefore end a tick over capacity —
+  which is correct, they have just driven into each other.
+  `unspotted_enemies_still_ambush` and
+  `hidden_enemies_do_not_show_up_as_holes_in_the_move_range` both failed the
+  moment this counted everybody, which is how the rule came to be written down
+  rather than rediscovered.
+- **Crowding is a reason not to *stop*, never a reason not to drive through.**
+  `passable` does not consult it and `destination_blocked` does. Collapsing
+  the two would make a wood holding three platoons into a wall.
+- **A claim takes up room exactly as a parked vehicle does.** `claimed_by_friend`
+  and `ai/goal.rs::claimed_by_another` both count footprints rather than
+  refusing on the first friend, which is what lets a section be ordered into
+  one wood. `Goal::finished` reads the same rule: "somebody else got there
+  first" now means the hex is *full*, not that anybody is on it.
+- **A platoon dismounts onto the carrier's own hex**, tried first, before the
+  neighbours. That is what happens on the day and it was not expressible
+  before; `a_platoon_boards_rides_hidden_and_steps_off_where_the_ride_ends`
+  used to assert `distance_to(carrier) == 1`, which was the engine's limit
+  rather than anybody's intent.
+
+**The stray rule: the gunner aims, and only a miss is a lottery.** She lays
+her gun on a vehicle and the to-hit arithmetic answers for that vehicle
+exactly as it always did. What is new is that a round which went *past* her
+has a hex full of other people to end up among.
+`balance.stray_percent` is the chance per hundred points of a bystander's
+`presence`, rolled once per bystander in id order — so several make a stray
+likelier without any one of them making it certain, and the arithmetic never
+needs a cap. Three things about it:
+
+- **`presence` is `100 + profile`**, reusing the term that already means "how
+  much easier or harder she is to hit than a tank". A second size field would
+  be a second opinion about the same fact and the two would drift.
+- **`Event::ShotStrayed` is its own event**, not a flag on `ShotHit`. The two
+  facts a reader needs are who was shot at and who was hit, and a hit quietly
+  naming a different unit than the `ShotFired` before it reads as the log
+  contradicting itself. The `ShotMissed` for the intended target still
+  precedes it: she *was* missed.
+- **The observed rate is below the rolled rate, on purpose.** A platoon's
+  presence is 80, so 25% nominally means one miss in five; measured on a
+  staged crowded wood it is 12%, because a stray that kills the bystander
+  leaves the rest of that round's misses with nobody to stray onto.
+  `a_round_that_goes_past_a_tank_can_find_the_platoon_beside_her` pins the
+  band rather than the number.
+
+**What stacking has *not* got is a reason.** The mechanism is live and
+measured — crews share ground in 69 of ~460 rounds and the deepest stack seen
+is 2 — but the AI never wants to, so strays fire 5 times in 1055 misses and
+`river_crossing`'s four determinism seeds stack literally never (which is why
+that snapshot did not move; a checkable coincidence, not a guarantee).
+Nothing in the evaluator values sharing cover or massing on ground, so a hex
+with room in it is worth exactly what an empty one is. That is the open item,
+in TODO — and it is the same shape as subordinate initiative: the mechanism
+waits on a *preference*, and nothing else has to move for it to arrive. What
+stacking did change is infantry survival, from 79 of 96 to 65: they dismount
+more often now that getting out costs nothing, and they stand with the
+vehicles, and vehicles attract fire. Isolating it says the strays are not the
+cause (64 survivors with `stray_percent: 0`) — the cause is infantry being
+where the shooting is, which is the point.
+
 ### Latitude: an order a crew may not set aside
 
 `Latitude` (`battle/command.rs`) is the per-unit twin of the

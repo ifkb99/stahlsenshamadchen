@@ -162,6 +162,24 @@ pub struct Balance {
     /// the point of penetration and interpolated up to full at
     /// [`Self::clean_penetration_percent`]. 100 disables the band.
     pub partial_penetration_percent: i32,
+    /// The chance, per hundred points of a bystander's `presence`, that a shot
+    /// which missed what it was aimed at finds *her* instead.
+    ///
+    /// A hex is 100 m across and can hold more than one crew. Until stacking
+    /// existed a miss was simply a miss, because there was never anybody else
+    /// standing there; now that a platoon can share a wood with the carrier
+    /// that brought it, a round that goes past the carrier has somewhere else
+    /// to end up. The gunner still *aims* — this is not a lottery over the
+    /// occupants, it is what happens after her aimed shot has already failed.
+    ///
+    /// Rolled once per bystander in id order, each at
+    /// `stray_percent * presence / 100`, so several bystanders make a stray
+    /// likelier without any one of them ever making it certain, and the
+    /// arithmetic never needs a cap. **Zero is the game before stacking**: no
+    /// rolls happen, a miss is a miss, and the additivity rule is kept without
+    /// an `if` in Rust.
+    #[serde(default)]
+    pub stray_percent: i32,
     /// Round-to-round penetration variance, as a percent.
     ///
     /// No two shells leave the same barrel identically, and armor plate is
@@ -196,6 +214,10 @@ impl Default for Balance {
             partial_penetration_percent: 55,
             blind_penalty: 40,
             pen_scatter: 15,
+            // Zero, so the Rust default is the game before a hex could hold
+            // two crews. The base mod turns it on; a mod that says nothing
+            // about stacking never meets the rule.
+            stray_percent: 0,
         }
     }
 }

@@ -1,6 +1,7 @@
 [
     {
         "id": "recon_car",
+        "footprint": 2,
         "name": "Luchs Scout Car",
         "class": "recon",
         "max_hp": 8,
@@ -38,6 +39,7 @@
     },
     {
         "id": "light_tank",
+        "footprint": 2,
         "name": "Wiesel Light Tank",
         "class": "light_tank",
         "max_hp": 10,
@@ -78,6 +80,7 @@
     },
     {
         "id": "medium_tank",
+        "footprint": 3,
         "name": "Panther Medium Tank",
         "class": "medium_tank",
         "max_hp": 10,
@@ -120,6 +123,7 @@
     },
     {
         "id": "heavy_tank",
+        "footprint": 4,
         "name": "Löwe Heavy Tank",
         "class": "heavy_tank",
         "max_hp": 12,
@@ -163,6 +167,7 @@
     },
     {
         "id": "tank_destroyer",
+        "footprint": 3,
         "name": "Marder Tank Destroyer",
         "class": "tank_destroyer",
         "max_hp": 9,
@@ -202,6 +207,7 @@
     },
     {
         "id": "artillery",
+        "footprint": 3,
         "name": "Hummel Self-Propelled Gun",
         "class": "artillery",
         "max_hp": 8,

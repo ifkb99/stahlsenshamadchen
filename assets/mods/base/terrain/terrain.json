@@ -1,6 +1,7 @@
 [
     {
         "id": "grass",
+        "capacity": 4,
         "name": "Grassland",
         "glyph": "g",
         "color": "#7aa646",
@@ -8,6 +9,7 @@
     },
     {
         "id": "road",
+        "capacity": 3,
         "name": "Road",
         "glyph": "R",
         "color": "#b3a284",
@@ -15,6 +17,7 @@
     },
     {
         "id": "forest",
+        "capacity": 5,
         "name": "Forest",
         "glyph": "f",
         "color": "#3f6d33",
@@ -32,6 +35,7 @@
     },
     {
         "id": "mud",
+        "capacity": 3,
         "name": "Mud Flats",
         "glyph": "m",
         "color": "#6e5b3f",
@@ -39,6 +43,7 @@
     },
     {
         "id": "town",
+        "capacity": 6,
         "name": "Town",
         "glyph": "t",
         "color": "#8d7f70",
@@ -48,6 +53,7 @@
     },
     {
         "id": "plains",
+        "capacity": 4,
         "name": "Plains",
         "glyph": "p",
         "color": "#86a95c",
@@ -63,6 +69,7 @@
     },
     {
         "id": "deep_forest",
+        "capacity": 5,
         "name": "Deep Forest",
         "glyph": "F",
         "color": "#40653a",

@@ -1561,6 +1561,190 @@ fn unit_at(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> UnitPlacement {
     }
 }
 
+/// Stand a platoon and a tank on one hex of forest, and shoot at the tank.
+///
+/// `f` is forest, which is the only terrain in the base mod roomy enough (5)
+/// to hold a medium tank (3) and a rifle platoon (1) with room to spare — the
+/// one-crew-per-hex rule is still what a terrain declaring no capacity means.
+fn crowded_wood(reg: &DataRegistry, seed: u64) -> BattleState {
+    // Ten hexes is a kilometre and the wood is worth 30 cover, so the gunner
+    // misses often enough to sample what a miss does. At two hexes on open
+    // grass she hits almost every time and the stage proves nothing.
+    let row: String = format!("{}f{}", "g".repeat(10), "g".repeat(4));
+    two_side_battle(
+        reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([0, 1], 0, "medium_tank", "Gunner"),
+            unit_at([10, 1], 1, "medium_tank", "Quarry"),
+            unit_at([10, 1], 1, "rifle_platoon", "Bystanders"),
+        ],
+        seed,
+    )
+}
+
+/// The rule the designer asked for: the gunner aims, and only a *miss* is a
+/// lottery over who else is standing there.
+#[test]
+fn a_round_that_goes_past_a_tank_can_find_the_platoon_beside_her() {
+    let reg = registry_wireless();
+    let (mut misses, mut strays, mut onto_the_tank) = (0, 0, 0);
+    // Many seeds rather than many rounds of one battle: a stray is a second
+    // roll behind a first one, so a single stage does not sample it.
+    for seed in 0..400u64 {
+        let mut state = crowded_wood(&reg, seed);
+        let events = state.apply(
+            &reg,
+            &Order::SetFire {
+                unit: UnitId(0),
+                fire: FireIntent::Target {
+                    target: UnitId(1),
+                    weapon: 0,
+                },
+            },
+        );
+        assert!(events.is_ok(), "the gunner can see her quarry");
+        for event in play_round(&reg, &mut state) {
+            match event {
+                BattleEvent::ShotMissed { .. } => misses += 1,
+                BattleEvent::ShotStrayed { intended, onto, .. } => {
+                    assert_eq!(intended, UnitId(1), "she was aiming at the tank");
+                    assert_eq!(onto, UnitId(2), "and the platoon is the only bystander");
+                    strays += 1;
+                }
+                BattleEvent::ShotHit {
+                    target: UnitId(1), ..
+                } => onto_the_tank += 1,
+                _ => {}
+            }
+        }
+    }
+    assert!(misses > 20, "the stage has to produce misses: {misses}");
+    assert!(onto_the_tank > 0, "and hits on what she aimed at");
+    // 25% per hundred points of presence, and a platoon's presence is
+    // 100 + profile = 80, so the nominal rate is one miss in five. Measured
+    // 148 of 1265, which is 12% — lower on purpose and not a discrepancy: a
+    // stray that kills the platoon leaves the rest of that round's misses
+    // with nobody to stray onto, so the *observed* rate is always below the
+    // roll. Loose bounds, because this pins that the rule fires at roughly
+    // its stated rate and not the rate itself, which is a tuning number and
+    // lives in mod.json.
+    let rate = 100 * strays / misses;
+    assert!(
+        (8..=34).contains(&rate),
+        "{strays} of {misses} misses strayed ({rate}%), which is nowhere near the \
+         20% the balance block asks for"
+    );
+}
+
+/// The additivity pin: a ladder with no rungs is no ladder.
+#[test]
+fn a_mod_that_prices_no_strays_has_a_miss_that_is_simply_a_miss() {
+    let mut reg = registry_wireless();
+    reg.balance.stray_percent = 0;
+    for seed in 0..200u64 {
+        let mut state = crowded_wood(&reg, seed);
+        let _ = state.apply(
+            &reg,
+            &Order::SetFire {
+                unit: UnitId(0),
+                fire: FireIntent::Target {
+                    target: UnitId(1),
+                    weapon: 0,
+                },
+            },
+        );
+        for event in play_round(&reg, &mut state) {
+            assert!(
+                !matches!(event, BattleEvent::ShotStrayed { .. }),
+                "stray_percent 0 must be the game before stacking existed"
+            );
+        }
+    }
+}
+
+/// And nobody to stray onto is nobody to stray onto.
+#[test]
+fn a_shot_at_a_crew_standing_alone_never_finds_anybody_else() {
+    let reg = registry_wireless();
+    for seed in 0..200u64 {
+        let mut state = two_side_battle(
+            &reg,
+            &[
+                &format!("{}f{}", "g".repeat(10), "g".repeat(4)),
+                &format!("{}f{}", "g".repeat(10), "g".repeat(4)),
+                &format!("{}f{}", "g".repeat(10), "g".repeat(4)),
+            ],
+            vec![
+                unit_at([0, 1], 0, "medium_tank", "Gunner"),
+                unit_at([10, 1], 1, "medium_tank", "Quarry"),
+            ],
+            seed,
+        );
+        let _ = state.apply(
+            &reg,
+            &Order::SetFire {
+                unit: UnitId(0),
+                fire: FireIntent::Target {
+                    target: UnitId(1),
+                    weapon: 0,
+                },
+            },
+        );
+        for event in play_round(&reg, &mut state) {
+            assert!(!matches!(event, BattleEvent::ShotStrayed { .. }));
+        }
+    }
+}
+
+/// Room is counted in footprints against the terrain's capacity, and a
+/// terrain that declares neither is the one-crew-per-hex game this engine
+/// shipped with.
+#[test]
+fn a_wood_holds_a_platoon_and_her_taxi_where_a_road_holds_only_the_taxi() {
+    let reg = registry_wireless();
+    // forest capacity 5, grass capacity 4; medium_tank 3, rifle_platoon 1.
+    // A tank and one platoon fit on either; a tank and two only fit in timber.
+    let state = two_side_battle(
+        &reg,
+        &["ggfggg", "ggfggg", "ggfggg"],
+        vec![
+            unit_at([2, 1], 0, "medium_tank", "In The Wood"),
+            unit_at([2, 1], 0, "rifle_platoon", "With Her"),
+            unit_at([1, 1], 0, "medium_tank", "In The Open"),
+            unit_at([1, 1], 0, "rifle_platoon", "With Him"),
+            unit_at([4, 1], 0, "rifle_platoon", "Latecomer"),
+            unit_at([5, 1], 1, "medium_tank", "Bystander"),
+        ],
+        11,
+    );
+    let platoon = state.unit(UnitId(4)).expect("she exists");
+    let wood = tactics_core::offset_to_hex(2, 1);
+    let open = tactics_core::offset_to_hex(1, 1);
+    assert!(
+        state.room_for(&reg, platoon, wood),
+        "forest holds 5 and a tank and two platoons are 5"
+    );
+    assert!(
+        !state.room_for(&reg, platoon, open),
+        "grass holds 4 and the tank and platoon on it are already 4"
+    );
+    // And the rule a terrain that says nothing keeps: grass in this test's own
+    // palette does declare a capacity, so use a registry that does not.
+    let mut old = registry_wireless();
+    for terrain in old.terrain.values_mut() {
+        terrain.capacity = None;
+    }
+    assert!(
+        !old.terrain("forest").expect("forest").capacity.is_some(),
+        "the stage needs a registry with stacking switched off"
+    );
+    assert!(
+        !state.room_for(&old, platoon, wood),
+        "no declared capacity is one crew to a hex, whatever size she is"
+    );
+}
+
 /// A hexagon of open grass, so that "the same problem from the other end" is
 /// a thing that exists.
 ///
@@ -9144,7 +9328,7 @@ fn a_one_rung_ladder_never_abandons_anything() {
         if state.is_over() {
             break;
         }
-        for event in state.resolve_round(&reg) {
+        for event in play_round(&reg, &mut state) {
             assert!(
                 !matches!(event, BattleEvent::Abandoned { .. }),
                 "nobody jumps off a one-rung ladder"
@@ -9200,7 +9384,7 @@ fn a_bounced_shell_wrecks_no_plate_it_never_touched() {
         if state.is_over() {
             break;
         }
-        for event in state.resolve_round(&reg) {
+        for event in play_round(&reg, &mut state) {
             match event {
                 BattleEvent::ShotBounced { target, .. } if target == wall => bounces += 1,
                 BattleEvent::ShotHit { target, .. } if target == wall => pens += 1,
@@ -9436,7 +9620,7 @@ fn a_shellburst_beside_a_platoon_is_attrition_not_erasure() {
         if state.is_over() {
             break;
         }
-        for event in state.resolve_round(&reg) {
+        for event in play_round(&reg, &mut state) {
             if matches!(
                 event,
                 BattleEvent::ModuleHit { unit, .. } | BattleEvent::CrewHit { unit, .. }
@@ -9833,7 +10017,14 @@ fn a_platoon_boards_rides_hidden_and_steps_off_where_the_ride_ends() {
         state.unit(riders).unwrap().pos,
         state.unit(taxi).unwrap().pos,
     );
-    assert_eq!(r.distance_to(t), 1, "onto the ground beside the ride");
+    assert_eq!(
+        r, t,
+        "onto the ground the ride is standing on — a section gets out of the back \
+         of the vehicle, it does not walk a hundred metres first. That was not \
+         expressible until a hex could hold two crews; before stacking this \
+         asserted `distance_to(t) == 1`, which was the engine's limit rather than \
+         anybody's intent."
+    );
 }
 
 /// Score a tile with every doctrinal preference switched off except the two
@@ -9984,7 +10175,7 @@ fn a_penetrated_taxi_shares_its_luck_with_everyone_aboard() {
         if state.is_over() {
             break;
         }
-        for event in state.resolve_round(&reg) {
+        for event in play_round(&reg, &mut state) {
             if matches!(
                 event,
                 BattleEvent::CrewHit { unit, .. } | BattleEvent::ModuleHit { unit, .. }
@@ -10037,7 +10228,7 @@ fn a_brewed_carrier_burns_its_passengers_and_spits_out_the_rest() {
         if state.is_over() {
             break;
         }
-        for event in state.resolve_round(&reg) {
+        for event in play_round(&reg, &mut state) {
             match event {
                 BattleEvent::BrewedUp { unit } if unit == taxi => brewed = true,
                 BattleEvent::CrewHit { unit, .. } | BattleEvent::ModuleHit { unit, .. }

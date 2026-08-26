@@ -211,6 +211,16 @@ pub struct VehicleDef {
     /// effect on the balance tables attributable to this one number.
     #[serde(default)]
     pub profile: i32,
+    /// How much room she takes up on a hex, against a terrain's `capacity`.
+    ///
+    /// One by default, so a chassis that says nothing is what it always was.
+    /// A hex is 100 m across and a rifle platoon is thirty people lying in a
+    /// field, so *count* is the wrong unit for crowding: three platoons in a
+    /// wood is a defended wood, and three heavy tanks in it is a traffic jam.
+    /// Read it through [`Self::footprint`] rather than the field, which is
+    /// where the zero-means-one rule lives.
+    #[serde(default)]
+    pub footprint: u32,
     /// How many units she lifts, in whole units.
     ///
     /// Deliberately counted in units rather than in seats. A rifle platoon is
@@ -228,6 +238,15 @@ pub struct VehicleDef {
     /// Requisition cost on the overworld.
     #[serde(default)]
     pub cost: i32,
+}
+
+impl VehicleDef {
+    /// How much room she takes up. Zero in the file means one, so a chassis
+    /// that says nothing is the size it always was and nobody has to write
+    /// `"footprint": 1` on every vehicle in a mod.
+    pub fn footprint(&self) -> u32 {
+        self.footprint.max(1)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -464,6 +483,19 @@ pub struct TerrainDef {
     /// Overworld: whether an army can capture this tile as an objective.
     #[serde(default)]
     pub capturable: bool,
+    /// How much [`VehicleDef::footprint`] this hex will hold, or `None` for
+    /// the rule this game had before stacking existed: one unit, whatever
+    /// size it is.
+    ///
+    /// `None` rather than `1` on purpose. A terrain that declares nothing has
+    /// to behave exactly as it always did, and "one unit of any size" is not
+    /// the same statement as "one footprint" — the latter would refuse a
+    /// medium tank onto grass the moment anything declared a footprint of 2,
+    /// which is an additivity break disguised as a default. So stacking is
+    /// opt-in per terrain, and a mod that never mentions capacity never gets
+    /// it.
+    #[serde(default)]
+    pub capacity: Option<u32>,
 }
 
 fn default_terrain_color() -> String {

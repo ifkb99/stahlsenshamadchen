@@ -1333,6 +1333,29 @@ fn pump_events(
                         .insert(Flash(Timer::from_seconds(0.35, TimerMode::Once)));
                 }
             }
+            // A round that went past its target and found somebody else. The
+            // `ShotMissed` above it already said she was missed; this says
+            // where the round actually ended up, and without it the hit that
+            // follows names a unit nobody fired at.
+            BattleEvent::ShotStrayed {
+                attacker,
+                intended,
+                onto,
+            } => {
+                log.push(if mine(*attacker) {
+                    traffic(
+                        *attacker,
+                        &format!("over — round went into {}.", name(*onto)),
+                    )
+                } else {
+                    format!(
+                        "{} shoots past {} and into {}.",
+                        name(*attacker),
+                        name(*intended),
+                        name(*onto)
+                    )
+                });
+            }
             BattleEvent::ShotMissed { attacker, at } => {
                 log.push(if mine(*attacker) {
                     traffic(*attacker, "miss.")

@@ -469,7 +469,7 @@ impl UtilityPlanner {
         let live = state
             .unit(unit)
             .and_then(|u| u.goal)
-            .filter(|g| !g.finished(state, unit));
+            .filter(|g| !g.finished(registry, state, unit));
         let goal = match live {
             Some(goal) => goal,
             None => {
