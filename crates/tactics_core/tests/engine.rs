@@ -1745,6 +1745,67 @@ fn a_wood_holds_a_platoon_and_her_taxi_where_a_road_holds_only_the_taxi() {
     );
 }
 
+/// A column can follow the column in front of it.
+///
+/// The campaign map used to treat *any* army as impassable, so a friend on the
+/// road refused the whole route — the same conflation of "cannot stop here"
+/// with "cannot cross here" that a hex holding one crew was in battle. Two
+/// armies still do not share a tile; they just do not wall each other off.
+///
+/// The budget is pinned to exactly the cost of driving straight through,
+/// which is what makes this a test rather than a coincidence: two tiles at
+/// distance two along one axis share exactly one neighbour, so blocking the
+/// midpoint leaves only a three-step detour, and a detour does not fit. An
+/// earlier draft of this asserted only that the far tile was reachable, and
+/// it passed against the old rule because the army simply drove around.
+#[test]
+fn an_army_drives_past_a_friend_and_stops_beyond_her() {
+    let reg = registry();
+    let mut state = OverworldState::from_map(&reg, "frontier", 1).unwrap();
+    let ids: Vec<_> = state.side_armies(0).map(|a| a.id).collect();
+    let (follower, ahead) = (ids[0], ids[1]);
+
+    let pos = state.army(follower).unwrap().pos;
+    let reach = state.reachable(&reg, follower);
+    // A direction with two tiles of ground in it, both free and both in range:
+    // one to park the friend on and one to finish beyond her.
+    let (step, beyond, through) = pos
+        .all_neighbors()
+        .into_iter()
+        .map(|next| (next, pos + (next - pos) * 2))
+        .filter(|(next, far)| state.army_at(*next).is_none() && state.army_at(*far).is_none())
+        .filter_map(|(next, far)| Some((next, far, *reach.get(&far)?)))
+        .min_by_key(|(next, _, _)| (next.x, next.y))
+        .expect("frontier gives her two tiles of room somewhere");
+
+    // Exactly enough fuel for the straight line and not a point more.
+    state.army_mut(follower).unwrap().movement = through;
+    state.army_mut(ahead).unwrap().pos = step;
+
+    let reach = state.reachable(&reg, follower);
+    assert!(!reach.contains_key(&step), "she may not park on her friend");
+    assert_eq!(
+        reach.get(&beyond),
+        Some(&through),
+        "the road past her is still a road, at the same price"
+    );
+
+    state
+        .apply(
+            &reg,
+            &OverworldOrder::MoveArmy {
+                army: follower,
+                to: beyond,
+            },
+        )
+        .expect("the route exists");
+    assert_eq!(
+        state.army(follower).expect("alive").pos,
+        beyond,
+        "and she ends up where she was sent"
+    );
+}
+
 /// A hexagon of open grass, so that "the same problem from the other end" is
 /// a thing that exists.
 ///

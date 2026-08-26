@@ -690,6 +690,24 @@ these:
   used to assert `distance_to(carrier) == 1`, which was the engine's limit
   rather than anybody's intent.
 
+**The campaign map makes the same distinction now.** A friendly army used to
+be impassable there too, so a column could not follow the column in front of
+it. Three places said so and only one of them moved anything: `reachable`'s
+expansion, the `retain` that decides what may be *stopped* on, and the A* cost
+function inside `move_army`. Only a *hostile* army can block a route now, and
+only a march that means to avoid contact — an `Advance` still paths straight
+through, because an operational advance that side-steps contact is not an
+advance. Two armies still never share a tile: the trim after the walk backs
+off to the last free one.
+
+**What is deliberately still impossible is sharing a hex with an enemy.** A
+spotted enemy blocks a destination whatever the capacity says, and the
+movement tick ends the advance on contact. Storming the same building as the
+defender is a real thing to want — it is in TODO — but it is close assault
+rather than stacking: range zero, who counts as "in" the building, what a
+gunner outside can see and shoot, and how a burst that lands there sorts
+friend from enemy. None of that falls out of a capacity check.
+
 **The stray rule: the gunner aims, and only a miss is a lottery.** She lays
 her gun on a vehicle and the to-hit arithmetic answers for that vehicle
 exactly as it always did. What is new is that a round which went *past* her

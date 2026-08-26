@@ -27,7 +27,16 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 ## Bugs
 - `WARN bevy_render::view::window: Couldn't get swap chain texture after configuring. Cause: 'Outdated'`
 - `WARN winit::platform_impl::linux::x11::xdisplay: error setting XSETTINGS; Xft options won't reload automatically`
-- units cannot move through friendlies on campaign map
+- ~~units cannot move through friendlies on campaign map~~ fixed 2026-08-26,
+  and it was three places, not one: `reachable`'s expansion, the `retain` that
+  says what may be *stopped* on, and — the one that actually moves the army —
+  the A* cost function in `move_army`, which treated a friend as impassable.
+  Same conflation of "cannot stop here" with "cannot cross here" that a hex
+  holding one crew was in battle. `an_army_drives_past_a_friend_and_stops_beyond_her`
+  pins the budget to exactly the straight-line cost so a detour will not fit,
+  and it was checked against all three sites individually — an earlier draft
+  asserted only that the far tile was reachable and passed against the old
+  rule, because the army just drove around.
 - ~~terrain cover is applied twice~~ — stale, closed 2026-08-25. The second
   half died with `raw_damage` in the ballistics rewrite's B1 chunk: a round
   that is through the plate is through, and the tree the shell passed did not
@@ -113,6 +122,19 @@ Things that shape everything below them. Deciding late means rework; ordered by 
   shooting is, and **that is not the strays** (64 survive with
   `stray_percent: 0`). Anything that makes the AI stack *more* will push that
   further, so re-read the infantry pricing item below at the same time.
+- **storming the same building as the enemy** (designer's example, 2026-08-26).
+  Stacking deliberately does not allow it: a spotted enemy blocks a
+  destination whatever the capacity says, and the movement tick ends the
+  advance on contact. Wanting it is reasonable and it is *not* a capacity
+  change — it is close assault, and it needs four rules stated rather than
+  fallen into. What a shot at range zero means (the whole to-hit gradient is
+  built on range and the minimum is 1 hex). Who counts as being *in* the
+  building for cover, since both sides would be. What a gunner outside can
+  see and shoot into a contested hex without picking her own side's crew off.
+  And how a shell that lands there sorts friend from enemy — `shell_lands`
+  currently resolves against every occupant, which is right for a stack of
+  friends and would be friendly fire here. Worth doing after the MVP, and
+  worth doing as its own arc.
 - **capacity has no per-hex override and no vision or spotting term.** A wood
   full of infantry is currently exactly as easy to find as a wood with one
   section in it, because `concealment` scales a spotter's range per *target*
