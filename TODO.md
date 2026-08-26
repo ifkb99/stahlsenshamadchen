@@ -163,6 +163,14 @@ stalemate, so there is finally a baseline to measure a rewrite against.
   those. And if it is resolution order, it is a *game* problem and not an
   instrument one: a player who deploys on the wrong side of `river_crossing`
   is paying it too.
+  A first reading of that, now that the budget is sweepable
+  (`--only mustered --sweep points=60,100`): at 100 points every doctrine buys
+  armour — elastic defence picks up a heavy tank and a tank destroyer beside
+  its platoons — and goes from 0–12 to 8–4 against recon pull. So part of the
+  answer is that 60 points is a budget at which only massed armour can afford
+  a coherent force, and elastic defence is being priced out of the vehicles
+  its doctrine wants rather than being bad at using infantry. Read at 12
+  battles, which is inside the band; re-draw before acting on it.
 - **infantry lose badly at their asking price** (measured 2026-08-14, first
   run of the mustered-forces table): given 60 points, elastic defence buys
   seven mixed units — two rifle platoons, two scout sections, their rides, a

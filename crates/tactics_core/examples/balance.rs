@@ -175,7 +175,7 @@ fn main() {
         if cfg.only.wants("sim") {
             simulate(&registry, games, seed);
         }
-        for grid in fought_grids(&registry, &cfg, seed) {
+        for grid in fought_grids(&registry, &cfg, seed, budget) {
             print_grid(&grid);
         }
     }
@@ -236,9 +236,11 @@ which game
   --sweep PATH=A,B,C     run once per value and put the results side by side.
                          Repeatable; the axes multiply. Two axis names are
                          not fields: `--sweep mods=a,b` compares two versions
-                         of the content, and `--sweep seed=1000,2000` fights
-                         the same game twice, which is how the table shows the
-                         noise floor every other difference has to clear.
+                         of the content, `--sweep seed=0,1000` fights the same
+                         game twice (how the table shows the noise floor that
+                         every other difference has to clear), and
+                         `--sweep points=60,100` buys each doctrine a bigger
+                         army instead of changing a number in one.
 
 how, and how much of it
   --jobs N               battles in the air at once (default: every core).
@@ -249,7 +251,8 @@ how, and how much of it
   --absolute             in a sweep, print each variant's own numbers rather
                          than its differences from the first. What a range
                          wants; the differences are what a tuning question wants
-  --csv                  print the comparison digest as csv as well
+  --csv                  print the comparison digest and every swept table as
+                         csv as well, long-form: table,row,variant,column,value
 
   A swept table with three or more variants also gets a `spread` line per row:
   the widest gap between variants in that column. Under a `--sweep seed=` that
@@ -1856,11 +1859,15 @@ fn delegation_tax(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
             col("shots", 0),
         ],
         rows,
-        note: "\n  a side's tax is its win drop against the same flat opponent when it\n  \
-               fights through missions instead; zero is the target.\n\n  \
-               the last three columns are always side 0's — carriers lost, foot units\n  \
-               lost, and rounds fired by anybody on their feet — so the middle row is\n  \
-               the commanded force and the two rows around it are the same force flat.",
+        note: format!(
+            "\n  a side's tax is its win drop against the same flat opponent when it\n  \
+             fights through missions instead; zero is the target.\n\n  \
+             the last three columns are always side 0's — carriers lost, foot units\n  \
+             lost, and rounds fired by anybody on their feet — so the middle row is\n  \
+             the commanded force and the two rows around it are the same force flat.\n\
+             {}",
+            level_note(games)
+        ),
     }
 }
 
@@ -1968,7 +1975,12 @@ fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32, seed: u64) -> 
         })
         .collect();
 
-    let mut preamble = vec!["  the shopping lists:".to_string()];
+    // The budget goes in the preamble rather than the title because a sweep
+    // can move it, and a comparison prints one title over every variant: a
+    // heading claiming "60 points a side" above a `points=100` row would be
+    // the table lying about its own axis. A preamble that differs is printed
+    // per variant, which is exactly what this needs.
+    let mut preamble = vec![format!("  {budget} points a side. the shopping lists:")];
     for (id, army) in &forces {
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
         for vehicle in army {
@@ -2021,7 +2033,7 @@ fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32, seed: u64) -> 
 
     Grid {
         title: format!(
-            "mustered forces: {games} battles per pairing, {budget} points a side, each doctrine buying its own army"
+            "mustered forces: {games} battles per pairing, each doctrine buying its own army"
         ),
         preamble,
         row_head: "pairing (A vs B)",
@@ -2033,10 +2045,13 @@ fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32, seed: u64) -> 
             col("A pts lost", 1),
         ],
         rows,
-        note: "\n  each pairing alternates ends game by game, so neither column is a\n  \
-               statement about deployment. `A pts lost` is the requisition value of\n  \
-               A's dead per battle — what the win cost, in the same currency the\n  \
-               army was bought with.",
+        note: format!(
+            "\n  each pairing alternates ends game by game, so neither column is a\n  \
+             statement about deployment. `A pts lost` is the requisition value of\n  \
+             A's dead per battle — what the win cost, in the same currency the\n  \
+             army was bought with.\n{}",
+            level_note(games)
+        ),
     }
 }
 
@@ -2444,20 +2459,30 @@ fn skill_gap(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
             col("B per A", 1),
         ],
         rows,
-        note: "\n  `A lost` and `B lost` are vehicles per battle. `B per A` is B's losses\n  \
-               for each of A's: a side that wins by outfighting rather than by\n  \
-               outlasting shows it there, not in the win column.\n\n  \
-               the last three rows are the ones to quote. `the ends` adds the two\n  \
-               equal-skill pairings, so its win columns are worth of being side A\n  \
-               against worth of being side B and nothing else — the arena is mirrored\n  \
-               but a battle is not, and each of the six rows above carries that on\n  \
-               top of the skill gap it is for. `both ends` adds a pairing's two\n  \
-               orientations, which cancels it: those columns are the better crew\n  \
-               against the worse one, and `B per A` there is the worse crew's losses\n  \
-               for each of the better crew's.\n\n  \
-               read this table at --games 36 or not at all, and re-draw it before\n  \
-               quoting it: --sweep seed=0,1000,2000,3000. Twelve battles cannot\n  \
-               resolve a 70% edge, and this is the table most often quoted at somebody.",
+        note: format!(
+            "\n  `A lost` and `B lost` are vehicles per battle. `B per A` is B's losses\n  \
+             for each of A's: a side that wins by outfighting rather than by\n  \
+             outlasting shows it there, not in the win column.\n\n  \
+             the last three rows are the ones to quote. `the ends` adds the two\n  \
+             equal-skill pairings, so its win columns are worth of being side A\n  \
+             against worth of being side B and nothing else — the arena is mirrored\n  \
+             but a battle is not, and each of the six rows above carries that on\n  \
+             top of the skill gap it is for. `both ends` adds a pairing's two\n  \
+             orientations, which cancels it: those columns are the better crew\n  \
+             against the worse one, and `B per A` there is the worse crew's losses\n  \
+             for each of the better crew's.\n{}\n\n  \
+             the three summary rows fought {} battles each, and their band is\n  \
+             {:.0}–{:.0} to {:.0}–{:.0}.\n\n  \
+             read this table at --games 36 or not at all, and re-draw it before\n  \
+             quoting it: --only skill --sweep seed=0,1000,2000,3000. This is the\n  \
+             table most often quoted at somebody.",
+            level_note(games),
+            2 * games,
+            games as f64 - coin_band(2 * games),
+            games as f64 + coin_band(2 * games),
+            games as f64 + coin_band(2 * games),
+            games as f64 - coin_band(2 * games),
+        ),
     }
 }
 
@@ -2528,6 +2553,11 @@ struct Variant {
     /// table has to clear before it means anything. It is the answer to the
     /// question the sample-size note asks, in the table rather than in prose.
     seed: Option<u64>,
+    /// The requisition budget each doctrine spends in the mustered table. An
+    /// axis because "does massed armour still win at 100 points" is a design
+    /// question and not a tuning one: the budget changes what every doctrine
+    /// *buys*, so two values of it are two armies rather than two numbers.
+    points: Option<i32>,
     overrides: Vec<Override>,
 }
 
@@ -2936,8 +2966,8 @@ fn compare(labels: &[String], digests: &[Digest], games: usize) {
     println!(
         "\n  A `·` is no difference at the precision shown. A row that is all dots\n  \
          changed nothing these {games} battles could see, which is a result about the\n  \
-         number and not about the sample only if {games} is enough of them — see the\n  \
-         note on sample size in CLAUDE.md before quoting a small one at anybody."
+         number and not about the sample only if {games} is enough of them.{}",
+        level_note(games)
     );
 
     // Kills and losses per chassis, which is the table the ballistics arcs
@@ -3059,6 +3089,7 @@ fn variants(root: &std::path::Path, axes: &[Axis], base: &[Override]) -> Vec<Var
         label: String::new(),
         mods: root.to_path_buf(),
         seed: None,
+        points: None,
         overrides: base.to_vec(),
     }];
     for axis in axes {
@@ -3069,13 +3100,15 @@ fn variants(root: &std::path::Path, axes: &[Axis], base: &[Override]) -> Vec<Var
                     label: prefix.label.clone(),
                     mods: prefix.mods.clone(),
                     seed: prefix.seed,
+                    points: prefix.points,
                     overrides: prefix.overrides.clone(),
                 };
-                // Two axis names are not fields of anything. `mods` selects
+                // Three axis names are not fields of anything. `mods` selects
                 // which tree to load, which is how two *versions* of the
                 // content get compared rather than two numbers within one;
                 // `seed` selects which battles get fought, which is how the
-                // table is made to show its own noise floor.
+                // table is made to show its own noise floor; `points` selects
+                // how big an army each doctrine buys itself.
                 let leaf = if axis.path == "mods" {
                     v.mods = std::path::PathBuf::from(value);
                     std::path::Path::new(value)
@@ -3088,6 +3121,12 @@ fn variants(root: &std::path::Path, axes: &[Axis], base: &[Override]) -> Vec<Var
                         std::process::exit(1);
                     }));
                     format!("seed={value}")
+                } else if axis.path == "points" {
+                    v.points = Some(value.parse().unwrap_or_else(|_| {
+                        eprintln!("error: --sweep points=...: `{value}` is not a budget");
+                        std::process::exit(1);
+                    }));
+                    format!("points={value}")
                 } else {
                     let ov = Override {
                         path: axis.path.clone(),
@@ -3199,11 +3238,14 @@ fn sweep(axes: &[Axis], base: &[Override], root: &std::path::Path, cfg: &Run) {
 
     if cfg.games < 36 {
         println!(
-            "\n  NOTE {} battles is a small sample to read a difference out of. The\n  \
-             doctrine table needs 36 before it discriminates at all (CLAUDE.md says\n  \
-             so, with the numbers); a sweep comparing two rows of it needs at least\n  \
-             as many. Re-run the interesting rows at --games 36 before believing one.",
-            cfg.games
+            "\n  NOTE {} battles is a small sample to read a difference out of: a\n  \
+             pairing that is genuinely level lands as far out as {:.0}–{:.0} one time in\n  \
+             twenty, before any of these numbers change anything. The doctrine table\n  \
+             needs 36 battles before it discriminates at all (CLAUDE.md says so, with\n  \
+             the numbers); a sweep comparing two rows of it needs at least as many.",
+            cfg.games,
+            cfg.games as f64 / 2.0 + coin_band(cfg.games),
+            cfg.games as f64 / 2.0 - coin_band(cfg.games),
         );
     }
     // The three that fight their own battles, laid out the same way. They run
@@ -3217,11 +3259,21 @@ fn sweep(axes: &[Axis], base: &[Override], root: &std::path::Path, cfg: &Run) {
     let grids: Vec<Vec<Grid>> = plan
         .iter()
         .zip(&registries)
-        .map(|(v, reg)| fought_grids(reg, cfg, v.seed.unwrap_or(cfg.seed)))
+        .map(|(v, reg)| {
+            fought_grids(
+                reg,
+                cfg,
+                v.seed.unwrap_or(cfg.seed),
+                v.points.unwrap_or(cfg.budget),
+            )
+        })
         .collect();
     for i in 0..grids.first().map(Vec::len).unwrap_or(0) {
         let column: Vec<Grid> = grids.iter().map(|g| g[i].clone()).collect();
         compare_grids(&labels, &column, cfg.absolute);
+    }
+    if cfg.csv {
+        csv_grids(&labels, &grids);
     }
 }
 
@@ -3230,13 +3282,13 @@ fn sweep(axes: &[Axis], base: &[Override], root: &std::path::Path, cfg: &Run) {
 /// One list, called by both the single run and the sweep, because the failure
 /// mode of two lists is a table that quietly stops being swept the day it is
 /// added to one of them.
-fn fought_grids(reg: &DataRegistry, cfg: &Run, seed: u64) -> Vec<Grid> {
+fn fought_grids(reg: &DataRegistry, cfg: &Run, seed: u64, budget: i32) -> Vec<Grid> {
     let mut out = Vec::new();
     if cfg.only.wants("delegation") {
         out.push(delegation_tax(reg, cfg.games, seed));
     }
     if cfg.only.wants("mustered") {
-        out.push(mustered_forces(reg, cfg.games, cfg.budget, seed));
+        out.push(mustered_forces(reg, cfg.games, budget, seed));
     }
     if cfg.only.wants("skill") {
         out.push(skill_gap(reg, cfg.games, seed));
@@ -3282,9 +3334,76 @@ fn csv(labels: &[String], digests: &[Digest]) {
     }
 }
 
+/// Every swept grid as csv, one row per (table, row, variant).
+///
+/// Long rather than wide, because the tables do not share columns and a
+/// sheet built by pasting them side by side would have to be un-pasted before
+/// anything could be plotted. This shape goes straight into a pivot.
+fn csv_grids(labels: &[String], grids: &[Vec<Grid>]) {
+    let Some(first) = grids.first() else {
+        return;
+    };
+    heading("csv (tables)");
+    println!("table,row,variant,column,value");
+    for (i, base) in first.iter().enumerate() {
+        // The title carries the battle count and the map list, which change
+        // between runs; the part before the colon is the table's name.
+        let table = base.title.split(':').next().unwrap_or(&base.title);
+        for (name, _) in &base.rows {
+            for (label, variant) in labels.iter().zip(grids) {
+                let Some(cells) = variant.get(i).and_then(|g| g.row(name)) else {
+                    continue;
+                };
+                for (c, v) in base.columns.iter().zip(cells) {
+                    println!(
+                        "{},{},{},{},{:.4}",
+                        quoted(table),
+                        quoted(name),
+                        quoted(label),
+                        quoted(c.head),
+                        v
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// One csv field, escaped the way every reader of csv agrees on.
 fn quoted(text: &str) -> String {
     format!("\"{}\"", text.replace('"', "\"\""))
+}
+
+/// How far from level a genuinely even pairing wanders, at this many battles.
+///
+/// Half the 95% interval of a fair coin over `battles` trials, which for 36 is
+/// about six wins either side of 18–18. Printed under every table that has a
+/// win column, because this project has repeatedly read a two- or three-win
+/// move as a result and then built on it: `28–8` and `26–10` were quoted at
+/// each other for months as evidence about a change, and they are the same
+/// number to anyone who knows this band. It is deliberately arithmetic rather
+/// than a remembered rule of thumb — the rule of thumb is what failed.
+///
+/// It is a floor and not the whole story. Two runs of *this* game differ by
+/// more than a coin does, because the battles are not independent draws from
+/// one distribution: they share maps, forces and doctrines. A seed sweep
+/// measures the real spread; this says what it can never be smaller than.
+fn coin_band(battles: usize) -> f64 {
+    1.96 * 0.5 * (battles as f64).sqrt()
+}
+
+/// The sentence that goes under a win table.
+fn level_note(battles: usize) -> String {
+    let band = coin_band(battles);
+    let half = battles as f64 / 2.0;
+    let (lo, hi) = (half - band, half + band);
+    format!(
+        "\n  at {battles} battles a genuinely level pairing still lands anywhere from\n\
+         \x20 {lo:.0}\u{2013}{hi:.0} to {hi:.0}\u{2013}{lo:.0}, nineteen times in twenty. That band is the\n\
+         \x20 floor under every win column here \u{2014} and it is a floor, not the answer:\n\
+         \x20 these battles share maps, forces and doctrines, so they scatter wider than\n\
+         \x20 a coin does. Sweep the seed for the real spread."
+    )
 }
 
 /// A table reduced to what a sweep can lay beside another copy of itself:
@@ -3310,8 +3429,10 @@ struct Grid {
     columns: Vec<GridColumn>,
     rows: Vec<(String, Vec<f64>)>,
     /// Prose printed under it: what the reader is looking at, and what would
-    /// make it wrong.
-    note: &'static str,
+    /// make it wrong. A `String` rather than a `&'static str` because the most
+    /// useful sentence a win table can carry is the one that depends on how
+    /// many battles it fought — see [`coin_band`].
+    note: String,
 }
 
 #[derive(Clone)]

@@ -82,14 +82,39 @@ Three things about it are worth knowing before reaching for it:
   equivalent `--sweep balance.moving_target_per_hex=5,40` print
   byte-identical difference rows. That equivalence is the whole claim; if it
   ever stops holding, the override machinery has become a second game.
-- **Two axis names are not fields.** `mods=` selects the tree to load, which
-  compares two *versions* of the content rather than two numbers in one;
-  `seed=` selects which battles get fought, which puts the noise floor in the
-  same table and the same columns as the difference being read. That second
-  one is the more useful of the two: at 36 games, four seeds alone move the
-  tank destroyer's kills between 74 and 89 and the mean battle length by 1.1
-  rounds, which is larger than several differences this project has quoted as
-  results.
+- **Three axis names are not fields.** `mods=` selects the tree to load,
+  which compares two *versions* of the content rather than two numbers in
+  one. `seed=` selects which battles get fought, which puts the noise floor
+  in the same table and the same columns as the difference being read — the
+  most useful of the three: at 36 games, four seeds alone move the tank
+  destroyer's kills between 74 and 89 and the mean battle length by 1.1
+  rounds, larger than several differences this project has quoted as results.
+  `points=` sets the requisition budget, so its rows are two *armies* rather
+  than two numbers; at 100 points instead of 60 every doctrine buys armour
+  and elastic defence goes from 0–12 to 8–4 against recon pull, which is the
+  first thing the infantry-pricing item in TODO should be read against.
+- **Every table with a win column prints the band a level pairing wanders
+  in**, computed from the battle count rather than remembered: at 36 battles
+  a genuinely even pairing still lands anywhere from 12–24 to 24–12 nineteen
+  times in twenty, and at the default 12 it lands as far out as 9–3. That one
+  line is the answer to the failure this section exists because of — `28–8`
+  and `26–10` were quoted at each other for months as evidence about a change,
+  and they are the same number. It is a *floor*, not the answer: these battles
+  share maps, forces and doctrines, so they scatter wider than a coin does,
+  and only a seed sweep measures how much wider.
+- **A swept table with three or more variants prints its own `spread` line**
+  — the widest gap between variants in that column, under every row. Under a
+  `--sweep seed=` that line *is* the measured noise floor; it is printed
+  unasked because the alternative is remembering to work it out.
+  `--absolute` switches the variant lines from differences to their own
+  values, which is what reading a *range* wants.
+- **`--only <tables>` prints just the ones named** (`roster`, `hit`, `pen`,
+  `kills`, `flight`, `flags`, `sim`, `delegation`, `mustered`, `skill`).
+  `--sim` runs four tables that fight battles, and paying for the other three
+  while iterating on one is the kind of friction that ends in the instrument
+  not being run at all. Sixteen seeds of the skill-gap table alone take about
+  three seconds. `--csv` emits the digest and every swept table long-form
+  (`table,row,variant,column,value`), which goes straight into a pivot.
 - **The sweep compares every table that fights battles.** The fought-out
   digest — outcome, length, gunnery, artillery, crew cost, kills and losses
   per chassis — and then the delegation tax, mustered forces and the skill
