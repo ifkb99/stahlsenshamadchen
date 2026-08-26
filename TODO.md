@@ -188,22 +188,27 @@ stalemate, so there is finally a baseline to measure a rewrite against.
   of 2304 equal-skill battles, and round one on the symmetric arena at equal
   skill is now mirrored 8 of 8. The general rule is in CLAUDE.md's invariants;
   the account is under "Difficulty is inverted in practice".
-- **two of the three battle maps favour an end, and nobody decided that**
-  (measured 2026-08-26, `--only ground`, 72 battles a map with the armies
-  exchanged between the ends so the force cancels). `battle_forest` pays the
-  west 50-22 and `battle_plains` pays the east 29-43; a level pairing at 72
-  battles wanders 28-44, so both are real. `river_crossing`'s ground is level
-  (42-30) but its two orders of battle are not: 26-46 to the side fielding the
-  tank destroyer instead of the artillery.
-  **This is a content question, not a bug.** Ground advantage is strategy and
-  a map is allowed to have it — what it must not be is unlabelled, because
-  `balance --sim` samples all three maps and every number it prints carries
-  the term. Two things to decide. Whether each map's tilt is the one intended
-  (a river crossing *should* favour the defender; does `battle_plains` mean to
-  favour its east?), and whether `river_crossing`'s force gap is deliberate,
-  since it is the determinism baseline and its 26-46 is quoted implicitly
-  every time the fought-out pass is read. Re-measure any change with
-  `--only ground --sweep seed=0,1000,2000`.
+- ~~**two of the three battle maps favour an end**~~ re-measured 2026-08-26
+  after the coordinate tiebreaks were fixed, and the answer changed: at 8
+  seeds x 36 battles the ground is nearly level everywhere.
+  `battle_forest` 45.8% west (-2.0 sd), `battle_plains` 55.6% west (+2.7 sd),
+  `river_crossing` 49.5% (-0.2 sd). The first reading — forest west 50-22,
+  plains east 29-43 at 72 battles — was one draw of a build in which every
+  crew edged west. Recorded and accepted in
+  `assets/wiki/reference/battlefields.md`, per the designer: ground advantage
+  is strategy, it just has to be labelled.
+- **`river_crossing`'s two orders of battle are wildly uneven**: side 1 wins
+  **436 of 576** (24.1% / 75.9%, -12.4 sd) with the ground cancelled, because
+  it fields a tank destroyer where side 0 fields artillery. Nothing to do with
+  the river — the ground there measures level. Two reasons it matters more
+  than a scenario being uneven usually would. It is the determinism baseline,
+  so it is fought in every snapshot; and it is one of the three maps
+  `balance --sim` samples, so **every doctrine conclusion the fought-out pass
+  prints is partly a conclusion about that tank destroyer**. Decide whether
+  the scenario means it (a river crossing with the defender better armed is a
+  perfectly good scenario) and if so consider dropping it from the `--sim`
+  sample or fielding a fourth, even map alongside it. Re-measure with
+  `--only ground`.
 - **difficulty 5 over difficulty 3 barely discriminates**: 51.9% of 2304
   battles (+1.8 sd) against 61.1% for 5-over-1. Not a bias — the bias is gone
   — but it is the measurement behind "the goal chooser is shallow" under

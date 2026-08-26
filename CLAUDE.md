@@ -119,13 +119,22 @@ Three things about it are worth knowing before reaching for it:
   ship *identical* orders of battle, so their `OB` columns must read level
   whatever the ground does, and they do (36–36 and 37–35).
 
-  First reading, 72 battles a map: **`battle_forest` favours the west 50–22 and
-  `battle_plains` favours the east 29–43**, both well outside the 28–44 band a
-  level pairing wanders in. `river_crossing`'s *ground* is level at 42–30, but
-  its two orders of battle are not — 26–46 to the side with the tank destroyer.
-  Whether those are the ground the designer meant is a content question, now in
-  TODO; what matters here is that every other number measured on those maps
-  carries the term, and it used to carry it unlabelled.
+  Measured at 8 seeds × 36 battles, in
+  `assets/wiki/reference/battlefields.md` with the method and the re-measure
+  command: **`battle_forest` leans slightly east (45.8% west, −2.0 sd) and
+  `battle_plains` slightly west (55.6%, +2.7 sd)** — small, real, and not
+  worth changing. **`river_crossing`'s ground is level (49.5%) and its armies
+  are not: 24.1% / 75.9% to the side fielding a tank destroyer where the other
+  fields artillery**, which is −12.4 sd and by far the largest term on any of
+  these maps. It is the determinism baseline *and* one third of the
+  fought-out pass's sample, so every doctrine conclusion `--sim` prints is
+  partly a conclusion about that tank destroyer.
+
+  Note what the first reading of this table got wrong, because it is
+  instructive: at 72 battles a map, before the coordinate tiebreaks were
+  fixed, it said forest favoured the *west* 50–22 and plains the *east* 29–43.
+  Both were one draw of a build that made every crew edge west. Sweep the
+  seed, and re-measure after anything that changes how the AI moves.
 - **`--only <tables>` prints just the ones named** (`roster`, `hit`, `pen`,
   `kills`, `flight`, `flags`, `sim`, `delegation`, `mustered`, `skill`,
   `ground`).
