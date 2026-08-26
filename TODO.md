@@ -28,7 +28,15 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 - `WARN bevy_render::view::window: Couldn't get swap chain texture after configuring. Cause: 'Outdated'`
 - `WARN winit::platform_impl::linux::x11::xdisplay: error setting XSETTINGS; Xft options won't reload automatically`
 - units cannot move through friendlies on campaign map
-- terrain cover is applied twice: hit_chance_inner subtracts `cover / 2` from accuracy and raw_damage then multiplies by `(100 - cover) / 100`. town at 40 is -20 to hit *and* -40% damage, ~52% total. may well be intended, but the number in a mod file reads much weaker than it plays
+- ~~terrain cover is applied twice~~ — stale, closed 2026-08-25. The second
+  half died with `raw_damage` in the ballistics rewrite's B1 chunk: a round
+  that is through the plate is through, and the tree the shell passed did not
+  make the inside of the tank bigger (see `ShotProfile::damage`). Cover now
+  reaches a shot in exactly one place, `hit_chance_inner`, and it is data
+  rather than a divisor — `balance.cover_to_hit_percent`, 50 by default,
+  which is the `/ 2` it replaced. The one other `.cover` read in `combat.rs`
+  is artillery splash halving itself against dug-in neighbours, which is a
+  different rule and deliberate.
 
 ## Immediate Goals
 ### Misc
@@ -50,7 +58,21 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 - improve line of sight system, should be easier to hide while seeing enemy. now urgent rather than nice-to-have: `vision_range` is doing detection's job, not eyesight's. at 100 m hexes a commander really can see kilometres, so a hard range cutoff is the only thing keeping anything hidden, and it gets less believable the more the ranges grow. wants a detection roll against terrain concealment plus modifiers for moving and for having just fired (`revealed` already covers the last one).
   **do the detection roll before touching the FOV algorithm.** a detection roll is additive and cheap; shadowcasting changes *which* tiles are visible, which invalidates the determinism baseline and every balance intuition at once — and doing that in the same stretch as the ballistics rewrite would leave two big changes with no way to attribute what moved
 - occupancy index: `unit_at` is a linear scan over all units, and it is called from `passable()` inside the dijkstra inner loop and from `claimed_by_friend` (another full scan) once per candidate hex in reachable's final retain. so `reachable()` is O(hexes x units) twice over, and MCTS calls it constantly. a `HashMap<Hex, UnitId>` kept up to date on move fixes both, and it is the same refactor the apc needs: "who is in this hex" becomes a real query instead of a first-match
-- `accuracy_falloff` is an integer per hex, which was fine when the longest band was 5 hexes and is coarse now that the 88 reaches 16. consider "accuracy lost per 10 hexes", or a float
+- `accuracy_falloff` is an integer per hex, which was fine when the longest band was 5 hexes and is coarse now that the 88 reaches 16. consider "accuracy lost per 10 hexes", or a float. **now the last term in `hit_chance_inner` that is neither data nor scale-aware** — the resolver-depth arc moved the other four into `balance` and added three more, so this one stands out
+- **artillery still does not lead a moving target**, and the shell-flight
+  table has been printing the size of the lead it would need since B3. The
+  gun aims at the hex the target is standing on right now; dispersion (R2)
+  made the shot honest about the *gun's* error but nothing models the
+  gunner's guess about where she will be. Wants the target-track memory the
+  chain-of-command work has been circling — last seen hex and tick, on the
+  side's own picture — which is the same feature the ROE/target-arc item
+  below wants, and which cannot be faked by reading the target's `intent`
+  without leaking fog
+- **smoke** is the one round type the ammunition schema has always been able
+  to carry and nothing has written: the data is trivial and the fog
+  interaction is not. Deliberately after the detection-roll work below,
+  since both change what can be seen and doing them together would leave
+  neither attributable
 - `max_climb` means something physical now: at 10 m per elevation level, `max_climb: 1` over a 100 m hex is a 10% grade. that is conservative for tracked vehicles (real limit is nearer 30% sustained). left at 1 for now, but 2 for tracked is defensible and would open up the hills
 ### Menus
 - ability to move cadets around between tanks/reserve, ~~and see stats~~ — the

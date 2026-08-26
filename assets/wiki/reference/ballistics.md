@@ -519,6 +519,33 @@ motion and profile terms go *into* it rather than beside it. Anything
 that reads the world at fire time and not at plan time makes the planner
 a liar.
 
+**Arc closed 2026-08-25.** All three chunks landed, each proving its own
+additivity the strong way — coefficients zeroed in data reproduce the
+previous chunk's event stream byte for byte — and each measured at 36 games
+across the three battle maps before its numbers were chosen. Where the
+arc ended up, against the baseline it started from (20-16-0, 13.6 rounds,
+1409 shots with 30% missing, artillery 80% on occupied ground):
+
+  19-17-0, 12.8 rounds, 0 stalemates
+  1773 shots — 585 penetrated (33%), 260 bounced, 817 missed (46%)
+  53% of shots laid from a vehicle under way
+  artillery 54 kills / 40 losses, 69% of shells on an occupied hex
+  tank_destroyer 88 kills / 26 losses, infantry losses 19 -> 12
+
+Three findings worth carrying forward. **A planner term that prices a
+hypothetical is not the same as one that reads state** — charging a
+candidate tile for the drive to reach it rebuilt the sit-still pathology
+objectives exist to remove, and only the balance table said so. **A rule can
+be right at a wrong number**: the partial-penetration band at a 40% floor
+swung the doctrine table to 25-11, and 55% says the same thing at parity.
+And **a fragile test is usually a fragile stage, not a fragile seed** — the
+binding-march test was reseeded twice before the actual cause turned up,
+which was a gun with no fire order taking cover on its own initiative.
+
+What the arc deliberately did not do: artillery lead and smoke, both moved
+to TODO. Lead wants target-track memory from the command picture and smoke
+wants the fog interaction, and neither is a resolver question.
+
 ### R1. Before the plate
 
 The hit half, in one chunk because the three terms share one seam and
