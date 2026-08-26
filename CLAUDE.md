@@ -135,8 +135,8 @@ Three things about it are worth knowing before reaching for it:
   fixed, it said forest favoured the *west* 50–22 and plains the *east* 29–43.
   Both were one draw of a build that made every crew edge west. Sweep the
   seed, and re-measure after anything that changes how the AI moves.
-- **`--only <tables>` prints just the ones named** (`roster`, `hit`, `pen`,
-  `kills`, `flight`, `flags`, `sim`, `delegation`, `mustered`, `skill`,
+- **`--only <tables>` prints just the ones named** (`roster`, `detect`, `hit`,
+  `pen`, `kills`, `flight`, `flags`, `sim`, `delegation`, `mustered`, `skill`,
   `ground`).
   `--sim` runs four tables that fight battles, and paying for the other three
   while iterating on one is the kind of friction that ends in the instrument
@@ -238,6 +238,63 @@ The reason they exist is not scenario variety, it is that the AI had no reason
 to advance: with elimination as the only victory condition, holding the best
 cover on the map is optimal play, and the stalemate rate *rose* as difficulty
 noise fell (11/12 at zero noise). See TODO.md under Design Decisions.
+
+### Looking is not seeing
+
+Spotting used to be geometry and nothing else: a crew saw every tile inside a
+hard `vision_range`, and an enemy standing on a tile she could see was an enemy
+she had found, instantly, whatever the ground and whatever the target was
+doing. At 100 m to the hex a commander with twenty hexes of vision is claiming
+two kilometres — which she can genuinely see across — so certainty at 1,999 m
+and nothing at 2,001 m is a cutoff rather than eyesight, and it was the only
+thing on the battlefield keeping anything hidden.
+
+Finding somebody inside your own field of view now costs a roll. The design
+record, the shipped table and the measurements are in
+`assets/wiki/reference/detection.md`; what follows is what will bite someone
+editing `fog.rs`.
+
+- **The geometry is untouched.** Line of sight, range and
+  `VehicleDef::concealment` (which shortens a *spotter's* reach against one
+  target) decide whether a look is possible at all. `Balance::detection_chance`
+  decides how long that look takes, and the two are deliberately separate
+  questions — which is also why the far-range term reads the spotter's **own**
+  reach and never the concealment-shortened one. Compounding them put a platoon
+  at three hexes on 75% of "reach" and charged the same fact twice.
+- **A search buys an acquisition, never the watching afterwards.** A contact
+  the side already holds is not re-rolled, and neither is a crew who has fired
+  (`revealed`, checked before any die). Drop the first clause and every found
+  enemy flickers in and out of the picture tick by tick.
+- **One look per target per tick**, recorded in `SideFog::searched`. The fog is
+  recomputed after movement, after fire and after **every individual shot**, so
+  rolling per call would make finding somebody a function of how much shooting
+  happened to be going on nearby. The look is spent even when the chance was
+  zero — which is why a test that pokes `moved` between recomputes has to let a
+  tick go by first.
+- **The best-placed spotter rolls, not each of them.** A roll per pair of eyes
+  makes the printed chance a lie by however many crews are looking: at four
+  spotters a nominal 2% is 8%, and the whole usable range of the knob collapses
+  into single digits. More eyes still pay, through watching more *ground*.
+- **`detection_certain_percent` is the near band and it is not optional.** The
+  first draft had none and gave two tanks three hexes apart on open grass an
+  82% chance of noticing each other per tick; nobody searches for the tank
+  300 m away in an open field. It surfaced as two dozen failing staged tests.
+  100 is its neutral value — the whole reach is the near band, nothing fades
+  in, **no die is thrown** — and that is the additivity contract, pinned by
+  `a_mod_that_asks_for_no_search_spots_exactly_as_it_always_did` down to the
+  rng's stream position. It is pinned separately from the determinism snapshot
+  on purpose, because the base mod now declares detection numbers and that
+  snapshot is therefore a record of the rule being *on*.
+- **A staged test that needs two crews in plain sight goes through `seen(..)`**,
+  the twin of `registry_wireless()` in `tests/engine.rs` and `tests/save.rs`. A
+  test about shells, or a dismount reflex, or a binding order must not also be
+  a test of whether anybody happened to find anybody on the tick it was set up.
+- **What the rule has not got is a reason**, exactly as stacking has not. The
+  mechanism is live and every fought-out column stays inside the seed noise
+  floor, because nothing in the evaluator wants to be unseen: the AI never
+  sits still to stay hidden and never prefers concealing ground *for its
+  concealment*. It is a player-facing rule until the goal chooser learns to
+  want it — and that is the shallow-goal-chooser item in TODO.
 
 ### Before the plate: what a gunner is up against
 
@@ -1259,7 +1316,7 @@ rule they defend (`unspotted_enemies_still_ambush`).
 
   | | |
   | --- | --- |
-  | round resolution | 1.07 ms (0.79–1.43 across seeds) |
+  | round resolution | 1.87 ms (1.36–2.57 across seeds) |
   | `reachable()` per call | 24.6 µs |
   | `unit_vision` per unit, cold | 74.9 µs |
   | utility order | 0.05 ms |
@@ -1269,6 +1326,18 @@ rule they defend (`unspotted_enemies_still_ambush`).
   fraction of what a crew can absorb, which walks the unit list once more per
   candidate tile. Anything added to `score_tile` is paid for at that rate —
   it is the hottest function the AI has.
+
+  Round resolution was 1.07 ms until detection rolls landed, and the same
+  binary with `balance.detection_certain_percent` at 100 — the rule switched
+  off — still measures 1.30. **The spotting pass is not where that went**: over
+  the same benchmark the rule *lowers* the number of fog recomputes (545 → 454)
+  and of cold field-of-view computations (322 → 305), and `search` runs about
+  2.4 times a round. The same raycasting work with the same call count costing
+  more points at where the units are standing when they do it — contact comes
+  later, so more of the measured eight rounds are spent with everybody alive
+  and looking across open ground. That is a hypothesis nobody has confirmed;
+  it is the first thing to check if this number becomes a problem, and the
+  shadowcasting FOV work in TODO is what would move it.
 
   Run it `--release` or the figures are meaningless. Note this supersedes the
   "~39 µs per call on the 768-tile map" figure that used to appear below: that

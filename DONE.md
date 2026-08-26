@@ -556,6 +556,41 @@ core: 256 battles took four minutes, where the first attempt at a quarter of
 that sample had been framed as an overnight job and produced six battles a
 pairing, which said nothing at all.
 
+**Being looked at is no longer being seen.** Spotting keeps its geometry —
+line of sight, range, and `VehicleDef::concealment` shortening a spotter's
+reach against one target — and finding somebody inside your own field of view
+now costs a die, once per tick, against the ground's own `concealment`, the
+outer band of the spotter's reach, and how many hexes the target has driven
+this round. Firing still bypasses everything. The full record is in
+[detection.md](assets/wiki/reference/detection.md); four things in it were
+wrong first and are worth not rediscovering:
+
+- **A roll per spotter is a lie about the number.** At four crews looking, a
+  nominal 2% is 8%, so the whole usable range of the knob collapsed into single
+  digits and the instrument's "ticks to find" column was wrong by a factor
+  nobody could see. One roll, by the best-placed crew. More eyes still pay,
+  through watching more ground.
+- **A near band is not optional.** Without `detection_certain_percent` two
+  tanks three hexes apart on open grass had an 82% chance of noticing each
+  other per tick. Nobody searches for the tank 300 m away in an open field, and
+  it surfaced as two dozen staged tests failing at once.
+- **The far-range term reads the spotter's own reach**, never the
+  concealment-shortened one. Compounding them put a platoon at three hexes on
+  75% of "reach" and charged the same fact twice.
+- **The first instrument measured the wrong thing twice.** "Round of the
+  battle's first contact" is dominated by one easy spot and reported no
+  difference at any setting; splitting contacts by whether the found crew had
+  driven is worse than useless, because `moved` is zeroed at the top of a round
+  so "halted" means "has not driven *yet*" — a delayed contact leaves the
+  halted bucket by construction, and the table cheerfully reported that
+  detection rolls make stationary crews easier to find. What works is contact
+  *range*, read at the tick the contact was made in.
+
+And the finding that matters most is that it changed nothing measurable: 36
+battles across four seeds put every fought-out column inside the seed noise
+floor, no stalemates either way, because **nothing in the evaluator wants to be
+unseen**. Same shape as stacking — the mechanism waits on a preference.
+
 **Saves record which mods were playing.** `SaveGame.mods` stamps id and
 version; mismatched ids are refused (the rules genuinely differ), version drift
 on the same set warns and loads (a content patch must not cost the player their

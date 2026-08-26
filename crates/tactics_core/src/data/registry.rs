@@ -459,6 +459,25 @@ impl DataRegistry {
             if !(0..=100).contains(&t.cover) {
                 report.error(format!("terrain `{}` cover must be 0-100", t.id));
             }
+            if !(0..=100).contains(&t.concealment) {
+                report.error(format!("terrain `{}` concealment must be 0-100", t.id));
+            }
+            // Ground that hides somebody at the far edge of a crew's reach is
+            // a perfectly good thing to declare — the base mod's deep forest
+            // does exactly that, and a crew is still given away by driving or
+            // firing. Ground that hides her from a crew standing next to her
+            // is not: `detection_certain_percent` exists precisely so that
+            // what is plainly in front of somebody is seen, and a terrain
+            // that beats it has made a hex nobody can ever be found on.
+            // Warned rather than refused, because where that line sits is a
+            // balance opinion and a mod is allowed to disagree with ours.
+            if self.balance.detection_chance(t.concealment, 0, 1, 0) <= 0 {
+                report.warn(format!(
+                    "terrain `{}` conceals {}%, which is more than a crew standing on \
+                     the next hex can see through",
+                    t.id, t.concealment
+                ));
+            }
             if parse_color(&t.color).is_none() {
                 report.error(format!(
                     "terrain `{}` color `{}` is not #rrggbb",

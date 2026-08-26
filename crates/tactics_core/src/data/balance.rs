@@ -20,6 +20,23 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Serde's default for [`Balance::detection_base`].
+///
+/// A function rather than a plain `#[serde(default)]`, because the neutral
+/// value for this one is 100 and not zero: a mod that declares a `balance`
+/// block and says nothing about detection must get the game it always had,
+/// not one in which nobody can see anybody.
+fn detection_base() -> i32 {
+    100
+}
+
+/// Serde's default for [`Balance::detection_certain_percent`], and neutral
+/// for the same reason: at 100 a crew's whole reach is the near band, so
+/// nothing is ever faded in and no die is ever thrown.
+fn detection_certain() -> i32 {
+    100
+}
+
 /// Per-point value of each crew stat.
 ///
 /// Three different kinds of number live here, and which kind a new field is
@@ -180,6 +197,82 @@ pub struct Balance {
     /// an `if` in Rust.
     #[serde(default)]
     pub stray_percent: i32,
+    /// Chance in 100 that a crew who has an enemy in her field of view
+    /// actually picks her out of it, per tick, before anything is subtracted
+    /// for the ground or added for the enemy's driving.
+    ///
+    /// **100 is the game before detection rolls existed** — being looked at
+    /// was being seen, and a hard `vision_range` cutoff was the only thing on
+    /// the battlefield keeping anything hidden. That is the additivity
+    /// contract for this whole rule: at 100, with no terrain declaring
+    /// [`crate::data::TerrainDef::concealment`], not one die is rolled and
+    /// not one spot moves.
+    ///
+    /// Deliberately *not* scaled by the spotter's `observation`. What a sharp
+    /// crew buys is already priced once, in [`Self::vision`], and a skill
+    /// that bought both range and speed of acquisition would be paid for
+    /// twice — while the range it bought already shortens
+    /// [`Self::detection_at_range_percent`]'s bite at any given distance,
+    /// which is the same benefit arriving honestly.
+    #[serde(default = "detection_base")]
+    pub detection_base: i32,
+    /// The share of a crew's reach inside which she simply sees what she is
+    /// looking at: no search, no die, no ground worth hiding in.
+    ///
+    /// **100 is the neutral value**, and it is the second half of the
+    /// additivity contract — at 100 nothing is ever faded in, so
+    /// [`Self::detection_at_range_percent`] and every terrain's
+    /// `concealment` are worth nothing and the spotting pass never reaches
+    /// the rng at all.
+    ///
+    /// It exists because the first draft had no near band and was wrong in a
+    /// way that showed up as two dozen failing tests: two tanks three hexes
+    /// apart on open grass had an 82% chance of noticing each other, per
+    /// tick, which reads as "she probably sees the tank 300 m away in the
+    /// open field". Nobody has to *search* for that. What a crew searches is
+    /// the far part of her own reach, and everything concealment is worth is
+    /// worth out there — a wood at 200 m hides nobody, and the same wood at
+    /// 1.5 km hides a company.
+    ///
+    /// So the whole reduction fades in together, from nothing at this share
+    /// of her reach to all of it at the limit. One curve rather than one per
+    /// term, because they are all answers to the same question: how much of
+    /// what is in front of her can she actually resolve at this distance.
+    #[serde(default = "detection_certain")]
+    pub detection_certain_percent: i32,
+    /// Percentage points of that chance lost at the far edge of the
+    /// spotter's reach, faded in from [`Self::detection_certain_percent`].
+    ///
+    /// This is the number the whole item is about. A hex is 100 m, so a
+    /// commander with 20 hexes of vision is claiming to see two kilometres —
+    /// which she can, and which is exactly why a cutoff at twenty and
+    /// certainty at nineteen reads as a wall rather than as eyesight. Spend
+    /// the outer part of a sight radius on *time to find* instead and the
+    /// same range becomes a gradient: what is close is known, what is far is
+    /// suspected.
+    ///
+    /// Zero is the flat game where a crew at the limit of her vision finds an
+    /// enemy exactly as fast as one at point-blank range.
+    #[serde(default)]
+    pub detection_at_range_percent: i32,
+    /// Percentage points of that chance gained **per hex** the target has
+    /// crossed this round.
+    ///
+    /// Movement is what gives a hidden crew away, and per hex rather than a
+    /// flat charge for the same reason [`Self::moving_target_per_hex`] is:
+    /// one hex a round is a walking pace and five is thirty km/h, and a flat
+    /// term prices them identically. It reads the same `Unit::moved` counter
+    /// the gunnery terms do, so a crew who dashed for cover pays for the dash
+    /// in being seen as well as in being hit.
+    ///
+    /// The round's first look therefore sees a field on which nobody has
+    /// driven yet, because `moved` is zeroed in `begin_round`. That is the
+    /// truth of it rather than an oversight: what she did last round is not
+    /// still kicking up dust, and anyone who was found while doing it is
+    /// found already — a search buys a *contact*, and keeping one costs
+    /// nothing.
+    #[serde(default)]
+    pub detection_per_hex_moved: i32,
     /// Round-to-round penetration variance, as a percent.
     ///
     /// No two shells leave the same barrel identically, and armor plate is
@@ -214,6 +307,15 @@ impl Default for Balance {
             partial_penetration_percent: 55,
             blind_penalty: 40,
             pen_scatter: 15,
+            // 100, zero, zero: a crew who can see the ground somebody is
+            // standing on has found her, at any range, driving or parked.
+            // That is precisely the spotting this engine shipped with, which
+            // is what makes every detection number below opt-in data rather
+            // than a rule Rust imposes.
+            detection_base: detection_base(),
+            detection_certain_percent: detection_certain(),
+            detection_at_range_percent: 0,
+            detection_per_hex_moved: 0,
             // Zero, so the Rust default is the game before a hex could hold
             // two crews. The base mod turns it on; a mod that says nothing
             // about stacking never meets the rule.
@@ -300,6 +402,58 @@ impl Balance {
     /// moving a single number.
     pub fn cover_against_accuracy(&self, cover: i32) -> i32 {
         cover * self.cover_to_hit_percent / 100
+    }
+
+    /// Chance in 100 that one crew picks one enemy out of her own field of
+    /// view this tick.
+    ///
+    /// Everything the caller has already settled is geometry: the enemy is on
+    /// ground this crew can see, and inside whatever range her
+    /// `VehicleDef::concealment` leaves the crew. This is the other half —
+    /// how long it takes to find her there — and it is three terms over one
+    /// curve:
+    ///
+    /// - `distance` against `range` fades the curve in, from nothing at
+    ///   [`Self::detection_certain_percent`] of the reach to all of it at the
+    ///   limit;
+    /// - what fades in is the ground's own `concealment` plus
+    ///   [`Self::detection_at_range_percent`], because both are answers to
+    ///   the same question — how much of what is in front of her she can
+    ///   actually resolve at this distance;
+    /// - `moved` is hexes crossed this round, and buys the searcher
+    ///   [`Self::detection_per_hex_moved`] a hex at *any* range. Driving is
+    ///   not something distance forgives.
+    ///
+    /// Clamped to 0..=100 rather than floored above zero. A mod whose numbers
+    /// reach zero is describing ground somebody can lie in indefinitely,
+    /// which is a legitimate thing to describe — she is still given away the
+    /// moment she drives or fires, both of which reach this from outside.
+    ///
+    /// Integer arithmetic throughout, like every other number in this block,
+    /// because a spot is rolled against it and replays have to agree bit for
+    /// bit about what was rolled.
+    pub fn detection_chance(&self, concealment: i32, distance: i32, range: u32, moved: u32) -> i32 {
+        // How far out she is as a percentage of the reach, so a scout with
+        // twice the eyes of a tank spends this term half as fast at the same
+        // distance. A range of zero can only be looked at from zero hexes
+        // away, and calling that the far edge is both harmless and the
+        // conservative reading.
+        let reach = match range {
+            0 => 100,
+            range => (distance.max(0) * 100 / range as i32).clamp(0, 100),
+        };
+        // The near band, in hundredths so the fade keeps its resolution
+        // through integer division. At 100 there is no far band at all and
+        // nothing is ever faded in, which is the neutral game.
+        let certain = self.detection_certain_percent.clamp(0, 100);
+        let fade = if certain >= 100 {
+            0
+        } else {
+            ((reach - certain).max(0) * 100) / (100 - certain)
+        };
+        (self.detection_base - (concealment + self.detection_at_range_percent) * fade / 100
+            + self.detection_per_hex_moved * moved as i32)
+            .clamp(0, 100)
     }
 
     /// Hit chance change, in percentage points, for a crew shooting at

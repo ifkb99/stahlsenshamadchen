@@ -66,7 +66,7 @@
 //! seed order regardless of which core finished first, and that is checked by
 //! running the same batch at several widths, not hoped for.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
 use tactics_core::Hex;
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
@@ -74,7 +74,7 @@ use tactics_core::battle::{
     AttackPreview, BattleState, EndReason, Event, Order, SideState, UnitId, blast_overmatches,
     flight_ticks, hit_breakdown, preview_attack,
 };
-use tactics_core::data::{ArmorFacing, DataRegistry, ModuleEffect, WeaponDef};
+use tactics_core::data::{ArmorFacing, DataRegistry, ModuleEffect, TerrainDef, WeaponDef};
 use tactics_core::force;
 use tactics_core::map::{Facing, HexMap, MapFile, MapKind, UnitPlacement};
 use tactics_core::roster::{CadetId, Roster};
@@ -193,6 +193,9 @@ fn analytic(reg: &DataRegistry, cfg: &Run) {
     if cfg.only.wants("roster") {
         roster_table(reg);
     }
+    if cfg.only.wants("detect") {
+        detect_table(reg);
+    }
     if cfg.only.wants("hit") {
         hit_table(reg);
     }
@@ -224,8 +227,8 @@ what to run
                          runs at different seeds are two samples of one game.
   --points N             requisition budget per side in the mustered table (60)
   --brains               which planner is better; --brain-games, --brain-difficulty
-  --only A,B             print only these tables. One of: roster, hit, pen,
-                         kills, flight, flags, sim, delegation, mustered,
+  --only A,B             print only these tables. One of: roster, detect, hit,
+                         pen, kills, flight, flags, sim, delegation, mustered,
                          skill, ground
 
 which game
@@ -672,6 +675,108 @@ fn roster_table(reg: &DataRegistry) {
 /// the field the resolver reads, and `pressure` is set to the rung's own
 /// threshold, so a column labelled "breaking" is a crew the morale ladder
 /// would actually call breaking.
+/// What the detection numbers do: how long a crew takes to pick somebody out
+/// of ground she is already looking straight at.
+///
+/// The twin of the `to hit` table one section down, and built the same way —
+/// every cell is the engine's own [`Balance::detection_chance`], never a
+/// formula retyped here, so the table cannot drift from what the spotting
+/// pass rolls against.
+///
+/// Rows are ground rather than vehicles because the ground is where the
+/// number lives. What a *vehicle* contributes is her `concealment`, and that
+/// does something else entirely: it shortens the range at which she can be
+/// found at all, which the roster table already prints and which moves these
+/// columns rather than these cells — a crew hidden at 50% meets the `far`
+/// column at half the distance the same crew in the open would.
+fn detect_table(reg: &DataRegistry) {
+    heading("detection: how long a crew takes to find what she is looking at");
+    // Only the ratio of distance to reach enters the arithmetic, so a
+    // notional hundred-hex reach makes every column an exact percentage of
+    // it and keeps the table independent of whose eyes are being used.
+    const REACH: u32 = 100;
+    // The gradient is the rule, exactly as it is for the gunnery terms: one
+    // hex a round is a walking pace and five is thirty km/h, and a table
+    // with one "moving" column would price them the same.
+    const BOUNDS: [u32; 3] = [1, 3, 5];
+    let ticks = reg.scale.ticks_per_round;
+
+    let mut grounds: Vec<&TerrainDef> = reg
+        .terrain
+        .values()
+        // Ground nothing can stand on cannot hide anybody on it.
+        .filter(|t| !t.move_cost.is_empty())
+        .collect();
+    grounds.sort_by(|a, b| a.id.cmp(&b.id));
+
+    print!(
+        "{:<16} {:>8} {:>8} {:>8} {:>8} {:>8}",
+        "ground", "conceal", "close", "half", "3/4", "far"
+    );
+    for hexes in BOUNDS {
+        print!(" {:>8}", format!("far {hexes}h"));
+    }
+    println!(" {:>10} {:>10}", "ticks far", "rounds");
+
+    for ground in grounds {
+        let chance = |at: u32, moved: u32| {
+            reg.balance
+                .detection_chance(ground.concealment, at as i32, REACH, moved)
+        };
+        let far = chance(REACH, 0);
+        print!(
+            "{:<16} {:>8} {:>8} {:>8} {:>8} {:>8}",
+            short(&ground.id),
+            if ground.concealment == 0 {
+                "-".to_string()
+            } else {
+                format!("{}%", ground.concealment)
+            },
+            chance(0, 0),
+            chance(REACH / 2, 0),
+            chance(REACH * 3 / 4, 0),
+            far
+        );
+        for hexes in BOUNDS {
+            print!(" {:>8}", chance(REACH, hexes));
+        }
+        // Expected ticks for ONE crew to find a halted target at the edge of
+        // her reach, which is `1 / p` — the mean of the geometric
+        // distribution the per-tick roll actually is. A dash where the
+        // numbers reach zero, because "never" is not a large number.
+        if far <= 0 {
+            println!(" {:>10} {:>10}", "never", "never");
+        } else {
+            let t = 100.0 / far as f32;
+            println!(" {:>10.1} {:>10.1}", t, t / ticks as f32);
+        }
+    }
+
+    println!(
+        "\n  every cell is `Balance::detection_chance` in 100, rolled once per\n  \
+         tick by the best-placed crew who has her ground in view — one roll, never\n  \
+         one per pair of eyes, so the ticks column is the real wait and not a\n  \
+         number divided by however many crews happen to be looking.\n  \
+         \n  \
+         `close`, `half`, `3/4` and `far` are distance as a share of that\n  \
+         spotter's reach, and `far Nh` is the target having crossed N hexes this\n  \
+         round — the same `moved` field the gunner reads, so a crew who dashed for\n  \
+         cover pays for the dash twice. Inside {}% of a crew's reach she simply\n  \
+         sees what is in front of her, and everything the ground and the distance\n  \
+         are worth fades in over what is left of it.\n  \
+         \n  \
+         A round is {ticks} ticks. Firing bypasses all of this — `revealed` is\n  \
+         checked before a die is thrown — and so does a contact this side already\n  \
+         holds: a search buys an acquisition, never the watching afterwards.\n  \
+         detection_base {}, certain {}%, at_range {}, per_hex_moved {}.",
+        reg.balance.detection_certain_percent,
+        reg.balance.detection_base,
+        reg.balance.detection_certain_percent,
+        reg.balance.detection_at_range_percent,
+        reg.balance.detection_per_hex_moved,
+    );
+}
+
 fn hit_table(reg: &DataRegistry) {
     heading("to hit: what the gunner is up against, P(hit) %");
     // A representative target: the hit half does not read armour at all, so
@@ -1248,6 +1353,41 @@ struct Tally {
     troops_left: Vec<f32>,
     mounts: usize,
     dismounts: usize,
+    /// Contacts made, and the round each crew was first found in.
+    ///
+    /// A detection roll does not change what a crew can *see*, it changes how
+    /// long she takes to pick somebody out of it — so the thing to watch is
+    /// when each vehicle stopped being hidden, not when the battle's first
+    /// contact happened. One easy spot on round one would mask every other
+    /// crew on the field, and the first draft of this measured exactly that
+    /// and reported no difference at any setting.
+    ///
+    /// `spots` counts every acquisition, re-acquisitions included, which is
+    /// the other half: contact broken and remade is what a screen is for.
+    spots: u32,
+    found_at: Vec<u32>,
+    /// How far the nearest crew of the finding side was when each contact was
+    /// made, in hexes.
+    ///
+    /// This is the headline number for the detection rules, and the reason
+    /// the two above it move so little: delaying a spot does not usually
+    /// delay the *battle*, because both sides are closing anyway. What it
+    /// does is let them close. A contact made at eight hexes instead of
+    /// sixteen is a different fight — the same crews, a kilometre nearer —
+    /// even when the round it happens in barely moves.
+    ///
+    /// Deliberately not split by whether the crew who was found had driven,
+    /// which the first draft did and which measured the wrong thing entirely:
+    /// `moved` is zeroed at the top of every round, so "halted" at tick three
+    /// means "has not driven yet", and a *delayed* contact therefore moves
+    /// out of the halted bucket by construction. It reported that detection
+    /// rolls made stationary crews easier to find.
+    contact_range: Vec<u32>,
+    /// Shots laid at a map reference rather than at somebody anybody could
+    /// see. The direct twin of the above on the shooting side, and the one
+    /// number that says whether hiding is worth anything: a gun that can
+    /// always see its target never pays `balance.blind_penalty`.
+    shots_blind: u32,
 }
 
 /// Every battle map the loaded mods ship, sorted by id.
@@ -1349,6 +1489,10 @@ impl Tally {
         self.troops_left.extend_from_slice(&other.troops_left);
         self.mounts += other.mounts;
         self.dismounts += other.dismounts;
+        self.spots += other.spots;
+        self.found_at.extend_from_slice(&other.found_at);
+        self.contact_range.extend_from_slice(&other.contact_range);
+        self.shots_blind += other.shots_blind;
     }
 }
 
@@ -1392,6 +1536,9 @@ fn fight_one(reg: &DataRegistry, maps: &[&str], seed: u64) -> Tally {
     // Final state per cadet, so a cadet wounded and then killed is counted
     // once, as killed.
     let mut cadets: BTreeMap<CadetId, bool> = BTreeMap::new();
+    // Which crews have been found at all yet, so a contact broken and remade
+    // is not counted as a second crew coming out of hiding.
+    let mut found: HashSet<UnitId> = HashSet::new();
     for unit in &state.units {
         for (id, count) in &unit.ammo {
             *t.ammo_aboard.entry(id.clone()).or_default() += count;
@@ -1422,13 +1569,53 @@ fn fight_one(reg: &DataRegistry, maps: &[&str], seed: u64) -> Tally {
             }
             t.deepest_stack = t.deepest_stack.max(deepest);
         }
-        for event in state.resolve_round(reg) {
+        // Resolved a tick at a time rather than through `resolve_round`,
+        // which is exactly this loop — so the simulation is untouched — in
+        // order to have a *state* to read when a contact is announced. How
+        // far away a crew was when somebody finally picked her out is the
+        // number the detection rules are really about, and an event stream
+        // drained at the end of the round cannot answer it: by then everyone
+        // has driven on. Read at the end of the tick the contact was made
+        // in, which is within one tick's driving of where the spotter stood
+        // when she made it.
+        let mut round_events = Vec::new();
+        while !state.is_over() && state.resolving_tick().is_some() {
+            let ticked = state.step_tick(reg);
+            for event in &ticked {
+                if let Event::UnitSpotted { by_side, at, .. } = event {
+                    let range = state
+                        .units
+                        .iter()
+                        .filter(|u| u.alive && u.aboard.is_none() && u.side == *by_side)
+                        .map(|u| u.pos.distance_to(*at))
+                        .min();
+                    if let Some(hexes) = range {
+                        t.contact_range.push(hexes as u32);
+                    }
+                }
+            }
+            round_events.extend(ticked);
+        }
+        for event in round_events {
             let landed = std::mem::take(&mut shell_from);
             match event {
-                Event::ShotFired { moving, .. } => {
+                Event::ShotFired { moving, blind, .. } => {
                     t.shots += 1;
                     if moving {
                         t.shots_on_the_move += 1;
+                    }
+                    if blind {
+                        t.shots_blind += 1;
+                    }
+                }
+                Event::UnitSpotted { unit, .. } => {
+                    t.spots += 1;
+                    // The round THIS crew was first found in, once per crew
+                    // and not once per battle. `rounds` was incremented above
+                    // before the round was resolved, so it already reads as
+                    // this round's number.
+                    if found.insert(unit) {
+                        t.found_at.push(rounds);
                     }
                 }
                 Event::ShellLanded { attacker, .. } => {
@@ -1566,6 +1753,23 @@ fn report(t: &Tally, games: usize) {
         t.rounds.iter().min().copied().unwrap_or(0),
         t.rounds.iter().max().copied().unwrap_or(0)
     );
+    // How long it takes to find somebody, which is what the detection roll
+    // is for and the one thing a length figure cannot tell you: a battle can
+    // be short because it was decided quickly or because it started at once.
+    if !t.found_at.is_empty() {
+        println!(
+            "  contact: a crew is first found in round {:.1} mean, {} acquisition(s) \
+             per battle",
+            t.found_at.iter().sum::<u32>() as f32 / t.found_at.len() as f32,
+            t.spots as usize / t.rounds.len().max(1),
+        );
+        println!(
+            "    made at {:.1} hexes from the nearest crew of the finding side, mean \
+             of {}",
+            t.contact_range.iter().sum::<u32>() as f32 / t.contact_range.len().max(1) as f32,
+            t.contact_range.len(),
+        );
+    }
     if t.shots > 0 {
         // Four outcomes now, not two: a shot that hits and a shot that gets
         // through are different events, and the gap between them is the
@@ -1583,9 +1787,12 @@ fn report(t: &Tally, games: usize) {
             elsewhere,
         );
         println!(
-            "    {} of those shots ({:.0}%) were laid from a vehicle under way",
+            "    {} of those shots ({:.0}%) were laid from a vehicle under way, {} \
+             ({:.0}%) at a map\n    reference nobody could see",
             t.shots_on_the_move,
             100.0 * t.shots_on_the_move as f32 / t.shots as f32,
+            t.shots_blind,
+            100.0 * t.shots_blind as f32 / t.shots as f32,
         );
         println!(
             "    {} of the {} misses ({:.0}%) still found somebody sharing the target's\n    \
@@ -3016,6 +3223,9 @@ struct Digest {
     bounce: f64,
     miss: f64,
     moving: f64,
+    blind: f64,
+    contact: f64,
+    range: f64,
     on_target: f64,
     wounded: f64,
     out: f64,
@@ -3038,6 +3248,9 @@ impl Digest {
             bounce: 100.0 * t.bounces as f64 / shots,
             miss: 100.0 * t.misses as f64 / shots,
             moving: 100.0 * t.shots_on_the_move as f64 / shots,
+            blind: 100.0 * t.shots_blind as f64 / shots,
+            contact: t.found_at.iter().sum::<u32>() as f64 / t.found_at.len().max(1) as f64,
+            range: t.contact_range.iter().sum::<u32>() as f64 / t.contact_range.len().max(1) as f64,
             on_target: 100.0 * t.shells_on_target as f64 / shells,
             wounded: t.girls_wounded as f64 / games,
             out: t.girls_out as f64 / games,
@@ -3100,6 +3313,21 @@ const COLUMNS: &[Column] = &[
         head: "mov%",
         of: |d| d.moving,
         dp: 0,
+    },
+    Column {
+        head: "bln%",
+        of: |d| d.blind,
+        dp: 0,
+    },
+    Column {
+        head: "cntct",
+        of: |d| d.contact,
+        dp: 1,
+    },
+    Column {
+        head: "range",
+        of: |d| d.range,
+        dp: 1,
     },
     Column {
         head: "arty%",
@@ -4030,6 +4258,7 @@ struct Only(Vec<String>);
 /// Every name `--only` accepts, in the order the tables print.
 const TABLES: &[&str] = &[
     "roster",
+    "detect",
     "hit",
     "pen",
     "kills",

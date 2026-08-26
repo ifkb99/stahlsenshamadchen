@@ -27,7 +27,11 @@
     "moving_target_per_hex": 5,
     "firing_on_the_move_per_hex": 8,
     "clean_penetration_percent": 130,
-    "partial_penetration_percent": 55
+    "partial_penetration_percent": 55,
+    "detection_base": 100,
+    "detection_certain_percent": 40,
+    "detection_at_range_percent": 70,
+    "detection_per_hex_moved": 20
   },
   "casualties": {
     "harm_kinetic": 55,

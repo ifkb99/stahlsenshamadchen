@@ -473,6 +473,26 @@ pub struct TerrainDef {
     /// line of sight, e.g. forests and buildings.
     #[serde(default)]
     pub vision_block: i32,
+    /// How much harder this ground is to *find* somebody in, in percentage
+    /// points off a searching crew's chance each tick.
+    ///
+    /// The twin of [`VehicleDef::concealment`] and deliberately a separate
+    /// number from both of its neighbours here. `vision_block` is geometry:
+    /// a wood stands between two hexes and the sight line stops. `cover` is
+    /// what the ground is worth once the shooting starts. This is neither —
+    /// it is how long a crew already inside somebody's field of view can
+    /// keep from being picked out of it, which is the difference between
+    /// eyesight and detection and the reason a still tank in a wheatfield is
+    /// not the same problem as one on a road.
+    ///
+    /// Not derived from `cover`, because the two come apart in both
+    /// directions: a standing crop conceals and stops nothing, a low wall
+    /// covers and hides no one. Zero by default, and zero means the ground
+    /// gives her nothing — with [`crate::data::Balance::detection_base`] at
+    /// 100 that is the game before detection rolls existed, where being
+    /// looked at *was* being seen.
+    #[serde(default)]
+    pub concealment: i32,
     /// On the overworld, armies inside concealing terrain are hidden from
     /// enemies unless adjacent.
     #[serde(default)]

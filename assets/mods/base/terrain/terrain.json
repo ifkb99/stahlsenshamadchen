@@ -22,6 +22,7 @@
         "glyph": "f",
         "color": "#3f6d33",
         "move_cost": { "foot": 1, "wheeled": 4, "tracked": 2, "air": 1 },
+        "concealment": 25,
         "cover": 30,
         "vision_block": 2,
         "concealing": true
@@ -48,6 +49,7 @@
         "glyph": "t",
         "color": "#8d7f70",
         "move_cost": { "foot": 1, "wheeled": 1, "tracked": 1, "air": 1 },
+        "concealment": 25,
         "cover": 40,
         "vision_block": 2
     },
@@ -65,6 +67,7 @@
         "glyph": "M",
         "color": "#7d7d85",
         "move_cost": { "foot": 3, "air": 1 },
+        "concealment": 15,
         "vision_block": 4
     },
     {
@@ -74,6 +77,7 @@
         "glyph": "F",
         "color": "#40653a",
         "move_cost": { "foot": 1, "wheeled": 3, "tracked": 2, "air": 1 },
+        "concealment": 35,
         "vision_block": 3,
         "concealing": true
     },
@@ -83,6 +87,7 @@
         "glyph": "C",
         "color": "#a7a29a",
         "move_cost": { "foot": 1, "wheeled": 1, "tracked": 1, "air": 1 },
+        "concealment": 25,
         "capturable": true,
         "income": 3
     },
@@ -92,6 +97,7 @@
         "glyph": "I",
         "color": "#7d6b6b",
         "move_cost": { "foot": 1, "wheeled": 1, "tracked": 1, "air": 1 },
+        "concealment": 25,
         "capturable": true,
         "income": 5
     },

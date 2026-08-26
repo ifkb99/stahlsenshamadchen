@@ -40,6 +40,22 @@ fn registry_wireless() -> DataRegistry {
     reg
 }
 
+/// The same game with the search switched off: a crew who can see a hex sees
+/// what is standing on it, exactly as she did before detection rolls existed.
+///
+/// The twin of [`registry_wireless`] and there for the same reason. A stage
+/// that puts two crews in plain sight in order to test shells, or a dismount
+/// reflex, or whether a binding order is obeyed, must not also be a test of
+/// whether anybody happened to *find* anybody on the tick it was set up —
+/// and at the base mod's numbers a target seven hexes off an eight-hex reach
+/// is found in about three ticks rather than instantly. Detection has tests
+/// of its own; `detection_certain_percent` at 100 is its neutral value, so
+/// this is the absence of the rule rather than a gentle version of it.
+fn seen(mut reg: DataRegistry) -> DataRegistry {
+    reg.balance.detection_certain_percent = 100;
+    reg
+}
+
 /// Close every side's planning and play the round out.
 fn play_round(reg: &DataRegistry, state: &mut BattleState) -> Vec<BattleEvent> {
     let mut events = Vec::new();
@@ -312,6 +328,206 @@ fn fog_hides_unseen_enemies() {
     assert!(
         fog0.spotted.len() < enemy_count,
         "player should not start with every enemy spotted"
+    );
+}
+
+/// A registry whose spotting is a search rather than a certainty, with the
+/// base mod's own tuning taken out of the way.
+///
+/// Every one of these tests isolates a single term by making it decisive:
+/// what is under test is the *rule*, and numbers chosen so that a die is
+/// never actually thrown are what make each of them a statement rather than a
+/// bet on a seed. The medium tank is given a four-hex reach and the crew
+/// bonus is switched off, so "the far edge of what she can see" is a place a
+/// test can put a vehicle by counting hexes.
+fn registry_searching(base: i32, certain: i32, at_range: i32, per_hex_moved: i32) -> DataRegistry {
+    let mut reg = registry();
+    reg.balance.detection_base = base;
+    reg.balance.detection_certain_percent = certain;
+    reg.balance.detection_at_range_percent = at_range;
+    reg.balance.detection_per_hex_moved = per_hex_moved;
+    reg.balance.vision_per_observation = 0;
+    for terrain in reg.terrain.values_mut() {
+        terrain.concealment = 0;
+    }
+    reg.vehicles
+        .get_mut("medium_tank")
+        .expect("base mod has a medium tank")
+        .vision_range = 4;
+    reg
+}
+
+/// One watcher at the west end of a five-hex strip and one enemy at the east,
+/// four hexes off — which is exactly the watcher's reach, so she is standing
+/// on the far edge of it.
+fn watched(reg: &DataRegistry, rows: &[&str]) -> BattleState {
+    two_side_battle(
+        reg,
+        rows,
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "Watcher"),
+            unit_at([4, 0], 1, "medium_tank", "Watched"),
+        ],
+        7,
+    )
+}
+
+#[test]
+fn a_mod_that_asks_for_no_search_spots_exactly_as_it_always_did() {
+    // The additivity contract for the whole detection rule, and the strong
+    // form of it: with the near band covering a crew's whole reach, being
+    // looked at is being seen AND not one die is thrown. The second half is
+    // what keeps every other seeded result in this project valid — a rule
+    // that consumed randomness to conclude "yes, obviously" would move every
+    // battle in the game without changing a single decision.
+    //
+    // Note the far-range term is set high and still buys nothing: at
+    // `detection_certain_percent` 100 there is no far band for it to be
+    // spent in, which is what makes the neutral value one number rather than
+    // a set of them.
+    let reg = registry_searching(100, 100, 70, 0);
+    let state = watched(&reg, &["ggggg"]);
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "a crew in the open with nothing to search for is seen at once"
+    );
+    // And the stream is where the seed left it. Setting a whole battlefield
+    // up draws no randomness of its own, so anything the spotting pass spent
+    // would show here — worth pinning separately from the determinism
+    // snapshot, because the moment the base mod declares detection numbers
+    // that snapshot is a record of the rule being *on*.
+    let mut untouched = <rand_chacha::ChaCha8Rng as rand::SeedableRng>::seed_from_u64(7);
+    assert_eq!(
+        rand::RngExt::random_range(&mut state.rng.clone(), 0..u32::MAX),
+        rand::RngExt::random_range(&mut untouched, 0..u32::MAX),
+        "spotting a whole field with nothing to decide must not draw a die"
+    );
+}
+
+#[test]
+fn a_crew_in_timber_has_to_be_found_and_one_in_the_open_does_not() {
+    // The ground's own concealment, made decisive: a hundred points of it,
+    // fully faded in at the edge of a watcher's reach, is a crew who is never
+    // picked out of that wood by looking, however long anybody looks. She is
+    // still given away by driving or firing, which is what the tests below
+    // are about.
+    let mut reg = registry_searching(100, 0, 0, 0);
+    reg.terrain
+        .get_mut("forest")
+        .expect("base mod has forest")
+        .concealment = 100;
+    let open = watched(&reg, &["ggggg"]);
+    assert!(
+        open.fog.side(0).spotted.contains(&UnitId(1)),
+        "the crew on open grass is seen at once"
+    );
+    let timber = watched(&reg, &["ggggf"]);
+    assert!(
+        timber
+            .fog
+            .side(0)
+            .visible
+            .contains(&tactics_core::offset_to_hex(4, 0)),
+        "the wood itself is in view — this is a test about detection, not sight"
+    );
+    assert!(
+        !timber.fog.side(0).spotted.contains(&UnitId(1)),
+        "the crew in the wood is standing on ground the watcher can see, and is \
+         not thereby seen"
+    );
+}
+
+#[test]
+fn a_crew_who_drives_gives_herself_away() {
+    // The motion term on its own: nobody is worth looking for at all
+    // (`detection_base` zero), and one hex of driving is worth the whole
+    // search. The two targets are identical and stand side by side, so the
+    // only thing between them is the counter the gunner reads too.
+    let reg = registry_searching(0, 100, 0, 100);
+    let mut state = two_side_battle(
+        &reg,
+        &["ggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "Watcher"),
+            unit_at([3, 0], 1, "medium_tank", "Halted"),
+            unit_at([4, 0], 1, "medium_tank", "Under way"),
+        ],
+        7,
+    );
+    assert!(
+        state.fog.side(0).spotted.is_empty(),
+        "with no search worth making, nobody is found"
+    );
+    // Nobody has orders and nobody is spotted, so the ticks below are empty:
+    // what they do is look again. Two of them, because a look is spent once
+    // per tick whether or not it had any chance of succeeding — the battle's
+    // own opening pass already used up tick zero — and `moved` is zeroed at
+    // the *end* of a round rather than at the top of one, so a count set
+    // between ticks is the count the next spotting pass reads.
+    for side in state.living_sides() {
+        state.apply(&reg, &Order::Commit { side }).unwrap();
+    }
+    state.step_tick(&reg);
+    state.unit_mut(UnitId(2)).unwrap().moved = 1;
+    state.step_tick(&reg);
+    let fog = state.fog.side(0);
+    assert!(
+        fog.spotted.contains(&UnitId(2)),
+        "a crew who crossed a hex this round has been noticed"
+    );
+    assert!(
+        !fog.spotted.contains(&UnitId(1)),
+        "the one who sat still has not"
+    );
+}
+
+#[test]
+fn the_far_edge_of_a_crews_reach_is_where_she_has_to_search() {
+    // The range term, made decisive: at a hundred percent, with no near band
+    // to protect anybody, the chance runs linearly to nothing at the limit of
+    // what a crew can see — so a target standing exactly there is never
+    // picked out, and the identical battle with the term at zero finds her at
+    // once. That is the wall this whole item exists to take down: at 100 m to
+    // the hex a commander who can see four hexes can see 400 m, and certainty
+    // at 399 m with nothing at 401 m is not eyesight, it is a cutoff.
+    for (at_range, found) in [(0, true), (100, false)] {
+        let reg = registry_searching(100, 0, at_range, 0);
+        let state = watched(&reg, &["ggggg"]);
+        assert_eq!(
+            state.fog.side(0).spotted.contains(&UnitId(1)),
+            found,
+            "at detection_at_range_percent {at_range}, a crew four hexes off a \
+             four-hex reach should{} be spotted",
+            if found { "" } else { " not" }
+        );
+    }
+}
+
+#[test]
+fn nobody_searches_for_what_is_plainly_in_front_of_her() {
+    // The near band, which the first draft of these rules did not have and
+    // was wrong without: with the far term at its maximum, a crew at half of
+    // a four-hex reach is inside the certain band and simply seen, while the
+    // same crew at the edge of it is never found at all. Two hundred metres
+    // of open field is not something anybody has to search.
+    let reg = registry_searching(100, 50, 100, 0);
+    let close = two_side_battle(
+        &reg,
+        &["ggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "Watcher"),
+            unit_at([2, 0], 1, "medium_tank", "Two hexes off"),
+        ],
+        7,
+    );
+    assert!(
+        close.fog.side(0).spotted.contains(&UnitId(1)),
+        "half a reach away in the open is not a thing anybody searches for"
+    );
+    let far = watched(&reg, &["ggggg"]);
+    assert!(
+        !far.fog.side(0).spotted.contains(&UnitId(1)),
+        "the same crew at the limit of the same reach has to be found"
     );
 }
 
@@ -1587,7 +1803,7 @@ fn crowded_wood(reg: &DataRegistry, seed: u64) -> BattleState {
 /// lottery over who else is standing there.
 #[test]
 fn a_round_that_goes_past_a_tank_can_find_the_platoon_beside_her() {
-    let reg = registry_wireless();
+    let reg = seen(registry_wireless());
     let (mut misses, mut strays, mut onto_the_tank) = (0, 0, 0);
     // Many seeds rather than many rounds of one battle: a stray is a second
     // roll behind a first one, so a single stage does not sample it.
@@ -7300,7 +7516,7 @@ fn a_binding_march_presses_on_where_an_ordinary_one_takes_cover() {
     // round, and if that has to move again, scan for another rather than
     // weakening what is asserted below.
     const SEED: u64 = 4;
-    let reg = registry_wireless();
+    let reg = seen(registry_wireless());
     let (delegated_from, delegated_to, delegated_took_cover) = {
         let (state, crew) = marching_under_fire(&reg, Latitude::Delegated, SEED);
         second_round_plan(&reg, state, crew, SEED)
@@ -10015,7 +10231,7 @@ fn a_platoon_boards_rides_hidden_and_steps_off_where_the_ride_ends() {
     // from the enemy's picture while the carrier stays plainly visible,
     // rides wherever it drives, and steps off beside it when told —
     // reappearing to the enemy the same tick her boots touch ground.
-    let reg = registry_wireless();
+    let reg = seen(registry_wireless());
     let mut state = taxi_stage(&reg, "recon_car", 701);
     let (taxi, riders) = (UnitId(0), UnitId(1));
     state
@@ -10147,7 +10363,7 @@ fn a_loaded_taxi_reads_the_same_gun_as_a_bigger_danger_than_an_empty_one() {
     // own hex in both, so the mass term, the fog and every friend-relative
     // distance are identical; only `aboard` is set, and only the passenger
     // stake can account for the difference.
-    let reg = registry_wireless();
+    let reg = seen(registry_wireless());
     let mut empty = taxi_stage(&reg, "tank_destroyer", 703);
     let (taxi, riders) = (UnitId(0), UnitId(1));
     assert!(
@@ -10212,7 +10428,7 @@ fn a_penetrated_taxi_shares_its_luck_with_everyone_aboard() {
     // check tickets. The pool a penetration rolls against includes the
     // passengers' cadets and troops, so riding a taxi under fire costs
     // exactly what the period says it cost.
-    let reg = registry_wireless();
+    let reg = seen(registry_wireless());
     let mut state = taxi_stage(&reg, "tank_destroyer", 702);
     let (taxi, riders, gun) = (UnitId(0), UnitId(1), UnitId(2));
     state.units[riders.index()].aboard = Some(taxi);
@@ -10258,7 +10474,7 @@ fn a_brewed_carrier_burns_its_passengers_and_spits_out_the_rest() {
     // The worst ride there is. The carrier's racks go up, every passenger
     // is rolled through the fire, and whoever is left picks herself up
     // beside the wreck — dismounted by catastrophe rather than by order.
-    let mut reg = registry_wireless();
+    let mut reg = seen(registry_wireless());
     reg.balance.brewup_percent = 100;
     if let Some(rack) = reg.modules.get_mut("ammo_rack_sparse") {
         // The apc's rack becomes most of what a penetration can find, so
@@ -10371,7 +10587,7 @@ fn a_taxi_under_at_threat_puts_her_passengers_on_the_ground() {
     // planner sees the carrier under a threat that can actually hurt her
     // and puts the platoon on the ground without being asked. Nothing
     // mounts on its own initiative — the reflex only ever gets people OFF.
-    let reg = registry_wireless();
+    let reg = seen(registry_wireless());
     let mut state = taxi_stage(&reg, "tank_destroyer", 705);
     let (taxi, riders) = (UnitId(0), UnitId(1));
     state.units[riders.index()].aboard = Some(taxi);
@@ -11521,7 +11737,7 @@ fn a_shell_takes_time_to_arrive_and_lands_on_the_hex_not_the_unit() {
     // shell, and at the shipped 470 m/s the same sentence needs kilometres of
     // ground to be true on — which is exactly the range artillery is fired at
     // and exactly why the balance table for it moved.
-    let mut reg = registry_wireless();
+    let mut reg = seen(registry_wireless());
     if let Some(ammo) = reg.ammo.get_mut("he_105") {
         ammo.velocity = 10;
     }
@@ -11806,7 +12022,7 @@ fn a_gun_with_nothing_left_to_break_expects_nothing() {
     // — the predicate every planner in the game prices shots with — refuses
     // to call it a weapon at all, which is what puts the gun back on a
     // target worth having.
-    let reg = registry_wireless();
+    let reg = seen(registry_wireless());
     let mut state = battery_stage(&reg, "tank_destroyer", 812);
     let (battery, quarry) = (UnitId(0), UnitId(1));
     let howitzer = reg
