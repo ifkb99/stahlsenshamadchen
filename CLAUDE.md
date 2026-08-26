@@ -34,7 +34,10 @@ cargo run --release -p tactics_core --example balance -- --help  # every flag, w
 cargo run --release -p tactics_core --example balance -- \
     --sim --games 36 --sweep balance.partial_penetration_percent=40,55,70
 # ...and how much of that was the dice?
-cargo run --release -p tactics_core --example balance -- --sim --games 36 --sweep seed=1000,2000,3000
+cargo run --release -p tactics_core --example balance -- --sim --games 36 --sweep seed=0,1000,2000
+# ...for one table, in about three seconds
+cargo run --release -p tactics_core --example balance -- \
+    --sim --games 36 --only skill --absolute --sweep seed=0,1000,2000,3000
 ```
 
 **The battles run across every core** (`run_all`, `std::thread::scope`, no
@@ -940,39 +943,49 @@ rule they defend (`unspotted_enemies_still_ambush`).
   crossing a plateau to park on identical grass. The second half was the
   instrument itself: the skill-gap table fought on `river_crossing`,
   whose sides field different vehicles, so it measured the map — it now
-  fights on a mirrored arena inside `balance --sim`. Measured after: 5v1
-  wins 29–7 / 28–8 across orientations at 1:1.9–2.1 exchange (B4's
-  written success metric was "most battles at visibly better than 1:2"),
-  equal-skill pairings sit at parity, and the deterministic 36–0 sweep is
-  gone. Re-measured 2026-08-25 after the blast-pricing fix and still
-  standing: **26–10 / 28–8 at 1:1.7–1.9**, and again after difficulty noise
-  became a per-round lean: **28–8 / 9–27 at 1:2.1**, the best recorded.
-  ~~Residual, tracked: side B retains a modest edge on the mirrored
-  arena~~ — **it was not resolution order.** The 5-vs-3 gap paid 24 wins
-  from one end and 32 from the other; once difficulty noise stopped being
-  drawn per candidate tile it pays 20 and 20. The bias scaled with how many
-  tiles a unit could reach, which is what an argmax-over-independent-draws
-  bias does. Note the same change *lowered* how much 5v3 discriminates at
-  all (67%/89% to 56%/56%); the reading is that most of the old figure was
-  the artifact, and that reading is a hypothesis — see DONE.md.
+  fights on a mirrored arena inside `balance --sim`, and the deterministic
+  36–0 sweep is gone.
 
-  **Read this table at `--games 36` or not at all.** The default 12 put
-  5v1 at 6–6 and looked like a regression against the numbers above; the
-  same build at 36 gives 26–10. Twelve battles cannot resolve a 70% edge,
-  and the table is the one most often quoted at somebody.
+  **The current numbers, and they are seed-swept rather than drawn once.**
+  Measured 2026-08-26: 16 seeds at `--games 36`, so 576 battles per pairing
+  row and 1152 per summary row, read off the table's own `both ends` rows —
+  which add a pairing's two orientations and therefore cancel whatever being
+  side A is worth.
 
-  **And read every figure above as one draw.** Measured 2026-08-26, once the
-  harness could sweep the seed: four seeds at `--games 36`, nothing else
-  changed, put difficulty 5 against difficulty 1 at **23–27 wins from one end
-  and 23–32 from the other**, with the exchange ratio between 1:1.25 and
-  1:2.5. The *direction* is solid — 5 beats 1 on every seed in both
-  orientations, which is the claim the table exists to support — but the
-  specific pairs quoted in this section (26–10 / 28–8, 1:1.7–1.9, 1:2.1) sit
-  at the top of that band and are not the build's value, they are one sample
-  of it. The same sweep puts the two *equal-skill* rows, which this section
-  calls parity, anywhere from 16–20 to 12–24. Before quoting a number from
-  here at anybody, or reading a change in one as a result, re-draw it:
-  `balance -- --sim --games 36 --sweep seed=0,1000,2000,3000`.
+  | | wins | share | per 72-battle draw | exchange |
+  | --- | --- | --- | --- | --- |
+  | difficulty 5 over 1 | 824–326 | **71.5%** | 46–58 | 1:1.2–1.8 |
+  | difficulty 5 over 3 | 710–441 | **61.6%** | 36–54 | 1:0.9–1.6 |
+
+  Read the fourth column before quoting the third. One draw of 72 battles
+  puts 5-over-1 anywhere between 64% and 81%, and puts 5-over-3 **level, at
+  36–36, on one seed of sixteen** — so a single run cannot tell you whether
+  the 5-vs-3 gap discriminates at all. Every figure this section used to
+  quote was one such draw near the top of that band: 29–7 / 28–8 at
+  1:1.9–2.1 when the arena was built, 26–10 / 28–8 at 1:1.7–1.9 after the
+  blast-pricing fix, 28–8 / 9–27 at 1:2.1 after difficulty noise became a
+  per-round lean. B4's written success metric was "most battles at visibly
+  better than 1:2"; against difficulty 1 the exchange reaches that on some
+  seeds and not on others.
+
+  **Side B still holds an edge on the mirrored arena, and it is not small.**
+  The table's `the ends` row adds the two *equal-skill* pairings, so its two
+  win columns are worth-of-being-A against worth-of-being-B and nothing
+  else: **494–652, side B on 56.6% of 1152 battles**, in the same direction
+  on 14 of the 16 seeds. An earlier version of this note struck that
+  residual through on the strength of the 5-vs-3 row paying "20 and 20"
+  once — one draw of a figure that ranges 16–27. What *was* real about that
+  fix is its mechanism: difficulty noise drawn per candidate tile gave a bias
+  that scaled with how many tiles a unit could reach, which is what an
+  argmax-over-independent-draws bias does, and removing it was right. It did
+  not remove this. Tracked in TODO under Balance; the arena is symmetric and
+  a battle is not, so resolution order is the first place to look.
+
+  **Read this table at `--games 36` or not at all**, and re-draw it before
+  quoting it — `--only skill --sweep seed=0,1000,2000,3000` costs about
+  three seconds. The default 12 put 5v1 at 6–6 and looked like a regression
+  against the numbers above; twelve battles cannot resolve a 70% edge, and
+  this is the table most often quoted at somebody.
 - **Army-contained unit placements are never validated.**
   `map.rs:962` passes `a.at` (the army's own hex) instead of `u.at` when
   checking each unit inside an `ArmyPlacement`, so a unit's own coordinates are

@@ -149,17 +149,20 @@ stalemate, so there is finally a baseline to measure a rewrite against.
 - cadet progression: xp, leveling, skills. fire emblem is a stated inspiration and this is the emotional engine of the genre. sketch the shape early since it lives on the cadet-instance model
 - basic requisition flow: vehicle costs, side funds, and income all exist but nothing spends money until academy mode. a minimal buy/reinforce loop shouldn't wait for the 4x layer
 ### Balance
-- **the skill-gap table's magnitudes are one draw, and CLAUDE.md quotes them
-  as facts** (measured 2026-08-26, `--sim --games 36 --sweep
-  seed=0,1000,2000,3000`). Difficulty 5 against difficulty 1 pays 23–27 wins
-  from one end and 23–32 from the other across four seeds with nothing else
-  changed, at exchange ratios from 1:1.25 to 1:2.5; the equal-skill rows that
-  section calls parity range 16–20 to 12–24. The direction is stable and the
-  claim survives — what does not survive is quoting `28–8 at 1:2.1` as the
-  build's number. Either the table wants more battles per pairing before it
-  is quoted (it is a mirrored arena, so it is cheap: 36 pairings ran in 3.7 s
-  wall), or the quoted figures want replacing with a seed-swept range. The
-  second is the honest one and is nearly free now.
+- **side B wins 56.6% of equal-skill battles on the mirrored arena**
+  (measured 2026-08-26, 16 seeds × `--games 36` = 1152 battles, the skill-gap
+  table's `the ends` row: 494–652, same direction on 14 of 16 seeds). CLAUDE.md
+  and DONE.md both had this struck through as fixed by the per-round
+  difficulty lean; it was not — that fix removed a *different* bias, the one
+  that scaled with reachable-tile count, and "20 and 20" was one draw of a
+  figure that ranges 16–27. The arena is mirror-symmetric and a battle is not,
+  so **resolution order is the first place to look**: within a tick, side 0's
+  movement and fire resolve before side 1's, and a tick is 5 s. Two things
+  follow. It taxes every reading of that table, which is why the table now
+  prints `both ends` rows that add the two orientations and cancel it — quote
+  those. And if it is resolution order, it is a *game* problem and not an
+  instrument one: a player who deploys on the wrong side of `river_crossing`
+  is paying it too.
 - **infantry lose badly at their asking price** (measured 2026-08-14, first
   run of the mustered-forces table): given 60 points, elastic defence buys
   seven mixed units — two rifle platoons, two scout sections, their rides, a

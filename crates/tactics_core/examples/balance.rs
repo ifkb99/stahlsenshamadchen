@@ -127,6 +127,8 @@ fn main() {
         sim,
         verbose: args.iter().any(|a| a == "--verbose"),
         csv: args.iter().any(|a| a == "--csv"),
+        absolute: args.iter().any(|a| a == "--absolute"),
+        only: Only::parse(flag(&args, "--only")),
     };
 
     if cfg!(debug_assertions) {
@@ -168,15 +170,11 @@ fn main() {
 
     let registry = configure(&root, &overrides);
 
-    let mut duels = Duels::new(&registry);
-    roster_table(&registry);
-    hit_table(&registry);
-    penetration_table(&registry, &mut duels);
-    kill_chain_table(&registry, &mut duels);
-    flight_table(&registry);
-    flags(&registry, &mut duels);
+    analytic(&registry, &cfg);
     if sim {
-        simulate(&registry, games, seed);
+        if cfg.only.wants("sim") {
+            simulate(&registry, games, seed);
+        }
         for grid in fought_grids(&registry, &cfg, seed) {
             print_grid(&grid);
         }
@@ -185,6 +183,29 @@ fn main() {
         brains_table(&registry, brain_games, brain_difficulty);
     } else {
         println!("\n(pass --sim to fight {games} battles and see what these numbers do)");
+    }
+}
+
+/// Everything that answers without fighting anything.
+fn analytic(reg: &DataRegistry, cfg: &Run) {
+    let mut duels = Duels::new(reg);
+    if cfg.only.wants("roster") {
+        roster_table(reg);
+    }
+    if cfg.only.wants("hit") {
+        hit_table(reg);
+    }
+    if cfg.only.wants("pen") {
+        penetration_table(reg, &mut duels);
+    }
+    if cfg.only.wants("kills") {
+        kill_chain_table(reg, &mut duels);
+    }
+    if cfg.only.wants("flight") {
+        flight_table(reg);
+    }
+    if cfg.only.wants("flags") {
+        flags(reg, &mut duels);
     }
 }
 
@@ -202,6 +223,8 @@ what to run
                          runs at different seeds are two samples of one game.
   --points N             requisition budget per side in the mustered table (60)
   --brains               which planner is better; --brain-games, --brain-difficulty
+  --only A,B             print only these tables. One of: roster, hit, pen,
+                         kills, flight, flags, sim, delegation, mustered, skill
 
 which game
   --mods DIR             mod tree to load (default assets/mods)
@@ -223,14 +246,22 @@ how, and how much of it
                          folded in seed order — so it is safe to run several
                          of these at once at a fraction of the machine each.
   --verbose              in a sweep, print each variant's full report too
+  --absolute             in a sweep, print each variant's own numbers rather
+                         than its differences from the first. What a range
+                         wants; the differences are what a tuning question wants
   --csv                  print the comparison digest as csv as well
+
+  A swept table with three or more variants also gets a `spread` line per row:
+  the widest gap between variants in that column. Under a `--sweep seed=` that
+  line is the noise floor, and it is what every other difference has to clear.
 
 examples
   --sim --sweep balance.partial_penetration_percent=40,55,70 --games 36
   --sim --sweep weapon.howitzer_105.dispersion=0,4,8 --jobs 4
   --set balance.moving_target_per_hex=0 --set balance.firing_on_the_move_per_hex=0
   --sim --sweep mods=assets/mods,../old/assets/mods
-  --sim --sweep seed=0,1000,2000 --games 36         # what is the noise floor?";
+  --sim --sweep seed=0,1000,2000 --games 36         # what is the noise floor?
+  --sim --only skill --absolute --sweep seed=0,1000,2000,3000   # ...for one table";
 
 /// Every occurrence of a repeatable `--flag value`.
 fn flag_all<'a>(args: &'a [String], name: &str) -> Vec<&'a str> {
@@ -2302,8 +2333,24 @@ fn brains_table(reg: &DataRegistry, games: usize, difficulty: u8) {
     );
 }
 
+/// A pairing's five raw figures dressed with the exchange ratio the table
+/// reports. Kept apart from the tallying so the summary rows below are built
+/// the same way as the ordinary ones and cannot disagree with them.
+fn cells(raw: &[f64; 5]) -> Vec<f64> {
+    let mut out = raw.to_vec();
+    // B's losses per A's loss, as a number rather than the `1:2.1` this used
+    // to print, so a sweep can subtract it. The note says which way it reads.
+    out.push(if raw[3] > 0.0 {
+        raw[4] / raw[3]
+    } else {
+        f64::INFINITY
+    });
+    out
+}
+
 fn skill_gap(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
     let mut rows = Vec::new();
+    let mut raw: BTreeMap<(u8, u8), [f64; 5]> = BTreeMap::new();
     for (a, b) in [(5, 5), (1, 1), (5, 3), (3, 5), (5, 1), (1, 5)] {
         let cfg = |difficulty: u8| AiConfig {
             planner: "utility".into(),
@@ -2327,27 +2374,59 @@ fn skill_gap(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
             b_losses += outcome.b_losses;
         }
         let per = |l: usize| l as f64 / games.max(1) as f64;
-        rows.push((
-            format!("{a} vs {b}"),
-            vec![
+        raw.insert(
+            (a, b),
+            [
                 a_wins as f64,
                 b_wins as f64,
                 draws as f64,
                 per(a_losses),
                 per(b_losses),
-                // B's losses per A's loss, as a number rather than the
-                // `1:2.1` this used to print, so that a sweep can subtract
-                // it. The note still says which way round it reads.
-                if a_losses > 0 {
-                    b_losses as f64 / a_losses as f64
-                } else {
-                    f64::INFINITY
-                },
             ],
-        ));
+        );
+        rows.push((format!("{a} vs {b}"), cells(&raw[&(a, b)])));
         // Each pairing is a few hundred battles' worth of planning; let it
         // out as it finishes rather than making the reader wait for the block.
         let _ = std::io::stdout().flush();
+    }
+
+    // The three summary rows, and they are the ones to quote.
+    //
+    // The arena is mirror-symmetric but a battle is not: side 0 and side 1 do
+    // not resolve simultaneously, so each of the six rows above measures a
+    // skill gap *plus* whatever the ends are worth. Adding the two
+    // orientations of a pairing cancels that, and adding the two equal-skill
+    // pairings isolates it — which is the only honest way to read either.
+    // Quoting one orientation of one pairing is what put figures in CLAUDE.md
+    // that the other orientation did not support.
+    // `x` is the pairing with the better crew on side B and `y` the one with
+    // her on side A, so the strong side's figures are x[1]/y[0] and the weak
+    // side's are x[0]/y[1]. Strong first, because the row is named that way.
+    let both = |x: &[f64; 5], y: &[f64; 5]| {
+        cells(&[
+            x[1] + y[0],
+            x[0] + y[1],
+            x[2] + y[2],
+            (x[4] + y[3]) / 2.0,
+            (x[3] + y[4]) / 2.0,
+        ])
+    };
+    if let (Some(hi), Some(lo)) = (raw.get(&(5, 5)), raw.get(&(1, 1))) {
+        rows.push((
+            "the ends (A/B)".to_string(),
+            cells(&[
+                hi[0] + lo[0],
+                hi[1] + lo[1],
+                hi[2] + lo[2],
+                (hi[3] + lo[3]) / 2.0,
+                (hi[4] + lo[4]) / 2.0,
+            ]),
+        ));
+    }
+    for (weak, strong) in [(3u8, 5u8), (1u8, 5u8)] {
+        if let (Some(x), Some(y)) = (raw.get(&(weak, strong)), raw.get(&(strong, weak))) {
+            rows.push((format!("{strong} over {weak}, both ends"), both(x, y)));
+        }
     }
 
     Grid {
@@ -2368,7 +2447,16 @@ fn skill_gap(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
         note: "\n  `A lost` and `B lost` are vehicles per battle. `B per A` is B's losses\n  \
                for each of A's: a side that wins by outfighting rather than by\n  \
                outlasting shows it there, not in the win column.\n\n  \
-               read this table at --games 36 or not at all. Twelve battles cannot\n  \
+               the last three rows are the ones to quote. `the ends` adds the two\n  \
+               equal-skill pairings, so its win columns are worth of being side A\n  \
+               against worth of being side B and nothing else — the arena is mirrored\n  \
+               but a battle is not, and each of the six rows above carries that on\n  \
+               top of the skill gap it is for. `both ends` adds a pairing's two\n  \
+               orientations, which cancels it: those columns are the better crew\n  \
+               against the worse one, and `B per A` there is the worse crew's losses\n  \
+               for each of the better crew's.\n\n  \
+               read this table at --games 36 or not at all, and re-draw it before\n  \
+               quoting it: --sweep seed=0,1000,2000,3000. Twelve battles cannot\n  \
                resolve a 70% edge, and this is the table most often quoted at somebody.",
     }
 }
@@ -2921,6 +3009,38 @@ fn distinct(labels: &[String]) -> Vec<String> {
     trimmed
 }
 
+/// How far apart the variants got, per column, under one row.
+///
+/// The single most useful line in a swept table and the reason it is printed
+/// unasked: a difference between two variants means nothing until it is held
+/// against how far the same configuration wanders on its own, and the way to
+/// get that is a `--sweep seed=` whose spread row *is* the noise floor. Two
+/// variants have no spread worth the name, so it starts at three.
+fn spread_line(base: &Grid, grids: &[Grid], name: &str, w: usize, vw: usize) {
+    if grids.len() < 3 {
+        return;
+    }
+    print!("  {:<w$} {:<vw$}", "", "spread");
+    for (j, c) in base.columns.iter().enumerate() {
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for g in grids {
+            if let Some(cells) = g.row(name) {
+                let v = cells.get(j).copied().unwrap_or(0.0);
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+        }
+        let text = if lo.is_finite() && hi > lo {
+            c.cell(hi - lo)
+        } else {
+            "·".to_string()
+        };
+        print!(" {:>width$}", text, width = c.width());
+    }
+    println!();
+}
+
 /// A difference, printed so that "no change" is visibly not a small number.
 fn signed(v: f64, dp: usize) -> String {
     if v.abs() < 0.5 / 10f64.powi(dp as i32) {
@@ -3027,55 +3147,56 @@ fn sweep(axes: &[Axis], base: &[Override], root: &std::path::Path, cfg: &Run) {
     if cfg.verbose {
         for (v, reg) in plan.iter().zip(&registries) {
             heading(&format!("=== {} ===", label_of(v)));
-            roster_table(reg);
-            hit_table(reg);
-            let mut duels = Duels::new(reg);
-            penetration_table(reg, &mut duels);
-            kill_chain_table(reg, &mut duels);
-            flight_table(reg);
-            flags(reg, &mut duels);
+            analytic(reg, cfg);
         }
     }
 
     if !cfg.sim {
         println!(
             "\n(no --sim, so nothing was fought. The analytic tables above are per\n\
-             variant with --verbose; the comparison table below needs battles.)"
+             variant with --verbose; the comparison tables below need battles.)"
         );
         return;
     }
 
-    // One job per (variant, battle). The map roster can differ between
-    // variants — a swept mod tree may ship different maps — so each variant
-    // resolves its own.
-    let maps: Vec<Vec<&str>> = registries.iter().map(battle_maps).collect();
-    let jobs: Vec<(usize, u64)> = plan
-        .iter()
-        .enumerate()
-        .flat_map(|(v, variant)| {
-            let base = variant.seed.unwrap_or(cfg.seed);
-            (0..cfg.games).map(move |g| (v, base + g as u64))
-        })
-        .collect();
-    let fought = run_all(&jobs, |&(v, seed)| {
-        fight_one(&registries[v], &maps[v], seed)
-    });
+    let labels: Vec<String> = plan.iter().map(|v| label_of(v).to_string()).collect();
 
-    let mut tallies: Vec<Tally> = (0..plan.len()).map(|_| Tally::default()).collect();
-    for ((v, _), t) in jobs.iter().zip(&fought) {
-        tallies[*v].merge(t);
-    }
+    if cfg.only.wants("sim") {
+        // One job per (variant, battle). The map roster can differ between
+        // variants — a swept mod tree may ship different maps — so each
+        // variant resolves its own.
+        let maps: Vec<Vec<&str>> = registries.iter().map(battle_maps).collect();
+        let jobs: Vec<(usize, u64)> = plan
+            .iter()
+            .enumerate()
+            .flat_map(|(v, variant)| {
+                let base = variant.seed.unwrap_or(cfg.seed);
+                (0..cfg.games).map(move |g| (v, FOUGHT_SEED + base + g as u64))
+            })
+            .collect();
+        let fought = run_all(&jobs, |&(v, seed)| {
+            fight_one(&registries[v], &maps[v], seed)
+        });
 
-    if cfg.verbose {
-        for (v, t) in plan.iter().zip(&tallies) {
-            heading(&format!("=== {} ===", label_of(v)));
-            report(t, cfg.games);
+        let mut tallies: Vec<Tally> = (0..plan.len()).map(|_| Tally::default()).collect();
+        for ((v, _), t) in jobs.iter().zip(&fought) {
+            tallies[*v].merge(t);
+        }
+
+        if cfg.verbose {
+            for (v, t) in plan.iter().zip(&tallies) {
+                heading(&format!("=== {} ===", label_of(v)));
+                report(t, cfg.games);
+            }
+        }
+
+        let digests: Vec<Digest> = tallies.iter().map(|t| Digest::of(t, cfg.games)).collect();
+        compare(&labels, &digests, cfg.games);
+        if cfg.csv {
+            csv(&labels, &digests);
         }
     }
 
-    let labels: Vec<String> = plan.iter().map(|v| label_of(v).to_string()).collect();
-    let digests: Vec<Digest> = tallies.iter().map(|t| Digest::of(t, cfg.games)).collect();
-    compare(&labels, &digests, cfg.games);
     if cfg.games < 36 {
         println!(
             "\n  NOTE {} battles is a small sample to read a difference out of. The\n  \
@@ -3085,10 +3206,6 @@ fn sweep(axes: &[Axis], base: &[Override], root: &std::path::Path, cfg: &Run) {
             cfg.games
         );
     }
-    if cfg.csv {
-        csv(&labels, &digests);
-    }
-
     // The three that fight their own battles, laid out the same way. They run
     // after the digest rather than beside it because each is already parallel
     // inside itself, and because the digest is the table somebody watching the
@@ -3104,7 +3221,7 @@ fn sweep(axes: &[Axis], base: &[Override], root: &std::path::Path, cfg: &Run) {
         .collect();
     for i in 0..grids.first().map(Vec::len).unwrap_or(0) {
         let column: Vec<Grid> = grids.iter().map(|g| g[i].clone()).collect();
-        compare_grids(&labels, &column);
+        compare_grids(&labels, &column, cfg.absolute);
     }
 }
 
@@ -3114,11 +3231,17 @@ fn sweep(axes: &[Axis], base: &[Override], root: &std::path::Path, cfg: &Run) {
 /// mode of two lists is a table that quietly stops being swept the day it is
 /// added to one of them.
 fn fought_grids(reg: &DataRegistry, cfg: &Run, seed: u64) -> Vec<Grid> {
-    vec![
-        delegation_tax(reg, cfg.games, seed),
-        mustered_forces(reg, cfg.games, cfg.budget, seed),
-        skill_gap(reg, cfg.games, seed),
-    ]
+    let mut out = Vec::new();
+    if cfg.only.wants("delegation") {
+        out.push(delegation_tax(reg, cfg.games, seed));
+    }
+    if cfg.only.wants("mustered") {
+        out.push(mustered_forces(reg, cfg.games, cfg.budget, seed));
+    }
+    if cfg.only.wants("skill") {
+        out.push(skill_gap(reg, cfg.games, seed));
+    }
+    out
 }
 
 fn label_of(v: &Variant) -> &str {
@@ -3263,7 +3386,7 @@ fn print_grid(g: &Grid) {
 /// deltas from them, rather than four rows of absolute figures with the
 /// subtraction left to the reader. A row of `·` therefore means what it means
 /// everywhere else in this harness: nothing these battles could see moved.
-fn compare_grids(labels: &[String], grids: &[Grid]) {
+fn compare_grids(labels: &[String], grids: &[Grid], absolute: bool) {
     let (Some(base), Some(base_label)) = (grids.first(), labels.first()) else {
         return;
     };
@@ -3307,7 +3430,7 @@ fn compare_grids(labels: &[String], grids: &[Grid]) {
                     let mut moved = false;
                     for (j, c) in base.columns.iter().enumerate() {
                         let v = theirs.get(j).copied().unwrap_or(0.0);
-                        let text = if i == 0 {
+                        let text = if i == 0 || absolute {
                             c.cell(v)
                         } else {
                             let delta = v - cells.get(j).copied().unwrap_or(0.0);
@@ -3316,21 +3439,75 @@ fn compare_grids(labels: &[String], grids: &[Grid]) {
                         };
                         print!(" {:>width$}", text, width = c.width());
                     }
-                    if i > 0 && !moved {
+                    if i > 0 && !absolute && !moved {
                         print!("   <- the same");
                     }
                 }
             }
             println!();
         }
+        spread_line(base, grids, name, w, vw);
     }
-    println!(
-        "\n  the first line of each {} is `{base_label}`; the rest are differences\n  \
-         from it, and a line of `·` is a variant these battles could not tell\n  \
-         apart from the baseline.",
-        base.row_head
-    );
+    if absolute {
+        println!(
+            "\n  every line is that variant's own number. `spread` is the widest gap\n  \
+             between variants in that column."
+        );
+    } else {
+        println!(
+            "\n  the first line of each {} is `{base_label}`; the rest are differences\n  \
+             from it, and a line of `·` is a variant these battles could not tell\n  \
+             apart from the baseline. `spread` is the widest gap between variants.",
+            base.row_head
+        );
+    }
     println!("{}", base.note);
+}
+
+/// Which tables to print, by name; empty means all of them.
+///
+/// Iterating on one number means reading one table, and `--sim` runs four that
+/// fight battles. Paying for the other three every time is the kind of friction
+/// that ends with somebody not running the instrument at all — which is the
+/// failure this whole file is built against.
+struct Only(Vec<String>);
+
+/// Every name `--only` accepts, in the order the tables print.
+const TABLES: &[&str] = &[
+    "roster",
+    "hit",
+    "pen",
+    "kills",
+    "flight",
+    "flags",
+    "sim",
+    "delegation",
+    "mustered",
+    "skill",
+];
+
+impl Only {
+    fn parse(text: Option<&str>) -> Self {
+        let Some(text) = text else {
+            return Self(Vec::new());
+        };
+        let names: Vec<String> = text.split(',').map(str::to_string).collect();
+        for name in &names {
+            if !TABLES.contains(&name.as_str()) {
+                eprintln!(
+                    "error: --only {name}: no such table. There is: {}",
+                    TABLES.join(", ")
+                );
+                std::process::exit(1);
+            }
+        }
+        Self(names)
+    }
+
+    fn wants(&self, name: &str) -> bool {
+        debug_assert!(TABLES.contains(&name), "{name} is not in TABLES");
+        self.0.is_empty() || self.0.iter().any(|n| n == name)
+    }
 }
 
 /// What one invocation of the fought-out pass was asked for.
@@ -3341,4 +3518,9 @@ struct Run {
     sim: bool,
     verbose: bool,
     csv: bool,
+    /// Print the variants' own numbers rather than their differences from the
+    /// baseline. The differences are what a tuning question wants; the values
+    /// are what a *range* wants, and a seed sweep is asking for a range.
+    absolute: bool,
+    only: Only,
 }
