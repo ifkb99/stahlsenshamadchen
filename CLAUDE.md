@@ -28,18 +28,69 @@ cargo run --release -p tactics_core --example balance    # what the data does
 cargo run --release -p tactics_core --example balance -- --sim   # ...fought out
 cargo run --release -p tactics_core --example balance -- --sim --points 100  # richer armies
 cargo run --release -p tactics_core --example balance -- --brains --brain-games 64  # which planner
+cargo run --release -p tactics_core --example balance -- --help  # every flag, with examples
+
+# what does this number do that the old one did not?
+cargo run --release -p tactics_core --example balance -- \
+    --sim --games 36 --sweep balance.partial_penetration_percent=40,55,70
+# ...and how much of that was the dice?
+cargo run --release -p tactics_core --example balance -- --sim --games 36 --sweep seed=1000,2000,3000
 ```
 
-**The battles run across every core** (`fight_all`, `std::thread::scope`, no
+**The battles run across every core** (`run_all`, `std::thread::scope`, no
 new dependency). They are genuinely independent — each has its own map,
 state, planners and seeded rng, sharing only the read-only registry — so what
 parallelism could damage is not a battle but a *table*. That is guarded
-rather than hoped for: every battle writes into the slot its seed owns and
-results are folded in seed order, so the printed numbers cannot depend on
-which core finished first. A balance figure that moved with scheduling would
-be worse than a slow one, because it would look exactly like noise. If you
-add a table, fold it in seed order too, and check a run against itself before
-trusting it.
+rather than hoped for: every job writes into the slot it owns and results are
+folded in job order, which is seed order, so the printed numbers cannot depend
+on which core finished first. A balance figure that moved with scheduling
+would be worse than a slow one, because it would look exactly like noise. If
+you add a table, fold it in seed order too, and check a run against itself
+before trusting it. `Tally::merge` is where that contract is written down:
+every field is a sum, a concatenation or a union of sums, and a field that is
+none of those — a maximum, a ratio, a last value — breaks it.
+
+`--jobs N` caps how much of the machine one invocation takes, so several
+sweeps can run beside each other; **no printed number moves with it**, and
+that is checked rather than assumed (`--jobs 1 / 3 / 7` on the same batch are
+byte-identical, as is the parallel fought-out pass against the sequential one
+it replaced).
+
+### Asking what a number does, instead of what it is
+
+`--set path=value` changes one number before anything runs and `--sweep
+path=a,b,c` runs the whole thing once per value and prints the rows side by
+side, with a second table of differences from the first row. Both address
+fields by the name the json uses — `balance.partial_penetration_percent`,
+`weapon.howitzer_105.dispersion`, `morale.rungs[2].accuracy`,
+`vehicle.medium_tank.profile` — and they reach *every* field of every block
+and every content map, because the patch is a serde round trip through the
+same representation a save file holds rather than a hand-written list of the
+knobs somebody thought to expose. A field added to `Balance` tomorrow is
+sweepable the same afternoon with no change to `balance.rs`. A path that
+names nothing is an error listing what was actually at that level, because
+the silent alternative is a sweep whose rows all measured the same game and
+agreed with each other beautifully.
+
+Three things about it are worth knowing before reaching for it:
+
+- **It is the same thing as editing `mod.json`, and that is checked.** A
+  hand-edited copy of the mod tree swept with `--sweep mods=a,b` and the
+  equivalent `--sweep balance.moving_target_per_hex=5,40` print
+  byte-identical difference rows. That equivalence is the whole claim; if it
+  ever stops holding, the override machinery has become a second game.
+- **Two axis names are not fields.** `mods=` selects the tree to load, which
+  compares two *versions* of the content rather than two numbers in one;
+  `seed=` selects which battles get fought, which puts the noise floor in the
+  same table and the same columns as the difference being read. That second
+  one is the more useful of the two: at 36 games, four seeds alone move the
+  tank destroyer's kills between 74 and 89 and the mean battle length by 1.1
+  rounds, which is larger than several differences this project has quoted as
+  results.
+- **The sweep compares the fought-out digest only** — outcome, length,
+  gunnery, artillery, crew cost, and kills/losses per chassis. The doctrine
+  tax, mustered forces and skill-gap tables still print once per run;
+  `--verbose` prints each variant's full report if that is what you need.
 
 `balance` is the content-iteration loop, and it is built around the kill chain
 rather than around damage. The analytic pass is instant and answers "what did

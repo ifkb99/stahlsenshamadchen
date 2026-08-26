@@ -159,6 +159,19 @@ stalemate, so there is finally a baseline to measure a rewrite against.
   anybody, cannot plan a taxi run, and holds infantry short-ranged in cover,
   so a platoon is currently paying five points for very little. Re-run the
   table after per-unit tasking lands before touching a single price.
+- **`balance.blind_penalty` is inert in every measured battle** (found
+  2026-08-26 by the first sweep that could ask). At 36 games, `--sweep
+  balance.blind_penalty=40,0,95` prints three byte-identical rows: outcome,
+  length, gunnery, artillery, crew cost and every chassis's kills and losses
+  all agree exactly. It is not broken — nothing in `ai/` ever sets
+  `ShotFired.blind`, so blind fire is a player-only path and an AI-vs-AI
+  sample can never move with it. Two consequences. The number cannot be tuned
+  by this harness at all, so tuning it needs either a scripted battle or an AI
+  that shells ground it cannot see; and **shelling unseen ground is a tactic
+  the AI does not have**, which is worth deciding about on its own — see
+  artillery lead under Chain of Command, which wants the same target-track
+  memory. Do not "fix" this by giving the sweep a special case; the sweep is
+  right and it is reporting something true.
 ### Content gaps
 - **a random map generator** (noted 2026-08-14, deliberately not yet): real
   balance work needs terrain the numbers were not tuned on, and the designer
@@ -190,6 +203,11 @@ stalemate, so there is finally a baseline to measure a rewrite against.
 - music, engine sounds, gun reports. even placeholder sfx changes game feel enormously
 - cadet voice barks — cheap characterization for the cute side of the identity
 ### Tooling
+- the sweep compares the **fought-out digest only**. The doctrine tax,
+  mustered forces and skill-gap tables still print once per run, so a change
+  aimed at one of those has to be read with `--verbose` and two screens of
+  scrollback — the exact loop `--sweep` exists to end, one table over. Each
+  wants the same treatment: a digest struct, a fold, and a row.
 - replay viewer: save the seed + order stream and re-watch. nearly free with the deterministic sim (the same intents replay tick for tick), doubles as a balance tool
 - the game crate is barely tested: 120 tests, 5 of them in `crates/game`, and four of those are devtools/iso unit tests. `nobody_deploys_onto_their_own_way_off_the_map` is the first real one and it caught a battle-ending bug on its first run, which is the argument for more. `finish_battle`'s survivor accounting and the `apply_battle_result` wiring still have no coverage, and that is the seam where campaign state can corrupt silently. a headless test that runs a field battle end to end and checks the roster afterwards would cover most of it
 
