@@ -58,6 +58,10 @@
 //! | `shot <path>` | capture the window; the script waits for it to land |
 //! | `log <text>` | print a marker, to correlate stdout with screenshots |
 //! | `until <predicate> [<secs>]` | block until the game says so, or give up |
+//!
+//! Predicates: `idle`, `waiting`, `over`, `turn <cmp> <n>`,
+//! `score <side> <cmp> <n>`, `unit "<name>" alive|dead|aboard|afoot`,
+//! `log "<text>"`, `selected "<name>"`.
 //! | `expect <predicate>` | assert now; a failure makes the run exit nonzero |
 //! | `quit` | exit once every pending screenshot has been written |
 //!
@@ -190,6 +194,16 @@ pub(crate) struct ScriptFacts {
     /// The on-screen log as it stands. A rolling window of the last few
     /// lines, not a transcript — see [`Script::seen_log`].
     pub log: Vec<String>,
+    /// Who the player has selected, by name, if anyone.
+    ///
+    /// Worth a fact of its own because selection is the one piece of UI state
+    /// a script *drives* and could not previously *check*: a click that
+    /// selected nothing, or selected the wrong crew of two sharing a hex,
+    /// looked exactly like a click that worked until several actions later
+    /// when the keystroke it was setting up did nothing. That is how the
+    /// stacked-hex selection bug survived — see the click handler in
+    /// `battle::handle_input`.
+    pub selected: Option<String>,
 }
 
 /// One unit, as a script may ask about her.
@@ -261,6 +275,7 @@ enum Predicate {
     Score { side: usize, op: Cmp, n: u32 },
     Unit { name: String, is: UnitIs },
     Log(String),
+    Selected(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -322,6 +337,7 @@ impl Predicate {
                 }
             }
             Predicate::Log(text) => seen_log.iter().any(|line| line.contains(text.as_str())),
+            Predicate::Selected(name) => facts.selected.as_deref() == Some(name.as_str()),
         }
     }
 }
@@ -480,6 +496,7 @@ fn parse_predicate(text: &str) -> Option<Predicate> {
             })
         }
         "log" => parse_quoted(rest).map(|(text, _)| Predicate::Log(text)),
+        "selected" => parse_quoted(rest).map(|(name, _)| Predicate::Selected(name)),
         _ => None,
     }
 }
@@ -826,6 +843,7 @@ mod tests {
                 },
             ],
             log: Vec::new(),
+            selected: Some("Grenadier 1".into()),
         }
     }
 
@@ -857,6 +875,10 @@ mod tests {
         assert_eq!(
             parse_predicate("log \"brews up\""),
             Some(Predicate::Log("brews up".into()))
+        );
+        assert_eq!(
+            parse_predicate("selected \"Grenadier 2\""),
+            Some(Predicate::Selected("Grenadier 2".into()))
         );
         // A closed vocabulary: anything else is a warning at load, not a
         // silently-false question at run time.
@@ -907,6 +929,10 @@ mod tests {
         assert!(holds("score 0 >= 7") && holds("score 1 == 0"));
         // A side nobody published scores nothing rather than panicking.
         assert!(holds("score 9 == 0"));
+
+        // Selection: the fact a script drives and could not previously check.
+        assert!(holds("selected \"Grenadier 1\""));
+        assert!(!holds("selected \"Grenadier 2\""));
 
         assert!(holds("unit \"Grenadier 2\" aboard"));
         assert!(!holds("unit \"Grenadier 2\" afoot"));

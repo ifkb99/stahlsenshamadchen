@@ -580,6 +580,10 @@ fn publish_script_facts(
     facts.over = battle.state.is_over();
     facts.score.clone_from(&battle.state.score);
     facts.log = log.0.iter().cloned().collect();
+    facts.selected = battle
+        .selected
+        .and_then(|id| battle.state.unit(id))
+        .map(|unit| unit.name.clone());
     facts.units.clear();
     facts.units.extend(
         battle
@@ -2100,8 +2104,34 @@ fn handle_input(
 
     // Click own unit: select it. Every unit can be given orders during
     // planning, including ones that already have some.
-    if let Some(unit) = battle.state.unit_at(hex).filter(|u| u.side == side) {
-        let id = unit.id;
+    //
+    // Clicking a hex that holds more than one of her crews steps to the next
+    // one rather than re-selecting the same one, because since stacking
+    // landed the second occupant was **unreachable by mouse entirely**:
+    // `unit_at` answers with whoever comes first in id order, and a platoon
+    // that dismounts onto her carrier's own hex — which is now the ordinary
+    // case, tried before the neighbours — sits behind the carrier forever.
+    // The infantry tour caught it, having been the only thing that ever tried
+    // to re-mount a platoon.
+    //
+    // `occupants` rather than `unit_at` is the honest question here, and it
+    // walks `units` in id order, so the cycle is the same on every machine.
+    let mine: Vec<tactics_core::battle::UnitId> = battle
+        .state
+        .occupants(hex)
+        .filter(|u| u.side == side)
+        .map(|u| u.id)
+        .collect();
+    if !mine.is_empty() {
+        let id = match battle
+            .selected
+            .and_then(|cur| mine.iter().position(|&id| id == cur))
+        {
+            // Already on one of them: the next, wrapping. Two crews on a hex
+            // is a toggle, which is what a player expects of a second click.
+            Some(i) => mine[(i + 1) % mine.len()],
+            None => mine[0],
+        };
         battle.selected = Some(id);
         battle.formation = None;
         battle.range_dirty = true;

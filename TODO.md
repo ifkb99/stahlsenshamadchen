@@ -25,26 +25,7 @@ Things that shape everything below them. Deciding late means rework; ordered by 
   still needs: **selecting which mods are active at runtime** (see Menus)
 
 ## Bugs
-- **three of the ten dev tours in `scripts/dev/` are red, and have been for at
-  least five commits.** measured 2026-08-26 across the whole set:
-  `infantry-tour` (5 failures), `press-on` (3), `orders-explained` (2); the
-  other seven — `battle-tour`, `battle-fight`, `command-tour`, `after-action`,
-  `overworld-tour`, `orders-waiting`, `the-roll` — pass. checked against
-  `1c6c823` and every one of the three fails identically there, so this is not
-  fallout from the detection or goal-chooser work.
-  what they fail on: `infantry-tour` never gets Grenadier 2 aboard and then
-  loses Grenadier 1; `press-on` expects Anka Weiss alive and two "will press
-  on to" log lines; `orders-explained` expects "ordered to assault" and
-  "ordered to advance" in the log. all three are plausibly *scripts* that
-  drifted from behaviour rather than behaviour that broke, since the scripted
-  clicks name specific hexes.
-  the real problem is the one behind them: **nothing runs the tours**.
-  `cargo test --workspace` does not, CI does not, and the change loop only
-  says to screenshot when the Bevy layer was touched — so "a tour is a test"
-  (see the devtools note in CLAUDE.md) is a property nothing is currently
-  enforcing. either wire them into a gate or stop claiming it
-- `WARN bevy_render::view::window: Couldn't get swap chain texture after configuring. Cause: 'Outdated'`
-- `WARN winit::platform_impl::linux::x11::xdisplay: error setting XSETTINGS; Xft options won't reload automatically`
+- ~~three of the ten dev tours are red~~ — **mostly my own bad invocation, fixed 2026-08-26.** Two of the three (`press-on`, `orders-explained`) were only ever run without the map they need and passed the moment they got it. The third, `infantry-tour`, was a real regression: since stacking landed, a platoon dismounts onto her *carrier's own hex*, and click-to-select goes through `unit_at`, which answers with whoever comes first in id order — so **the second crew on a hex could not be selected at all** and the tour could never re-mount her. Clicking a hex now cycles through its occupants. The tour was the only thing in the project that ever tried to re-mount a platoon, which is the argument for the runner below.
 - ~~units cannot move through friendlies on campaign map~~ fixed 2026-08-26,
   and it was three places, not one: `reachable`'s expansion, the `retain` that
   says what may be *stopped* on, and — the one that actually moves the army —
@@ -320,6 +301,8 @@ stalemate, so there is finally a baseline to measure a rewrite against.
 - music, engine sounds, gun reports. even placeholder sfx changes game feel enormously
 - cadet voice barks — cheap characterization for the cute side of the identity
 ### Tooling
+- **run the dev tours in CI.** `scripts/dev/run-tours.sh` runs all ten with the boot environment each declares on its own `#!env` line, and is now step 5 of the change loop. `STAHL_HEADLESS=1` runs them with no display and no GPU, under `xvfb-run` with Mesa's lavapipe — **tried, and it works**: `battle-tour` and `after-action` both pass that way on a machine that has no screen of its own, so `ubuntu-latest` is not the obstacle.
+  what is left is the budget. it is **roughly an order of magnitude slower**, because everything a tour waits on is paced by animation, animation is paced by frames, and llvmpipe draws this scene at a few frames a second — the full set is minutes on a GPU and looked like half an hour without one. so: a nightly or a `workflow_dispatch` job rather than one on every push, or a fast subset on push and the rest nightly. the presentation layer is the half of this project nothing gates, which is exactly how a selection bug lived through a whole stacking arc
 - replay viewer: save the seed + order stream and re-watch. nearly free with the deterministic sim (the same intents replay tick for tick), doubles as a balance tool
 - the game crate is barely tested: 120 tests, 5 of them in `crates/game`, and four of those are devtools/iso unit tests. `nobody_deploys_onto_their_own_way_off_the_map` is the first real one and it caught a battle-ending bug on its first run, which is the argument for more. `finish_battle`'s survivor accounting and the `apply_battle_result` wiring still have no coverage, and that is the seam where campaign state can corrupt silently. a headless test that runs a field battle end to end and checks the roster afterwards would cover most of it
 

@@ -1096,6 +1096,13 @@ with `cargo run -p stahlsenshamädchen --example minimal_window` (a stock Bevy
 window that reproduces it with no game code). See DONE.md.
 
 `scripts/dev/` holds a tour of each screen; the module doc lists every action.
+**`scripts/dev/run-tours.sh` runs all of them** and is the only thing that
+makes "a tour is a test" true — nothing else does, not `cargo test
+--workspace` and not CI, which has no display. Each tour declares the boot
+environment it needs on a `#!env` line so the runner cannot start one on the
+wrong map; that used to be prose at the top of the file, and three tours were
+written off as broken for weeks when they had only ever been invoked wrongly.
+Run it after anything that touches `crates/game`.
 Two things about it are load-bearing:
 
 - **The scripted cursor is a resource, not the window's.** Writing to
@@ -1114,6 +1121,13 @@ Two things about it are load-bearing:
   `until idle` over `wait N` for anything that waits on the simulation — a
   `wait` that guessed short photographs a half-played round and says nothing
   about it.
+- **A click on a stacked hex cycles through its occupants.** `unit_at` answers
+  with whoever comes first in id order, which is right for a HUD line and was
+  silently wrong for selection the day a hex could hold two crews: a platoon
+  dismounts onto her carrier's own tile, so she sat behind the carrier and
+  could not be selected by mouse at all. `ScriptFacts::selected` exists so a
+  tour can assert *who* a click selected rather than discovering three actions
+  later that a keystroke went nowhere.
 - **Every screen answers for every fact.** `ScriptFacts` is one resource
   shared by all of them, so a field a publisher leaves alone is still holding
   the *previous* screen's answer — a script would wait on a muster prompt

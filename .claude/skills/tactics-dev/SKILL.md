@@ -28,6 +28,7 @@ messages** — that is the house style and it is why claims here are checkable.
 | Did behaviour change, and did I mean it? | `cargo test -p tactics_core --test determinism` |
 | Is it still fast? | `cargo run --release -p tactics_core --example perf` |
 | What does it look like? | `STAHL_PRESENT=immediate STAHL_DEBUG=1 STAHL_BATTLE=river_crossing STAHL_SCRIPT=scripts/dev/battle-tour.txt cargo run -p stahlsenshamädchen` |
+| Is the whole presentation layer still working? | `scripts/dev/run-tours.sh` — all ten tours, each on the map it declares |
 | Is the renderer broken, or is it the driver? | `cargo run -p stahlsenshamädchen --example minimal_window` |
 
 `--release` is not optional for `perf` and `balance`; the dev profile builds at
@@ -48,8 +49,11 @@ messages** — that is the house style and it is why claims here are checkable.
    it puts the baseline on the row above the difference. Sweep the seed in
    the same session: this project has quoted differences smaller than its own
    noise floor before.
-5. If it touched the Bevy layer: take a screenshot. The sim being right and the
-   UI being silently dead is a real failure mode here — it has happened.
+5. If it touched the Bevy layer: **run `scripts/dev/run-tours.sh`** and take a
+   screenshot. The sim being right and the UI being silently dead is a real
+   failure mode here — it has happened. The tours are the only check on that
+   half, and nothing else runs them: not `cargo test --workspace`, not CI.
+   `STAHL_HEADLESS=1` runs them without a display or a GPU.
 6. Gates: `cargo clippy --workspace --all-targets -- -D warnings`,
    `cargo fmt --check`, `cargo run --bin validate-mods`.
 7. Commit with the numbers in the message.
@@ -74,6 +78,12 @@ cargo test --workspace 2>&1 | grep -E "Running|test result" | paste - - | sed 's
 compile error means the *old binary* runs, and every conclusion drawn from it
 is worthless. This produced an hour of debugging a feature that was not in the
 binary being tested.
+
+**A tour run on the wrong map fails for no reason at all.** Each needs its own
+boot environment and it used to live in a prose comment; three tours were
+written off as broken for weeks on the strength of that. They declare it on a
+`#!env` line now and `run-tours.sh` reads it, so run them through the runner
+rather than by hand.
 
 **In-game messages go to the HUD log, not stdout.** Grepping the process output
 for "Loaded." proves nothing. Screenshot the log panel instead.

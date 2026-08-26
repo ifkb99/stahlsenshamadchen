@@ -1387,6 +1387,16 @@ struct Tally {
     /// see. The direct twin of the above on the shooting side, and the one
     /// number that says whether hiding is worth anything: a gun that can
     /// always see its target never pays `balance.blind_penalty`.
+    ///
+    /// **It reads zero in every run so far, and it is kept anyway.** Nothing
+    /// in the AI ever chooses to shell ground it cannot see, so this is
+    /// currently measuring the absence of a decision rather than the outcome
+    /// of one — which is the same thing `blind_penalty` itself turned out to
+    /// be. The reason to keep the column is that the decision is coming:
+    /// suppressing fire is fire at a place rather than at a crew, and the
+    /// moment a planner learns to lay it, this is the number that will say so
+    /// without anybody having to add an instrument in the same breath as the
+    /// feature it is meant to judge.
     shots_blind: u32,
 }
 

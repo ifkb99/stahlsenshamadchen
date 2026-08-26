@@ -1,4 +1,5 @@
 # Fight a real battle out, so the things that only happen under fire — morale
+#!env STAHL_BATTLE=river_crossing
 # changes, refusals, casualties — actually reach the log panel.
 #
 #   STAHL_PRESENT=immediate STAHL_DEBUG=1 STAHL_BATTLE=river_crossing \
