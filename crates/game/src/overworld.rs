@@ -1,13 +1,13 @@
 //! The overworld screen: strategic army movement, objective capture,
 //! income, soft fog, and handing off clashes to the battle screen.
 
-use crate::AppState;
 use crate::battle::{BattleForce, BattleOutcome, PendingBattle};
 use crate::camera::CameraFocus;
 use crate::campaign::{self, Campaign, CampaignCommand};
 use crate::iso::{self, ArtCache, ViewCenter};
 use crate::map_render::{self, CurrentMap, HexOverlay};
 use crate::mods::Mods;
+use crate::{AppState, ScreenSet};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use std::collections::{HashMap, VecDeque};
@@ -152,13 +152,28 @@ pub struct OverworldPlugin;
 
 impl Plugin for OverworldPlugin {
     fn build(&self, app: &mut App) {
+        // Same seven phases as the battle screen, in the same order, declared
+        // once in `main.rs`. What differs is only which systems go in each.
         app.init_resource::<OwLogLines>()
             .add_systems(OnEnter(AppState::Overworld), enter_overworld)
             .add_systems(
                 Update,
+                pump_events
+                    .in_set(ScreenSet::Animate)
+                    .run_if(in_state(AppState::Overworld)),
+            )
+            .add_systems(
+                Update,
+                drive_ai
+                    .in_set(ScreenSet::Simulate)
+                    .run_if(in_state(AppState::Overworld)),
+            )
+            .add_systems(
+                Update,
+                // These four stay chained and the chain is load-bearing: one
+                // keystroke means different things to a modal and to the map
+                // underneath it, so whoever is on top must have first refusal.
                 (
-                    pump_events,
-                    drive_ai,
                     muster_input,
                     handle_input,
                     // After `handle_input`, not before: dismissing the report
@@ -170,16 +185,38 @@ impl Plugin for OverworldPlugin {
                     // closes the roll and also drops the map selection, so
                     // the roll must have its chance first.
                     roster_input,
-                    sync_armies,
+                )
+                    .chain()
+                    .in_set(ScreenSet::Input)
+                    .run_if(in_state(AppState::Overworld)),
+            )
+            .add_systems(
+                Update,
+                sync_armies
+                    .in_set(ScreenSet::Sync)
+                    .run_if(in_state(AppState::Overworld)),
+            )
+            .add_systems(
+                Update,
+                (
                     update_owner_dots,
                     update_range_highlights,
                     update_ui,
                     update_muster_ui,
                     update_debrief_ui,
                     update_roster_ui,
-                    apply_campaign_commands,
                 )
                     .chain()
+                    .in_set(ScreenSet::Present)
+                    .run_if(in_state(AppState::Overworld)),
+            )
+            .add_systems(
+                Update,
+                // Lifecycle because a campaign script can ask for a state
+                // transition, and a frame that leaves the screen should have
+                // been drawn first.
+                apply_campaign_commands
+                    .in_set(ScreenSet::Lifecycle)
                     .run_if(in_state(AppState::Overworld)),
             )
             .add_systems(OnExit(AppState::Overworld), leave_overworld);

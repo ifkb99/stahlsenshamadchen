@@ -22,6 +22,51 @@ pub enum AppState {
     Battle,
 }
 
+/// The phases a screen's frame runs in, in order.
+///
+/// Both screens do the same seven things in the same sequence, which is why
+/// this is one enum and not two: the battle and the campaign map differ in
+/// *which* systems they put in each phase, never in what the phases are or
+/// what order they come in.
+///
+/// **This replaced a `.chain()` of twelve and fourteen systems.** A chain is a
+/// total order expressed by adjacency, so where a system sat in a tuple was
+/// load-bearing and invisible — two of the orderings were load-bearing enough
+/// to carry paragraphs explaining them, and this layer has already lost time
+/// to an ordering fault (`until idle` coming true a frame early, four `Enter`
+/// presses advancing one round, every screenshot after them describing the
+/// wrong turn while the script reported success). A new system now names the
+/// phase it belongs to and inherits that phase's place.
+///
+/// The order is not the obvious one and it is worth knowing why:
+/// **animation comes first**. The paced event queue gates everything behind
+/// it — the simulation refuses to advance while anything is still animating,
+/// and the screen refuses keystrokes for the same reason — so the queue has to
+/// be drained before anyone asks whether it is empty.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ScreenSet {
+    /// Drain the paced event queue and advance sprite animation. First
+    /// because everything after it asks whether this has finished.
+    Animate,
+    /// Let the simulation take a step: AI planning, round resolution.
+    Simulate,
+    /// Read the keyboard and the mouse. After the simulation so a keystroke
+    /// is answered against the state the player was actually looking at.
+    Input,
+    /// Carry the simulation's answer out to the entities that draw it.
+    Sync,
+    /// Everything derived purely for the eye: fog, highlights, markers,
+    /// panels, decaying effects.
+    Present,
+    /// Leaving the screen, and anything that can ask for a state transition.
+    /// Late, so a frame that ends the screen has already been drawn.
+    Lifecycle,
+    /// The dev harness's window onto the frame. Last, so `ScriptFacts`
+    /// describes a settled frame rather than a half-applied one — an `until
+    /// idle` that came true early is exactly the fault above.
+    Facts,
+}
+
 /// Returning [`AppExit`] rather than `()` is what lets a failing dev script
 /// fail the process. `App::run` has always handed back an exit status and
 /// this dropped it, so a scripted tour could watch every assertion fail and
@@ -42,6 +87,23 @@ fn main() -> AppExit {
         )
         .insert_resource(ClearColor(Color::srgb(0.09, 0.10, 0.13)))
         .init_state::<AppState>()
+        // Declared once for the whole app rather than per screen. Configuring
+        // the same set twice with two `run_if`s would AND them and the phase
+        // would never run at all, so the run conditions stay on the systems
+        // and the *order* lives here.
+        .configure_sets(
+            Update,
+            (
+                ScreenSet::Animate,
+                ScreenSet::Simulate,
+                ScreenSet::Input,
+                ScreenSet::Sync,
+                ScreenSet::Present,
+                ScreenSet::Lifecycle,
+                ScreenSet::Facts,
+            )
+                .chain(),
+        )
         .init_resource::<iso::ViewCenter>()
         .add_plugins((
             mods::ModsPlugin,

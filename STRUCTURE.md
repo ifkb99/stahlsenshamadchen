@@ -244,7 +244,28 @@ small `tools/` crate, and leave the example as argument parsing and printing.
 
 ---
 
-## 6. Both screens serialise their systems with `.chain()`
+## 6. ~~Both screens serialise their systems with `.chain()`~~
+
+**Fixed 2026-08-26.** `ScreenSet` in `main.rs` names the seven phases a
+screen's frame runs in — `Animate → Simulate → Input → Sync → Present →
+Lifecycle → Facts` — declared once for the whole app. Both screens turn out to
+run the *same* phases in the *same* order, which is why it is one enum rather
+than two; what differs is only which systems go in each.
+
+The order is **not** the `Input → Simulate → Sync → Present` this item
+originally proposed. Animation comes first, and for a real reason: the paced
+event queue gates everything behind it, since both the simulation and the
+keyboard refuse to act while anything is still animating. Naming the phases
+after what the code does rather than after a tidy guess is the point of the
+exercise.
+
+Provably order-preserving: every system is in exactly one set, sets are
+chained, and systems within a set are still chained — so the total order
+matches the old chain element for element. Systems keep their own `run_if`,
+because configuring one set twice with two state conditions would AND them and
+the phase would never run at all. All ten tours pass.
+
+<details><summary>The original finding</summary>
 
 `BattlePlugin` chains twelve systems; `OverworldPlugin` chains fourteen.
 Ordering is therefore positional — the constraint lives in where a name sits
@@ -262,6 +283,8 @@ turn while the script reported success.
 **Fix.** Named sets — `Input → Simulate → Sync → Present` — with the systems
 assigned to them. Insertion order then stops mattering, and a new system
 declares which phase it belongs to rather than being dropped into a list.
+
+</details>
 
 ---
 

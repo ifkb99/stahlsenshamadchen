@@ -1,11 +1,11 @@
 //! The battle screen: renders a `tactics_core` battle, feeds it player
 //! orders, animates the resulting events, and drives AI sides.
 
-use crate::AppState;
 use crate::camera::CameraFocus;
 use crate::iso::{self, ArtCache, ViewCenter};
 use crate::map_render::{self, CurrentMap, FogOverlay, HexOverlay};
 use crate::mods::Mods;
+use crate::{AppState, ScreenSet};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -500,25 +500,59 @@ pub struct BattlePlugin;
 
 impl Plugin for BattlePlugin {
     fn build(&self, app: &mut App) {
+        // Each phase says what it is for; the order between phases is
+        // declared once, in `main.rs`, so nothing here depends on the order
+        // these calls happen to be written in. Systems are still chained
+        // *within* a phase, because within a phase adjacency is a real
+        // constraint and a short list is where it can be seen.
         app.init_resource::<BattleLog>()
             .add_systems(OnEnter(AppState::Battle), setup_battle)
             .add_systems(
                 Update,
+                // The queue first: `advance_resolution` and `handle_input`
+                // both refuse to act while anything is still animating, so
+                // the drain has to happen before either asks.
+                (drive_movers, pump_events)
+                    .chain()
+                    .in_set(ScreenSet::Animate)
+                    .run_if(in_state(AppState::Battle)),
+            )
+            .add_systems(
+                Update,
+                (drive_ai, advance_resolution)
+                    .chain()
+                    .in_set(ScreenSet::Simulate)
+                    .run_if(in_state(AppState::Battle)),
+            )
+            .add_systems(
+                Update,
+                handle_input
+                    .in_set(ScreenSet::Input)
+                    .run_if(in_state(AppState::Battle)),
+            )
+            .add_systems(
+                Update,
+                sync_units
+                    .in_set(ScreenSet::Sync)
+                    .run_if(in_state(AppState::Battle)),
+            )
+            .add_systems(
+                Update,
                 (
-                    drive_movers,
-                    pump_events,
-                    drive_ai,
-                    advance_resolution,
-                    handle_input,
-                    sync_units,
                     update_fog,
                     update_highlights,
                     update_objective_markers,
                     update_panel,
                     update_flashes,
-                    finish_battle,
                 )
                     .chain()
+                    .in_set(ScreenSet::Present)
+                    .run_if(in_state(AppState::Battle)),
+            )
+            .add_systems(
+                Update,
+                finish_battle
+                    .in_set(ScreenSet::Lifecycle)
                     .run_if(in_state(AppState::Battle)),
             );
         // Only a dev build answers questions about itself. The publisher
@@ -529,7 +563,7 @@ impl Plugin for BattlePlugin {
                 .add_systems(
                     Update,
                     publish_script_facts
-                        .after(finish_battle)
+                        .in_set(ScreenSet::Facts)
                         .run_if(in_state(AppState::Battle)),
                 );
         }
