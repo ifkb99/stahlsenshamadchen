@@ -10,6 +10,9 @@ TODO.md it is cross-referenced, not repeated. Finished work and the reasoning
 behind it lives in [DONE.md](DONE.md); read it before undoing a decision that
 looks arbitrary. [PARKED.md](PARKED.md) says why code with no callers is
 still in the tree, so that answer does not have to be carried here.
+[STRUCTURE.md](STRUCTURE.md) carries the seams that are in the wrong place —
+a rule living in the wrong crate, a contract asserted in prose that nothing
+checks — as against the rules that are wrong, which are here.
 
 **Start here:** `.claude/skills/tactics-dev/SKILL.md` is the working guide —
 the instruments this project has for answering questions about itself, the
