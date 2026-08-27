@@ -7811,6 +7811,41 @@ fn a_contact_report_belongs_to_the_crew_who_made_it() {
     );
 }
 
+/// A spot belongs to the side that made it, and being found is not something
+/// the found party is told.
+///
+/// She learns it when the shooting starts. This was answered in the renderer
+/// until the audience rule moved into core, and answered there by a *different
+/// question* — whether the spotting side had no AI on it, rather than whether
+/// it was the side being drawn for. Those agree while exactly one side is
+/// human-controlled and part company as soon as two are, which is why the
+/// stage below puts `ai: None` on both.
+#[test]
+fn being_found_is_not_something_the_found_crew_is_told() {
+    let reg = registry();
+    let state = two_side_battle(
+        &reg,
+        &["gggggfggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "West"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+        7,
+    );
+    let east = state.units[1].id;
+    // West has picked East out of the ground.
+    let spot = BattleEvent::UnitSpotted {
+        unit: east,
+        by_side: 0,
+        at: state.units[1].pos,
+    };
+    assert!(spot.heard_by(&state, 0), "West found her and knows it");
+    assert!(
+        !spot.heard_by(&state, 1),
+        "East is not sent a note saying she has been seen"
+    );
+}
+
 /// A formation's orders are its own side's business.
 ///
 /// Assigned, received, completed, and who is commanding it now: four events

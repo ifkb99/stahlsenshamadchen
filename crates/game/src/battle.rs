@@ -1398,10 +1398,11 @@ fn pump_events(
                     commands.entity(entity).despawn();
                 }
             }
-            BattleEvent::UnitSpotted { unit, by_side, .. } => {
-                if battle.state.sides[*by_side as usize].ai.is_none() {
-                    log.push(format!("Contact — {}.", name(*unit)));
-                }
+            // No audience check here any more: `heard_by` has already dropped
+            // any spot that was not this side's, and asking a second time in
+            // a second vocabulary is how the two answers came to disagree.
+            BattleEvent::UnitSpotted { unit, .. } => {
+                log.push(format!("Contact — {}.", name(*unit)));
             }
             // Said in the log, because a cadet doing something other than what
             // she was told has to be attributable or it reads as a bug.

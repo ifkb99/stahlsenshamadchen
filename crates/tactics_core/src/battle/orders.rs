@@ -591,11 +591,24 @@ impl Event {
             // unit being reported is by definition the other side's.
             Event::ContactReported { by, .. } => own_unit(by),
 
+            // A spot belongs to the side that made it. Finding somebody is
+            // the reward for looking, and being found is not something the
+            // found party gets told — she learns it when the shooting starts.
+            //
+            // This used to be answered in the renderer instead, by asking
+            // whether `by_side` was a side with no AI on it. That is a
+            // different question wearing the same clothes — "was the spotter
+            // human-controlled" rather than "was the spotter mine" — and the
+            // two part company the moment more than one side has `ai: None`,
+            // which the game crate's own tests construct and which a field
+            // battle with reinforcing neighbours makes reachable in play.
+            Event::UnitSpotted { by_side, .. } => *by_side == side,
+
             // Riding a `_ => true` until the audience rule moved here. Kept
-            // at today's answer in this commit deliberately, so that moving
-            // the rule and changing it are two separate things to review.
-            // See STRUCTURE.md item 1.
-            Event::UnitSpotted { .. } | Event::MoraleChanged { .. } | Event::Defied { .. } => true,
+            // at today's answer deliberately, so that moving the rule and
+            // changing it are separate things to review. See STRUCTURE.md
+            // item 1.
+            Event::MoraleChanged { .. } | Event::Defied { .. } => true,
         }
     }
 }
