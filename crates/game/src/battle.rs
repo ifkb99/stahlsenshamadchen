@@ -560,33 +560,34 @@ fn publish_script_facts(
     let Some(battle) = battle else {
         return;
     };
-    facts.turn = battle.state.round;
-    // "Idle" means the game is *waiting for the player*: the only moment a
-    // script's keystroke does what a person's would, and the only moment a
-    // screenshot shows a settled board. That is exactly `listening`, and it
-    // is a method on `Battle` rather than a copy of the conditions here
-    // precisely so the two cannot drift — see the note on it for what
-    // drifting cost.
-    //
-    // A battle that has ended is idle too — nothing is moving and nothing
-    // more will — or every tour that fights to a finish would hang on its
-    // last `until`.
-    facts.idle = battle.state.is_over() || battle.listening(movers.is_empty());
-    // Every screen answers for every fact, even the ones it has no notion of.
+    // Built whole and assigned, rather than written field by field. Every
+    // screen answers for every fact, even the ones it has no notion of —
     // `ScriptFacts` is one resource shared by all of them, so a field left
-    // alone here would still be holding the campaign map's last answer, and a
-    // script would wait on a prompt that was dismissed two screens ago.
-    facts.waiting = false;
-    facts.over = battle.state.is_over();
-    facts.score.clone_from(&battle.state.score);
-    facts.log = log.0.iter().cloned().collect();
-    facts.selected = battle
-        .selected
-        .and_then(|id| battle.state.unit(id))
-        .map(|unit| unit.name.clone());
-    facts.units.clear();
-    facts.units.extend(
-        battle
+    // alone here would still be holding the campaign map's last answer and a
+    // script would wait on a prompt dismissed two screens ago. Writing the
+    // struct out makes that structural instead of remembered: the literal is
+    // deliberately **exhaustive**, with no `..default()`, so a field added to
+    // `ScriptFacts` tomorrow fails to compile in every publisher until each
+    // screen has said what it answers. Same bargain `Mission::slot`'s
+    // exhaustive match makes, for the same reason — the failure mode of the
+    // alternative is silent.
+    *facts = crate::devtools::ScriptFacts {
+        turn: battle.state.round,
+        // "Idle" means the game is *waiting for the player*: the only moment
+        // a script's keystroke does what a person's would, and the only
+        // moment a screenshot shows a settled board. That is exactly
+        // `listening`, and it is a method on `Battle` rather than a copy of
+        // the conditions here precisely so the two cannot drift — see the
+        // note on it for what drifting cost.
+        //
+        // A battle that has ended is idle too — nothing is moving and nothing
+        // more will — or every tour that fights to a finish would hang on its
+        // last `until`.
+        idle: battle.state.is_over() || battle.listening(movers.is_empty()),
+        waiting: false,
+        over: battle.state.is_over(),
+        score: battle.state.score.clone(),
+        units: battle
             .state
             .units
             .iter()
@@ -594,8 +595,14 @@ fn publish_script_facts(
                 name: unit.name.clone(),
                 alive: unit.alive,
                 aboard: unit.aboard.is_some(),
-            }),
-    );
+            })
+            .collect(),
+        log: log.0.iter().cloned().collect(),
+        selected: battle
+            .selected
+            .and_then(|id| battle.state.unit(id))
+            .map(|unit| unit.name.clone()),
+    };
 }
 
 // --- setup ----------------------------------------------------------------

@@ -1131,15 +1131,23 @@ Two things about it are load-bearing:
   could not be selected by mouse at all. `ScriptFacts::selected` exists so a
   tour can assert *who* a click selected rather than discovering three actions
   later that a keystroke went nowhere.
-- **Every screen answers for every fact.** `ScriptFacts` is one resource
-  shared by all of them, so a field a publisher leaves alone is still holding
-  the *previous* screen's answer — a script would wait on a muster prompt
-  dismissed two screens ago. The campaign map publishes too now (`turn` as the
-  day, `idle`, `waiting`, `log`); it did not until the after-action report
-  gave it something worth waiting for, and every campaign tour was a
-  stopwatch. `waiting` means "held behind something the player must answer or
-  dismiss" — a muster prompt, an after-action page — and is the complement of
-  `idle`, not a second name for its negation.
+- **Every screen answers for every fact, and the shape enforces it.**
+  `ScriptFacts` is one resource shared by all of them, so a field a publisher
+  leaves alone is still holding the *previous* screen's answer — a script
+  would wait on a muster prompt dismissed two screens ago. That used to be a
+  paragraph asking people to remember, and it was already being forgotten:
+  the campaign publisher set seven of eight fields and left `selected` naming
+  the last crew clicked in a battle. **Each publisher now assigns the whole
+  struct through an exhaustive literal with no `..default()`**, so a field
+  added here fails to compile in every publisher until each screen has said
+  what it answers — the same bargain `Mission::slot`'s exhaustive match
+  makes. The campaign map publishes too (`turn` as the day, `idle`,
+  `waiting`, `log`, and `selected: None` said out loud, because a map has a
+  selected *army* and that is a different question); it did not until the
+  after-action report gave it something worth waiting for, and every campaign
+  tour was a stopwatch. `waiting` means "held behind something the player must
+  answer or dismiss" — a muster prompt, an after-action page — and is the
+  complement of `idle`, not a second name for its negation.
 - **`idle` is `Battle::listening`, and both must stay one predicate.** It
   means "a keystroke would be acted on this frame", which is not the same as
   "the phase is planning": sprites finishing a walk hold the keyboard, and a

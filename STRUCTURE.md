@@ -105,7 +105,25 @@ chunk and its own test. See item 8.
 
 ---
 
-## 3. `ScriptFacts` staleness is documented as a hazard and is live
+## 3. ~~`ScriptFacts` staleness is documented as a hazard and is live~~
+
+**Fixed 2026-08-26.** Both publishers assign the whole struct through an
+**exhaustive** literal — no `..default()` — so a field added to `ScriptFacts`
+fails to compile in every publisher until each screen has said what it
+answers. That is the house pattern already used by `Mission::slot`, and it is
+stronger than the `..default()` this item originally proposed: a screen that
+*should* answer a new fact cannot quietly take the default either. The
+campaign map now says `selected: None` out loud, with a note that a map has a
+selected *army* and that would want a fact of its own.
+
+All ten tours pass. Note what they do **not** do: the script language has only
+a positive `selected "<name>"` predicate, so no tour can assert the *absence*
+of a selection, which is the instance this item was about. The compile-time
+guard is what covers the class. A negated form would let a tour cover the
+instance too — small, and worth doing next time the predicate language is
+touched rather than on its own.
+
+<details><summary>The original finding</summary>
 
 CLAUDE.md warns: "a field a publisher leaves alone is still holding the
 *previous* screen's answer — a script would wait on a muster prompt dismissed
@@ -130,9 +148,21 @@ screen's answer, and omission stops being something a comment has to ask
 people to remember. The prose warning stays — it explains *why* the shape is
 what it is — but it stops being the only thing enforcing it.
 
+</details>
+
 ---
 
-## 4. Test helpers are copy-pasted; there is no `tests/common/`
+## 4. ~~Test helpers are copy-pasted; there is no `tests/common/`~~
+
+**Fixed 2026-08-26.** `tests/common/mod.rs` holds `mods_root`, `registry`,
+`registry_wireless` and `seen`; all eight binaries import from it. The count
+was worse than this item said: `determinism.rs` carried a ninth copy as
+`load_registry`, with one word of its assert message changed.
+
+Pure rearrangement, and the test counts say so — all twelve binaries green at
+the same numbers as before, determinism snapshot untouched.
+
+<details><summary>The original finding</summary>
 
 `fn registry()` is **byte-identical in six** of the eight test binaries —
 `save.rs`, `gunnery.rs`, `ammo.rs`, `modules.rs`, `content.rs`, `force.rs` —
@@ -152,6 +182,8 @@ paragraph.
 exists, and every binary declaring `mod common;`. Stage builders that are
 genuinely local to `engine.rs` stay in `engine.rs` — the goal is to make the
 *contract* importable, not to hollow out the file.
+
+</details>
 
 ---
 

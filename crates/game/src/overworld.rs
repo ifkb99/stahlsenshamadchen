@@ -226,13 +226,27 @@ fn publish_script_facts(
     // `idle` is what stops a tour photographing the map with a panel sitting
     // on top of it.
     let held = overworld.muster.is_some() || overworld.debrief.is_some() || overworld.roster;
-    facts.turn = overworld.state.turn;
-    facts.idle = overworld.anim.is_empty() && !held;
-    facts.waiting = held;
-    facts.over = overworld.state.over.is_some();
-    facts.score.clear();
-    facts.units.clear();
-    facts.log = log.0.iter().cloned().collect();
+    // Built whole, for the reason given at the battle screen's publisher: a
+    // field this screen has no answer for must read as "no answer" and not as
+    // the battle's last one. This publisher is why that stopped being a
+    // remark and became the shape — it set seven of the eight fields and left
+    // `selected` alone, so after any battle a campaign tour's `selected` was
+    // still naming the last crew the player had clicked, and an `expect
+    // selected …` on the map would have passed for the wrong reason.
+    //
+    // A campaign map has no selected *unit* — it has a selected army, which
+    // is a different question and would want a fact of its own — so the
+    // honest answer here is `None`, said out loud.
+    *facts = crate::devtools::ScriptFacts {
+        turn: overworld.state.turn,
+        idle: overworld.anim.is_empty() && !held,
+        waiting: held,
+        over: overworld.state.over.is_some(),
+        score: Vec::new(),
+        units: Vec::new(),
+        log: log.0.iter().cloned().collect(),
+        selected: None,
+    };
 }
 
 // Same reasoning as `battle::pump_events`: this is a setup system, and the
