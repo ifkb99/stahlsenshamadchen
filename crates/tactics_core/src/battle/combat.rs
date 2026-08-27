@@ -889,8 +889,13 @@ fn shell_lands(
     };
     let round = Round::loaded(ammo, weapon);
 
-    let direct = state.unit_at(shell.impact).map(|u| u.id);
-    if let Some(target) = direct {
+    // Everyone standing where it came down, not whoever happens to be first
+    // in the list. A shell bursts in a hex; a hex is 100 m across and may hold
+    // a platoon and the carrier that brought it, and both of them are in the
+    // burst. Id order so the rolls land in the same sequence in every replay.
+    let mut direct: Vec<UnitId> = state.occupants(shell.impact).map(|u| u.id).collect();
+    direct.sort_unstable();
+    for target in direct.iter().copied() {
         resolve_impact(
             registry,
             state,
@@ -910,8 +915,8 @@ fn shell_lands(
         .impact
         .all_neighbors()
         .into_iter()
-        .filter_map(|hex| state.unit_at(hex).map(|u| u.id))
-        .filter(|id| Some(*id) != direct)
+        .flat_map(|hex| state.occupants(hex).map(|u| u.id).collect::<Vec<_>>())
+        .filter(|id| !direct.contains(id))
         .collect();
     splashed.sort_unstable();
     for id in splashed {
@@ -1392,12 +1397,115 @@ fn resolve_shot(
             attacker,
             at: tgt_pos,
         });
+        // The shot missed *her*. Whether it also missed everybody else
+        // standing on her hex is a different question, and one that did not
+        // exist until a hex could hold more than one crew.
+        if let Some(bystander) = strays_onto(registry, state, target, tgt_pos) {
+            events.push(Event::ShotStrayed {
+                attacker,
+                intended: target,
+                onto: bystander,
+            });
+            resolve_impact(
+                registry, state, attacker, weapon, round, att_pos, bystander, events,
+            );
+        }
         return;
     }
 
     resolve_impact(
         registry, state, attacker, weapon, round, att_pos, target, events,
     );
+}
+
+/// How much of a hex a crew fills, for deciding who a round finds when it was
+/// not aimed at anybody in particular.
+///
+/// `100 + profile`, because `profile` already means exactly "how much easier
+/// or harder she is to hit than an armoured vehicle" and a second size field
+/// would be a second opinion about the same fact — the two would drift and a
+/// mod would have to keep them in step by hand. Floored at 1 so a chassis
+/// declaring `profile: -200` is very hard to find rather than impossible to
+/// find and mathematically undefined.
+fn presence(registry: &DataRegistry, state: &BattleState, id: UnitId) -> i32 {
+    state
+        .unit(id)
+        .and_then(|u| registry.vehicle(&u.vehicle))
+        .map(|v| (100 + v.profile).max(1))
+        .unwrap_or(100)
+}
+
+/// Which of several crews on one hex a round that named none of them finds.
+///
+/// Weighted by [`presence`] and drawn from the battle's own rng, so it is
+/// deterministic and replays. `candidates` must already be in id order: this
+/// walks it, and a different order would spend the same draw on a different
+/// crew.
+fn found_among(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    candidates: &[UnitId],
+) -> Option<UnitId> {
+    match candidates {
+        [] => None,
+        // The overwhelmingly common case, and worth short-circuiting rather
+        // than spending an rng draw on: a draw taken here would shift the
+        // stream for every battle in the game that never stacks anybody.
+        [only] => Some(*only),
+        many => {
+            let weights: Vec<i32> = many
+                .iter()
+                .map(|id| presence(registry, state, *id))
+                .collect();
+            let total: i32 = weights.iter().sum();
+            let mut roll = state.rng.random_range(0..total.max(1));
+            for (id, weight) in many.iter().zip(&weights) {
+                roll -= weight;
+                if roll < 0 {
+                    return Some(*id);
+                }
+            }
+            many.last().copied()
+        }
+    }
+}
+
+/// Whether a shot that missed `intended` finds somebody else on her hex.
+///
+/// The rule the designer asked for, in one place: **the gunner aims, and only
+/// a miss is a lottery.** She lays her gun on a vehicle and the to-hit
+/// arithmetic answers for that vehicle exactly as it always has; what is new
+/// is that a round which went past her has a hex full of other people to end
+/// up among, and how likely each of them is to catch it is a question about
+/// how much room she takes up.
+///
+/// Each bystander is rolled separately, in id order, so two of them are
+/// likelier to stop the round than one without either of them ever making it
+/// certain. `balance.stray_percent` of zero skips the whole thing, which is
+/// the game exactly as it was before a hex could hold two crews.
+fn strays_onto(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    intended: UnitId,
+    hex: Hex,
+) -> Option<UnitId> {
+    let rate = registry.balance.stray_percent;
+    if rate <= 0 {
+        return None;
+    }
+    let mut bystanders: Vec<UnitId> = state
+        .occupants(hex)
+        .map(|u| u.id)
+        .filter(|id| *id != intended)
+        .collect();
+    bystanders.sort_unstable();
+    for id in bystanders {
+        let chance = rate * presence(registry, state, id) / 100;
+        if state.rng.random_range(0..100) < chance {
+            return Some(id);
+        }
+    }
+    None
 }
 
 /// Everything a round does once it is known to have arrived: the plate, the
@@ -2151,7 +2259,19 @@ fn fire_at_tile(
         });
         state.shells.push(shell);
     } else {
-        match state.unit_at(at).filter(|t| t.side != side).map(|t| t.id) {
+        let standing: Vec<UnitId> = {
+            let mut ids: Vec<UnitId> = state
+                .occupants(at)
+                .filter(|t| t.side != side)
+                .map(|t| t.id)
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+        // Blind fire names no target, so if several crews are on the ground
+        // the round comes down on, which one it finds is a question about how
+        // much of the hex each of them fills — see `found_among`.
+        match found_among(registry, state, &standing) {
             Some(target) => resolve_shot(
                 registry, state, attacker, &weapon, &round, target, true, false, events,
             ),

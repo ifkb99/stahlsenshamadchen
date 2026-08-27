@@ -296,6 +296,19 @@ pub enum Event {
         unit: UnitId,
         at: Hex,
     },
+    /// The round missed what it was aimed at and found somebody else standing
+    /// on the same ground.
+    ///
+    /// Its own event rather than a flag on [`Self::ShotHit`] because the two
+    /// facts a reader needs are *who was shot at* and *who was hit*, and a
+    /// hit that quietly named a different unit than the `ShotFired` before it
+    /// would read as the log contradicting itself. A `ShotMissed` for the
+    /// intended target still precedes it: she was missed, and that is true.
+    ShotStrayed {
+        attacker: UnitId,
+        intended: UnitId,
+        onto: UnitId,
+    },
     ShotMissed {
         attacker: UnitId,
         at: Hex,
@@ -1518,22 +1531,40 @@ impl BattleState {
         }
     }
 
-    /// The first tile beside `carrier_pos` a dismounting foot unit can
-    /// stand on: on the map, unoccupied, and priced for foot movement.
-    /// Lowest (x, y) so replays agree where she stepped off.
+    /// Where a dismounting foot unit steps off: on the map, with room for her,
+    /// and priced for foot movement.
+    ///
+    /// **The carrier's own hex first.** That is what happens on the day — a
+    /// section gets out of the back of the vehicle it was riding in, it does
+    /// not walk a hundred metres first — and until a hex could hold more than
+    /// one crew it was the one place she could not go. It is also what makes
+    /// stacking a thing the game actually does rather than a rule it merely
+    /// permits: a platoon standing with its taxi in a wood is the ordinary
+    /// case, and it is the case the stray rule was written for.
+    ///
+    /// Then the neighbours, lowest `(x, y)` so replays agree where she stepped
+    /// off. A coordinate order is safe here in a way it is not in a tiebreak
+    /// about *direction* — this is a search for the first hex that works, not
+    /// a choice between equally good ones.
     fn dismount_tile(
         &self,
         registry: &DataRegistry,
         unit: UnitId,
         carrier_pos: Hex,
     ) -> Option<Hex> {
-        let mut tiles: Vec<Hex> = carrier_pos.all_neighbors().into();
-        tiles.sort_unstable_by_key(|h| (h.x, h.y));
+        let mut tiles: Vec<Hex> = vec![carrier_pos];
+        let mut around: Vec<Hex> = carrier_pos.all_neighbors().into();
+        around.sort_unstable_by_key(|h| (h.x, h.y));
+        tiles.extend(around);
+        let tiles = tiles;
         let u = self.unit(unit)?;
         tiles.into_iter().find(|hex| {
             self.map.contains(*hex)
-                && self.unit_at(*hex).is_none()
-                && movement::edge_cost_for(registry, self, u, carrier_pos, *hex).is_some()
+                && self.room_for(registry, u, *hex)
+                // Getting out where she already is costs no movement and needs
+                // no price; only a step to a neighbour does.
+                && (*hex == carrier_pos
+                    || movement::edge_cost_for(registry, self, u, carrier_pos, *hex).is_some())
         })
     }
 
@@ -1655,18 +1686,24 @@ impl BattleState {
                 if unit.move_credit < price {
                     break;
                 }
-                // One unit per hex. A friend in the way is traffic: it will
-                // probably have driven on by the next tick, so hold and try
-                // again. An enemy is the end of the advance either way, but
-                // only one nobody had spotted counts as an ambush.
-                if let Some(other) = self.unit_at(next) {
-                    if other.side != side {
-                        if self.fog.side(side).spotted.contains(&other.id) {
-                            blocked = true;
-                        } else {
-                            trapped_at = Some(unit.pos);
-                        }
+                // An enemy on the next hex is the end of the advance either
+                // way, but only one nobody had spotted counts as an ambush.
+                // Checked before crowding, because bumping into an enemy is
+                // an event and running out of room is just traffic.
+                if let Some(other) = self.occupants(next).find(|o| o.side != side) {
+                    if self.fog.side(side).spotted.contains(&other.id) {
+                        blocked = true;
+                    } else {
+                        trapped_at = Some(unit.pos);
                     }
+                    break;
+                }
+                // No room is traffic: a friend in the way will probably have
+                // driven on by the next tick, so hold and try again rather
+                // than abandoning the route. On terrain that declares no
+                // capacity this is the old one-unit-per-hex rule exactly.
+                let me = self.unit(id).expect("alive above");
+                if !self.room_for(registry, me, next) {
                     break;
                 }
                 let unit = self.unit_mut(id).expect("alive above");
@@ -1960,7 +1997,7 @@ impl BattleState {
             .units
             .iter()
             .filter(|u| u.alive)
-            .filter(|u| u.goal.is_some_and(|g| g.finished(self, u.id)))
+            .filter(|u| u.goal.is_some_and(|g| g.finished(registry, self, u.id)))
             .map(|u| u.id)
             .collect();
         for id in done {

@@ -1,4 +1,5 @@
 # What the order keys mean, said before they are pressed.
+#!env STAHL_BATTLE=river_crossing
 #
 #   STAHL_PRESENT=immediate STAHL_DEBUG=1 STAHL_BATTLE=river_crossing \
 #     STAHL_SCRIPT=scripts/dev/orders-explained.txt cargo run -p stahlsenshamädchen

@@ -1,6 +1,7 @@
 [
     {
         "id": "grass",
+        "capacity": 4,
         "name": "Grassland",
         "glyph": "g",
         "color": "#7aa646",
@@ -8,6 +9,7 @@
     },
     {
         "id": "road",
+        "capacity": 3,
         "name": "Road",
         "glyph": "R",
         "color": "#b3a284",
@@ -15,10 +17,12 @@
     },
     {
         "id": "forest",
+        "capacity": 5,
         "name": "Forest",
         "glyph": "f",
         "color": "#3f6d33",
         "move_cost": { "foot": 1, "wheeled": 4, "tracked": 2, "air": 1 },
+        "concealment": 25,
         "cover": 30,
         "vision_block": 2,
         "concealing": true
@@ -32,6 +36,7 @@
     },
     {
         "id": "mud",
+        "capacity": 3,
         "name": "Mud Flats",
         "glyph": "m",
         "color": "#6e5b3f",
@@ -39,15 +44,18 @@
     },
     {
         "id": "town",
+        "capacity": 6,
         "name": "Town",
         "glyph": "t",
         "color": "#8d7f70",
         "move_cost": { "foot": 1, "wheeled": 1, "tracked": 1, "air": 1 },
+        "concealment": 25,
         "cover": 40,
         "vision_block": 2
     },
     {
         "id": "plains",
+        "capacity": 4,
         "name": "Plains",
         "glyph": "p",
         "color": "#86a95c",
@@ -59,14 +67,17 @@
         "glyph": "M",
         "color": "#7d7d85",
         "move_cost": { "foot": 3, "air": 1 },
+        "concealment": 15,
         "vision_block": 4
     },
     {
         "id": "deep_forest",
+        "capacity": 5,
         "name": "Deep Forest",
         "glyph": "F",
         "color": "#40653a",
         "move_cost": { "foot": 1, "wheeled": 3, "tracked": 2, "air": 1 },
+        "concealment": 35,
         "vision_block": 3,
         "concealing": true
     },
@@ -76,6 +87,7 @@
         "glyph": "C",
         "color": "#a7a29a",
         "move_cost": { "foot": 1, "wheeled": 1, "tracked": 1, "air": 1 },
+        "concealment": 25,
         "capturable": true,
         "income": 3
     },
@@ -85,6 +97,7 @@
         "glyph": "I",
         "color": "#7d6b6b",
         "move_cost": { "foot": 1, "wheeled": 1, "tracked": 1, "air": 1 },
+        "concealment": 25,
         "capturable": true,
         "income": 5
     },

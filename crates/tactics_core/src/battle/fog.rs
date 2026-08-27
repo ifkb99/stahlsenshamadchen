@@ -8,10 +8,11 @@
 //! Enemy units are *spotted* while they stand on a visible tile, or while
 //! `revealed` (they fired recently and haven't moved since).
 
-use super::{BattleState, Event, UnitId, stats};
+use super::{BattleState, Event, Unit, UnitId, stats};
 use crate::data::DataRegistry;
 use crate::map::HexMap;
 use hexx::Hex;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -59,6 +60,22 @@ pub struct SideFog {
     /// Enemy units that gave away their position by firing. Cleared for a
     /// unit when it moves.
     pub revealed: HashSet<UnitId>,
+    /// The absolute tick at which this side last searched for each enemy it
+    /// could see the ground of but had not yet picked out of it.
+    ///
+    /// A search is a die roll, and the fog is recomputed several times a tick
+    /// — after movement, after fire, and again after every individual shot —
+    /// so without a clock the chance of finding somebody would be a function
+    /// of how much shooting happened to be going on around her. One roll per
+    /// enemy per tick, whoever asks and however often.
+    ///
+    /// Entries are overwritten rather than cleaned up: there is one per enemy
+    /// unit at most, and what it holds is meaningless the moment `now` moves
+    /// past it. A `BTreeMap` for the same reason [`Self::spotted_since`] is —
+    /// nothing iterates it today and nobody should be handed an
+    /// iteration-order bug the day something does.
+    #[serde(default)]
+    pub searched: std::collections::BTreeMap<UnitId, u64>,
 }
 
 /// One unit's vision, and the inputs it was computed from.
@@ -150,6 +167,12 @@ impl FogMap {
 }
 
 /// The two heights line of sight needs from a tile, in metres.
+///
+/// **Adding a fact to the grid is meant to be one field here and one line in
+/// [`Heights::of`]**, and nothing else — the same bargain
+/// `movement::TileMove` makes, and for the same reason: these two grids are
+/// the shape a streamed world resolves terrain in, and the next per-tile fact
+/// worth resolving once should cost a line rather than a redesign.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Heights {
     /// The ground an observer stands on or a target is measured from.
@@ -157,6 +180,18 @@ struct Heights {
     /// The top of whatever blocks sight here — the ground plus the terrain's
     /// own `vision_block`, so a forest stands above the hill it grows on.
     obstacle: f32,
+}
+
+impl Heights {
+    /// Resolve one tile against the registry. **The one place this grid reads
+    /// a terrain definition.**
+    fn of(tile: &crate::map::Tile, terrain: Option<&crate::data::TerrainDef>) -> Self {
+        let block = terrain.map(|t| t.vision_block).unwrap_or(0);
+        Self {
+            surface: tile.elevation as f32 * ELEVATION_STEP,
+            obstacle: (tile.elevation + block) as f32 * ELEVATION_STEP,
+        }
+    }
 }
 
 /// Every tile's sight heights, resolved once.
@@ -170,6 +205,21 @@ struct Heights {
 ///
 /// Shared through [`BattleState`] behind an `Arc`, so cloning a state for
 /// search branching does not copy it.
+///
+/// # Built for a world that streams
+///
+/// The twin of [`crate::battle::MoveGrid`] in this too: tiles are folded in a
+/// region at a time through [`Self::extend`] rather than resolved once for a
+/// map that is the whole world, because the design has the overworld and the
+/// battlefield converging into one continuous world at two zoom levels.
+/// Deriving a whole 1261-tile battle map costs about 25 microseconds, which
+/// is why these are built on load and never shipped as map assets: a grid
+/// written into content would be a second copy of `vision_block`, and a mod
+/// that retuned the terrain would silently get the old answer.
+///
+/// **The thing that will bite:** see [`sight_line_clear`], which treats a tile
+/// it cannot find as transparent. That is exactly right while the map is the
+/// whole world and a wrong answer the moment it is a window onto one.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SightGrid {
     /// Not saved: derived entirely from the map and the terrain definitions,
@@ -185,32 +235,40 @@ pub struct SightGrid {
 }
 
 impl SightGrid {
+    /// Resolve a whole map.
+    pub fn build(registry: &DataRegistry, map: &HexMap) -> Self {
+        let mut grid = Self::default();
+        grid.extend(registry, map);
+        grid
+    }
+
+    /// Fold a region's tiles in, replacing anything already known about them.
+    ///
+    /// `build` is this on an empty grid, deliberately: the streaming path and
+    /// the whole-map path are one piece of code, so the one used every day is
+    /// the one keeping the other honest.
+    pub fn extend(&mut self, registry: &DataRegistry, map: &HexMap) {
+        for (hex, tile) in map.iter() {
+            self.insert(registry, hex, tile);
+        }
+    }
+
+    /// Resolve one tile.
+    pub fn insert(&mut self, registry: &DataRegistry, hex: Hex, tile: &crate::map::Tile) {
+        self.tiles
+            .insert(hex, Heights::of(tile, registry.terrain(&tile.terrain)));
+    }
+
     /// Whether this grid has been built. A deserialized battle carries an
     /// empty one until [`crate::save`] refills it.
     pub fn is_empty(&self) -> bool {
         self.tiles.is_empty()
     }
-}
 
-impl SightGrid {
-    pub fn build(registry: &DataRegistry, map: &HexMap) -> Self {
-        let tiles = map
-            .iter()
-            .map(|(hex, tile)| {
-                let block = registry
-                    .terrain(&tile.terrain)
-                    .map(|t| t.vision_block)
-                    .unwrap_or(0);
-                (
-                    hex,
-                    Heights {
-                        surface: tile.elevation as f32 * ELEVATION_STEP,
-                        obstacle: (tile.elevation + block) as f32 * ELEVATION_STEP,
-                    },
-                )
-            })
-            .collect();
-        Self { tiles }
+    /// How many tiles are resolved. Uninteresting today and the thing a
+    /// streamed world watches.
+    pub fn len(&self) -> usize {
+        self.tiles.len()
     }
 
     /// Line of sight, using the precomputed heights. Identical in result to
@@ -246,7 +304,21 @@ fn sight_line_clear(heights: impl Fn(Hex) -> Option<Heights>, from: Hex, to: Hex
             continue;
         }
         let Some(h) = heights(hex) else {
-            // Off-map gaps don't block sight.
+            // A tile nobody knows about does not block sight.
+            //
+            // Correct while the map is the whole world — "not on the map"
+            // then means there is genuinely nothing there — and a **wrong
+            // answer the day the map is a window onto a streamed one**, where
+            // it would mean "not loaded". A ridge in an unloaded chunk would
+            // stop blocking, so whether a crew can see a tank would depend on
+            // what the renderer happened to have paged in, which is the one
+            // kind of non-determinism this engine cannot survive: replays,
+            // the search AI and the committed event stream all rest on it.
+            //
+            // The fix is not here. It is the loading rule: the resolved
+            // region has to cover everything any unit can see or shoot, not
+            // merely where the units are standing. See TODO under hex
+            // streaming.
             continue;
         };
         let ray = eye + (target - eye) * (i as f32 / last);
@@ -325,6 +397,123 @@ pub(crate) fn sees(registry: &DataRegistry, state: &BattleState, id: UnitId, tar
         && state.sight.clear(unit.pos, target)
 }
 
+/// What it takes for one side to find one enemy this tick.
+enum Search {
+    /// Found without a die: she fired and gave herself away, this side
+    /// already has her, or the data gives a crew looking straight at her no
+    /// reason to miss her. The last of those is what makes the whole
+    /// detection rule additive — a mod that declares nothing never rolls.
+    Found,
+    /// One roll in 100, against the best-placed crew who can see her ground.
+    /// Zero means nobody can see it, or that nobody who can has any chance at
+    /// all.
+    ///
+    /// The best crew rather than a roll each, and this was the second draft.
+    /// A roll per spotter reads well — more eyes, more chances — but it makes
+    /// the printed chance a lie by however many crews happen to be looking:
+    /// at four spotters a nominal 2% is 8%, so the whole usable range of the
+    /// knob collapsed into single digits and the instrument's "ticks to find"
+    /// column was wrong by a factor nobody could see. More eyes are still
+    /// worth having, through the thing they actually buy — more *ground*
+    /// watched, and someone closer to it — rather than through multiplying
+    /// dice against the one crew who was already the likeliest to find her.
+    Best(i32),
+}
+
+/// What each of `side`'s crews would have to roll to pick `unit` out of the
+/// ground she is standing on.
+///
+/// `key` is that side's `(unit, pos, range)` list, built by walking
+/// `state.units` in id order — which is what makes the list of rolls, and so
+/// the rng draws that consume it, reproducible.
+///
+/// Two different concealments meet here and they do different jobs.
+/// [`crate::data::VehicleDef::concealment`] is hers, and it shortens the
+/// range at which she can be found at all — a platoon lying in a ditch is
+/// hard to see from anywhere rather than hard to see from one direction, and
+/// standing in real cover counts it twice. The terrain's is the ground's, and
+/// it buys her *time* inside whatever range is left. Firing bypasses both,
+/// upstream: an ambush is spent by springing it.
+fn search(
+    registry: &DataRegistry,
+    state: &BattleState,
+    key: &[(UnitId, Hex, u32)],
+    unit: &Unit,
+) -> Search {
+    let concealment = registry
+        .vehicle(&unit.vehicle)
+        .map(|v| v.concealment)
+        .unwrap_or(0);
+    let terrain = state
+        .map
+        .get(unit.pos)
+        .and_then(|t| registry.terrain(&t.terrain));
+    let covered = terrain.is_some_and(|t| t.cover >= 30);
+    let hidden = if covered {
+        concealment.saturating_mul(2).min(95)
+    } else {
+        concealment.min(95)
+    };
+    let ground = terrain.map(|t| t.concealment).unwrap_or(0);
+
+    // The fast path, and the reason a mod that declares no detection rules
+    // pays nothing for this pass existing. A crew hiding behind no chassis
+    // concealment (`hidden` zero) is inside somebody's reach precisely when
+    // her hex is in the side's `visible` union — which the caller has already
+    // checked — so if the numbers make the look certain there is nothing left
+    // to establish. It is asked at the *worst* distance, one hex of a one-hex
+    // reach, so a `true` here means no distance could have made it uncertain.
+    //
+    // It matters because this runs for every enemy of every side on every
+    // recompute, and a recompute happens after movement, after fire and after
+    // every individual shot.
+    let at_the_far_edge = registry.balance.detection_chance(ground, 1, 1, unit.moved);
+    if hidden == 0 && at_the_far_edge >= 100 {
+        return Search::Found;
+    }
+
+    let mut best = 0;
+    for (spotter, at, range) in key {
+        let effective = range * (100 - hidden) / 100;
+        let distance = at.distance_to(unit.pos);
+        if distance > effective as i32 {
+            continue;
+        }
+        // Her own reach, not the concealment-shortened one. The two terms
+        // answer different questions and compounding them was measurably
+        // wrong: `VehicleDef::concealment` has already priced how close
+        // somebody has to be to find *her* at all, by cutting `effective`
+        // down, while `detection_at_range_percent` is about how much detail
+        // this crew resolves at a distance — a fact about her eyes and the
+        // air. Feeding the shortened reach in made a platoon at three hexes
+        // sit at 75% of "reach" and take the full far-band penalty on top of
+        // the shortening, which is the same fact charged twice.
+        let chance = registry
+            .balance
+            .detection_chance(ground, distance, *range, unit.moved);
+        // The arithmetic before the set lookup, deliberately. `best` is a
+        // maximum, so a crew who cannot improve on it need not be asked
+        // whether she can see the hex at all — and that question is a hash
+        // probe into a two-thousand-hex field of view, which is the only
+        // expensive thing in here.
+        if chance <= best {
+            continue;
+        }
+        if !state
+            .fog
+            .cached(*spotter, *at, *range)
+            .is_some_and(|tiles| tiles.contains(&unit.pos))
+        {
+            continue;
+        }
+        if chance >= 100 {
+            return Search::Found;
+        }
+        best = chance;
+    }
+    Search::Best(best)
+}
+
 /// Recompute all sides' fog. Returns `UnitSpotted` events for enemies that
 /// just became visible.
 ///
@@ -388,14 +577,29 @@ pub fn recompute(registry: &DataRegistry, state: &mut BattleState) -> Vec<Event>
             state.fog.visible_key[side as usize] = key.clone();
         }
 
+        // The absolute tick "now": what the reaction clocks are stamped
+        // with, and the clock a search is rate-limited against. During
+        // planning the round has not begun moving, so a spot made then is
+        // stamped at the round's first tick — a target visible while orders
+        // were being written is not a surprise when they execute.
+        let now = state.round as u64 * registry.scale.ticks_per_round as u64
+            + state.resolving_tick().unwrap_or(0) as u64;
+
         // Units are visited in id order and events pushed in that order, so
         // the same seed always yields the same event stream. Iterating the
         // spotted set instead would not: a HashSet's order varies run to
         // run, and a replay cannot survive that. It only stayed hidden while
         // vision was short enough that two enemies rarely appeared at once.
+        //
+        // The pass is in two halves and the seam is the rng: a die cannot be
+        // thrown while a borrow of `state.fog` is alive. Only the *uncertain*
+        // looks cross that seam, which is what keeps the common case free —
+        // a `Vec` that is never pushed to never allocates, and with nothing
+        // left to decide nothing is ever pushed.
         let fog = state.fog.side(side);
         let mut spotted = HashSet::new();
         let mut spotted_now = Vec::new();
+        let mut uncertain: Vec<(UnitId, Hex, i32)> = Vec::new();
         for unit in state
             .units
             .iter()
@@ -405,57 +609,54 @@ pub fn recompute(registry: &DataRegistry, state: &mut BattleState) -> Vec<Event>
             if !(fog.visible.contains(&unit.pos) || revealed) {
                 continue;
             }
-            // Concealment: standing on ground somebody can see is not the
-            // same as being seen. A concealed unit on a visible tile is
-            // spotted only by a spotter whose own sight reaches the tile
-            // AND who stands inside her vision range scaled down by the
-            // target's `concealment` — counted twice when the target is in
-            // real cover, which is where a platoon in the treeline becomes
-            // the ambush the design doc promises. Firing bypasses all of
-            // it (`revealed`): an ambush is spent by springing it.
-            // Vehicles default to concealment 0 and skip this entirely —
-            // spotted exactly as they always were.
-            if !revealed {
-                let concealment = registry
-                    .vehicle(&unit.vehicle)
-                    .map(|v| v.concealment)
-                    .unwrap_or(0);
-                if concealment > 0 {
-                    let covered = state
-                        .map
-                        .get(unit.pos)
-                        .and_then(|t| registry.terrain(&t.terrain))
-                        .is_some_and(|t| t.cover >= 30);
-                    let hidden = if covered {
-                        concealment.saturating_mul(2).min(95)
-                    } else {
-                        concealment.min(95)
-                    };
-                    let seen = key.iter().any(|(sid, spos, srange)| {
-                        let effective = srange * (100 - hidden) / 100;
-                        spos.distance_to(unit.pos) <= effective as i32
-                            && state
-                                .fog
-                                .cached(*sid, *spos, *srange)
-                                .is_some_and(|tiles| tiles.contains(&unit.pos))
-                    });
-                    if !seen {
-                        continue;
-                    }
+            // A crew who fired is found outright, and so is one this side
+            // already has in its sights. A search is what it costs to
+            // *acquire* a contact, never what it costs to keep watching one:
+            // without that second clause every found enemy would be rolled
+            // for again every tick and flicker in and out of the picture.
+            if revealed || fog.spotted.contains(&unit.id) {
+                spotted.insert(unit.id);
+                if !fog.spotted.contains(&unit.id) {
+                    spotted_now.push((unit.id, unit.pos));
                 }
+                continue;
             }
-            spotted.insert(unit.id);
-            if !fog.spotted.contains(&unit.id) {
-                spotted_now.push((unit.id, unit.pos));
+            // Already looked for this tick. The fog is recomputed after
+            // movement, after fire and after every individual shot, and the
+            // inputs to a search do not change in between — so the other
+            // passes of a tick neither price the look again nor throw a
+            // second die at it.
+            if fog.searched.get(&unit.id) == Some(&now) {
+                continue;
+            }
+            match search(registry, state, &key, unit) {
+                Search::Found => {
+                    spotted.insert(unit.id);
+                    spotted_now.push((unit.id, unit.pos));
+                }
+                Search::Best(chance) => uncertain.push((unit.id, unit.pos, chance)),
             }
         }
-        // The absolute tick "now": what the reaction clocks are stamped
-        // with. During planning the round has not begun moving, so a spot
-        // made then is stamped at the round's first tick — a target visible
-        // while orders were being written is not a surprise when they
-        // execute.
-        let now = state.round as u64 * registry.scale.ticks_per_round as u64
-            + state.resolving_tick().unwrap_or(0) as u64;
+
+        for (id, at, chance) in uncertain {
+            // The look is spent whether or not there was anything worth
+            // rolling for: a target must not be easier to find because a
+            // firefight is going on somewhere else, and a chance of nothing
+            // is a look that failed rather than a look nobody took. The
+            // short circuit is what keeps a game with no detection rules
+            // from drawing a die it does not need.
+            state.fog.side_mut(side).searched.insert(id, now);
+            if chance > 0 && state.rng.random_range(0..100) < chance {
+                spotted.insert(id);
+                spotted_now.push((id, at));
+            }
+        }
+        // Back into id order. The certain looks were collected in it and the
+        // uncertain ones were appended after, which is deterministic but is
+        // not the order this module promises everywhere else — and the event
+        // stream a replay reads comes straight off this list.
+        spotted_now.sort_unstable_by_key(|(id, _)| id.index());
+
         for (unit, at) in spotted_now {
             events.push(Event::UnitSpotted {
                 unit,

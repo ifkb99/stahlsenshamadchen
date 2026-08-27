@@ -1,4 +1,5 @@
 # Orders that wait instead of dying: giving a direct order to a cadet who has
+#!env STAHL_BATTLE=river_crossing
 # driven off the net, seeing it acknowledged rather than refused, and watching
 # it arrive when her platoon closes back up.
 #

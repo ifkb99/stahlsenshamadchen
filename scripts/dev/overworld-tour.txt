@@ -1,4 +1,5 @@
 # The campaign screen: hover a tile, select an army, order it a day's march.
+#!env
 #
 #   STAHL_DEBUG=1 STAHL_SCRIPT=scripts/dev/overworld-tour.txt \
 #     cargo run -p stahlsenshamädchen

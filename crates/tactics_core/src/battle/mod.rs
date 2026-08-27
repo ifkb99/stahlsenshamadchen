@@ -34,8 +34,8 @@ pub use command::{
 };
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
-    destination_blocked, edge_cost as movement_edge_cost, move_points, path_to, reachable,
-    step_toward,
+    MoveGrid, Roads, along_the_bearing, destination_blocked, edge_cost as movement_edge_cost,
+    move_points, path_to, reachable, roads, step_toward,
 };
 pub use orders::{Event, FireIntent, Order, OrderError, UnitIntent};
 
@@ -440,6 +440,11 @@ pub struct BattleState {
     /// battle. `Arc` keeps state cloning — which search planners do
     /// constantly — cheap.
     pub sight: Arc<SightGrid>,
+    /// Movement costs for every tile, resolved once from the map and the
+    /// registry. Shared for exactly the reasons [`Self::sight`] is: terrain
+    /// never changes during a battle, the searches ask for it per edge of
+    /// every tile they touch, and a planner clones the whole state to branch.
+    pub moves: Arc<MoveGrid>,
     pub sides: Vec<SideState>,
     /// The cadets crewing the vehicles in this battle.
     ///
@@ -543,6 +548,7 @@ impl BattleState {
         let side_count = sides.len();
         let objective_count = map.objectives().len();
         let sight = Arc::new(SightGrid::build(registry, &map));
+        let moves = Arc::new(MoveGrid::build(registry, &map));
         // Resolved before the map is moved into its `Arc`, and from the same
         // two things the units are spawned from, so membership cannot drift
         // from the roster it describes.
@@ -553,6 +559,7 @@ impl BattleState {
         let mut state = Self {
             map: Arc::new(map),
             sight,
+            moves,
             sides,
             roster: Arc::new(roster),
             units: Vec::new(),
@@ -593,6 +600,7 @@ impl BattleState {
         let side_count = sides.len();
         let objective_count = map.objectives().len();
         let sight = Arc::new(SightGrid::build(registry, &map));
+        let moves = Arc::new(MoveGrid::build(registry, &map));
         // The formations travel on the map for exactly this reason: a field
         // battle the overworld assembles picks them up without this signature
         // growing, the same trip objectives already make. A declaration whose
@@ -602,6 +610,7 @@ impl BattleState {
         let mut state = Self {
             map: Arc::new(map),
             sight,
+            moves,
             sides,
             roster,
             units: Vec::new(),
@@ -977,12 +986,78 @@ impl BattleState {
     }
 
     pub fn unit_at(&self, hex: Hex) -> Option<&Unit> {
-        // A passenger's `pos` mirrors her carrier's, so she must never
-        // answer for the hex: one filter here keeps every occupancy,
-        // targeting and collision read in the game passenger-blind at once.
+        self.occupants(hex).next()
+    }
+
+    /// Everyone standing on `hex`, in id order.
+    ///
+    /// The one place the passenger filter lives: a passenger's `pos` mirrors
+    /// her carrier's, so she must never answer for the hex, and doing it once
+    /// here keeps every occupancy, targeting and collision read in the game
+    /// passenger-blind at the same time.
+    ///
+    /// **A hex can hold more than one crew**, so this is the honest question
+    /// and [`Self::unit_at`] is a convenience that answers "whichever comes
+    /// first in id order". Reach for the singular only where one answer is
+    /// genuinely what is wanted — a mouse click, a HUD line — and never to
+    /// decide whether there is room, which is [`Self::room_for`], or who a
+    /// shot or a burst finds, which is everybody.
+    pub fn occupants(&self, hex: Hex) -> impl Iterator<Item = &Unit> {
         self.units
             .iter()
-            .find(|u| u.alive && u.aboard.is_none() && u.pos == hex)
+            .filter(move |u| u.alive && u.aboard.is_none() && u.pos == hex)
+    }
+
+    /// How much of `hex`'s capacity is already taken.
+    pub fn crowding(&self, registry: &DataRegistry, hex: Hex) -> u32 {
+        self.occupants(hex)
+            .filter_map(|u| registry.vehicle(&u.vehicle))
+            .map(|v| v.footprint())
+            .sum()
+    }
+
+    /// Whether `unit` would fit on `hex` alongside whoever is already there —
+    /// **as far as her own side can tell**.
+    ///
+    /// A terrain that declares no `capacity` keeps the rule this game had
+    /// before stacking: one crew to a hex, whatever size she is. That is why
+    /// this asks the terrain first and only counts footprints if the terrain
+    /// opted in — see [`crate::data::TerrainDef::capacity`].
+    ///
+    /// **An enemy her side has not spotted takes up no room.** That is not an
+    /// approximation, it is the fog rule: an order refused because a hex is
+    /// "full" announces that somebody is standing there, and this engine
+    /// deliberately lets that move resolve as an ambush instead. Two crews can
+    /// therefore end a tick over capacity, which is correct — they have just
+    /// driven into each other. `unspotted_enemies_still_ambush` and
+    /// `hidden_enemies_do_not_show_up_as_holes_in_the_move_range` both failed
+    /// the moment this counted everybody, which is how the rule got written
+    /// down here rather than rediscovered later.
+    pub fn room_for(&self, registry: &DataRegistry, unit: &Unit, hex: Hex) -> bool {
+        let others: Vec<&Unit> = self
+            .occupants(hex)
+            .filter(|other| other.id != unit.id)
+            .filter(|other| {
+                other.side == unit.side || self.fog.side(unit.side).spotted.contains(&other.id)
+            })
+            .collect();
+        let capacity = self
+            .terrain_at(hex)
+            .and_then(|id| registry.terrain(id))
+            .and_then(|t| t.capacity);
+        let Some(capacity) = capacity else {
+            return others.is_empty();
+        };
+        let mine = registry
+            .vehicle(&unit.vehicle)
+            .map(|v| v.footprint())
+            .unwrap_or(1);
+        let taken: u32 = others
+            .iter()
+            .filter_map(|o| registry.vehicle(&o.vehicle))
+            .map(|v| v.footprint())
+            .sum();
+        taken + mine <= capacity.max(mine)
     }
 
     /// Everyone riding in `carrier`, in id order.
@@ -992,6 +1067,15 @@ impl BattleState {
             .filter(|u| u.alive && u.aboard == Some(carrier))
             .map(|u| u.id)
             .collect()
+    }
+
+    /// Every enemy on `hex` that `side` may act on: the ones its fog spots.
+    /// Callers that would otherwise reach for [`Self::occupants`] should
+    /// prefer this, so an order refusal never betrays a unit the side cannot
+    /// see.
+    pub fn spotted_enemies_at(&self, hex: Hex, side: u8) -> impl Iterator<Item = &Unit> {
+        self.occupants(hex)
+            .filter(move |u| u.side != side && self.fog.side(side).spotted.contains(&u.id))
     }
 
     /// The unit at `hex` if `side` may act on it as a target: an enemy its

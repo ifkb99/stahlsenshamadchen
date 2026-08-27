@@ -437,7 +437,7 @@ impl DataRegistry {
         for d in self.doctrines.values() {
             // Weights are multipliers; wildly out-of-band numbers are more
             // likely a typo than a design choice, so warn rather than reject.
-            let bounded: [(&str, f32, f32, f32); 7] = [
+            let bounded: [(&str, f32, f32, f32); 9] = [
                 ("aggression", d.aggression, 0.0, 1.0),
                 ("cover_value", d.cover_value, 0.0, 5.0),
                 ("elevation_value", d.elevation_value, 0.0, 5.0),
@@ -445,6 +445,13 @@ impl DataRegistry {
                 ("scouting", d.scouting, 0.0, 5.0),
                 ("indirect_appetite", d.indirect_appetite, 0.0, 5.0),
                 ("withdraw_threshold", d.withdraw_threshold, 0.0, 1.0),
+                // These two are points off a goal's score per round of march
+                // rather than multipliers, and `IMPATIENCE` charges 0.35 a
+                // round for the march itself — so anything past 5 is a
+                // doctrine that would rather sit still than take any ground
+                // at all, which is a typo far more often than a design.
+                ("route_caution", d.route_caution, 0.0, 5.0),
+                ("contest_aversion", d.contest_aversion, 0.0, 5.0),
             ];
             for (field, value, lo, hi) in bounded {
                 if !(lo..=hi).contains(&value) {
@@ -458,6 +465,25 @@ impl DataRegistry {
         for t in self.terrain.values() {
             if !(0..=100).contains(&t.cover) {
                 report.error(format!("terrain `{}` cover must be 0-100", t.id));
+            }
+            if !(0..=100).contains(&t.concealment) {
+                report.error(format!("terrain `{}` concealment must be 0-100", t.id));
+            }
+            // Ground that hides somebody at the far edge of a crew's reach is
+            // a perfectly good thing to declare — the base mod's deep forest
+            // does exactly that, and a crew is still given away by driving or
+            // firing. Ground that hides her from a crew standing next to her
+            // is not: `detection_certain_percent` exists precisely so that
+            // what is plainly in front of somebody is seen, and a terrain
+            // that beats it has made a hex nobody can ever be found on.
+            // Warned rather than refused, because where that line sits is a
+            // balance opinion and a mod is allowed to disagree with ours.
+            if self.balance.detection_chance(t.concealment, 0, 1, 0) <= 0 {
+                report.warn(format!(
+                    "terrain `{}` conceals {}%, which is more than a crew standing on \
+                     the next hex can see through",
+                    t.id, t.concealment
+                ));
             }
             if parse_color(&t.color).is_none() {
                 report.error(format!(

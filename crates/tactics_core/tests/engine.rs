@@ -8,7 +8,7 @@ use tactics_core::battle::{
     BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Latitude, Mission,
     Order, STALEMATE_ROUNDS, SideState, UnitId, los_clear, reachable,
 };
-use tactics_core::data::DataRegistry;
+use tactics_core::data::{DataRegistry, MovementClass};
 use tactics_core::map::{HexMap, UnitPlacement};
 use tactics_core::overworld::{
     Army, ArmyId, ArmyMission, OverworldError, OverworldEvent, OverworldOrder, OverworldState,
@@ -37,6 +37,22 @@ fn registry() -> DataRegistry {
 fn registry_wireless() -> DataRegistry {
     let mut reg = registry();
     reg.command = None;
+    reg
+}
+
+/// The same game with the search switched off: a crew who can see a hex sees
+/// what is standing on it, exactly as she did before detection rolls existed.
+///
+/// The twin of [`registry_wireless`] and there for the same reason. A stage
+/// that puts two crews in plain sight in order to test shells, or a dismount
+/// reflex, or whether a binding order is obeyed, must not also be a test of
+/// whether anybody happened to *find* anybody on the tick it was set up —
+/// and at the base mod's numbers a target seven hexes off an eight-hex reach
+/// is found in about three ticks rather than instantly. Detection has tests
+/// of its own; `detection_certain_percent` at 100 is its neutral value, so
+/// this is the absence of the rule rather than a gentle version of it.
+fn seen(mut reg: DataRegistry) -> DataRegistry {
+    reg.balance.detection_certain_percent = 100;
     reg
 }
 
@@ -267,6 +283,103 @@ fn the_sight_grid_answers_exactly_what_the_reference_does() {
 }
 
 #[test]
+fn the_move_grid_answers_exactly_what_the_reference_does() {
+    // Same bargain as the sight grid: it exists only to stop the searches
+    // re-deriving a tile's cost through a String-keyed registry lookup on
+    // every edge they touch. It is allowed to be faster; it is not allowed to
+    // price a single step differently, for any class, at any climb limit.
+    let reg = registry();
+    let state = BattleState::from_map(&reg, "river_crossing", 1).unwrap();
+    let mut hexes: Vec<_> = state.map.iter().map(|(h, _)| h).collect();
+    hexes.sort_unstable_by_key(|h| (h.x, h.y));
+
+    let mut checked = 0;
+    for hex in &hexes {
+        for next in hex.all_neighbors() {
+            for class in MovementClass::ALL {
+                for climb in [0, 1, 2] {
+                    assert_eq!(
+                        state.moves.cost(class, climb, *hex, next),
+                        tactics_core::battle::movement_edge_cost(
+                            &reg, &state.map, class, climb, *hex, next
+                        ),
+                        "move grid disagrees about {hex:?} -> {next:?} for {class:?} at climb \
+                         {climb}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 10_000, "sampled too little of the map: {checked}");
+}
+
+#[test]
+fn a_sight_grid_folded_in_a_region_at_a_time_is_the_grid_of_the_whole_map() {
+    // The streaming claim for the other grid. Both of them resolve a per-tile
+    // fact from immutable terrain, both will have tiles arriving and leaving
+    // when the world becomes one continuous map, and both therefore have to
+    // land in exactly the state a whole-map build would.
+    let reg = registry();
+    let whole = BattleState::from_map(&reg, "river_crossing", 1).unwrap();
+    let map = &whole.map;
+
+    let mut streamed = tactics_core::battle::SightGrid::default();
+    assert!(streamed.is_empty(), "and an unbuilt one knows it");
+    streamed.extend(&reg, map);
+    streamed.extend(&reg, map);
+    assert_eq!(streamed.len(), whole.sight.len());
+
+    let mut hexes: Vec<_> = map.iter().map(|(h, _)| h).collect();
+    hexes.sort_unstable_by_key(|h| (h.x, h.y));
+    let mut checked = 0;
+    for a in hexes.iter().step_by(29) {
+        for b in hexes.iter().step_by(31) {
+            assert_eq!(
+                streamed.clear(*a, *b),
+                whole.sight.clear(*a, *b),
+                "a streamed grid disagrees about {a:?} -> {b:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 1000, "sampled too little of the map: {checked}");
+}
+
+#[test]
+fn a_move_grid_folded_in_a_region_at_a_time_is_the_grid_of_the_whole_map() {
+    // The streaming claim, which is what the grid is shaped for: the world is
+    // meant to become one continuous map at two zoom levels, so tiles arrive
+    // and leave and rebuilding everything is not an option. Folding a map in
+    // through `extend` must therefore land in exactly the state `build`
+    // would, and folding the same region in twice must change nothing —
+    // otherwise a chunk that comes back into view is a chunk that prices
+    // differently.
+    let reg = registry();
+    let whole = BattleState::from_map(&reg, "river_crossing", 1).unwrap();
+    let map = &whole.map;
+
+    let mut streamed = tactics_core::battle::MoveGrid::default();
+    assert!(streamed.is_empty(), "and an unbuilt one knows it");
+    streamed.extend(&reg, map);
+    streamed.extend(&reg, map);
+    assert_eq!(streamed.len(), whole.moves.len());
+
+    let mut checked = 0;
+    for (hex, _) in map.iter() {
+        for next in hex.all_neighbors() {
+            assert_eq!(
+                streamed.cost(MovementClass::Tracked, 1, hex, next),
+                whole.moves.cost(MovementClass::Tracked, 1, hex, next),
+                "a streamed grid disagrees about {hex:?} -> {next:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 5_000, "sampled too little of the map: {checked}");
+}
+
+#[test]
 fn cached_vision_is_the_same_answer_as_computing_it_fresh() {
     // Vision is cached per unit against (position, range) because the map
     // cannot change under a unit mid-battle. That makes the cache the real
@@ -312,6 +425,433 @@ fn fog_hides_unseen_enemies() {
     assert!(
         fog0.spotted.len() < enemy_count,
         "player should not start with every enemy spotted"
+    );
+}
+
+/// A registry whose spotting is a search rather than a certainty, with the
+/// base mod's own tuning taken out of the way.
+///
+/// Every one of these tests isolates a single term by making it decisive:
+/// what is under test is the *rule*, and numbers chosen so that a die is
+/// never actually thrown are what make each of them a statement rather than a
+/// bet on a seed. The medium tank is given a four-hex reach and the crew
+/// bonus is switched off, so "the far edge of what she can see" is a place a
+/// test can put a vehicle by counting hexes.
+fn registry_searching(base: i32, certain: i32, at_range: i32, per_hex_moved: i32) -> DataRegistry {
+    let mut reg = registry();
+    reg.balance.detection_base = base;
+    reg.balance.detection_certain_percent = certain;
+    reg.balance.detection_at_range_percent = at_range;
+    reg.balance.detection_per_hex_moved = per_hex_moved;
+    reg.balance.vision_per_observation = 0;
+    for terrain in reg.terrain.values_mut() {
+        terrain.concealment = 0;
+    }
+    reg.vehicles
+        .get_mut("medium_tank")
+        .expect("base mod has a medium tank")
+        .vision_range = 4;
+    reg
+}
+
+/// One watcher at the west end of a five-hex strip and one enemy at the east,
+/// four hexes off — which is exactly the watcher's reach, so she is standing
+/// on the far edge of it.
+fn watched(reg: &DataRegistry, rows: &[&str]) -> BattleState {
+    two_side_battle(
+        reg,
+        rows,
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "Watcher"),
+            unit_at([4, 0], 1, "medium_tank", "Watched"),
+        ],
+        7,
+    )
+}
+
+#[test]
+fn a_mod_that_asks_for_no_search_spots_exactly_as_it_always_did() {
+    // The additivity contract for the whole detection rule, and the strong
+    // form of it: with the near band covering a crew's whole reach, being
+    // looked at is being seen AND not one die is thrown. The second half is
+    // what keeps every other seeded result in this project valid — a rule
+    // that consumed randomness to conclude "yes, obviously" would move every
+    // battle in the game without changing a single decision.
+    //
+    // Note the far-range term is set high and still buys nothing: at
+    // `detection_certain_percent` 100 there is no far band for it to be
+    // spent in, which is what makes the neutral value one number rather than
+    // a set of them.
+    let reg = registry_searching(100, 100, 70, 0);
+    let state = watched(&reg, &["ggggg"]);
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "a crew in the open with nothing to search for is seen at once"
+    );
+    // And the stream is where the seed left it. Setting a whole battlefield
+    // up draws no randomness of its own, so anything the spotting pass spent
+    // would show here — worth pinning separately from the determinism
+    // snapshot, because the moment the base mod declares detection numbers
+    // that snapshot is a record of the rule being *on*.
+    let mut untouched = <rand_chacha::ChaCha8Rng as rand::SeedableRng>::seed_from_u64(7);
+    assert_eq!(
+        rand::RngExt::random_range(&mut state.rng.clone(), 0..u32::MAX),
+        rand::RngExt::random_range(&mut untouched, 0..u32::MAX),
+        "spotting a whole field with nothing to decide must not draw a die"
+    );
+}
+
+#[test]
+fn a_crew_in_timber_has_to_be_found_and_one_in_the_open_does_not() {
+    // The ground's own concealment, made decisive: a hundred points of it,
+    // fully faded in at the edge of a watcher's reach, is a crew who is never
+    // picked out of that wood by looking, however long anybody looks. She is
+    // still given away by driving or firing, which is what the tests below
+    // are about.
+    let mut reg = registry_searching(100, 0, 0, 0);
+    reg.terrain
+        .get_mut("forest")
+        .expect("base mod has forest")
+        .concealment = 100;
+    let open = watched(&reg, &["ggggg"]);
+    assert!(
+        open.fog.side(0).spotted.contains(&UnitId(1)),
+        "the crew on open grass is seen at once"
+    );
+    let timber = watched(&reg, &["ggggf"]);
+    assert!(
+        timber
+            .fog
+            .side(0)
+            .visible
+            .contains(&tactics_core::offset_to_hex(4, 0)),
+        "the wood itself is in view — this is a test about detection, not sight"
+    );
+    assert!(
+        !timber.fog.side(0).spotted.contains(&UnitId(1)),
+        "the crew in the wood is standing on ground the watcher can see, and is \
+         not thereby seen"
+    );
+}
+
+#[test]
+fn a_crew_who_drives_gives_herself_away() {
+    // The motion term on its own: nobody is worth looking for at all
+    // (`detection_base` zero), and one hex of driving is worth the whole
+    // search. The two targets are identical and stand side by side, so the
+    // only thing between them is the counter the gunner reads too.
+    let reg = registry_searching(0, 100, 0, 100);
+    let mut state = two_side_battle(
+        &reg,
+        &["ggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "Watcher"),
+            unit_at([3, 0], 1, "medium_tank", "Halted"),
+            unit_at([4, 0], 1, "medium_tank", "Under way"),
+        ],
+        7,
+    );
+    assert!(
+        state.fog.side(0).spotted.is_empty(),
+        "with no search worth making, nobody is found"
+    );
+    // Nobody has orders and nobody is spotted, so the ticks below are empty:
+    // what they do is look again. Two of them, because a look is spent once
+    // per tick whether or not it had any chance of succeeding — the battle's
+    // own opening pass already used up tick zero — and `moved` is zeroed at
+    // the *end* of a round rather than at the top of one, so a count set
+    // between ticks is the count the next spotting pass reads.
+    for side in state.living_sides() {
+        state.apply(&reg, &Order::Commit { side }).unwrap();
+    }
+    state.step_tick(&reg);
+    state.unit_mut(UnitId(2)).unwrap().moved = 1;
+    state.step_tick(&reg);
+    let fog = state.fog.side(0);
+    assert!(
+        fog.spotted.contains(&UnitId(2)),
+        "a crew who crossed a hex this round has been noticed"
+    );
+    assert!(
+        !fog.spotted.contains(&UnitId(1)),
+        "the one who sat still has not"
+    );
+}
+
+#[test]
+fn the_far_edge_of_a_crews_reach_is_where_she_has_to_search() {
+    // The range term, made decisive: at a hundred percent, with no near band
+    // to protect anybody, the chance runs linearly to nothing at the limit of
+    // what a crew can see — so a target standing exactly there is never
+    // picked out, and the identical battle with the term at zero finds her at
+    // once. That is the wall this whole item exists to take down: at 100 m to
+    // the hex a commander who can see four hexes can see 400 m, and certainty
+    // at 399 m with nothing at 401 m is not eyesight, it is a cutoff.
+    for (at_range, found) in [(0, true), (100, false)] {
+        let reg = registry_searching(100, 0, at_range, 0);
+        let state = watched(&reg, &["ggggg"]);
+        assert_eq!(
+            state.fog.side(0).spotted.contains(&UnitId(1)),
+            found,
+            "at detection_at_range_percent {at_range}, a crew four hexes off a \
+             four-hex reach should{} be spotted",
+            if found { "" } else { " not" }
+        );
+    }
+}
+
+#[test]
+fn nobody_searches_for_what_is_plainly_in_front_of_her() {
+    // The near band, which the first draft of these rules did not have and
+    // was wrong without: with the far term at its maximum, a crew at half of
+    // a four-hex reach is inside the certain band and simply seen, while the
+    // same crew at the edge of it is never found at all. Two hundred metres
+    // of open field is not something anybody has to search.
+    let reg = registry_searching(100, 50, 100, 0);
+    let close = two_side_battle(
+        &reg,
+        &["ggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "Watcher"),
+            unit_at([2, 0], 1, "medium_tank", "Two hexes off"),
+        ],
+        7,
+    );
+    assert!(
+        close.fog.side(0).spotted.contains(&UnitId(1)),
+        "half a reach away in the open is not a thing anybody searches for"
+    );
+    let far = watched(&reg, &["ggggg"]);
+    assert!(
+        !far.fog.side(0).spotted.contains(&UnitId(1)),
+        "the same crew at the limit of the same reach has to be found"
+    );
+}
+
+/// A doctrine with one field changed, so a test about the goal chooser's
+/// terms can hold every other appetite still.
+fn doctrine_with(
+    reg: &DataRegistry,
+    id: &str,
+    edit: impl FnOnce(&mut tactics_core::data::DoctrineDef),
+) -> tactics_core::data::DoctrineDef {
+    let mut doctrine = reg.doctrine(id).expect("base doctrine").clone();
+    edit(&mut doctrine);
+    doctrine
+}
+
+#[test]
+fn a_commander_who_reads_the_ground_goes_where_the_road_goes() {
+    // The chooser priced a march as the crow flies, which on a map with a
+    // river in it is not a small error: the far bank is five hexes away and
+    // twenty-odd hexes of driving, and a crew who cannot tell the difference
+    // marches at the water.
+    //
+    // Two objectives worth the same. One is across a river reach with the
+    // only crossing at the bottom of the map; the other is straight down her
+    // own bank. As the crow flies the far one is nearer. By road it is not.
+    let reg = seen(registry_wireless());
+    let mut rows: Vec<&str> = vec!["gggwgggg"; 15];
+    // The one crossing, at the bottom of the map.
+    rows.push("gggggggg");
+    let state = goal_battle(
+        &reg,
+        &rows,
+        serde_json::json!([
+            { "id": "far_bank", "name": "The Far Bank", "at": [[5, 0]], "value": 2 },
+            { "id": "down_river", "name": "Down River", "at": [[0, 8]], "value": 2 },
+        ]),
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "Chooser"),
+            // Off at the other end of the map and out of sight: a visible
+            // enemy is worth several points of shot and several more of
+            // advance, which would swamp the thing being measured.
+            unit_at([7, 15], 1, "medium_tank", "Somebody"),
+        ],
+        11,
+    );
+    assert!(
+        state.fog.side(0).spotted.is_empty(),
+        "the stage needs no enemy in sight — this is a test about ground"
+    );
+    let far = tactics_core::offset_to_hex(5, 0);
+    let down = tactics_core::offset_to_hex(0, 8);
+    let me = state.units[0].pos;
+    // The stage, stated rather than assumed. Without both halves the test
+    // proves nothing about which of the two the chooser read.
+    assert!(
+        me.distance_to(far) < me.distance_to(down),
+        "the far bank has to be nearer as the crow flies: {} against {}",
+        me.distance_to(far),
+        me.distance_to(down)
+    );
+    let roads = tactics_core::battle::roads(&reg, &state, UnitId(0), 12);
+    let (far_road, down_road) = (
+        roads.cost(far).expect("reachable the long way round"),
+        roads.cost(down).expect("reachable straight down the bank"),
+    );
+    assert!(
+        far_road > down_road,
+        "and much further by road: {far_road} against {down_road}"
+    );
+
+    // Route caution and contest aversion are switched off, so the only thing
+    // foresight can be reading here is how long the drive is.
+    let doctrine = doctrine_with(&reg, "massed_armor", |d| {
+        d.route_caution = 0.0;
+        d.contest_aversion = 0.0;
+    });
+    assert_eq!(
+        goal_with_foresight(&reg, &state, UnitId(0), doctrine.clone(), 0.0),
+        Some(tactics_core::battle::Goal::Take(far)),
+        "a commander who reads a straight line off the map marches at the river"
+    );
+    assert_eq!(
+        goal_with_foresight(&reg, &state, UnitId(0), doctrine, 1.0),
+        Some(tactics_core::battle::Goal::Take(down)),
+        "one who reads the ground takes the objective she can drive to"
+    );
+}
+
+#[test]
+fn a_road_under_a_gun_is_worth_going_round() {
+    // The second thing the chooser could not see: what happens on the way.
+    // Two objectives the same distance off by roads that cost the same, and
+    // one of those roads is walked in front of a tank. A doctrine that minds,
+    // in the hands of a commander with the foresight to notice, takes the
+    // other one.
+    //
+    // The timber is what makes the difference a fact about the *route*
+    // rather than about the destination: it breaks the sight line along the
+    // northern road without changing what either objective is worth.
+    let reg = seen(registry_wireless());
+    // The wood is crossed cheaply at its western end and expensively
+    // everywhere else, so the road behind it is a *single* cheapest road
+    // rather than one of several ties — the chooser prices the road the
+    // pathfinder actually found, and a tie would leave which one to chance.
+    let rows = [
+        "ggggggggg",
+        "rffffffff",
+        "ggggggggg",
+        "gggggffff",
+        "ggggggggg",
+    ];
+    let state = goal_battle(
+        &reg,
+        &rows,
+        serde_json::json!([
+            { "id": "open_road", "name": "Down the Open Road", "at": [[8, 2]], "value": 8 },
+            { "id": "behind_the_wood", "name": "Behind the Wood", "at": [[8, 0]], "value": 8 },
+        ]),
+        vec![
+            unit_at([0, 2], 0, "medium_tank", "Chooser"),
+            // Parked south-west behind her, watching the open ground and
+            // blind to everything north of the treeline. Behind rather than
+            // beside the southern objective, so that the two objectives are
+            // worth the same to stand on — one of them offering a shot at
+            // her would be worth several times what the road is.
+            unit_at([2, 4], 1, "medium_tank", "The Gun"),
+        ],
+        11,
+    );
+    let open = tactics_core::offset_to_hex(8, 2);
+    let covered = tactics_core::offset_to_hex(8, 0);
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "she has to be able to see the gun to route around it"
+    );
+    let roads = tactics_core::battle::roads(&reg, &state, UnitId(0), 12);
+    assert!(
+        roads.cost(covered) >= roads.cost(open),
+        "the covered road must not also be the shorter one, or the test would \
+         pass for the wrong reason: {:?} against {:?}",
+        roads.cost(covered),
+        roads.cost(open)
+    );
+
+    // Massed armour, whose low `cover_value` keeps the treeline itself from
+    // outbidding both objectives, carrying elastic defence's appetite for
+    // the covered road. Contest aversion off: the two objectives are about
+    // equally far from the one enemy on the field, but leaving it in would
+    // mean the test could pass for a second reason.
+    let doctrine = doctrine_with(&reg, "massed_armor", |d| {
+        d.route_caution = 1.2;
+        d.contest_aversion = 0.0;
+    });
+    assert_eq!(
+        goal_with_foresight(&reg, &state, UnitId(0), doctrine.clone(), 0.0),
+        Some(tactics_core::battle::Goal::Take(open)),
+        "a commander who does not look at the road takes the first one offered"
+    );
+    assert_eq!(
+        goal_with_foresight(&reg, &state, UnitId(0), doctrine, 1.0),
+        Some(tactics_core::battle::Goal::Take(covered)),
+        "one who does takes the road the gun cannot see"
+    );
+}
+
+#[test]
+fn ground_the_enemy_reaches_first_is_worth_less_marching_for() {
+    // The third thing: what the enemy will do about it. Two objectives, and
+    // a tank already sitting a hex from one of them — she will not have that
+    // one to herself when she arrives, and a commander who has noticed goes
+    // for the other.
+    //
+    // Isolated by comparing the same battle under two values of the one
+    // term, so `score_tile` is identical in both runs and the only thing that
+    // can have moved the answer is the arithmetic under test. That matters
+    // here more than in the tests above: an enemy beside an objective makes
+    // that objective worth *more* to an aggressive doctrine, because there is
+    // something to shoot from it, so the contested ground starts ahead.
+    let reg = seen(registry_wireless());
+    let rows = ["ggggggggg"; 9];
+    let state = goal_battle(
+        &reg,
+        &rows,
+        serde_json::json!([
+            { "id": "contested", "name": "The Contested Hill", "at": [[8, 4]], "value": 8 },
+            { "id": "open_ground", "name": "The Open Ground", "at": [[4, 8]], "value": 8 },
+        ]),
+        vec![
+            unit_at([0, 4], 0, "medium_tank", "Chooser"),
+            unit_at([7, 4], 1, "medium_tank", "Already There"),
+        ],
+        11,
+    );
+    let contested = tactics_core::offset_to_hex(8, 4);
+    let open = tactics_core::offset_to_hex(4, 8);
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "she has to be able to see who she is racing"
+    );
+    let me = state.units[0].pos;
+    let them = state.units[1].pos;
+    assert!(
+        them.distance_to(contested) < me.distance_to(contested),
+        "the stage needs the enemy nearer to the contested ground"
+    );
+
+    let racing = |aversion: f32| {
+        goal_with_foresight(
+            &reg,
+            &state,
+            UnitId(0),
+            doctrine_with(&reg, "massed_armor", |d| {
+                d.route_caution = 0.0;
+                d.contest_aversion = aversion;
+            }),
+            1.0,
+        )
+    };
+    assert_eq!(
+        racing(0.0),
+        Some(tactics_core::battle::Goal::Take(contested)),
+        "a commander who does not ask marches at the ground with a tank on it"
+    );
+    assert_eq!(
+        racing(3.0),
+        Some(tactics_core::battle::Goal::Take(open)),
+        "one who does takes the ground that will still be empty when she gets there"
     );
 }
 
@@ -1547,6 +2087,82 @@ fn two_side_battle(
     )
 }
 
+/// A battle on a hand-drawn map that declares ground worth holding.
+///
+/// The twin of [`two_side_battle`] for tests about the *goal* layer, which
+/// needs somewhere to go: a crew with no objectives has two candidates — the
+/// tile this round's sweep picked, and standing still — and neither of them
+/// says anything about how she chose. Distinct from `objective_battle`
+/// further down, which draws its own one-row map and is about scoring rather
+/// than about choosing.
+fn goal_battle(
+    reg: &DataRegistry,
+    rows: &[&str],
+    objectives: serde_json::Value,
+    placements: Vec<UnitPlacement>,
+    seed: u64,
+) -> BattleState {
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "goal_map",
+        "palette": { "g": "grass", "f": "forest", "w": "water", "r": "road" },
+        "rows": rows,
+        "objectives": objectives,
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    )
+}
+
+/// What ground this planner sends `unit` to, with the blur switched off and
+/// foresight set by hand.
+///
+/// Difficulty is two numbers now and a test about one of them must hold the
+/// other still: at difficulty 1 a commander both misjudges the map and does
+/// not read it, and a test that changed difficulty would not know which of
+/// the two moved its answer.
+fn goal_with_foresight(
+    reg: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    doctrine: tactics_core::data::DoctrineDef,
+    foresight: f32,
+) -> Option<tactics_core::battle::Goal> {
+    let mut planner = UtilityPlanner::new(Evaluator::new(doctrine), 5, 99);
+    planner.foresight = foresight;
+    let mut state = state.clone();
+    loop {
+        let order = planner.next_order(reg, &state, 0);
+        if let Order::SetGoal { unit: who, goal } = order
+            && who == unit
+        {
+            return Some(goal);
+        }
+        if matches!(order, Order::Commit { .. }) {
+            return None;
+        }
+        state.apply(reg, &order).ok()?;
+    }
+}
+
 fn unit_at(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> UnitPlacement {
     UnitPlacement {
         aboard_at: None,
@@ -1559,6 +2175,370 @@ fn unit_at(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> UnitPlacement {
         formation: None,
         leads: false,
     }
+}
+
+/// Stand a platoon and a tank on one hex of forest, and shoot at the tank.
+///
+/// `f` is forest, which is the only terrain in the base mod roomy enough (5)
+/// to hold a medium tank (3) and a rifle platoon (1) with room to spare — the
+/// one-crew-per-hex rule is still what a terrain declaring no capacity means.
+fn crowded_wood(reg: &DataRegistry, seed: u64) -> BattleState {
+    // Ten hexes is a kilometre and the wood is worth 30 cover, so the gunner
+    // misses often enough to sample what a miss does. At two hexes on open
+    // grass she hits almost every time and the stage proves nothing.
+    let row: String = format!("{}f{}", "g".repeat(10), "g".repeat(4));
+    two_side_battle(
+        reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([0, 1], 0, "medium_tank", "Gunner"),
+            unit_at([10, 1], 1, "medium_tank", "Quarry"),
+            unit_at([10, 1], 1, "rifle_platoon", "Bystanders"),
+        ],
+        seed,
+    )
+}
+
+/// The rule the designer asked for: the gunner aims, and only a *miss* is a
+/// lottery over who else is standing there.
+#[test]
+fn a_round_that_goes_past_a_tank_can_find_the_platoon_beside_her() {
+    let reg = seen(registry_wireless());
+    let (mut misses, mut strays, mut onto_the_tank) = (0, 0, 0);
+    // Many seeds rather than many rounds of one battle: a stray is a second
+    // roll behind a first one, so a single stage does not sample it.
+    for seed in 0..400u64 {
+        let mut state = crowded_wood(&reg, seed);
+        let events = state.apply(
+            &reg,
+            &Order::SetFire {
+                unit: UnitId(0),
+                fire: FireIntent::Target {
+                    target: UnitId(1),
+                    weapon: 0,
+                },
+            },
+        );
+        assert!(events.is_ok(), "the gunner can see her quarry");
+        for event in play_round(&reg, &mut state) {
+            match event {
+                BattleEvent::ShotMissed { .. } => misses += 1,
+                BattleEvent::ShotStrayed { intended, onto, .. } => {
+                    assert_eq!(intended, UnitId(1), "she was aiming at the tank");
+                    assert_eq!(onto, UnitId(2), "and the platoon is the only bystander");
+                    strays += 1;
+                }
+                BattleEvent::ShotHit {
+                    target: UnitId(1), ..
+                } => onto_the_tank += 1,
+                _ => {}
+            }
+        }
+    }
+    assert!(misses > 20, "the stage has to produce misses: {misses}");
+    assert!(onto_the_tank > 0, "and hits on what she aimed at");
+    // 25% per hundred points of presence, and a platoon's presence is
+    // 100 + profile = 80, so the nominal rate is one miss in five. Measured
+    // 148 of 1265, which is 12% — lower on purpose and not a discrepancy: a
+    // stray that kills the platoon leaves the rest of that round's misses
+    // with nobody to stray onto, so the *observed* rate is always below the
+    // roll. Loose bounds, because this pins that the rule fires at roughly
+    // its stated rate and not the rate itself, which is a tuning number and
+    // lives in mod.json.
+    let rate = 100 * strays / misses;
+    assert!(
+        (8..=34).contains(&rate),
+        "{strays} of {misses} misses strayed ({rate}%), which is nowhere near the \
+         20% the balance block asks for"
+    );
+}
+
+/// The additivity pin: a ladder with no rungs is no ladder.
+#[test]
+fn a_mod_that_prices_no_strays_has_a_miss_that_is_simply_a_miss() {
+    let mut reg = registry_wireless();
+    reg.balance.stray_percent = 0;
+    for seed in 0..200u64 {
+        let mut state = crowded_wood(&reg, seed);
+        let _ = state.apply(
+            &reg,
+            &Order::SetFire {
+                unit: UnitId(0),
+                fire: FireIntent::Target {
+                    target: UnitId(1),
+                    weapon: 0,
+                },
+            },
+        );
+        for event in play_round(&reg, &mut state) {
+            assert!(
+                !matches!(event, BattleEvent::ShotStrayed { .. }),
+                "stray_percent 0 must be the game before stacking existed"
+            );
+        }
+    }
+}
+
+/// And nobody to stray onto is nobody to stray onto.
+#[test]
+fn a_shot_at_a_crew_standing_alone_never_finds_anybody_else() {
+    let reg = registry_wireless();
+    for seed in 0..200u64 {
+        let mut state = two_side_battle(
+            &reg,
+            &[
+                &format!("{}f{}", "g".repeat(10), "g".repeat(4)),
+                &format!("{}f{}", "g".repeat(10), "g".repeat(4)),
+                &format!("{}f{}", "g".repeat(10), "g".repeat(4)),
+            ],
+            vec![
+                unit_at([0, 1], 0, "medium_tank", "Gunner"),
+                unit_at([10, 1], 1, "medium_tank", "Quarry"),
+            ],
+            seed,
+        );
+        let _ = state.apply(
+            &reg,
+            &Order::SetFire {
+                unit: UnitId(0),
+                fire: FireIntent::Target {
+                    target: UnitId(1),
+                    weapon: 0,
+                },
+            },
+        );
+        for event in play_round(&reg, &mut state) {
+            assert!(!matches!(event, BattleEvent::ShotStrayed { .. }));
+        }
+    }
+}
+
+/// Room is counted in footprints against the terrain's capacity, and a
+/// terrain that declares neither is the one-crew-per-hex game this engine
+/// shipped with.
+#[test]
+fn a_wood_holds_a_platoon_and_her_taxi_where_a_road_holds_only_the_taxi() {
+    let reg = registry_wireless();
+    // forest capacity 5, grass capacity 4; medium_tank 3, rifle_platoon 1.
+    // A tank and one platoon fit on either; a tank and two only fit in timber.
+    let state = two_side_battle(
+        &reg,
+        &["ggfggg", "ggfggg", "ggfggg"],
+        vec![
+            unit_at([2, 1], 0, "medium_tank", "In The Wood"),
+            unit_at([2, 1], 0, "rifle_platoon", "With Her"),
+            unit_at([1, 1], 0, "medium_tank", "In The Open"),
+            unit_at([1, 1], 0, "rifle_platoon", "With Him"),
+            unit_at([4, 1], 0, "rifle_platoon", "Latecomer"),
+            unit_at([5, 1], 1, "medium_tank", "Bystander"),
+        ],
+        11,
+    );
+    let platoon = state.unit(UnitId(4)).expect("she exists");
+    let wood = tactics_core::offset_to_hex(2, 1);
+    let open = tactics_core::offset_to_hex(1, 1);
+    assert!(
+        state.room_for(&reg, platoon, wood),
+        "forest holds 5 and a tank and two platoons are 5"
+    );
+    assert!(
+        !state.room_for(&reg, platoon, open),
+        "grass holds 4 and the tank and platoon on it are already 4"
+    );
+    // And the rule a terrain that says nothing keeps: grass in this test's own
+    // palette does declare a capacity, so use a registry that does not.
+    let mut old = registry_wireless();
+    for terrain in old.terrain.values_mut() {
+        terrain.capacity = None;
+    }
+    assert!(
+        !old.terrain("forest").expect("forest").capacity.is_some(),
+        "the stage needs a registry with stacking switched off"
+    );
+    assert!(
+        !state.room_for(&old, platoon, wood),
+        "no declared capacity is one crew to a hex, whatever size she is"
+    );
+}
+
+/// A column can follow the column in front of it.
+///
+/// The campaign map used to treat *any* army as impassable, so a friend on the
+/// road refused the whole route — the same conflation of "cannot stop here"
+/// with "cannot cross here" that a hex holding one crew was in battle. Two
+/// armies still do not share a tile; they just do not wall each other off.
+///
+/// The budget is pinned to exactly the cost of driving straight through,
+/// which is what makes this a test rather than a coincidence: two tiles at
+/// distance two along one axis share exactly one neighbour, so blocking the
+/// midpoint leaves only a three-step detour, and a detour does not fit. An
+/// earlier draft of this asserted only that the far tile was reachable, and
+/// it passed against the old rule because the army simply drove around.
+#[test]
+fn an_army_drives_past_a_friend_and_stops_beyond_her() {
+    let reg = registry();
+    let mut state = OverworldState::from_map(&reg, "frontier", 1).unwrap();
+    let ids: Vec<_> = state.side_armies(0).map(|a| a.id).collect();
+    let (follower, ahead) = (ids[0], ids[1]);
+
+    let pos = state.army(follower).unwrap().pos;
+    let reach = state.reachable(&reg, follower);
+    // A direction with two tiles of ground in it, both free and both in range:
+    // one to park the friend on and one to finish beyond her.
+    let (step, beyond, through) = pos
+        .all_neighbors()
+        .into_iter()
+        .map(|next| (next, pos + (next - pos) * 2))
+        .filter(|(next, far)| state.army_at(*next).is_none() && state.army_at(*far).is_none())
+        .filter_map(|(next, far)| Some((next, far, *reach.get(&far)?)))
+        .min_by_key(|(next, _, _)| (next.x, next.y))
+        .expect("frontier gives her two tiles of room somewhere");
+
+    // Exactly enough fuel for the straight line and not a point more.
+    state.army_mut(follower).unwrap().movement = through;
+    state.army_mut(ahead).unwrap().pos = step;
+
+    let reach = state.reachable(&reg, follower);
+    assert!(!reach.contains_key(&step), "she may not park on her friend");
+    assert_eq!(
+        reach.get(&beyond),
+        Some(&through),
+        "the road past her is still a road, at the same price"
+    );
+
+    state
+        .apply(
+            &reg,
+            &OverworldOrder::MoveArmy {
+                army: follower,
+                to: beyond,
+            },
+        )
+        .expect("the route exists");
+    assert_eq!(
+        state.army(follower).expect("alive").pos,
+        beyond,
+        "and she ends up where she was sent"
+    );
+}
+
+/// A hexagon of open grass, so that "the same problem from the other end" is
+/// a thing that exists.
+///
+/// A hexagon rather than a rectangle of text because the offset conversion
+/// *shears* text: a rectangle of ASCII is symmetric on the page and is not
+/// symmetric on the map, which is a mistake this project has already made
+/// once and paid for (see `a_march_is_the_same_march_from_either_end`). A
+/// hexagon is closed under point reflection through its own centre for the
+/// same reason a circle is.
+fn open_hexagon(reg: &DataRegistry, radius: i32, placements: Vec<UnitPlacement>) -> BattleState {
+    let centre = tactics_core::offset_to_hex(radius + radius / 2, radius);
+    let rows: Vec<String> = (0..=2 * radius)
+        .map(|row| {
+            (0..=2 * radius + radius / 2 + 1)
+                .map(|col| {
+                    if tactics_core::offset_to_hex(col, row).distance_to(centre) > radius {
+                        ' '
+                    } else {
+                        'g'
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    let borrowed: Vec<&str> = rows.iter().map(String::as_str).collect();
+    two_side_battle(reg, &borrowed, placements, 1)
+}
+
+/// Driving from A to B and driving from B to A are the same problem reflected,
+/// and the engine has to answer them the same way.
+///
+/// This is the regression test for a bias that cost this project months of
+/// misread balance numbers. `movement::step_toward` used to break ties with
+/// `(h.x, h.y)` — and smallest x is *west*, so wherever two hexes were equally
+/// close to the destination every crew in the game edged west. That is
+/// forwards for a side attacking west and backwards for a side attacking east,
+/// so it was worth real points to whichever end of a map was on the east; the
+/// mirrored arena that was supposed to detect exactly this had the same fault
+/// in its own terrain and the two pointed the same way.
+///
+/// The rule it enforces: **a tiebreak may only read quantities a reflection
+/// preserves.** Distances and terrain costs qualify; a dot product of two
+/// differences qualifies, because a reflection negates both; a coordinate does
+/// not, and no total order on coordinates can — a reflection maps the least
+/// element to the greatest, so asking for the smallest is asking which way is
+/// west.
+#[test]
+fn a_march_is_the_same_march_from_either_end() {
+    let reg = registry();
+    let radius = 6;
+    let centre = tactics_core::offset_to_hex(radius + radius / 2, radius);
+    let mirror = |h: tactics_core::Hex| centre * 2 - h;
+
+    // Off both axes on purpose: a destination straight ahead has one closest
+    // reachable hex and never reaches the tiebreak at all.
+    let west = centre + tactics_core::Hex::new(-5, 1);
+    let goal_west = centre + tactics_core::Hex::new(3, -2);
+    let state = open_hexagon(
+        &reg,
+        radius,
+        vec![
+            unit_at(tactics_core::hex_to_offset(west), 0, "medium_tank", "West"),
+            unit_at(
+                tactics_core::hex_to_offset(mirror(west)),
+                1,
+                "medium_tank",
+                "East",
+            ),
+        ],
+    );
+
+    let theirs = reachable(&reg, &state, UnitId(0)).len();
+    assert!(
+        theirs > 1,
+        "the stage is pointless if she cannot go anywhere: {theirs} tiles"
+    );
+
+    let a = tactics_core::battle::step_toward(&reg, &state, UnitId(0), goal_west)
+        .expect("west has somewhere to go");
+    let b = tactics_core::battle::step_toward(&reg, &state, UnitId(1), mirror(goal_west))
+        .expect("east has somewhere to go");
+    assert_eq!(
+        a,
+        mirror(b),
+        "west stepped to {a:?} and east to {b:?}, whose mirror is {:?} — the same \
+         problem from the other end got a different answer",
+        mirror(b)
+    );
+}
+
+/// The projection a tiebreak is allowed to read, and why it is allowed.
+#[test]
+fn a_reflection_leaves_a_bearing_alone_and_turns_a_coordinate_around() {
+    use tactics_core::Hex;
+    use tactics_core::battle::along_the_bearing;
+    let centre = Hex::new(4, -7);
+    let mirror = |h: Hex| centre * 2 - h;
+    for step in [Hex::new(1, 0), Hex::new(-2, 3), Hex::new(0, -4)] {
+        for bearing in [Hex::new(5, -1), Hex::new(-3, -2)] {
+            // A reflection negates both differences, so their product stands.
+            assert_eq!(
+                along_the_bearing(step, bearing),
+                along_the_bearing(-step, -bearing),
+                "the bearing projection must survive a reflection"
+            );
+        }
+    }
+    // And the thing that does not: whichever hex has the smaller x, its
+    // mirror has the larger. This is the whole reason a coordinate cannot be
+    // a tiebreak, stated as an assertion rather than as a comment.
+    let (lo, hi) = (Hex::new(-3, 1), Hex::new(2, 1));
+    assert!(lo.x < hi.x);
+    assert!(
+        mirror(lo).x > mirror(hi).x,
+        "a reflection reverses a coordinate order, which is what made `min_by_key` \
+         on `h.x` a compass"
+    );
 }
 
 /// Two medium tanks three hexes apart in the open, in plain sight of each
@@ -5167,7 +6147,7 @@ fn plan_one(
     }
     let mut planner = UtilityPlanner::new(
         Evaluator::new(reg.doctrine("massed_armor").expect("base doctrine").clone()),
-        0.0,
+        5,
         seed,
     );
     loop {
@@ -6936,7 +7916,7 @@ fn a_binding_march_presses_on_where_an_ordinary_one_takes_cover() {
     // round, and if that has to move again, scan for another rather than
     // weakening what is asserted below.
     const SEED: u64 = 4;
-    let reg = registry_wireless();
+    let reg = seen(registry_wireless());
     let (delegated_from, delegated_to, delegated_took_cover) = {
         let (state, crew) = marching_under_fire(&reg, Latitude::Delegated, SEED);
         second_round_plan(&reg, state, crew, SEED)
@@ -7067,6 +8047,8 @@ fn a_formation_keeps_its_interval_and_its_sight_lines() {
         withdraw_threshold: 0.5,
         initiative: 0.5,
         delegation: 0.5,
+        route_caution: 0.0,
+        contest_aversion: 0.0,
     });
     let score = |col: i32| {
         evaluator
@@ -8084,6 +9066,8 @@ fn support_holds_her_at_overwatch_distance() {
         withdraw_threshold: 0.5,
         initiative: 0.5,
         delegation: 0.5,
+        route_caution: 0.0,
+        contest_aversion: 0.0,
     });
     let score = |col: i32| {
         evaluator
@@ -9025,7 +10009,7 @@ fn a_one_rung_ladder_never_abandons_anything() {
         if state.is_over() {
             break;
         }
-        for event in state.resolve_round(&reg) {
+        for event in play_round(&reg, &mut state) {
             assert!(
                 !matches!(event, BattleEvent::Abandoned { .. }),
                 "nobody jumps off a one-rung ladder"
@@ -9081,7 +10065,7 @@ fn a_bounced_shell_wrecks_no_plate_it_never_touched() {
         if state.is_over() {
             break;
         }
-        for event in state.resolve_round(&reg) {
+        for event in play_round(&reg, &mut state) {
             match event {
                 BattleEvent::ShotBounced { target, .. } if target == wall => bounces += 1,
                 BattleEvent::ShotHit { target, .. } if target == wall => pens += 1,
@@ -9317,7 +10301,7 @@ fn a_shellburst_beside_a_platoon_is_attrition_not_erasure() {
         if state.is_over() {
             break;
         }
-        for event in state.resolve_round(&reg) {
+        for event in play_round(&reg, &mut state) {
             if matches!(
                 event,
                 BattleEvent::ModuleHit { unit, .. } | BattleEvent::CrewHit { unit, .. }
@@ -9651,7 +10635,7 @@ fn a_platoon_boards_rides_hidden_and_steps_off_where_the_ride_ends() {
     // from the enemy's picture while the carrier stays plainly visible,
     // rides wherever it drives, and steps off beside it when told —
     // reappearing to the enemy the same tick her boots touch ground.
-    let reg = registry_wireless();
+    let reg = seen(registry_wireless());
     let mut state = taxi_stage(&reg, "recon_car", 701);
     let (taxi, riders) = (UnitId(0), UnitId(1));
     state
@@ -9714,7 +10698,14 @@ fn a_platoon_boards_rides_hidden_and_steps_off_where_the_ride_ends() {
         state.unit(riders).unwrap().pos,
         state.unit(taxi).unwrap().pos,
     );
-    assert_eq!(r.distance_to(t), 1, "onto the ground beside the ride");
+    assert_eq!(
+        r, t,
+        "onto the ground the ride is standing on — a section gets out of the back \
+         of the vehicle, it does not walk a hundred metres first. That was not \
+         expressible until a hex could hold two crews; before stacking this \
+         asserted `distance_to(t) == 1`, which was the engine's limit rather than \
+         anybody's intent."
+    );
 }
 
 /// Score a tile with every doctrinal preference switched off except the two
@@ -9738,6 +10729,8 @@ fn risk_score(reg: &DataRegistry, state: &BattleState, unit: UnitId, tile: [i32;
         withdraw_threshold: 0.0,
         initiative: 0.5,
         delegation: 0.5,
+        route_caution: 0.0,
+        contest_aversion: 0.0,
     });
     evaluator
         .score_tile(
@@ -9776,7 +10769,7 @@ fn a_loaded_taxi_reads_the_same_gun_as_a_bigger_danger_than_an_empty_one() {
     // own hex in both, so the mass term, the fog and every friend-relative
     // distance are identical; only `aboard` is set, and only the passenger
     // stake can account for the difference.
-    let reg = registry_wireless();
+    let reg = seen(registry_wireless());
     let mut empty = taxi_stage(&reg, "tank_destroyer", 703);
     let (taxi, riders) = (UnitId(0), UnitId(1));
     assert!(
@@ -9841,7 +10834,7 @@ fn a_penetrated_taxi_shares_its_luck_with_everyone_aboard() {
     // check tickets. The pool a penetration rolls against includes the
     // passengers' cadets and troops, so riding a taxi under fire costs
     // exactly what the period says it cost.
-    let reg = registry_wireless();
+    let reg = seen(registry_wireless());
     let mut state = taxi_stage(&reg, "tank_destroyer", 702);
     let (taxi, riders, gun) = (UnitId(0), UnitId(1), UnitId(2));
     state.units[riders.index()].aboard = Some(taxi);
@@ -9865,7 +10858,7 @@ fn a_penetrated_taxi_shares_its_luck_with_everyone_aboard() {
         if state.is_over() {
             break;
         }
-        for event in state.resolve_round(&reg) {
+        for event in play_round(&reg, &mut state) {
             if matches!(
                 event,
                 BattleEvent::CrewHit { unit, .. } | BattleEvent::ModuleHit { unit, .. }
@@ -9887,7 +10880,7 @@ fn a_brewed_carrier_burns_its_passengers_and_spits_out_the_rest() {
     // The worst ride there is. The carrier's racks go up, every passenger
     // is rolled through the fire, and whoever is left picks herself up
     // beside the wreck — dismounted by catastrophe rather than by order.
-    let mut reg = registry_wireless();
+    let mut reg = seen(registry_wireless());
     reg.balance.brewup_percent = 100;
     if let Some(rack) = reg.modules.get_mut("ammo_rack_sparse") {
         // The apc's rack becomes most of what a penetration can find, so
@@ -9918,7 +10911,7 @@ fn a_brewed_carrier_burns_its_passengers_and_spits_out_the_rest() {
         if state.is_over() {
             break;
         }
-        for event in state.resolve_round(&reg) {
+        for event in play_round(&reg, &mut state) {
             match event {
                 BattleEvent::BrewedUp { unit } if unit == taxi => brewed = true,
                 BattleEvent::CrewHit { unit, .. } | BattleEvent::ModuleHit { unit, .. }
@@ -10000,7 +10993,7 @@ fn a_taxi_under_at_threat_puts_her_passengers_on_the_ground() {
     // planner sees the carrier under a threat that can actually hurt her
     // and puts the platoon on the ground without being asked. Nothing
     // mounts on its own initiative — the reflex only ever gets people OFF.
-    let reg = registry_wireless();
+    let reg = seen(registry_wireless());
     let mut state = taxi_stage(&reg, "tank_destroyer", 705);
     let (taxi, riders) = (UnitId(0), UnitId(1));
     state.units[riders.index()].aboard = Some(taxi);
@@ -11150,7 +12143,7 @@ fn a_shell_takes_time_to_arrive_and_lands_on_the_hex_not_the_unit() {
     // shell, and at the shipped 470 m/s the same sentence needs kilometres of
     // ground to be true on — which is exactly the range artillery is fired at
     // and exactly why the balance table for it moved.
-    let mut reg = registry_wireless();
+    let mut reg = seen(registry_wireless());
     if let Some(ammo) = reg.ammo.get_mut("he_105") {
         ammo.velocity = 10;
     }
@@ -11435,7 +12428,7 @@ fn a_gun_with_nothing_left_to_break_expects_nothing() {
     // — the predicate every planner in the game prices shots with — refuses
     // to call it a weapon at all, which is what puts the gun back on a
     // target worth having.
-    let reg = registry_wireless();
+    let reg = seen(registry_wireless());
     let mut state = battery_stage(&reg, "tank_destroyer", 812);
     let (battery, quarry) = (UnitId(0), UnitId(1));
     let howitzer = reg

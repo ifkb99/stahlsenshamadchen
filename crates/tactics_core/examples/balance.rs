@@ -66,14 +66,15 @@
 //! seed order regardless of which core finished first, and that is checked by
 //! running the same batch at several widths, not hoped for.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
+use tactics_core::Hex;
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{
     AttackPreview, BattleState, EndReason, Event, Order, SideState, UnitId, blast_overmatches,
     flight_ticks, hit_breakdown, preview_attack,
 };
-use tactics_core::data::{ArmorFacing, DataRegistry, ModuleEffect, WeaponDef};
+use tactics_core::data::{ArmorFacing, DataRegistry, ModuleEffect, TerrainDef, WeaponDef};
 use tactics_core::force;
 use tactics_core::map::{Facing, HexMap, MapFile, MapKind, UnitPlacement};
 use tactics_core::roster::{CadetId, Roster};
@@ -175,7 +176,7 @@ fn main() {
         if cfg.only.wants("sim") {
             simulate(&registry, games, seed);
         }
-        for grid in fought_grids(&registry, &cfg, seed) {
+        for grid in fought_grids(&registry, &cfg, seed, budget) {
             print_grid(&grid);
         }
     }
@@ -191,6 +192,9 @@ fn analytic(reg: &DataRegistry, cfg: &Run) {
     let mut duels = Duels::new(reg);
     if cfg.only.wants("roster") {
         roster_table(reg);
+    }
+    if cfg.only.wants("detect") {
+        detect_table(reg);
     }
     if cfg.only.wants("hit") {
         hit_table(reg);
@@ -223,8 +227,9 @@ what to run
                          runs at different seeds are two samples of one game.
   --points N             requisition budget per side in the mustered table (60)
   --brains               which planner is better; --brain-games, --brain-difficulty
-  --only A,B             print only these tables. One of: roster, hit, pen,
-                         kills, flight, flags, sim, delegation, mustered, skill
+  --only A,B             print only these tables. One of: roster, detect, hit,
+                         pen, kills, flight, flags, sim, delegation, mustered,
+                         skill, ground
 
 which game
   --mods DIR             mod tree to load (default assets/mods)
@@ -236,9 +241,11 @@ which game
   --sweep PATH=A,B,C     run once per value and put the results side by side.
                          Repeatable; the axes multiply. Two axis names are
                          not fields: `--sweep mods=a,b` compares two versions
-                         of the content, and `--sweep seed=1000,2000` fights
-                         the same game twice, which is how the table shows the
-                         noise floor every other difference has to clear.
+                         of the content, `--sweep seed=0,1000` fights the same
+                         game twice (how the table shows the noise floor that
+                         every other difference has to clear), and
+                         `--sweep points=60,100` buys each doctrine a bigger
+                         army instead of changing a number in one.
 
 how, and how much of it
   --jobs N               battles in the air at once (default: every core).
@@ -249,7 +256,8 @@ how, and how much of it
   --absolute             in a sweep, print each variant's own numbers rather
                          than its differences from the first. What a range
                          wants; the differences are what a tuning question wants
-  --csv                  print the comparison digest as csv as well
+  --csv                  print the comparison digest and every swept table as
+                         csv as well, long-form: table,row,variant,column,value
 
   A swept table with three or more variants also gets a `spread` line per row:
   the widest gap between variants in that column. Under a `--sweep seed=` that
@@ -667,6 +675,108 @@ fn roster_table(reg: &DataRegistry) {
 /// the field the resolver reads, and `pressure` is set to the rung's own
 /// threshold, so a column labelled "breaking" is a crew the morale ladder
 /// would actually call breaking.
+/// What the detection numbers do: how long a crew takes to pick somebody out
+/// of ground she is already looking straight at.
+///
+/// The twin of the `to hit` table one section down, and built the same way —
+/// every cell is the engine's own [`Balance::detection_chance`], never a
+/// formula retyped here, so the table cannot drift from what the spotting
+/// pass rolls against.
+///
+/// Rows are ground rather than vehicles because the ground is where the
+/// number lives. What a *vehicle* contributes is her `concealment`, and that
+/// does something else entirely: it shortens the range at which she can be
+/// found at all, which the roster table already prints and which moves these
+/// columns rather than these cells — a crew hidden at 50% meets the `far`
+/// column at half the distance the same crew in the open would.
+fn detect_table(reg: &DataRegistry) {
+    heading("detection: how long a crew takes to find what she is looking at");
+    // Only the ratio of distance to reach enters the arithmetic, so a
+    // notional hundred-hex reach makes every column an exact percentage of
+    // it and keeps the table independent of whose eyes are being used.
+    const REACH: u32 = 100;
+    // The gradient is the rule, exactly as it is for the gunnery terms: one
+    // hex a round is a walking pace and five is thirty km/h, and a table
+    // with one "moving" column would price them the same.
+    const BOUNDS: [u32; 3] = [1, 3, 5];
+    let ticks = reg.scale.ticks_per_round;
+
+    let mut grounds: Vec<&TerrainDef> = reg
+        .terrain
+        .values()
+        // Ground nothing can stand on cannot hide anybody on it.
+        .filter(|t| !t.move_cost.is_empty())
+        .collect();
+    grounds.sort_by(|a, b| a.id.cmp(&b.id));
+
+    print!(
+        "{:<16} {:>8} {:>8} {:>8} {:>8} {:>8}",
+        "ground", "conceal", "close", "half", "3/4", "far"
+    );
+    for hexes in BOUNDS {
+        print!(" {:>8}", format!("far {hexes}h"));
+    }
+    println!(" {:>10} {:>10}", "ticks far", "rounds");
+
+    for ground in grounds {
+        let chance = |at: u32, moved: u32| {
+            reg.balance
+                .detection_chance(ground.concealment, at as i32, REACH, moved)
+        };
+        let far = chance(REACH, 0);
+        print!(
+            "{:<16} {:>8} {:>8} {:>8} {:>8} {:>8}",
+            short(&ground.id),
+            if ground.concealment == 0 {
+                "-".to_string()
+            } else {
+                format!("{}%", ground.concealment)
+            },
+            chance(0, 0),
+            chance(REACH / 2, 0),
+            chance(REACH * 3 / 4, 0),
+            far
+        );
+        for hexes in BOUNDS {
+            print!(" {:>8}", chance(REACH, hexes));
+        }
+        // Expected ticks for ONE crew to find a halted target at the edge of
+        // her reach, which is `1 / p` — the mean of the geometric
+        // distribution the per-tick roll actually is. A dash where the
+        // numbers reach zero, because "never" is not a large number.
+        if far <= 0 {
+            println!(" {:>10} {:>10}", "never", "never");
+        } else {
+            let t = 100.0 / far as f32;
+            println!(" {:>10.1} {:>10.1}", t, t / ticks as f32);
+        }
+    }
+
+    println!(
+        "\n  every cell is `Balance::detection_chance` in 100, rolled once per\n  \
+         tick by the best-placed crew who has her ground in view — one roll, never\n  \
+         one per pair of eyes, so the ticks column is the real wait and not a\n  \
+         number divided by however many crews happen to be looking.\n  \
+         \n  \
+         `close`, `half`, `3/4` and `far` are distance as a share of that\n  \
+         spotter's reach, and `far Nh` is the target having crossed N hexes this\n  \
+         round — the same `moved` field the gunner reads, so a crew who dashed for\n  \
+         cover pays for the dash twice. Inside {}% of a crew's reach she simply\n  \
+         sees what is in front of her, and everything the ground and the distance\n  \
+         are worth fades in over what is left of it.\n  \
+         \n  \
+         A round is {ticks} ticks. Firing bypasses all of this — `revealed` is\n  \
+         checked before a die is thrown — and so does a contact this side already\n  \
+         holds: a search buys an acquisition, never the watching afterwards.\n  \
+         detection_base {}, certain {}%, at_range {}, per_hex_moved {}.",
+        reg.balance.detection_certain_percent,
+        reg.balance.detection_base,
+        reg.balance.detection_certain_percent,
+        reg.balance.detection_at_range_percent,
+        reg.balance.detection_per_hex_moved,
+    );
+}
+
 fn hit_table(reg: &DataRegistry) {
     heading("to hit: what the gunner is up against, P(hit) %");
     // A representative target: the hit half does not read armour at all, so
@@ -1208,6 +1318,16 @@ struct Tally {
     hits: u32,
     bounces: u32,
     misses: u32,
+    /// Misses that found somebody else standing on the target's hex. Stacking
+    /// is worth nothing unless crews actually share ground, and the stray rule
+    /// is worth nothing unless misses land among them — these three numbers are
+    /// the check that neither is a term nobody in the game ever meets, which is
+    /// what `balance.blind_penalty` turned out to be.
+    strays: u32,
+    /// Rounds that opened with somebody sharing a hex, and the largest stack
+    /// seen anywhere in the run.
+    stacked_rounds: u32,
+    deepest_stack: usize,
     hits_by_arc: HashMap<String, u32>,
     /// What actually ended each vehicle, by the flag she died carrying.
     causes: BTreeMap<&'static str, usize>,
@@ -1233,6 +1353,51 @@ struct Tally {
     troops_left: Vec<f32>,
     mounts: usize,
     dismounts: usize,
+    /// Contacts made, and the round each crew was first found in.
+    ///
+    /// A detection roll does not change what a crew can *see*, it changes how
+    /// long she takes to pick somebody out of it — so the thing to watch is
+    /// when each vehicle stopped being hidden, not when the battle's first
+    /// contact happened. One easy spot on round one would mask every other
+    /// crew on the field, and the first draft of this measured exactly that
+    /// and reported no difference at any setting.
+    ///
+    /// `spots` counts every acquisition, re-acquisitions included, which is
+    /// the other half: contact broken and remade is what a screen is for.
+    spots: u32,
+    found_at: Vec<u32>,
+    /// How far the nearest crew of the finding side was when each contact was
+    /// made, in hexes.
+    ///
+    /// This is the headline number for the detection rules, and the reason
+    /// the two above it move so little: delaying a spot does not usually
+    /// delay the *battle*, because both sides are closing anyway. What it
+    /// does is let them close. A contact made at eight hexes instead of
+    /// sixteen is a different fight — the same crews, a kilometre nearer —
+    /// even when the round it happens in barely moves.
+    ///
+    /// Deliberately not split by whether the crew who was found had driven,
+    /// which the first draft did and which measured the wrong thing entirely:
+    /// `moved` is zeroed at the top of every round, so "halted" at tick three
+    /// means "has not driven yet", and a *delayed* contact therefore moves
+    /// out of the halted bucket by construction. It reported that detection
+    /// rolls made stationary crews easier to find.
+    contact_range: Vec<u32>,
+    /// Shots laid at a map reference rather than at somebody anybody could
+    /// see. The direct twin of the above on the shooting side, and the one
+    /// number that says whether hiding is worth anything: a gun that can
+    /// always see its target never pays `balance.blind_penalty`.
+    ///
+    /// **It reads zero in every run so far, and it is kept anyway.** Nothing
+    /// in the AI ever chooses to shell ground it cannot see, so this is
+    /// currently measuring the absence of a decision rather than the outcome
+    /// of one — which is the same thing `blind_penalty` itself turned out to
+    /// be. The reason to keep the column is that the decision is coming:
+    /// suppressing fire is fire at a place rather than at a crew, and the
+    /// moment a planner learns to lay it, this is the number that will say so
+    /// without anybody having to add an instrument in the same breath as the
+    /// feature it is meant to judge.
+    shots_blind: u32,
 }
 
 /// Every battle map the loaded mods ship, sorted by id.
@@ -1273,6 +1438,7 @@ const MUSTER_SEED: u64 = 4000;
 /// The skill-gap table's own block is zero: `arena_duel` adds its 9000 itself,
 /// and moving that would change the planner seeds rather than only the ground.
 const ARENA_SEED: u64 = 0;
+const GROUND_SEED: u64 = 7000;
 
 /// Which ground this battle is fought on. Keyed on the seed rather than the
 /// game index so the pairing of map to battle survives changing `--games`.
@@ -1320,6 +1486,9 @@ impl Tally {
         self.hits += other.hits;
         self.bounces += other.bounces;
         self.misses += other.misses;
+        self.strays += other.strays;
+        self.stacked_rounds += other.stacked_rounds;
+        self.deepest_stack = self.deepest_stack.max(other.deepest_stack);
         self.girls_wounded += other.girls_wounded;
         self.girls_out += other.girls_out;
         self.racks_destroyed += other.racks_destroyed;
@@ -1330,6 +1499,10 @@ impl Tally {
         self.troops_left.extend_from_slice(&other.troops_left);
         self.mounts += other.mounts;
         self.dismounts += other.dismounts;
+        self.spots += other.spots;
+        self.found_at.extend_from_slice(&other.found_at);
+        self.contact_range.extend_from_slice(&other.contact_range);
+        self.shots_blind += other.shots_blind;
     }
 }
 
@@ -1373,6 +1546,9 @@ fn fight_one(reg: &DataRegistry, maps: &[&str], seed: u64) -> Tally {
     // Final state per cadet, so a cadet wounded and then killed is counted
     // once, as killed.
     let mut cadets: BTreeMap<CadetId, bool> = BTreeMap::new();
+    // Which crews have been found at all yet, so a contact broken and remade
+    // is not counted as a second crew coming out of hiding.
+    let mut found: HashSet<UnitId> = HashSet::new();
     for unit in &state.units {
         for (id, count) in &unit.ammo {
             *t.ammo_aboard.entry(id.clone()).or_default() += count;
@@ -1389,13 +1565,67 @@ fn fight_one(reg: &DataRegistry, maps: &[&str], seed: u64) -> Tally {
         // immediately. Watching the next event is how artillery gets
         // credited without the resolver having to say so twice.
         let mut shell_from: Option<UnitId> = None;
-        for event in state.resolve_round(reg) {
+        {
+            // A census at the top of every round: how deep did anybody stack?
+            // Taken from state rather than from events because sharing a hex is
+            // a *state* and nothing announces it.
+            let mut per_hex: BTreeMap<(i32, i32), usize> = BTreeMap::new();
+            for unit in state.units.iter().filter(|u| u.alive && u.aboard.is_none()) {
+                *per_hex.entry((unit.pos.x, unit.pos.y)).or_default() += 1;
+            }
+            let deepest = per_hex.values().copied().max().unwrap_or(0);
+            if deepest > 1 {
+                t.stacked_rounds += 1;
+            }
+            t.deepest_stack = t.deepest_stack.max(deepest);
+        }
+        // Resolved a tick at a time rather than through `resolve_round`,
+        // which is exactly this loop — so the simulation is untouched — in
+        // order to have a *state* to read when a contact is announced. How
+        // far away a crew was when somebody finally picked her out is the
+        // number the detection rules are really about, and an event stream
+        // drained at the end of the round cannot answer it: by then everyone
+        // has driven on. Read at the end of the tick the contact was made
+        // in, which is within one tick's driving of where the spotter stood
+        // when she made it.
+        let mut round_events = Vec::new();
+        while !state.is_over() && state.resolving_tick().is_some() {
+            let ticked = state.step_tick(reg);
+            for event in &ticked {
+                if let Event::UnitSpotted { by_side, at, .. } = event {
+                    let range = state
+                        .units
+                        .iter()
+                        .filter(|u| u.alive && u.aboard.is_none() && u.side == *by_side)
+                        .map(|u| u.pos.distance_to(*at))
+                        .min();
+                    if let Some(hexes) = range {
+                        t.contact_range.push(hexes as u32);
+                    }
+                }
+            }
+            round_events.extend(ticked);
+        }
+        for event in round_events {
             let landed = std::mem::take(&mut shell_from);
             match event {
-                Event::ShotFired { moving, .. } => {
+                Event::ShotFired { moving, blind, .. } => {
                     t.shots += 1;
                     if moving {
                         t.shots_on_the_move += 1;
+                    }
+                    if blind {
+                        t.shots_blind += 1;
+                    }
+                }
+                Event::UnitSpotted { unit, .. } => {
+                    t.spots += 1;
+                    // The round THIS crew was first found in, once per crew
+                    // and not once per battle. `rounds` was incremented above
+                    // before the round was resolved, so it already reads as
+                    // this round's number.
+                    if found.insert(unit) {
+                        t.found_at.push(rounds);
                     }
                 }
                 Event::ShellLanded { attacker, .. } => {
@@ -1422,6 +1652,7 @@ fn fight_one(reg: &DataRegistry, maps: &[&str], seed: u64) -> Tally {
                     }
                 }
                 Event::ShotMissed { .. } => t.misses += 1,
+                Event::ShotStrayed { .. } => t.strays += 1,
                 Event::ShotBounced { attacker, .. } => {
                     t.bounces += 1;
                     if landed == Some(attacker) {
@@ -1532,6 +1763,23 @@ fn report(t: &Tally, games: usize) {
         t.rounds.iter().min().copied().unwrap_or(0),
         t.rounds.iter().max().copied().unwrap_or(0)
     );
+    // How long it takes to find somebody, which is what the detection roll
+    // is for and the one thing a length figure cannot tell you: a battle can
+    // be short because it was decided quickly or because it started at once.
+    if !t.found_at.is_empty() {
+        println!(
+            "  contact: a crew is first found in round {:.1} mean, {} acquisition(s) \
+             per battle",
+            t.found_at.iter().sum::<u32>() as f32 / t.found_at.len() as f32,
+            t.spots as usize / t.rounds.len().max(1),
+        );
+        println!(
+            "    made at {:.1} hexes from the nearest crew of the finding side, mean \
+             of {}",
+            t.contact_range.iter().sum::<u32>() as f32 / t.contact_range.len().max(1) as f32,
+            t.contact_range.len(),
+        );
+    }
     if t.shots > 0 {
         // Four outcomes now, not two: a shot that hits and a shot that gets
         // through are different events, and the gap between them is the
@@ -1549,9 +1797,21 @@ fn report(t: &Tally, games: usize) {
             elsewhere,
         );
         println!(
-            "    {} of those shots ({:.0}%) were laid from a vehicle under way",
+            "    {} of those shots ({:.0}%) were laid from a vehicle under way, {} \
+             ({:.0}%) at a map\n    reference nobody could see",
             t.shots_on_the_move,
             100.0 * t.shots_on_the_move as f32 / t.shots as f32,
+            t.shots_blind,
+            100.0 * t.shots_blind as f32 / t.shots as f32,
+        );
+        println!(
+            "    {} of the {} misses ({:.0}%) still found somebody sharing the target's\n    \
+             hex; crews shared ground in {} round(s) and the deepest stack was {}",
+            t.strays,
+            t.misses,
+            100.0 * t.strays as f32 / t.misses.max(1) as f32,
+            t.stacked_rounds,
+            t.deepest_stack,
         );
     }
     let mut arcs: Vec<_> = t.hits_by_arc.iter().collect();
@@ -1856,11 +2116,15 @@ fn delegation_tax(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
             col("shots", 0),
         ],
         rows,
-        note: "\n  a side's tax is its win drop against the same flat opponent when it\n  \
-               fights through missions instead; zero is the target.\n\n  \
-               the last three columns are always side 0's — carriers lost, foot units\n  \
-               lost, and rounds fired by anybody on their feet — so the middle row is\n  \
-               the commanded force and the two rows around it are the same force flat.",
+        note: format!(
+            "\n  a side's tax is its win drop against the same flat opponent when it\n  \
+             fights through missions instead; zero is the target.\n\n  \
+             the last three columns are always side 0's — carriers lost, foot units\n  \
+             lost, and rounds fired by anybody on their feet — so the middle row is\n  \
+             the commanded force and the two rows around it are the same force flat.\n\
+             {}",
+            level_note(games)
+        ),
     }
 }
 
@@ -1968,7 +2232,12 @@ fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32, seed: u64) -> 
         })
         .collect();
 
-    let mut preamble = vec!["  the shopping lists:".to_string()];
+    // The budget goes in the preamble rather than the title because a sweep
+    // can move it, and a comparison prints one title over every variant: a
+    // heading claiming "60 points a side" above a `points=100` row would be
+    // the table lying about its own axis. A preamble that differs is printed
+    // per variant, which is exactly what this needs.
+    let mut preamble = vec![format!("  {budget} points a side. the shopping lists:")];
     for (id, army) in &forces {
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
         for vehicle in army {
@@ -2021,7 +2290,7 @@ fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32, seed: u64) -> 
 
     Grid {
         title: format!(
-            "mustered forces: {games} battles per pairing, {budget} points a side, each doctrine buying its own army"
+            "mustered forces: {games} battles per pairing, each doctrine buying its own army"
         ),
         preamble,
         row_head: "pairing (A vs B)",
@@ -2033,10 +2302,13 @@ fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32, seed: u64) -> 
             col("A pts lost", 1),
         ],
         rows,
-        note: "\n  each pairing alternates ends game by game, so neither column is a\n  \
-               statement about deployment. `A pts lost` is the requisition value of\n  \
-               A's dead per battle — what the win cost, in the same currency the\n  \
-               army was bought with.",
+        note: format!(
+            "\n  each pairing alternates ends game by game, so neither column is a\n  \
+             statement about deployment. `A pts lost` is the requisition value of\n  \
+             A's dead per battle — what the win cost, in the same currency the\n  \
+             army was bought with.\n{}",
+            level_note(games)
+        ),
     }
 }
 
@@ -2053,19 +2325,19 @@ fn muster_arena(
 ) -> Option<BattleState> {
     let map = arena_map()?;
     let mut placements = Vec::new();
+    // Deliberately dense, and deliberately the same shape for both armies:
+    // these forces differ in size — that is the interesting part — and a
+    // spacing rule that scaled with the count would hand the smaller army more
+    // room as a hidden bonus. Every hex is one of `arena_deployment`'s mirror
+    // pairs walked outward, so the n-th vehicle of one army stands exactly
+    // where the n-th of the other's reflection would.
+    let pairs = muster_deployment(west.len().max(east.len()));
     for (side, army) in [(0u8, west), (1u8, east)] {
         for (i, vehicle) in army.iter().enumerate() {
-            // A column down the deployment edge, spilling into the next
-            // column inward once eleven rows are used. Deliberately dense:
-            // these forces differ in size — that is the interesting part —
-            // and a spacing rule that scaled with the count would hand the
-            // smaller army more room as a hidden bonus.
-            let column = (i / 11) as i32;
-            let y = 1 + (i % 11) as i32;
-            let x = if side == 0 { 2 - column } else { 22 + column };
+            let Some((w, e)) = pairs.get(i) else { continue };
             placements.push(UnitPlacement {
                 aboard_at: None,
-                at: [x, y],
+                at: tactics_core::hex_to_offset(if side == 0 { *w } else { *e }),
                 side,
                 vehicle: vehicle.clone(),
                 crew: Vec::new(),
@@ -2098,15 +2370,143 @@ fn muster_arena(
     ))
 }
 
-fn arena_map() -> Option<HexMap> {
-    let width = 25usize;
-    let mut rows = Vec::new();
-    for _ in 0..13 {
-        let mut row: Vec<char> = "g".repeat(width).chars().collect();
-        row[8] = 'f';
-        row[16] = 'f';
-        rows.push(row.into_iter().collect::<String>());
+/// Enough mirror-paired standing room for an army of `wanted` vehicles.
+///
+/// Walks outward from the arena's own deployment line: the four hexes of
+/// `arena_deployment`, then the ring of hexes one step further from the middle,
+/// and so on. Sorted at every step so the order is a property of the geometry
+/// and not of a hash.
+fn muster_deployment(wanted: usize) -> Vec<(Hex, Hex)> {
+    let centre = arena_centre();
+    let mut out = arena_deployment();
+    let mut ring = 8i32;
+    while out.len() < wanted && ring <= ARENA_RADIUS as i32 {
+        let mut wests: Vec<Hex> = (-(ring)..=ring)
+            .map(|k| centre + Hex::new(-ring, k))
+            .filter(|h| h.distance_to(centre) <= ARENA_RADIUS as i32)
+            .collect();
+        wests.sort_by_key(|h| (h.y, h.x));
+        for w in wests {
+            if out.iter().all(|(a, _)| *a != w) {
+                out.push((w, arena_mirror(w)));
+            }
+        }
+        ring += 1;
     }
+    out
+}
+
+// --- the arena ------------------------------------------------------------
+//
+// The skill-gap and brains tables want ground that is worth nothing to either
+// side, because they are measuring execution and a ground advantage in the
+// arena is a confound rather than a result. That is a harder thing to build
+// than it looks, and the first version of this got it wrong in a way nobody
+// noticed for months: it was written as 25x13 rows of ASCII with forest at
+// columns 8 and 16, which is symmetric *as text*, and the odd-r offset
+// conversion shears text into hexes. Measured on the map it actually produced,
+// side A had nine forest hexes within six of its deployment and side B had
+// four, and side B went on to win 56.6% of 1152 equal-skill battles.
+//
+// So the arena is now built in hex space, and its symmetry is structural
+// rather than checked: a hexagon is closed under point reflection through its
+// own centre for the same reason a circle is, every feature is declared once
+// and mirrored, and `tests/arena.rs` asserts all of it. A map whose halves
+// have to be *compared* to know they match is a map that will drift.
+
+/// The arena's radius in hexes. Ten gives 331 tiles, near enough the 325 the
+/// sheared version had that the tables cost the same to run.
+const ARENA_RADIUS: u32 = 10;
+
+/// Where the arena's centre sits in the map file's offset grid. Any value does;
+/// this one keeps every column and row non-negative so the rows are printable.
+const ARENA_CENTRE: [i32; 2] = [15, 10];
+
+fn arena_centre() -> Hex {
+    tactics_core::offset_to_hex(ARENA_CENTRE[0], ARENA_CENTRE[1])
+}
+
+/// The point reflection that swaps the arena's two ends.
+///
+/// One function, used by the terrain, the objectives, the deployment and the
+/// test, so there is no second opinion about what "the other side" means.
+pub fn arena_mirror(h: Hex) -> Hex {
+    arena_centre() * 2 - h
+}
+
+/// Declare something on one side and get it on both.
+fn mirrored(seeds: impl IntoIterator<Item = Hex>) -> Vec<Hex> {
+    let mut out = Vec::new();
+    for h in seeds {
+        out.push(h);
+        out.push(arena_mirror(h));
+    }
+    out.sort_by_key(|h| (h.x, h.y));
+    out.dedup();
+    out
+}
+
+/// The timber: one belt three hexes short of the middle, and its mirror.
+///
+/// A line of constant axial x rather than a column of the text grid, which is
+/// the specific mistake being corrected — a text column is a diagonal in hex
+/// space and its two copies are not the same shape.
+fn arena_woods() -> Vec<Hex> {
+    let c = arena_centre();
+    mirrored((-3..=3).map(move |k| c + Hex::new(-4, k)))
+}
+
+/// Where each side forms up: four hexes seven out from the middle, and their
+/// mirrors. Side 0 takes the first of each pair.
+fn arena_deployment() -> Vec<(Hex, Hex)> {
+    let c = arena_centre();
+    [-3i32, -1, 1, 3]
+        .into_iter()
+        .map(move |k| {
+            let west = c + Hex::new(-7, k);
+            (west, arena_mirror(west))
+        })
+        .collect()
+}
+
+/// The ground worth holding: the middle hex and the two either side of it
+/// along one axis, which is a set the reflection maps onto itself.
+fn arena_objective() -> Vec<Hex> {
+    let c = arena_centre();
+    vec![c + Hex::new(0, -1), c, c + Hex::new(0, 1)]
+}
+
+fn arena_map() -> Option<HexMap> {
+    let centre = arena_centre();
+    let woods: std::collections::HashSet<Hex> = arena_woods().into_iter().collect();
+
+    // A bounding box on the offset grid wide enough for the hexagon. The
+    // shear costs half a column per row, so the columns have to stretch by
+    // the radius as well as by itself.
+    let radius = ARENA_RADIUS as i32;
+    let rows: Vec<String> = (0..=ARENA_CENTRE[1] + radius)
+        .map(|row| {
+            (0..=ARENA_CENTRE[0] + radius + radius / 2 + 1)
+                .map(|col| {
+                    let hex = tactics_core::offset_to_hex(col, row);
+                    // A space is "no tile here", which is how a sparse
+                    // `HexMap` spells the outside of a shape.
+                    if hex.distance_to(centre) > radius {
+                        ' '
+                    } else if woods.contains(&hex) {
+                        'f'
+                    } else {
+                        'g'
+                    }
+                })
+                .collect()
+        })
+        .collect();
+
+    let objective: Vec<[i32; 2]> = arena_objective()
+        .into_iter()
+        .map(tactics_core::hex_to_offset)
+        .collect();
     let file: MapFile = serde_json::from_value(serde_json::json!({
         "id": "skill_arena",
         "kind": "battle",
@@ -2117,14 +2517,61 @@ fn arena_map() -> Option<HexMap> {
             {
                 "id": "center",
                 "name": "The Crossroads",
-                "at": [[12, 5], [12, 6], [12, 7]],
+                "at": objective,
                 "value": 2
             }
         ],
         "victory_score": 30,
     }))
     .ok()?;
-    HexMap::from_map_file(&file).ok()
+    let map = HexMap::from_map_file(&file).ok()?;
+    assert_arena_is_mirrored(&map);
+    Some(map)
+}
+
+/// Refuse to hand back an arena that is not the mirror it claims to be.
+///
+/// A runtime check rather than a test, because the thing being defended is a
+/// *claim in a table heading*: `skill gap: ... on a mirrored arena`. The first
+/// version of this arena was asymmetric for months — nine forest hexes within
+/// six of one deployment against four of the other — and no test failed,
+/// because there was no test, because the symmetry was believed rather than
+/// asserted. It costs about a microsecond per run of a table that fights
+/// hundreds of battles, and every number the skill-gap and brains tables print
+/// depends on it being true.
+fn assert_arena_is_mirrored(map: &HexMap) {
+    let tiles: std::collections::HashMap<Hex, &str> =
+        map.iter().map(|(h, t)| (h, t.terrain.as_str())).collect();
+    for (hex, terrain) in &tiles {
+        let mirror = arena_mirror(*hex);
+        match tiles.get(&mirror) {
+            None => panic!("the arena has {hex:?} but not its mirror {mirror:?}"),
+            Some(other) => assert_eq!(
+                terrain, other,
+                "the arena is '{terrain}' at {hex:?} and '{other}' at its mirror {mirror:?}"
+            ),
+        }
+    }
+    for objective in map.objectives() {
+        for hex in &objective.hexes {
+            assert!(
+                objective.hexes.contains(&arena_mirror(*hex)),
+                "objective `{}` holds {hex:?} but not its mirror",
+                objective.id
+            );
+        }
+    }
+    for (west, east) in arena_deployment() {
+        assert_eq!(
+            arena_mirror(west),
+            east,
+            "the deployment pair {west:?}/{east:?} are not mirrors"
+        );
+        assert!(
+            tiles.contains_key(&west) && tiles.contains_key(&east),
+            "the deployment pair {west:?}/{east:?} is not on the map"
+        );
+    }
 }
 
 fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
@@ -2132,16 +2579,19 @@ fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
 
     let roster_of = ["medium_tank", "medium_tank", "tank_destroyer", "light_tank"];
     let mut placements = Vec::new();
-    for (i, vehicle) in roster_of.iter().enumerate() {
-        let y = (3 + i * 2) as i32;
-        for (side, x) in [(0u8, 2i32), (1u8, 22i32)] {
+    // The i-th vehicle of each side stands on the i-th mirror pair, so the two
+    // forces are one force and its reflection. `arena_deployment` is the only
+    // thing that knows where that is, which is what stops the two halves from
+    // being written down twice and drifting.
+    for ((west, east), vehicle) in arena_deployment().into_iter().zip(roster_of) {
+        for (side, hex) in [(0u8, west), (1u8, east)] {
             placements.push(UnitPlacement {
                 aboard_at: None,
-                at: [x, y],
+                at: tactics_core::hex_to_offset(hex),
                 side,
                 vehicle: vehicle.to_string(),
                 crew: Vec::new(),
-                name: Some(format!("{vehicle} {i}")),
+                name: Some(format!("{vehicle} {side}")),
                 facing: None,
                 formation: None,
                 leads: false,
@@ -2444,20 +2894,30 @@ fn skill_gap(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
             col("B per A", 1),
         ],
         rows,
-        note: "\n  `A lost` and `B lost` are vehicles per battle. `B per A` is B's losses\n  \
-               for each of A's: a side that wins by outfighting rather than by\n  \
-               outlasting shows it there, not in the win column.\n\n  \
-               the last three rows are the ones to quote. `the ends` adds the two\n  \
-               equal-skill pairings, so its win columns are worth of being side A\n  \
-               against worth of being side B and nothing else — the arena is mirrored\n  \
-               but a battle is not, and each of the six rows above carries that on\n  \
-               top of the skill gap it is for. `both ends` adds a pairing's two\n  \
-               orientations, which cancels it: those columns are the better crew\n  \
-               against the worse one, and `B per A` there is the worse crew's losses\n  \
-               for each of the better crew's.\n\n  \
-               read this table at --games 36 or not at all, and re-draw it before\n  \
-               quoting it: --sweep seed=0,1000,2000,3000. Twelve battles cannot\n  \
-               resolve a 70% edge, and this is the table most often quoted at somebody.",
+        note: format!(
+            "\n  `A lost` and `B lost` are vehicles per battle. `B per A` is B's losses\n  \
+             for each of A's: a side that wins by outfighting rather than by\n  \
+             outlasting shows it there, not in the win column.\n\n  \
+             the last three rows are the ones to quote. `the ends` adds the two\n  \
+             equal-skill pairings, so its win columns are worth of being side A\n  \
+             against worth of being side B and nothing else — the arena is mirrored\n  \
+             but a battle is not, and each of the six rows above carries that on\n  \
+             top of the skill gap it is for. `both ends` adds a pairing's two\n  \
+             orientations, which cancels it: those columns are the better crew\n  \
+             against the worse one, and `B per A` there is the worse crew's losses\n  \
+             for each of the better crew's.\n{}\n\n  \
+             the three summary rows fought {} battles each, and their band is\n  \
+             {:.0}–{:.0} to {:.0}–{:.0}.\n\n  \
+             read this table at --games 36 or not at all, and re-draw it before\n  \
+             quoting it: --only skill --sweep seed=0,1000,2000,3000. This is the\n  \
+             table most often quoted at somebody.",
+            level_note(games),
+            2 * games,
+            games as f64 - coin_band(2 * games),
+            games as f64 + coin_band(2 * games),
+            games as f64 + coin_band(2 * games),
+            games as f64 - coin_band(2 * games),
+        ),
     }
 }
 
@@ -2528,6 +2988,11 @@ struct Variant {
     /// table has to clear before it means anything. It is the answer to the
     /// question the sample-size note asks, in the table rather than in prose.
     seed: Option<u64>,
+    /// The requisition budget each doctrine spends in the mustered table. An
+    /// axis because "does massed armour still win at 100 points" is a design
+    /// question and not a tuning one: the budget changes what every doctrine
+    /// *buys*, so two values of it are two armies rather than two numbers.
+    points: Option<i32>,
     overrides: Vec<Override>,
 }
 
@@ -2622,7 +3087,15 @@ fn patch_json(
             // A number where a string was, or a string where a list was, is
             // caught here rather than by `from_value` below, because serde's
             // message names the Rust type and this one names the path.
-            if !cur.is_null() && std::mem::discriminant(&*cur) != std::mem::discriminant(&new) {
+            // `null` is always allowed: clearing an optional field is a real
+            // thing to want, and `--set terrain.forest.capacity=null` is how
+            // you switch a rule off in data to check that its absence is the
+            // game you had before it — which is the additivity test this whole
+            // project leans on.
+            if !cur.is_null()
+                && !new.is_null()
+                && std::mem::discriminant(&*cur) != std::mem::discriminant(&new)
+            {
                 return Err(format!(
                     "`{path}` holds {cur}, and {new} is a different kind of value"
                 ));
@@ -2760,6 +3233,9 @@ struct Digest {
     bounce: f64,
     miss: f64,
     moving: f64,
+    blind: f64,
+    contact: f64,
+    range: f64,
     on_target: f64,
     wounded: f64,
     out: f64,
@@ -2782,6 +3258,9 @@ impl Digest {
             bounce: 100.0 * t.bounces as f64 / shots,
             miss: 100.0 * t.misses as f64 / shots,
             moving: 100.0 * t.shots_on_the_move as f64 / shots,
+            blind: 100.0 * t.shots_blind as f64 / shots,
+            contact: t.found_at.iter().sum::<u32>() as f64 / t.found_at.len().max(1) as f64,
+            range: t.contact_range.iter().sum::<u32>() as f64 / t.contact_range.len().max(1) as f64,
             on_target: 100.0 * t.shells_on_target as f64 / shells,
             wounded: t.girls_wounded as f64 / games,
             out: t.girls_out as f64 / games,
@@ -2844,6 +3323,21 @@ const COLUMNS: &[Column] = &[
         head: "mov%",
         of: |d| d.moving,
         dp: 0,
+    },
+    Column {
+        head: "bln%",
+        of: |d| d.blind,
+        dp: 0,
+    },
+    Column {
+        head: "cntct",
+        of: |d| d.contact,
+        dp: 1,
+    },
+    Column {
+        head: "range",
+        of: |d| d.range,
+        dp: 1,
     },
     Column {
         head: "arty%",
@@ -2936,8 +3430,8 @@ fn compare(labels: &[String], digests: &[Digest], games: usize) {
     println!(
         "\n  A `·` is no difference at the precision shown. A row that is all dots\n  \
          changed nothing these {games} battles could see, which is a result about the\n  \
-         number and not about the sample only if {games} is enough of them — see the\n  \
-         note on sample size in CLAUDE.md before quoting a small one at anybody."
+         number and not about the sample only if {games} is enough of them.{}",
+        level_note(games)
     );
 
     // Kills and losses per chassis, which is the table the ballistics arcs
@@ -3059,6 +3553,7 @@ fn variants(root: &std::path::Path, axes: &[Axis], base: &[Override]) -> Vec<Var
         label: String::new(),
         mods: root.to_path_buf(),
         seed: None,
+        points: None,
         overrides: base.to_vec(),
     }];
     for axis in axes {
@@ -3069,13 +3564,15 @@ fn variants(root: &std::path::Path, axes: &[Axis], base: &[Override]) -> Vec<Var
                     label: prefix.label.clone(),
                     mods: prefix.mods.clone(),
                     seed: prefix.seed,
+                    points: prefix.points,
                     overrides: prefix.overrides.clone(),
                 };
-                // Two axis names are not fields of anything. `mods` selects
+                // Three axis names are not fields of anything. `mods` selects
                 // which tree to load, which is how two *versions* of the
                 // content get compared rather than two numbers within one;
                 // `seed` selects which battles get fought, which is how the
-                // table is made to show its own noise floor.
+                // table is made to show its own noise floor; `points` selects
+                // how big an army each doctrine buys itself.
                 let leaf = if axis.path == "mods" {
                     v.mods = std::path::PathBuf::from(value);
                     std::path::Path::new(value)
@@ -3088,6 +3585,12 @@ fn variants(root: &std::path::Path, axes: &[Axis], base: &[Override]) -> Vec<Var
                         std::process::exit(1);
                     }));
                     format!("seed={value}")
+                } else if axis.path == "points" {
+                    v.points = Some(value.parse().unwrap_or_else(|_| {
+                        eprintln!("error: --sweep points=...: `{value}` is not a budget");
+                        std::process::exit(1);
+                    }));
+                    format!("points={value}")
                 } else {
                     let ov = Override {
                         path: axis.path.clone(),
@@ -3199,11 +3702,14 @@ fn sweep(axes: &[Axis], base: &[Override], root: &std::path::Path, cfg: &Run) {
 
     if cfg.games < 36 {
         println!(
-            "\n  NOTE {} battles is a small sample to read a difference out of. The\n  \
-             doctrine table needs 36 before it discriminates at all (CLAUDE.md says\n  \
-             so, with the numbers); a sweep comparing two rows of it needs at least\n  \
-             as many. Re-run the interesting rows at --games 36 before believing one.",
-            cfg.games
+            "\n  NOTE {} battles is a small sample to read a difference out of: a\n  \
+             pairing that is genuinely level lands as far out as {:.0}–{:.0} one time in\n  \
+             twenty, before any of these numbers change anything. The doctrine table\n  \
+             needs 36 battles before it discriminates at all (CLAUDE.md says so, with\n  \
+             the numbers); a sweep comparing two rows of it needs at least as many.",
+            cfg.games,
+            cfg.games as f64 / 2.0 + coin_band(cfg.games),
+            cfg.games as f64 / 2.0 - coin_band(cfg.games),
         );
     }
     // The three that fight their own battles, laid out the same way. They run
@@ -3217,11 +3723,226 @@ fn sweep(axes: &[Axis], base: &[Override], root: &std::path::Path, cfg: &Run) {
     let grids: Vec<Vec<Grid>> = plan
         .iter()
         .zip(&registries)
-        .map(|(v, reg)| fought_grids(reg, cfg, v.seed.unwrap_or(cfg.seed)))
+        .map(|(v, reg)| {
+            fought_grids(
+                reg,
+                cfg,
+                v.seed.unwrap_or(cfg.seed),
+                v.points.unwrap_or(cfg.budget),
+            )
+        })
         .collect();
     for i in 0..grids.first().map(Vec::len).unwrap_or(0) {
         let column: Vec<Grid> = grids.iter().map(|g| g[i].clone()).collect();
         compare_grids(&labels, &column, cfg.absolute);
+    }
+    if cfg.csv {
+        csv_grids(&labels, &grids);
+    }
+}
+
+/// What one battle said about the ground it was fought on.
+#[derive(Default, Clone, Copy)]
+struct Ground {
+    /// Wins by whoever deployed on side 0's ground, and on side 1's. With the
+    /// orders of battle exchanged half the time, the difference between these
+    /// two is the *ground* and nothing else.
+    west: usize,
+    east: usize,
+    draws: usize,
+    /// Wins by the order of battle the map ships as side 0's, and as side 1's,
+    /// counted across both ends. The difference between *these* two is the
+    /// force, with the ground cancelled the same way.
+    ob0: usize,
+    ob1: usize,
+    rounds: u32,
+    /// Set when the two sides field different numbers of vehicles, so the
+    /// exchange could not be made and the row is measuring both effects at
+    /// once. Reported rather than hidden.
+    unswappable: bool,
+}
+
+/// One of a shipped map's battles, optionally with the two armies exchanged.
+///
+/// The exchange keeps every deployment hex exactly where the map put it and
+/// swaps only *which vehicles stand on them*, pairing the two sides' placements
+/// by index. That is the whole trick and it is why this table can separate two
+/// things a single battle cannot: fight a map both ways round and the ground
+/// stays put while the force moves.
+///
+/// Crews are stamped fresh rather than taken from the map, because a crew named
+/// for a medium tank has no business in a light one once the armies trade
+/// places. So these battles are anonymously crewed and their casualties are
+/// not comparable with the fought-out pass — which is fine, the question here
+/// is only who won.
+fn map_battle(reg: &DataRegistry, id: &str, seed: u64, swap: bool) -> Option<BattleState> {
+    let file = reg.map(id)?;
+    let map = HexMap::from_map_file(file).ok()?;
+    let sides: Vec<SideState> = file
+        .sides
+        .iter()
+        .map(|s| SideState {
+            name: s.name.clone(),
+            ai: s.ai.clone(),
+        })
+        .collect();
+    let mut placements = file.units.clone();
+    if swap {
+        let zero: Vec<usize> = (0..placements.len())
+            .filter(|i| placements[*i].side == 0)
+            .collect();
+        let one: Vec<usize> = (0..placements.len())
+            .filter(|i| placements[*i].side == 1)
+            .collect();
+        for (a, b) in zero.iter().zip(&one) {
+            let there = placements[*b].vehicle.clone();
+            let here = std::mem::replace(&mut placements[*a].vehicle, there);
+            placements[*b].vehicle = here;
+        }
+    }
+    let (roster, crews) = Roster::stamp_for(reg, &placements);
+    Some(BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    ))
+}
+
+fn ground_battle(reg: &DataRegistry, id: &str, seed: u64, swap: bool) -> Ground {
+    let mut g = Ground::default();
+    let counts = reg.map(id).map(|f| {
+        (
+            f.units.iter().filter(|u| u.side == 0).count(),
+            f.units.iter().filter(|u| u.side == 1).count(),
+        )
+    });
+    g.unswappable = counts.is_some_and(|(a, b)| a != b);
+    if swap && g.unswappable {
+        return g;
+    }
+    let Some(mut state) = map_battle(reg, id, seed, swap) else {
+        return g;
+    };
+    let mut ai = AiDriver::new();
+    // The same doctrine and the same difficulty on both sides, which is the
+    // point: two doctrines here would put a third variable in a table that
+    // exists to separate two.
+    ai.insert(0, planner(reg, seed, "massed_armor"));
+    ai.insert(1, planner(reg, seed + 1, "massed_armor"));
+    let mut rounds = 0;
+    while !state.is_over() && rounds < 60 {
+        ai.plan_round(reg, &mut state);
+        state.resolve_round(reg);
+        rounds += 1;
+    }
+    g.rounds = rounds;
+    // Side 0 holds the map's own order of battle unless they were exchanged.
+    let (side0_ob, side1_ob) = if swap { (1, 0) } else { (0, 1) };
+    match state.over.and_then(|r| r.winner) {
+        Some(0) => {
+            g.west += 1;
+            if side0_ob == 0 {
+                g.ob0 += 1
+            } else {
+                g.ob1 += 1
+            }
+        }
+        Some(_) => {
+            g.east += 1;
+            if side1_ob == 0 {
+                g.ob0 += 1
+            } else {
+                g.ob1 += 1
+            }
+        }
+        None => g.draws += 1,
+    }
+    g
+}
+
+/// What each battlefield is worth to the side that deploys on it.
+///
+/// A map favouring one end is not a bug — ground *is* strategy, and a scenario
+/// where one side holds the ridge is a scenario about holding a ridge. What is
+/// a bug is not knowing which of your maps do it or by how much, because then
+/// every other number measured on them carries an unlabelled term. This table
+/// is that label.
+///
+/// It separates the ground from the order of battle by fighting each map twice
+/// per seed with the two armies exchanged between the ends. Summed that way,
+/// `west`/`east` differ only by the ground and `OB-0`/`OB-1` differ only by the
+/// force — the other effect cancels in each. On `battle_plains` and
+/// `battle_forest` the two orders of battle are already identical, so their
+/// `OB` columns are a control that should read level whatever the ground does.
+fn ground_bias(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
+    let maps = battle_maps(reg);
+    let rows = maps
+        .iter()
+        .map(|id| {
+            let jobs: Vec<(u64, bool)> = (0..games as u64)
+                .flat_map(|g| [(g, false), (g, true)])
+                .collect();
+            let fought = run_all(&jobs, |&(g, swap)| {
+                ground_battle(reg, id, GROUND_SEED + seed + g, swap)
+            });
+            let mut t = Ground::default();
+            for one in &fought {
+                t.west += one.west;
+                t.east += one.east;
+                t.draws += one.draws;
+                t.ob0 += one.ob0;
+                t.ob1 += one.ob1;
+                t.rounds += one.rounds;
+                t.unswappable |= one.unswappable;
+            }
+            let fights = (t.west + t.east + t.draws).max(1) as f64;
+            (
+                format!("{id}{}", if t.unswappable { " *" } else { "" }),
+                vec![
+                    t.west as f64,
+                    t.east as f64,
+                    t.draws as f64,
+                    t.ob0 as f64,
+                    t.ob1 as f64,
+                    t.rounds as f64 / fights,
+                ],
+            )
+        })
+        .collect();
+
+    Grid {
+        title: format!(
+            "ground: {} battles per map, each fought both ways round with the two armies exchanged",
+            games * 2
+        ),
+        preamble: Vec::new(),
+        row_head: "map",
+        columns: vec![
+            col("west won", 0),
+            col("east won", 0),
+            col("draws", 0),
+            col("OB-0 won", 0),
+            col("OB-1 won", 0),
+            col("rounds", 1),
+        ],
+        rows,
+        note: format!(
+            "\n  `west`/`east` is which END of the map won, summed over both arrangements,\n  \
+             so the armies cancel and what is left is the ground. `OB-0`/`OB-1` is which\n  \
+             ORDER OF BATTLE won, summed over both ends, so the ground cancels and what is\n  \
+             left is the force. A map is allowed to favour an end — ground is strategy —\n  \
+             and this says which of them do and by how much.\n\n  \
+             a row marked `*` fields different numbers of vehicles per side, so the armies\n  \
+             could not be exchanged and its columns still carry both effects together.\n  \
+             crews are anonymous here (a crew named for a medium tank cannot follow it\n  \
+             into a light one), so the casualties are not comparable with the fought-out\n  \
+             pass; the winner is.{}",
+            level_note(games * 2)
+        ),
     }
 }
 
@@ -3230,16 +3951,19 @@ fn sweep(axes: &[Axis], base: &[Override], root: &std::path::Path, cfg: &Run) {
 /// One list, called by both the single run and the sweep, because the failure
 /// mode of two lists is a table that quietly stops being swept the day it is
 /// added to one of them.
-fn fought_grids(reg: &DataRegistry, cfg: &Run, seed: u64) -> Vec<Grid> {
+fn fought_grids(reg: &DataRegistry, cfg: &Run, seed: u64, budget: i32) -> Vec<Grid> {
     let mut out = Vec::new();
     if cfg.only.wants("delegation") {
         out.push(delegation_tax(reg, cfg.games, seed));
     }
     if cfg.only.wants("mustered") {
-        out.push(mustered_forces(reg, cfg.games, cfg.budget, seed));
+        out.push(mustered_forces(reg, cfg.games, budget, seed));
     }
     if cfg.only.wants("skill") {
         out.push(skill_gap(reg, cfg.games, seed));
+    }
+    if cfg.only.wants("ground") {
+        out.push(ground_bias(reg, cfg.games, seed));
     }
     out
 }
@@ -3282,9 +4006,76 @@ fn csv(labels: &[String], digests: &[Digest]) {
     }
 }
 
+/// Every swept grid as csv, one row per (table, row, variant).
+///
+/// Long rather than wide, because the tables do not share columns and a
+/// sheet built by pasting them side by side would have to be un-pasted before
+/// anything could be plotted. This shape goes straight into a pivot.
+fn csv_grids(labels: &[String], grids: &[Vec<Grid>]) {
+    let Some(first) = grids.first() else {
+        return;
+    };
+    heading("csv (tables)");
+    println!("table,row,variant,column,value");
+    for (i, base) in first.iter().enumerate() {
+        // The title carries the battle count and the map list, which change
+        // between runs; the part before the colon is the table's name.
+        let table = base.title.split(':').next().unwrap_or(&base.title);
+        for (name, _) in &base.rows {
+            for (label, variant) in labels.iter().zip(grids) {
+                let Some(cells) = variant.get(i).and_then(|g| g.row(name)) else {
+                    continue;
+                };
+                for (c, v) in base.columns.iter().zip(cells) {
+                    println!(
+                        "{},{},{},{},{:.4}",
+                        quoted(table),
+                        quoted(name),
+                        quoted(label),
+                        quoted(c.head),
+                        v
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// One csv field, escaped the way every reader of csv agrees on.
 fn quoted(text: &str) -> String {
     format!("\"{}\"", text.replace('"', "\"\""))
+}
+
+/// How far from level a genuinely even pairing wanders, at this many battles.
+///
+/// Half the 95% interval of a fair coin over `battles` trials, which for 36 is
+/// about six wins either side of 18–18. Printed under every table that has a
+/// win column, because this project has repeatedly read a two- or three-win
+/// move as a result and then built on it: `28–8` and `26–10` were quoted at
+/// each other for months as evidence about a change, and they are the same
+/// number to anyone who knows this band. It is deliberately arithmetic rather
+/// than a remembered rule of thumb — the rule of thumb is what failed.
+///
+/// It is a floor and not the whole story. Two runs of *this* game differ by
+/// more than a coin does, because the battles are not independent draws from
+/// one distribution: they share maps, forces and doctrines. A seed sweep
+/// measures the real spread; this says what it can never be smaller than.
+fn coin_band(battles: usize) -> f64 {
+    1.96 * 0.5 * (battles as f64).sqrt()
+}
+
+/// The sentence that goes under a win table.
+fn level_note(battles: usize) -> String {
+    let band = coin_band(battles);
+    let half = battles as f64 / 2.0;
+    let (lo, hi) = (half - band, half + band);
+    format!(
+        "\n  at {battles} battles a genuinely level pairing still lands anywhere from\n\
+         \x20 {lo:.0}\u{2013}{hi:.0} to {hi:.0}\u{2013}{lo:.0}, nineteen times in twenty. That band is the\n\
+         \x20 floor under every win column here \u{2014} and it is a floor, not the answer:\n\
+         \x20 these battles share maps, forces and doctrines, so they scatter wider than\n\
+         \x20 a coin does. Sweep the seed for the real spread."
+    )
 }
 
 /// A table reduced to what a sweep can lay beside another copy of itself:
@@ -3310,8 +4101,10 @@ struct Grid {
     columns: Vec<GridColumn>,
     rows: Vec<(String, Vec<f64>)>,
     /// Prose printed under it: what the reader is looking at, and what would
-    /// make it wrong.
-    note: &'static str,
+    /// make it wrong. A `String` rather than a `&'static str` because the most
+    /// useful sentence a win table can carry is the one that depends on how
+    /// many battles it fought — see [`coin_band`].
+    note: String,
 }
 
 #[derive(Clone)]
@@ -3475,6 +4268,7 @@ struct Only(Vec<String>);
 /// Every name `--only` accepts, in the order the tables print.
 const TABLES: &[&str] = &[
     "roster",
+    "detect",
     "hit",
     "pen",
     "kills",
@@ -3484,6 +4278,7 @@ const TABLES: &[&str] = &[
     "delegation",
     "mustered",
     "skill",
+    "ground",
 ];
 
 impl Only {

@@ -1,4 +1,5 @@
 # A guided tour of the battle screen, for eyeballing render/UI changes.
+#!env STAHL_BATTLE=river_crossing
 #
 #   STAHL_DEBUG=1 STAHL_BATTLE=river_crossing \
 #     STAHL_SCRIPT=scripts/dev/battle-tour.txt cargo run -p stahlsenshamädchen

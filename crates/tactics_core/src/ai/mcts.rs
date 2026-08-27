@@ -33,8 +33,8 @@
 //! factor to one side's decisions.
 
 use super::{
-    AiConfig, AiPlanner, Evaluator, PlannerRegistry, UtilityPlanner, difficulty_noise,
-    next_unplanned_unit, resolve_doctrine,
+    AiConfig, AiPlanner, Evaluator, PlannerRegistry, UtilityPlanner, next_unplanned_unit,
+    resolve_doctrine,
 };
 use crate::battle::{BattleState, FireIntent, Order, Phase, UnitId, UnitIntent, reachable};
 use crate::data::DataRegistry;
@@ -85,11 +85,7 @@ impl MctsPlanner {
             max_actions: 16,
             evaluator: Evaluator::new(doctrine.clone()),
             policy: UtilityPlanner::with_difficulty(3, seed ^ 0x9E37_79B9),
-            fallback: UtilityPlanner::new(
-                Evaluator::new(doctrine),
-                difficulty_noise(difficulty),
-                seed ^ 0x85EB_CA6B,
-            ),
+            fallback: UtilityPlanner::new(Evaluator::new(doctrine), difficulty, seed ^ 0x85EB_CA6B),
             rng: ChaCha8Rng::seed_from_u64(seed),
             pending: VecDeque::new(),
         }

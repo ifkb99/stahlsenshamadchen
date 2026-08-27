@@ -556,6 +556,112 @@ core: 256 battles took four minutes, where the first attempt at a quarter of
 that sample had been framed as an overnight job and produced six battles a
 pairing, which said nothing at all.
 
+**`MoveGrid`: the same trick as `SightGrid`, one layer down.** `edge_cost`
+resolved terrain by `String` through the registry and the searches called it
+per edge of every tile they touched — about 7,500 string hashes per `roads`
+call, for an answer no battle can change. Every tile's cost per movement class
+is now resolved once, shared behind an `Arc` on `BattleState`, and rebuilt by
+`save::rehydrate` (an empty one says every step is impossible, so a loaded
+battle would have nobody able to move at all).
+
+`roads` 322 → 219 µs, `reachable` 26.5 → 18.0, and **the event stream was
+byte-identical** with the grid in and nothing else changed, which is the whole
+claim: allowed to be faster, not allowed to price a step differently.
+`movement::edge_cost` stays as the reference implementation — tests, one-off
+queries, the campaign map — and the two share `step_cost` so the climb rule
+cannot drift, exactly as `los_clear` and `SightGrid::clear` share
+`sight_line_clear`.
+
+Cutting `ai::goal::HORIZON` from 6 rounds to 4 took `roads` to 135 µs and the
+planner's per-order cost from 0.17 to 0.09 ms. Six was chosen on the impatience
+arithmetic without checking what it covered: six rounds is 30–42 movement
+points and the battle map is a radius-20 hexagon, so the horizon was the entire
+map and pruned nothing.
+
+Two things worth keeping from the investigation. **Stacking is not a
+performance question** — `roads` consults no occupancy at all by design, and
+stripping the friend check out of `destination_blocked` entirely, infinite
+stacking, moves `reachable` only 31.1 → 27.6 µs. And the grid is written for
+the streamed world the design is heading for: keyed on tiles rather than on a
+map's identity, folded in a region at a time through `extend`/`insert`, with
+adding a new per-tile fact meant to be one field on `TileMove` and one line in
+`TileMove::of`. `SightGrid` is the same structure and wants merging with it
+when that day comes.
+
+**The goal chooser reads the road.** It priced a march as `distance / speed`
+and knew nothing about what happened on the way or about who else wanted the
+ground. It now prices the real terrain cost (`battle::roads`, one Dijkstra out
+to a horizon in rounds, shared by the whole candidate list), the share of that
+road a spotted gun can see (`DoctrineDef::route_caution`), and how many rounds
+later than the nearest visible enemy she would arrive (`contest_aversion`).
+
+Four things in it were wrong first:
+
+- **An A* per candidate** costs five to ten times a planned order. Every goal
+  is a place to drive from the same hex, so one Dijkstra answers all of them.
+- **Falling back to the crow flight** for ground with no road inside the
+  horizon is exactly backwards: that ground is the ground whose road is
+  longest, so the fallback made the far bank of an unfordable river the
+  nearest thing on the map. It is priced at the horizon instead.
+- **Occupancy has no business in a road.** A march takes rounds and the field
+  does not hold still; a tank parked on the bridge is not a wall, it is a
+  reason to expect a fight. Leaving units out also keeps the inner loop off
+  the O(hexes × units) scan that `reachable` still pays.
+- **Deepening a chooser makes a blur matter less**, which is the opposite of
+  what deepening it was for. A value function that separates a good goal from
+  a bad one more sharply is one a blurred commander still ranks correctly. So
+  difficulty gained a second axis, `difficulty_foresight`: noise is misjudging
+  what she has read, foresight is not having read it. At difficulty 1 it is
+  zero and the chooser is exactly what it was, which makes every level above
+  an addition.
+
+And the measurement that did not come: on the mirrored arena the skill gap
+barely moved (5-over-1 62.8% → 64.2%, 5-over-3 54.3% → 54.8% at 8 seeds × 36
+battles, both inside the noise). The arena has a handful of forest hexes and
+no objectives worth arguing about, so there is nothing there for a road-reader
+to be better at — an instrument limitation, and the reason the three terms are
+pinned by staged tests that isolate one apiece instead. Staging those turned
+up the thing to remember about all of them: an objective offering a shot at a
+visible tank is worth about seven points more to stand on than one that is
+not, against route costs of one or two. These are tie-breaks between
+comparable goals, and a coefficient big enough to overrule a destination would
+be a doctrine that refuses every contested objective.
+
+**Being looked at is no longer being seen.** Spotting keeps its geometry —
+line of sight, range, and `VehicleDef::concealment` shortening a spotter's
+reach against one target — and finding somebody inside your own field of view
+now costs a die, once per tick, against the ground's own `concealment`, the
+outer band of the spotter's reach, and how many hexes the target has driven
+this round. Firing still bypasses everything. The full record is in
+[detection.md](assets/wiki/reference/detection.md); four things in it were
+wrong first and are worth not rediscovering:
+
+- **A roll per spotter is a lie about the number.** At four crews looking, a
+  nominal 2% is 8%, so the whole usable range of the knob collapsed into single
+  digits and the instrument's "ticks to find" column was wrong by a factor
+  nobody could see. One roll, by the best-placed crew. More eyes still pay,
+  through watching more ground.
+- **A near band is not optional.** Without `detection_certain_percent` two
+  tanks three hexes apart on open grass had an 82% chance of noticing each
+  other per tick. Nobody searches for the tank 300 m away in an open field, and
+  it surfaced as two dozen staged tests failing at once.
+- **The far-range term reads the spotter's own reach**, never the
+  concealment-shortened one. Compounding them put a platoon at three hexes on
+  75% of "reach" and charged the same fact twice.
+- **The first instrument measured the wrong thing twice.** "Round of the
+  battle's first contact" is dominated by one easy spot and reported no
+  difference at any setting; splitting contacts by whether the found crew had
+  driven is worse than useless, because `moved` is zeroed at the top of a round
+  so "halted" means "has not driven *yet*" — a delayed contact leaves the
+  halted bucket by construction, and the table cheerfully reported that
+  detection rolls make stationary crews easier to find. What works is contact
+  *range*, read at the tick the contact was made in.
+
+And the finding that matters most is that it changed nothing measurable: 36
+battles across four seeds put every fought-out column inside the seed noise
+floor, no stalemates either way, because **nothing in the evaluator wants to be
+unseen**. Same shape as stacking — the mechanism waits on a preference.
+
 **Saves record which mods were playing.** `SaveGame.mods` stamps id and
 version; mismatched ids are refused (the rules genuinely differ), version drift
 on the same set warns and loads (a content patch must not cost the player their

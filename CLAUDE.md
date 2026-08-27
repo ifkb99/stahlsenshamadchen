@@ -82,14 +82,67 @@ Three things about it are worth knowing before reaching for it:
   equivalent `--sweep balance.moving_target_per_hex=5,40` print
   byte-identical difference rows. That equivalence is the whole claim; if it
   ever stops holding, the override machinery has become a second game.
-- **Two axis names are not fields.** `mods=` selects the tree to load, which
-  compares two *versions* of the content rather than two numbers in one;
-  `seed=` selects which battles get fought, which puts the noise floor in the
-  same table and the same columns as the difference being read. That second
-  one is the more useful of the two: at 36 games, four seeds alone move the
-  tank destroyer's kills between 74 and 89 and the mean battle length by 1.1
-  rounds, which is larger than several differences this project has quoted as
-  results.
+- **Three axis names are not fields.** `mods=` selects the tree to load,
+  which compares two *versions* of the content rather than two numbers in
+  one. `seed=` selects which battles get fought, which puts the noise floor
+  in the same table and the same columns as the difference being read — the
+  most useful of the three: at 36 games, four seeds alone move the tank
+  destroyer's kills between 74 and 89 and the mean battle length by 1.1
+  rounds, larger than several differences this project has quoted as results.
+  `points=` sets the requisition budget, so its rows are two *armies* rather
+  than two numbers; at 100 points instead of 60 every doctrine buys armour
+  and elastic defence goes from 0–12 to 8–4 against recon pull, which is the
+  first thing the infantry-pricing item in TODO should be read against.
+- **Every table with a win column prints the band a level pairing wanders
+  in**, computed from the battle count rather than remembered: at 36 battles
+  a genuinely even pairing still lands anywhere from 12–24 to 24–12 nineteen
+  times in twenty, and at the default 12 it lands as far out as 9–3. That one
+  line is the answer to the failure this section exists because of — `28–8`
+  and `26–10` were quoted at each other for months as evidence about a change,
+  and they are the same number. It is a *floor*, not the answer: these battles
+  share maps, forces and doctrines, so they scatter wider than a coin does,
+  and only a seed sweep measures how much wider.
+- **A swept table with three or more variants prints its own `spread` line**
+  — the widest gap between variants in that column, under every row. Under a
+  `--sweep seed=` that line *is* the measured noise floor; it is printed
+  unasked because the alternative is remembering to work it out.
+  `--absolute` switches the variant lines from differences to their own
+  values, which is what reading a *range* wants.
+- **`ground` says what each battlefield is worth to the end that deploys on
+  it**, which is worth knowing rather than worth removing: a scenario where one
+  side holds the ridge is a scenario about holding a ridge. It separates the
+  ground from the order of battle by fighting every map twice per seed **with
+  the two armies exchanged between the ends** — placements stay exactly where
+  the map put them and only the vehicles standing on them swap — so summed that
+  way `west`/`east` differ only by the ground and `OB-0`/`OB-1` differ only by
+  the force. Its own control is built in: `battle_plains` and `battle_forest`
+  ship *identical* orders of battle, so their `OB` columns must read level
+  whatever the ground does, and they do (36–36 and 37–35).
+
+  Measured at 8 seeds × 36 battles, in
+  `assets/wiki/reference/battlefields.md` with the method and the re-measure
+  command: **`battle_forest` leans slightly east (45.8% west, −2.0 sd) and
+  `battle_plains` slightly west (55.6%, +2.7 sd)** — small, real, and not
+  worth changing. **`river_crossing`'s ground is level (49.5%) and its armies
+  are not: 24.1% / 75.9% to the side fielding a tank destroyer where the other
+  fields artillery**, which is −12.4 sd and by far the largest term on any of
+  these maps. It is the determinism baseline *and* one third of the
+  fought-out pass's sample, so every doctrine conclusion `--sim` prints is
+  partly a conclusion about that tank destroyer.
+
+  Note what the first reading of this table got wrong, because it is
+  instructive: at 72 battles a map, before the coordinate tiebreaks were
+  fixed, it said forest favoured the *west* 50–22 and plains the *east* 29–43.
+  Both were one draw of a build that made every crew edge west. Sweep the
+  seed, and re-measure after anything that changes how the AI moves.
+- **`--only <tables>` prints just the ones named** (`roster`, `detect`, `hit`,
+  `pen`, `kills`, `flight`, `flags`, `sim`, `delegation`, `mustered`, `skill`,
+  `ground`).
+  `--sim` runs four tables that fight battles, and paying for the other three
+  while iterating on one is the kind of friction that ends in the instrument
+  not being run at all. Sixteen seeds of the skill-gap table alone take about
+  three seconds. `--csv` emits the digest and every swept table long-form
+  (`table,row,variant,column,value`), which goes straight into a pivot.
 - **The sweep compares every table that fights battles.** The fought-out
   digest — outcome, length, gunnery, artillery, crew cost, kills and losses
   per chassis — and then the delegation tax, mustered forces and the skill
@@ -185,6 +238,63 @@ The reason they exist is not scenario variety, it is that the AI had no reason
 to advance: with elimination as the only victory condition, holding the best
 cover on the map is optimal play, and the stalemate rate *rose* as difficulty
 noise fell (11/12 at zero noise). See TODO.md under Design Decisions.
+
+### Looking is not seeing
+
+Spotting used to be geometry and nothing else: a crew saw every tile inside a
+hard `vision_range`, and an enemy standing on a tile she could see was an enemy
+she had found, instantly, whatever the ground and whatever the target was
+doing. At 100 m to the hex a commander with twenty hexes of vision is claiming
+two kilometres — which she can genuinely see across — so certainty at 1,999 m
+and nothing at 2,001 m is a cutoff rather than eyesight, and it was the only
+thing on the battlefield keeping anything hidden.
+
+Finding somebody inside your own field of view now costs a roll. The design
+record, the shipped table and the measurements are in
+`assets/wiki/reference/detection.md`; what follows is what will bite someone
+editing `fog.rs`.
+
+- **The geometry is untouched.** Line of sight, range and
+  `VehicleDef::concealment` (which shortens a *spotter's* reach against one
+  target) decide whether a look is possible at all. `Balance::detection_chance`
+  decides how long that look takes, and the two are deliberately separate
+  questions — which is also why the far-range term reads the spotter's **own**
+  reach and never the concealment-shortened one. Compounding them put a platoon
+  at three hexes on 75% of "reach" and charged the same fact twice.
+- **A search buys an acquisition, never the watching afterwards.** A contact
+  the side already holds is not re-rolled, and neither is a crew who has fired
+  (`revealed`, checked before any die). Drop the first clause and every found
+  enemy flickers in and out of the picture tick by tick.
+- **One look per target per tick**, recorded in `SideFog::searched`. The fog is
+  recomputed after movement, after fire and after **every individual shot**, so
+  rolling per call would make finding somebody a function of how much shooting
+  happened to be going on nearby. The look is spent even when the chance was
+  zero — which is why a test that pokes `moved` between recomputes has to let a
+  tick go by first.
+- **The best-placed spotter rolls, not each of them.** A roll per pair of eyes
+  makes the printed chance a lie by however many crews are looking: at four
+  spotters a nominal 2% is 8%, and the whole usable range of the knob collapses
+  into single digits. More eyes still pay, through watching more *ground*.
+- **`detection_certain_percent` is the near band and it is not optional.** The
+  first draft had none and gave two tanks three hexes apart on open grass an
+  82% chance of noticing each other per tick; nobody searches for the tank
+  300 m away in an open field. It surfaced as two dozen failing staged tests.
+  100 is its neutral value — the whole reach is the near band, nothing fades
+  in, **no die is thrown** — and that is the additivity contract, pinned by
+  `a_mod_that_asks_for_no_search_spots_exactly_as_it_always_did` down to the
+  rng's stream position. It is pinned separately from the determinism snapshot
+  on purpose, because the base mod now declares detection numbers and that
+  snapshot is therefore a record of the rule being *on*.
+- **A staged test that needs two crews in plain sight goes through `seen(..)`**,
+  the twin of `registry_wireless()` in `tests/engine.rs` and `tests/save.rs`. A
+  test about shells, or a dismount reflex, or a binding order must not also be
+  a test of whether anybody happened to find anybody on the tick it was set up.
+- **What the rule has not got is a reason**, exactly as stacking has not. The
+  mechanism is live and every fought-out column stays inside the seed noise
+  floor, because nothing in the evaluator wants to be unseen: the AI never
+  sits still to stay hidden and never prefers concealing ground *for its
+  concealment*. It is a player-facing rule until the goal chooser learns to
+  want it — and that is the shallow-goal-chooser item in TODO.
 
 ### Before the plate: what a gunner is up against
 
@@ -431,6 +541,94 @@ is deliberate and is the thing to preserve:
   hexes. A per-candidate draw is safe over six meaningful options and was not
   safe over ninety interchangeable ones — the argmax is the difference.
 
+### The road, not the crow flight
+
+The goal chooser priced a march as `distance / speed`, which on a map with a
+river in it is not a small error: the far bank is five hexes away and twenty
+hexes of driving, and a crew who cannot tell the difference marches at the
+water. It also knew nothing about what happens on the way there, or about who
+else wants the same ground. `UtilityChooser` now prices all three, and every
+one of them is read off one Dijkstra.
+
+- **Every step is priced through `BattleState::moves`, a `MoveGrid`**, which
+  is `SightGrid`'s twin: every tile's cost per movement class resolved once,
+  shared behind an `Arc`, rebuilt by `save::rehydrate`. `movement::edge_cost`
+  remains the reference implementation for tests, one-off queries and the
+  campaign map, and the two share `step_cost` so the climb rule cannot drift.
+  The grid is written to have tiles folded in a region at a time — see the
+  streaming note on it.
+- **`battle::roads` is the road-pricing twin of `path_to`**, and differs from
+  it in the three ways a plan differs from an order: many destinations at
+  once, a *horizon* in rounds rather than this round's budget, and **no
+  occupancy at all**. Neither friends nor spotted enemies block. A march takes
+  several rounds and the field will not hold still for it, so treating a tank
+  parked on the bridge as a wall would make the bridge unreachable and the
+  ground a crew most wants invisible; the opposition is a cost along the way
+  instead, and `step_toward` still respects every vehicle on the field when
+  she actually drives. A happy consequence: the inner loop touches terrain
+  only, so unlike `reachable` it is **not O(hexes × units)**.
+- **One Dijkstra for the whole candidate list, not an A* per candidate.** The
+  first draft did the latter and cost five to ten times as much per planned
+  order. Every goal is a place to drive from the same hex.
+- **`HORIZON` is 4 rounds and is the only thing bounding the walk.** It is a
+  number in rounds, so a recon car looks further ahead than a heavy tank,
+  which is right; but it means the cost of `roads` is set by how many tiles
+  that reaches rather than by how many candidates there are. See the
+  performance section before changing it.
+- **Ground with no road inside the horizon is priced at the horizon**, not at
+  the crow flight. The first draft fell back to the crow flight and had it
+  exactly backwards — the ground with no road inside the horizon is the ground
+  whose road is *longest*, so that fallback made the far bank of an unfordable
+  river the nearest thing on the map.
+- **`DoctrineDef::route_caution` and `contest_aversion` default to competent
+  values, not to zero**, for the reason `objective_value` does: a doctrine
+  written before the chooser could see a road must not silently become one
+  that marches down the open one. The off switch for the whole family is
+  difficulty, below.
+- **The route terms are a tie-break between comparable goals, not a veto.**
+  Measured on a staged map, an objective that offers a shot at a visible tank
+  is worth about seven points more to stand on than one that does not, against
+  route costs of one or two — so any test of these terms has to stage goals
+  that are worth roughly the same, and the ones in `tests/engine.rs` say so in
+  their stage assertions. Reaching for a bigger coefficient instead would make
+  a crew who refuses every contested objective, which is the stalemate
+  objectives were introduced to end.
+
+### Difficulty has two axes now
+
+`difficulty_noise` is misjudging what she has read. `difficulty_foresight` is
+not having read it: at 0 (difficulty 1) she sees the objective and how far off
+it is *as the crow flies*, and not the river in between, nor the gun covering
+the open ground, nor that the enemy is nearer to the bridge than she is. It
+scales the blend between the crow flight and the road, and it gates both
+doctrine terms above.
+
+The second axis is not decoration, and this is the part to keep hold of:
+**more terms make the blur matter less.** A value function that separates a
+good goal from a bad one more sharply is one a blurred commander still ranks
+correctly, so deepening the chooser while leaving difficulty as noise alone
+would have made difficulty mean *less*. Anything else added to the chooser
+should ask which axis it belongs to.
+
+Zero at difficulty 1 is exactly the chooser as it stood before it could price
+a road, so the weakest commander plays the game the AI has always played and
+every level above her is an addition. `UtilityPlanner::new` therefore takes a
+difficulty rather than a noise amplitude — a caller who passed one of the two
+derived numbers and forgot the other would get a commander who misjudges the
+map but reads all of it, which is nobody.
+
+What this did to the measured skill gap is **almost nothing**: on the mirrored
+arena at 8 seeds × 36 battles, 5-over-1 went 62.8% → 64.2% and 5-over-3 54.3%
+→ 54.8%, both inside the noise at 576 battles a row. The arena is a radius-10
+hexagon with a handful of forest hexes and no objectives worth arguing about,
+so it has almost nothing for a road-reader to be better at. That is an
+instrument limitation rather than a result about the terms — the three tests
+in `tests/engine.rs` (`a_commander_who_reads_the_ground_goes_where_the_road_goes`,
+`a_road_under_a_gun_is_worth_going_round`,
+`ground_the_enemy_reaches_first_is_worth_less_marching_for`) are what actually
+pin them, each isolating one term by holding the other two at zero. A
+terrain-varied arena is the next instrument this question wants.
+
 ### Difficulty is a lens, not a lottery
 
 `UtilityPlanner::lean` draws **one** blur per unit per round and applies it as
@@ -589,6 +787,110 @@ bite someone editing the code.
   the assignable postures. A drop-off *short* of the objective was tried as
   a cheaper substitute and measurably lost platoons; the reason is in the
   passenger branch of `ai/utility.rs`.
+
+### Two crews on one hex
+
+A hex is 100 m across, and until this arc exactly one crew could stand on it.
+That is why a section arrived as a queue and why the AI spent movement driving
+around its own friends. Stacking is `VehicleDef.footprint` against
+`TerrainDef.capacity`, and the parts that will bite someone editing this are
+these:
+
+- **Capacity is `Option<u32>` and `None` is not `1`.** A terrain that declares
+  nothing keeps the rule this engine shipped with — *one crew, whatever size
+  she is* — which is not the same statement as "one footprint". The latter
+  would refuse a medium tank onto grass the moment anything declared a
+  footprint of 2, which is an additivity break disguised as a default. So
+  stacking is opt-in per terrain, and clearing the base mod's capacities in
+  data reproduces the old game exactly: `--set balance.stray_percent=0` with
+  every `terrain.*.capacity=null` gives 0 stacked rounds, deepest stack 1, 0
+  strays and the infantry survival it had before. Footprint has the mirror
+  rule and reads through `VehicleDef::footprint()`, where zero means one —
+  the same field-versus-accessor trap as `WeaponDef::reload`.
+- **`occupants` is the honest question and `unit_at` is a convenience.** The
+  singular now returns whoever comes first in id order and is for a mouse
+  click or a HUD line. Occupancy goes through `room_for`; who a shot or a
+  burst finds is *everybody*. The passenger filter lives in `occupants` alone,
+  so both inherit it.
+- **`room_for` is fog-aware, and this is not an approximation.** An enemy the
+  moving side has not spotted **takes up no room**, because an order refused
+  for a full hex announces that somebody is standing there. The move resolves
+  as an ambush instead, and two crews can therefore end a tick over capacity —
+  which is correct, they have just driven into each other.
+  `unspotted_enemies_still_ambush` and
+  `hidden_enemies_do_not_show_up_as_holes_in_the_move_range` both failed the
+  moment this counted everybody, which is how the rule came to be written down
+  rather than rediscovered.
+- **Crowding is a reason not to *stop*, never a reason not to drive through.**
+  `passable` does not consult it and `destination_blocked` does. Collapsing
+  the two would make a wood holding three platoons into a wall.
+- **A claim takes up room exactly as a parked vehicle does.** `claimed_by_friend`
+  and `ai/goal.rs::claimed_by_another` both count footprints rather than
+  refusing on the first friend, which is what lets a section be ordered into
+  one wood. `Goal::finished` reads the same rule: "somebody else got there
+  first" now means the hex is *full*, not that anybody is on it.
+- **A platoon dismounts onto the carrier's own hex**, tried first, before the
+  neighbours. That is what happens on the day and it was not expressible
+  before; `a_platoon_boards_rides_hidden_and_steps_off_where_the_ride_ends`
+  used to assert `distance_to(carrier) == 1`, which was the engine's limit
+  rather than anybody's intent.
+
+**The campaign map makes the same distinction now.** A friendly army used to
+be impassable there too, so a column could not follow the column in front of
+it. Three places said so and only one of them moved anything: `reachable`'s
+expansion, the `retain` that decides what may be *stopped* on, and the A* cost
+function inside `move_army`. Only a *hostile* army can block a route now, and
+only a march that means to avoid contact — an `Advance` still paths straight
+through, because an operational advance that side-steps contact is not an
+advance. Two armies still never share a tile: the trim after the walk backs
+off to the last free one.
+
+**What is deliberately still impossible is sharing a hex with an enemy.** A
+spotted enemy blocks a destination whatever the capacity says, and the
+movement tick ends the advance on contact. Storming the same building as the
+defender is a real thing to want — it is in TODO — but it is close assault
+rather than stacking: range zero, who counts as "in" the building, what a
+gunner outside can see and shoot, and how a burst that lands there sorts
+friend from enemy. None of that falls out of a capacity check.
+
+**The stray rule: the gunner aims, and only a miss is a lottery.** She lays
+her gun on a vehicle and the to-hit arithmetic answers for that vehicle
+exactly as it always did. What is new is that a round which went *past* her
+has a hex full of other people to end up among.
+`balance.stray_percent` is the chance per hundred points of a bystander's
+`presence`, rolled once per bystander in id order — so several make a stray
+likelier without any one of them making it certain, and the arithmetic never
+needs a cap. Three things about it:
+
+- **`presence` is `100 + profile`**, reusing the term that already means "how
+  much easier or harder she is to hit than a tank". A second size field would
+  be a second opinion about the same fact and the two would drift.
+- **`Event::ShotStrayed` is its own event**, not a flag on `ShotHit`. The two
+  facts a reader needs are who was shot at and who was hit, and a hit quietly
+  naming a different unit than the `ShotFired` before it reads as the log
+  contradicting itself. The `ShotMissed` for the intended target still
+  precedes it: she *was* missed.
+- **The observed rate is below the rolled rate, on purpose.** A platoon's
+  presence is 80, so 25% nominally means one miss in five; measured on a
+  staged crowded wood it is 12%, because a stray that kills the bystander
+  leaves the rest of that round's misses with nobody to stray onto.
+  `a_round_that_goes_past_a_tank_can_find_the_platoon_beside_her` pins the
+  band rather than the number.
+
+**What stacking has *not* got is a reason.** The mechanism is live and
+measured — crews share ground in 69 of ~460 rounds and the deepest stack seen
+is 2 — but the AI never wants to, so strays fire 5 times in 1055 misses and
+`river_crossing`'s four determinism seeds stack literally never (which is why
+that snapshot did not move; a checkable coincidence, not a guarantee).
+Nothing in the evaluator values sharing cover or massing on ground, so a hex
+with room in it is worth exactly what an empty one is. That is the open item,
+in TODO — and it is the same shape as subordinate initiative: the mechanism
+waits on a *preference*, and nothing else has to move for it to arrive. What
+stacking did change is infantry survival, from 79 of 96 to 65: they dismount
+more often now that getting out costs nothing, and they stand with the
+vehicles, and vehicles attract fire. Isolating it says the strays are not the
+cause (64 survivors with `stray_percent: 0`) — the cause is infantry being
+where the shooting is, which is the point.
 
 ### Latitude: an order a crew may not set aside
 
@@ -767,12 +1069,13 @@ through a save file, and requires both to produce the same events for the rest
 of the fight. That is why the rng's stream position is saved rather than its
 seed.
 
-Two structures are `#[serde(skip)]` because they are caches: `SightGrid` and
-the per-unit vision inside `FogMap`. They are pure functions of the map, and
-the sight grid alone would be a thousand entries per save. The price is that
-`save::rehydrate` *must* rebuild them — an empty sight grid answers every
-line-of-sight question wrongly rather than loudly, and an empty `visible_key`
-panics because recompute indexes it by side.
+Three structures are `#[serde(skip)]` because they are caches: `SightGrid`,
+`MoveGrid`, and the per-unit vision inside `FogMap`. They are pure functions of
+the map, and either grid alone would be a thousand entries per save. The price
+is that `save::rehydrate` *must* rebuild them — an empty sight grid answers
+every line-of-sight question wrongly rather than loudly, an empty move grid
+says every step is impossible so nobody can drive at all, and an empty
+`visible_key` panics because recompute indexes it by side.
 
 ### Seeing the game without playing it
 
@@ -793,6 +1096,13 @@ with `cargo run -p stahlsenshamädchen --example minimal_window` (a stock Bevy
 window that reproduces it with no game code). See DONE.md.
 
 `scripts/dev/` holds a tour of each screen; the module doc lists every action.
+**`scripts/dev/run-tours.sh` runs all of them** and is the only thing that
+makes "a tour is a test" true — nothing else does, not `cargo test
+--workspace` and not CI, which has no display. Each tour declares the boot
+environment it needs on a `#!env` line so the runner cannot start one on the
+wrong map; that used to be prose at the top of the file, and three tours were
+written off as broken for weeks when they had only ever been invoked wrongly.
+Run it after anything that touches `crates/game`.
 Two things about it are load-bearing:
 
 - **The scripted cursor is a resource, not the window's.** Writing to
@@ -811,6 +1121,13 @@ Two things about it are load-bearing:
   `until idle` over `wait N` for anything that waits on the simulation — a
   `wait` that guessed short photographs a half-played round and says nothing
   about it.
+- **A click on a stacked hex cycles through its occupants.** `unit_at` answers
+  with whoever comes first in id order, which is right for a HUD line and was
+  silently wrong for selection the day a hex could hold two crews: a platoon
+  dismounts onto her carrier's own tile, so she sat behind the carrier and
+  could not be selected by mouse at all. `ScriptFacts::selected` exists so a
+  tour can assert *who* a click selected rather than discovering three actions
+  later that a keystroke went nowhere.
 - **Every screen answers for every fact.** `ScriptFacts` is one resource
   shared by all of them, so a field a publisher leaves alone is still holding
   the *previous* screen's answer — a script would wait on a muster prompt
@@ -907,6 +1224,22 @@ Consequences that are easy to violate by accident:
   `spotted_enemy_at` exists so callers do not reach for `unit_at` and leak.
 - **Damage lands during a tick; death is reaped at the end of it.** That is what
   lets two crews kill each other simultaneously. Do not make `reap` eager.
+- **A tiebreak may only read quantities a reflection preserves.** Distances
+  and terrain costs qualify. A dot product of two differences qualifies,
+  because a point reflection negates both and the product is unchanged. **A
+  coordinate does not**, and no total order on coordinates can — a reflection
+  maps the least element to the greatest, so asking for "the smallest x" is
+  asking which way is west, and every crew in the game then edges that way
+  wherever the real keys tie. That is forwards for a side attacking west and
+  backwards for one attacking east, so it pays points to whichever end of the
+  map is on the east. It shipped twice, in `movement::step_toward` and in the
+  utility planner's plateau argmax, and cost about two points of win rate
+  between them. Where a *total* order is still needed for determinism — and it
+  is, because `reachable` returns a `HashMap` — put the coordinate key last,
+  behind every invariant key, so the compass decides only a left-or-right
+  choice off the line of advance. `a_march_is_the_same_march_from_either_end`
+  and `a_reflection_leaves_a_bearing_alone_and_turns_a_coordinate_around`
+  guard it.
 - **`alive` and "standing on a hex" are two different questions.** `alive`
   goes false when she is destroyed *and* when she drives off by an exit, so
   classify outcomes with `surviving_units()` / `lost_units()` or a successful
@@ -968,18 +1301,41 @@ rule they defend (`unspotted_enemies_still_ambush`).
   better than 1:2"; against difficulty 1 the exchange reaches that on some
   seeds and not on others.
 
-  **Side B still holds an edge on the mirrored arena, and it is not small.**
-  The table's `the ends` row adds the two *equal-skill* pairings, so its two
-  win columns are worth-of-being-A against worth-of-being-B and nothing
-  else: **494–652, side B on 56.6% of 1152 battles**, in the same direction
-  on 14 of the 16 seeds. An earlier version of this note struck that
-  residual through on the strength of the 5-vs-3 row paying "20 and 20"
-  once — one draw of a figure that ranges 16–27. What *was* real about that
-  fix is its mechanism: difficulty noise drawn per candidate tile gave a bias
-  that scaled with how many tiles a unit could reach, which is what an
-  argmax-over-independent-draws bias does, and removing it was right. It did
-  not remove this. Tracked in TODO under Balance; the arena is symmetric and
-  a battle is not, so resolution order is the first place to look.
+  ~~**Side B holds an edge on the mirrored arena.**~~ **Found and fixed
+  2026-08-26, and it was three faults pointing the same way — none of them
+  resolution order, which is where this note kept saying to look.**
+
+  | | side A's share of equal-skill battles |
+  | --- | --- |
+  | as it stood | **42.9%** (494–652 of 1152), −4.8 sd |
+  | arena rebuilt symmetric | 45.6% |
+  | `step_toward` tiebreak fixed | 46.4% |
+  | planner argmax tiebreak fixed | **49.2%** (1133–1169 of 2304), −0.8 sd |
+
+  1. **The arena was not mirrored.** It was written as 25×13 rows of ASCII
+     with forest at columns 8 and 16 — symmetric *as text* — and the odd-r
+     offset conversion shears text into hexes. On the map it actually
+     produced, six of 325 tiles had no mirror at all, 24 disagreed with their
+     mirror on terrain, and side A had **nine** forest hexes within six of its
+     deployment against side B's **four**. It is now a radius-10 hexagon whose
+     every feature is declared once and reflected, and `arena_map` asserts
+     that before handing it back.
+  2. **and 3. Two coordinate tiebreaks**, in `movement::step_toward` and in
+     the plateau argmax above. The general rule they broke is in the
+     invariants section: a tiebreak may only read quantities a reflection
+     preserves.
+
+  The proof that it is *structurally* gone rather than merely smaller: on the
+  symmetric arena, with difficulty 5 both sides (where the blur is exactly
+  zero) and the same planner seed, round one now produces **eight of eight
+  mirrored decisions and positions**. Before the tiebreak fixes the goals
+  matched and three of four positions did not — the planner agreed and the
+  march did not, which is what pointed at `step_toward`.
+
+  What the fixes did **not** do is make difficulty matter more. Skill still
+  tells strongly at the extreme — 5-over-1 pays 61.1% (+10.6 sd) — while
+  5-over-3 pays 51.9%, which is +1.8 sd and therefore barely anything. That is
+  the shallow-goal-chooser item in TODO, not a bias.
 
   **Read this table at `--games 36` or not at all**, and re-draw it before
   quoting it — `--only skill --sweep seed=0,1000,2000,3000` costs about
@@ -1063,16 +1419,60 @@ rule they defend (`unspotted_enemies_still_ambush`).
 
   | | |
   | --- | --- |
-  | round resolution | 1.07 ms (0.79–1.43 across seeds) |
-  | `reachable()` per call | 24.6 µs |
-  | `unit_vision` per unit, cold | 74.9 µs |
-  | utility order | 0.05 ms |
+  | round resolution | 1.42 ms (0.89–1.78 across seeds) |
+  | `reachable()` per call | 17.6 µs |
+  | `roads()` per call | 134.8 µs |
+  | `unit_vision` per unit, cold | 71.9 µs |
+  | utility order | 0.09 ms |
   | mcts order, difficulty 3 / 4 | 1.84 s / 4.24 s |
 
   Utility order was 0.03 ms until the evaluator started pricing danger as a
   fraction of what a crew can absorb, which walks the unit list once more per
   candidate tile. Anything added to `score_tile` is paid for at that rate —
   it is the hottest function the AI has.
+
+  Utility order was 0.04 ms until the goal chooser learned to price a road,
+  which is one Dijkstra out to `HORIZON` rounds per crew per goal chosen —
+  and only when a goal *finishes*, so the benchmark's figure (every crew
+  choosing at once, on the first round) is the worst case rather than the
+  usual one. An A* per candidate instead of one Dijkstra for the list cost
+  0.21–0.42 ms, which is what the shape is for.
+
+- **`MoveGrid` is `SightGrid`'s twin and was worth the same kind of money.**
+  `edge_cost` resolves terrain by `String` through the registry, and the
+  searches call it per edge of every tile they touch — one `roads` call over
+  the radius-20 map is about 7,500 of those string hashes for an answer no
+  battle can change. Resolving them once per tile took `roads` 322 → 219 µs
+  and `reachable` 26.5 → 18.0 µs, and **the event stream was byte-identical**
+  with the grid in and the horizon unchanged, which is the whole claim: it is
+  allowed to be faster, it is not allowed to price a step differently.
+  `the_move_grid_answers_exactly_what_the_reference_does` pins that against
+  `edge_cost` for every neighbour of every tile, at three climb limits and all
+  five movement classes.
+
+  Cutting `ai::goal::HORIZON` from 6 rounds to 4 took `roads` the rest of the
+  way, to 135 µs. Six was set on the impatience arithmetic without checking
+  what it *covered*: six rounds is 30–42 movement points and the map is a
+  radius-20 hexagon, so the horizon was the whole map and pruned nothing. At
+  2 / 3 / 4 / 6 rounds the call costs 61 / 106 / 155 / 219 µs.
+
+  Note what is **not** in either grid's inner loop, because it comes up: a
+  hex's capacity and a vehicle's footprint. `roads` consults no occupancy at
+  all by design, and stripping the friend check out of `destination_blocked`
+  entirely — infinite stacking — moves `reachable` only 31.1 → 27.6 µs.
+  Stacking is not a performance question.
+
+  **Round resolution moves with how well the AI plays, not only with how much
+  work the tick loop does**, and that is the thing to know before reading it.
+  It was 1.07 ms; detection rolls took it to 1.87; the deepened goal chooser
+  brought it to 1.38 — and re-measuring detection *after* the chooser landed
+  now shows the rule making rounds **faster** (1.62 ms off against 1.38 on),
+  the opposite of the sign it had a day earlier. Nothing in the spotting pass
+  changed in between. What changed is that crews pick ground they can drive to
+  and spend fewer ticks manoeuvring, which was the standing (unconfirmed)
+  explanation for the detection cost and is now about as confirmed as it will
+  get. `reachable()`, `roads()` and `unit_vision` measure work and are the
+  numbers to read when the question is whether something got slower.
 
   Run it `--release` or the figures are meaningless. Note this supersedes the
   "~39 µs per call on the 768-tile map" figure that used to appear below: that

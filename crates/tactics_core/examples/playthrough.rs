@@ -271,6 +271,11 @@ fn main() {
                     println!("   >> {} dismounts at {at:?}", name(&state, *unit))
                 }
                 Event::ShotMissed { .. } => println!("   miss"),
+                Event::ShotStrayed { intended, onto, .. } => println!(
+                    "   past {} — and into {}",
+                    name(&state, *intended),
+                    name(&state, *onto)
+                ),
                 Event::ShotBounced { target, facing, .. } => {
                     println!("   BOUNCES off {} ({facing:?})", name(&state, *target))
                 }

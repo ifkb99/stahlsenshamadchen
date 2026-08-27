@@ -10,11 +10,14 @@ use super::goal::{self, GoalChooser};
 use super::{
     AiConfig, AiPlanner, Evaluator, difficulty_noise, next_unplanned_unit, resolve_doctrine,
 };
-use crate::battle::{BattleState, FireIntent, Order, UnitId, reachable, step_toward};
+use crate::battle::{
+    BattleState, FireIntent, Order, UnitId, along_the_bearing, reachable, step_toward,
+};
 use crate::data::DataRegistry;
 use hexx::Hex;
 use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use std::cmp::Reverse;
 use std::collections::VecDeque;
 
 /// The best tile found for one unit, and the shot that came with it.
@@ -109,16 +112,26 @@ pub struct UtilityPlanner {
     /// Uniform noise amplitude added to every candidate score. Difficulty,
     /// not doctrine.
     pub noise: f32,
+    /// How much of the goal chooser's deeper reasoning this commander does.
+    /// Difficulty's other half — see [`super::difficulty_foresight`].
+    pub foresight: f32,
     rng: ChaCha8Rng,
     /// Orders decided for a unit but not yet handed out.
     pending: VecDeque<Order>,
 }
 
 impl UtilityPlanner {
-    pub fn new(evaluator: Evaluator, noise: f32, seed: u64) -> Self {
+    /// A planner for one doctrine at one difficulty.
+    ///
+    /// Difficulty rather than a noise amplitude, which is what this used to
+    /// take: there are two numbers derived from a difficulty level now and a
+    /// caller who passed one of them and forgot the other would get a
+    /// commander who misjudges the map but reads all of it, which is nobody.
+    pub fn new(evaluator: Evaluator, difficulty: u8, seed: u64) -> Self {
         Self {
             evaluator,
-            noise,
+            noise: difficulty_noise(difficulty),
+            foresight: super::difficulty_foresight(difficulty),
             rng: ChaCha8Rng::seed_from_u64(seed),
             pending: VecDeque::new(),
         }
@@ -127,7 +140,7 @@ impl UtilityPlanner {
     pub fn from_config(config: &AiConfig, seed: u64, data: &DataRegistry) -> Self {
         Self::new(
             Evaluator::new(resolve_doctrine(config, data)),
-            difficulty_noise(config.difficulty),
+            config.difficulty,
             seed,
         )
     }
@@ -135,11 +148,7 @@ impl UtilityPlanner {
     /// A planner with the balanced default doctrine, for callers that only
     /// care about skill: MCTS uses this for its policy opponent.
     pub fn with_difficulty(difficulty: u8, seed: u64) -> Self {
-        Self::new(
-            Evaluator::new(Default::default()),
-            difficulty_noise(difficulty),
-            seed,
-        )
+        Self::new(Evaluator::new(Default::default()), difficulty, seed)
     }
 
     /// Whoever is walking toward `carrier` to get aboard her, if anybody.
@@ -415,11 +424,38 @@ impl UtilityPlanner {
         // conserves movement for ground that is actually better, and is
         // what a crew would do: nobody drives across a field to park on
         // identical grass.
+        //
+        // The two keys after distance replaced `(tile.x, tile.y)`, which was
+        // a **compass**: smallest x is west, so where the first key tied every
+        // crew in the game edged west, which is forwards for a side attacking
+        // west and backwards for one attacking east. On the mirrored arena
+        // that is worth points to whichever end is on the east — it is the
+        // same bug as the one this comment describes, one layer up, and it
+        // survived the fix because the fix only changed which tile *wins*, not
+        // how a tie between winners breaks. The rule now, here and in
+        // `step_toward`: **a tiebreak may only read quantities a reflection
+        // preserves.** Distances do. A score does. A dot product of two
+        // differences does, because a reflection negates both. A coordinate
+        // does not, and no total order on coordinates can.
         const PLATEAU: f32 = 0.3;
+        let facing = Hex::from(state.unit(unit).map(|u| u.facing).unwrap_or_default());
         let best = scored
             .into_iter()
             .filter(|(_, s, _)| *s >= top - PLATEAU)
-            .min_by_key(|(tile, _, _)| (pos.distance_to(*tile), tile.x, tile.y))
+            .min_by_key(|(tile, score, _)| {
+                (
+                    pos.distance_to(*tile),
+                    // Among tiles equally near, the better one. The plateau
+                    // rule is about not *driving* for a tiny gain; it was
+                    // never about declining one that costs nothing.
+                    Reverse((score * 1000.0) as i32),
+                    // And among those, the one furthest the way she is already
+                    // looking — which is at the enemy, because that is where
+                    // `face_units_at_enemies` pointed her and where every
+                    // shot since has kept her.
+                    -along_the_bearing(*tile - pos, facing),
+                )
+            })
             .map(|(tile, _, attack)| Choice { dest: tile, attack });
 
         let (best_dest, attack) = match best {
@@ -439,7 +475,7 @@ impl UtilityPlanner {
         let live = state
             .unit(unit)
             .and_then(|u| u.goal)
-            .filter(|g| !g.finished(state, unit));
+            .filter(|g| !g.finished(registry, state, unit));
         let goal = match live {
             Some(goal) => goal,
             None => {
@@ -456,6 +492,7 @@ impl UtilityPlanner {
                 let mut chooser = goal::UtilityChooser {
                     evaluator: &self.evaluator,
                     noise: self.noise,
+                    foresight: self.foresight,
                     rng: &mut self.rng,
                 };
                 chooser.choose(registry, state, unit, &options)

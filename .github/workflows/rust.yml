@@ -24,7 +24,7 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev
+          sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
 
       # Bevy is a large dependency tree; without a cache most of the run is
       # spent rebuilding it unchanged.

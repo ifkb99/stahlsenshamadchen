@@ -590,9 +590,18 @@ impl OverworldState {
     }
 
     /// Every tile this army could end its move on, with the cheapest cost to
-    /// get there. Other armies block both movement and parking, matching
-    /// what [`Self::apply_move`] will actually allow. Ignores whether the
-    /// army has already moved, so callers can preview a spent army's reach.
+    /// get there. Ignores whether the army has already moved, so callers can
+    /// preview a spent army's reach.
+    ///
+    /// **A friendly army is driven past, not parked on.** Two divisions do not
+    /// share a tile, but a road with a friend on it is still a road: the old
+    /// rule refused the whole route, which is why the campaign map would not
+    /// let a column follow the column in front of it. This is the same split
+    /// the battle layer makes between `passable` and `destination_blocked`,
+    /// and it is made the same way — expand through, then filter what can be
+    /// stopped on. A visible enemy still blocks outright, because reaching one
+    /// is a battle rather than a move and [`Self::attack_targets`] is what
+    /// answers for that.
     pub fn reachable(&self, registry: &DataRegistry, id: ArmyId) -> HashMap<Hex, u32> {
         let Some(army) = self.army(id) else {
             return HashMap::new();
@@ -608,7 +617,11 @@ impl OverworldState {
                 continue;
             }
             for next in hex.all_neighbors() {
-                if self.army_at(next).is_some() {
+                // An enemy is the end of the road; a friend is traffic.
+                if self
+                    .army_at(next)
+                    .is_some_and(|other| other.side != army.side)
+                {
                     continue;
                 }
                 let Some(step) = self.edge_cost(registry, hex, next) else {
@@ -624,6 +637,10 @@ impl OverworldState {
                 }
             }
         }
+        // Driven past, not parked on: the tile a friend is standing on is not
+        // somewhere this army may finish, so it leaves the set even though the
+        // search was allowed to cross it.
+        best.retain(|hex, _| *hex == army.pos || self.army_at(*hex).is_none());
         best
     }
 
@@ -827,16 +844,25 @@ impl OverworldState {
                 return Some(0);
             }
             // Ending on an enemy is the attack case, handled below, so `to`
-            // itself is always open. Everything else depends on what the move
-            // is: a friend is furniture either way, and a hostile army is a
-            // wall to a march that means to avoid it and ordinary ground to
-            // one that means to hit whatever it finds. Routing an advance
-            // *around* the enemy in its road was the old behaviour and it is
-            // precisely the bug — an operational advance that side-steps
-            // contact is not an advance.
+            // itself is always open. Of the rest, **only a hostile army can
+            // block a route, and only a march that means to avoid contact.**
+            //
+            // A friend used to block, and that was the campaign map's version
+            // of one crew to a hex: a column could not follow the column in
+            // front of it, and the only reason was that the pathfinder could
+            // not tell "cannot stop here" from "cannot cross here". It stops
+            // being able to stop there in the trim below, which is where the
+            // rule belongs.
+            //
+            // A hostile army is a wall to a march that means to avoid it and
+            // ordinary ground to one that means to hit whatever it finds.
+            // Routing an advance *around* the enemy in its road was the old
+            // behaviour and it is precisely the bug — an operational advance
+            // that side-steps contact is not an advance.
             if next != to
                 && let Some(other) = self.army_at(next)
-                && (other.side == side || engagement == Engagement::Avoid)
+                && other.side != side
+                && engagement == Engagement::Avoid
             {
                 return None;
             }
@@ -861,15 +887,28 @@ impl OverworldState {
             if step > budget {
                 break;
             }
-            // Stop short of any occupied tile; battle triggers if hostile.
-            if let Some(other) = self.army_at(pair[1]) {
-                if other.side != side {
-                    blocked_by = Some((other.id, pair[1]));
-                }
+            // A hostile tile is the end of the march and a battle. A friendly
+            // one is traffic: drive past it and keep going, which is what
+            // `reachable` now offers routes through.
+            if let Some(other) = self.army_at(pair[1])
+                && other.side != side
+            {
+                blocked_by = Some((other.id, pair[1]));
                 break;
             }
             budget -= step;
             walked.push(pair[1]);
+        }
+        // Two armies do not share a tile, so if the budget ran out on top of a
+        // friend, fall back to the last tile that is actually free. Without
+        // this the pass-through above would let a column stop inside the
+        // column it was following.
+        while walked.len() > 1
+            && self
+                .army_at(*walked.last().expect("non-empty"))
+                .is_some_and(|other| other.id != id)
+        {
+            walked.pop();
         }
         let destination = *walked.last().expect("path starts at pos");
 

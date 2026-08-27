@@ -27,6 +27,9 @@
 //!   ms/round) and the one a rendering-side change can silently regress.
 //! - **`reachable()`** is O(hexes x units) twice over and sits inside the MCTS
 //!   inner loop, so it is the thing the planned occupancy index has to beat.
+//! - **`roads()`** is what the goal chooser pays to price every candidate goal
+//!   at once, and the number `ai::goal::HORIZON` is really about: it scales
+//!   with the tiles inside the horizon, not with the number of candidates.
 //! - **Planner cost per order** is what decides whether a difficulty is
 //!   shippable against a human at all. MCTS is the reason the shipped scenario
 //!   still names `utility`.
@@ -37,7 +40,7 @@
 
 use std::time::{Duration, Instant};
 use tactics_core::ai::{AiConfig, AiPlanner, make_battle_planner};
-use tactics_core::battle::{BattleState, Order, reachable, unit_vision};
+use tactics_core::battle::{BattleState, Order, reachable, roads, unit_vision};
 use tactics_core::data::DataRegistry;
 
 const MAP: &str = "river_crossing";
@@ -73,6 +76,7 @@ fn main() {
 
     let rounds = bench_round_resolution(&registry, &seeds);
     let reach = bench_reachable(&registry, &seeds);
+    let road = bench_roads(&registry, &seeds);
     let fog = bench_fog(&registry, &seeds);
 
     row("measurement", "result", "notes");
@@ -91,6 +95,11 @@ fn main() {
         "reachable() per call",
         &fmt_us(reach),
         "selected unit, full move range",
+    );
+    row(
+        "roads() per call",
+        &fmt_us(road),
+        "goal chooser's whole candidate list, one Dijkstra",
     );
     row(
         "unit_vision per unit (cold)",
@@ -172,6 +181,33 @@ fn bench_round_resolution(registry: &DataRegistry, seeds: &[u64]) -> Stats {
 
 /// `reachable()` for every living unit, which is what the search does
 /// repeatedly while expanding move candidates.
+/// One `roads` call: what the goal chooser pays to price every candidate at
+/// once, and the number `ai::goal::HORIZON` is really about. Only paid when a
+/// crew's goal *finishes*, so this is not a per-round cost.
+fn bench_roads(registry: &DataRegistry, seeds: &[u64]) -> Duration {
+    // Matches `ai::goal::HORIZON`. A benchmark that drifted from it would
+    // mislabel itself rather than break anything, which is why it is a
+    // literal with a comment rather than a new public constant.
+    const HORIZON: u32 = 4;
+    let mut samples = Vec::new();
+    for &seed in seeds {
+        let state = BattleState::from_map(registry, MAP, seed).expect("battle");
+        let ids: Vec<_> = state.alive_units().map(|u| u.id).collect();
+        for &id in &ids {
+            let _ = roads(registry, &state, id, HORIZON);
+        }
+        let t = Instant::now();
+        const REPS: u32 = 20;
+        for _ in 0..REPS {
+            for &id in &ids {
+                std::hint::black_box(roads(registry, &state, id, HORIZON));
+            }
+        }
+        samples.push(t.elapsed() / (REPS * ids.len() as u32));
+    }
+    mean(&samples)
+}
+
 fn bench_reachable(registry: &DataRegistry, seeds: &[u64]) -> Duration {
     let mut samples = Vec::new();
     for &seed in seeds {

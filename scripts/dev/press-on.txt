@@ -1,4 +1,5 @@
 # Saying "I mean it" to one crew: the per-unit twin of ordering a formation
+#!env STAHL_BATTLE=river_crossing
 # to assault, and the thing that was missing when the player's tank kept
 # stopping in a hedge on the way to the ridge.
 #

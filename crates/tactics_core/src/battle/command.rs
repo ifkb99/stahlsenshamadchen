@@ -228,6 +228,7 @@ impl Goal {
     /// crew told to sit somewhere sits there until told otherwise.
     pub fn finished(
         &self,
+        registry: &crate::data::DataRegistry,
         state: &crate::battle::BattleState,
         unit: crate::battle::UnitId,
     ) -> bool {
@@ -239,11 +240,16 @@ impl Goal {
             Self::Take(hex) => {
                 // Arrived.
                 me.pos == *hex
-                    // Or somebody else got there first. Two crews driving for
-                    // one hex is the queue the plateau rule was invented to
-                    // break up, and saying it here says it once instead of
-                    // as a tie-break buried in a sweep.
-                    || state.unit_at(*hex).is_some_and(|u| u.id != unit && u.side == me.side)
+                    // Or somebody else filled it. Two crews driving for one
+                    // hex is the queue the plateau rule was invented to break
+                    // up, and saying it here says it once instead of as a
+                    // tie-break buried in a sweep. What counts as "filled" is
+                    // now the capacity rule rather than "anybody at all",
+                    // because a wood a friend is standing in may still have
+                    // room for a platoon — and on terrain that declares no
+                    // capacity the two statements are the same one.
+                    || (state.occupants(*hex).any(|u| u.id != unit && u.side == me.side)
+                        && !state.room_for(registry, me, *hex))
             }
         }
     }

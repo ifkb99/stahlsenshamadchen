@@ -25,9 +25,17 @@ Things that shape everything below them. Deciding late means rework; ordered by 
   still needs: **selecting which mods are active at runtime** (see Menus)
 
 ## Bugs
-- `WARN bevy_render::view::window: Couldn't get swap chain texture after configuring. Cause: 'Outdated'`
-- `WARN winit::platform_impl::linux::x11::xdisplay: error setting XSETTINGS; Xft options won't reload automatically`
-- units cannot move through friendlies on campaign map
+- ~~three of the ten dev tours are red~~ — **mostly my own bad invocation, fixed 2026-08-26.** Two of the three (`press-on`, `orders-explained`) were only ever run without the map they need and passed the moment they got it. The third, `infantry-tour`, was a real regression: since stacking landed, a platoon dismounts onto her *carrier's own hex*, and click-to-select goes through `unit_at`, which answers with whoever comes first in id order — so **the second crew on a hex could not be selected at all** and the tour could never re-mount her. Clicking a hex now cycles through its occupants. The tour was the only thing in the project that ever tried to re-mount a platoon, which is the argument for the runner below.
+- ~~units cannot move through friendlies on campaign map~~ fixed 2026-08-26,
+  and it was three places, not one: `reachable`'s expansion, the `retain` that
+  says what may be *stopped* on, and — the one that actually moves the army —
+  the A* cost function in `move_army`, which treated a friend as impassable.
+  Same conflation of "cannot stop here" with "cannot cross here" that a hex
+  holding one crew was in battle. `an_army_drives_past_a_friend_and_stops_beyond_her`
+  pins the budget to exactly the straight-line cost so a detour will not fit,
+  and it was checked against all three sites individually — an earlier draft
+  asserted only that the far tile was reachable and passed against the old
+  rule, because the army just drove around.
 - ~~terrain cover is applied twice~~ — stale, closed 2026-08-25. The second
   half died with `raw_damage` in the ballistics rewrite's B1 chunk: a round
   that is through the plate is through, and the tree the shell passed did not
@@ -43,20 +51,32 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 - **traits should be gained from gameplay, and should mean more than a skill modifier.** `reckless`, `craven` and `stolid` exist and reach the fight/flight question through `TraitEffect.defiance`; what is missing is the rest — traits earned from what a cadet lived through, and the character work that makes 49 cadets feel like people rather than cores. The designer's note: "much can be postponed until we dive into making characters feel real"
 - **`river_crossing` and `battle_plains` are still anonymously crewed**, so every crew on them freezes when she breaks — correct by design (nobody wrote her a temperament) and invisible to the instrument. `battle_forest` now names 23 seats a side. Crewing `river_crossing` means regenerating the determinism baseline, and would break the coincidence that let the defiance chunk land without touching it
 - ~~**MCTS: delete or keep?**~~ settled — kept, and the reasoning is in [PARKED.md](PARKED.md) rather than here, so it stops costing attention. it is not maintenance surface anybody owes anything to: no change elsewhere owes it a performance budget
-- **the goal chooser is shallow, and that is where difficulty has to come from.** it prices being *there* and the drive to it, and nothing about the route, the risk on the way, or what the enemy will do about it — so a higher-difficulty commander has very little to be better at. this is now the whole of the "higher difficulty should be better for intelligence reasons" question, and it is tractable in a way it was not when difficulty was jitter on a tile sweep. `ai/goal.rs` is the file; `GoalChooser` is the trait
+- ~~**the goal chooser is shallow, and that is where difficulty has to come from.**~~ **deepened 2026-08-26.** it now prices the *road* (real terrain cost through `battle::roads`, one Dijkstra for the whole candidate list), the fire along it (`DoctrineDef::route_caution` against the share of the march a spotted gun can see), and who gets there first (`contest_aversion`). difficulty gained a second axis to go with the blur — `difficulty_foresight`, how much of that reasoning she actually does — because more terms make a blur matter *less*, so deepening without it would have made difficulty mean less rather than more. see CLAUDE.md, "The road, not the crow flight"
+  what is left of the item:
+  - **the arena cannot measure it.** 5-over-1 moved 62.8% → 64.2% and 5-over-3 54.3% → 54.8% at 8 seeds × 36 battles, both inside the noise: the mirrored arena is a radius-10 hexagon with a few forest hexes and no objectives worth arguing about, so there is nothing for a road-reader to be better at. a terrain-varied arena — or a skill table fought on the shipped maps with matched forces — is the instrument this question now wants
+  - **the road is priced, not chosen.** `roads` minimises terrain cost, so a crew notices that the cheapest road is exposed but never actually routes *around* the gun. a danger-weighted Dijkstra would, at the cost of the road no longer being measured in rounds
+  - **still nothing about what the enemy does next** beyond where she is standing now, nothing about what her own side is doing elsewhere, and no memory
+  - `HORIZON` in `ai/goal.rs` joins `IMPATIENCE` on the list of evaluator numbers that want to be data. it is 4 rounds, cut from 6 on 2026-08-26 after measuring what six actually covered (the whole map — see CLAUDE.md's performance section for the 61/106/155/219 µs curve) — so a higher-difficulty commander has very little to be better at. this is now the whole of the "higher difficulty should be better for intelligence reasons" question, and it is tractable in a way it was not when difficulty was jitter on a tile sweep. `ai/goal.rs` is the file; `GoalChooser` is the trait
 - **subordinate initiative**: a mission currently *replaces* the candidate list, so an ordered crew has exactly one goal open to her. `DoctrineDef::initiative` (0.3 massed / 0.7 elastic / 0.9 recon) is still unread and this is where it attaches — a high-initiative doctrine admits her own candidates alongside the ordered one and lets her weigh them. nothing else has to move. the designer's eventual shape is a hierarchy of policies (commander / section / battle drill) with initiative as a policy parameter, NOT as an rl epsilon — epsilon is exploration noise and anneals away, which would make a high-initiative crew act randomly rather than independently
-- **`IMPATIENCE` in `ai/goal.rs`** joins `PLATEAU`, `MISSION_WEIGHT`, `contact_scale`, the 0.15 decay, `AMBUSH_PATIENCE` and `BOARDING_ROUNDS` on the list of evaluator numbers that want to be `mod.json` data and want sweeping with `balance --sim`
+- **`IMPATIENCE` and `HORIZON` in `ai/goal.rs`** join `PLATEAU`, `MISSION_WEIGHT`, `contact_scale`, the 0.15 decay, `AMBUSH_PATIENCE` and `BOARDING_ROUNDS` on the list of evaluator numbers that want to be `mod.json` data and want sweeping with `balance --sim`. note two of that family *did* become data on 2026-08-26 — `DoctrineDef::route_caution` and `contest_aversion` — which is the shape the rest want
 - **`battle_forest` declares no `exit` objective**, so no crew on it can withdraw whatever the AI decides. content, and it is why one of the review's three battles could not have shown a retreat
 - think about retreating. how does it work IRL?
   - the battle half exists: an `exit` objective is those tiles, leaving by one keeps the crew, and `river_crossing` has a retreat lane at each road vertex. what is missing is the **campaign half** — an army that withdrew should arrive somewhere, not merely stop existing on the battle map
   - IRL there are no tiles. maybe allow enemy to attempt to pursue?
-  - the lanes are three hexes at the map's west and east road vertices. widening them to the whole edge would make retreat easier to reach from the flanks; keeping them narrow makes the road matter. undecided
+  - the lanes are three hexes at the map's west and east road vertices. widening them to the whole edge would make retreat easier to reach from the flanks; keeping them narrow makes the road matter. undecided — **and hex streaming eventually settles it by deleting the question**: the overworld and the battlefield become one continuous world at two zoom levels, crossing what is today a map edge is an ordinary drive, and there is nothing left to declare an `exit` objective *for*. Withdrawal becomes "drive that way until nobody is shooting at you", and the campaign half (where does an army that withdrew arrive) is then the only half left
 - overlays currently reproject via HexOverlay + reposition_map on view rotate. alternative: parent each overlay to its MapTile entity and let Bevy transform propagation carry them (more robust as overlay kinds grow; needs a Hex→Entity index when spawning highlights)
 - allow better control of units. planned routes are drawn now, but they cannot be shaped: waypoints, reverse movement (penalized), and a face command (uses movement)
 - multiple cadets in a vehicle, as it makes sense. can be wounded from hits to remove their bonuses (engine already supports multi-crew via crew_slots/crew_best; this is a wound model + UI)
 - ability to place units in a starting zone in battle prep phase; if ambushed spawn in a column
-- improve line of sight system, should be easier to hide while seeing enemy. now urgent rather than nice-to-have: `vision_range` is doing detection's job, not eyesight's. at 100 m hexes a commander really can see kilometres, so a hard range cutoff is the only thing keeping anything hidden, and it gets less believable the more the ranges grow. wants a detection roll against terrain concealment plus modifiers for moving and for having just fired (`revealed` already covers the last one).
-  **do the detection roll before touching the FOV algorithm.** a detection roll is additive and cheap; shadowcasting changes *which* tiles are visible, which invalidates the determinism baseline and every balance intuition at once — and doing that in the same stretch as the ballistics rewrite would leave two big changes with no way to attribute what moved
+- ~~improve line of sight system, should be easier to hide while seeing enemy~~ — **half done 2026-08-26**, and the half that is done is the detection roll: finding somebody inside your own field of view now costs a die, once per tick, against the ground's `concealment`, the outer band of the spotter's reach, and what the target has driven this round. Firing still bypasses it. The record, the shipped table and the measurements are in [detection.md](assets/wiki/reference/detection.md); the rules that will bite an editor are in CLAUDE.md under "Looking is not seeing".
+  what is left is the **FOV algorithm** — shadowcasting instead of a raycast per tile — which changes *which* tiles are visible rather than how long they take to resolve, and which was deliberately kept out of the same stretch so that what moved could be attributed. Two findings from the detection work point straight at it: contact on these maps is made at 11 hexes mean against vision ranges of 8–20, so **line of sight already binds harder than vision range does** — the ground is doing most of the hiding — and round resolution is now 1.87 ms with the raycasting the bulk of it.
+  and the third finding is not about sight at all: **nothing in the evaluator wants to be unseen**, so every fought-out column stays inside the seed noise floor. Same shape as stacking. See the goal-chooser item above
+- **hex streaming**: the overworld and the battle map become one continuous world at two zoom levels, with no gameplay difference between map tiles and no seam to cross. planned for later. what is already settled and already built for it:
+  - **both derived grids are stream-shaped** as of 2026-08-26 — `MoveGrid` and `SightGrid` are keyed on tiles rather than on a map's identity, fold a region in through `extend`/`insert`, and have `build` defined as `extend` onto an empty grid so the streaming path is the one exercised every day. adding a per-tile fact to either is one field on `TileMove`/`Heights` and one line in its `of`
+  - **the grids live with the map and load with it** (designer's call). they should be *derived on load*, never written into map assets: a shipped grid is a second copy of `move_cost` and `vision_block` that a retuned mod silently contradicts, and deriving is free anyway — 85 µs + 25 µs for a whole 1261-tile battle map. the refactor is to give `HexMap` and its two grids one owner, so `BattleState`'s `map` / `sight` / `moves` become one `Arc<_>` that a chunk load replaces or extends. the two grids probably become one object at the same time; they are the same structure
+  - **the loading rule is not "where units are".** `sight_line_clear` treats a tile it cannot find as *transparent* — right when the map is the whole world, a wrong answer when it is a window, because a ridge in an unloaded chunk would stop blocking and whether a crew can see a tank would depend on what was paged in. the resolved region has to cover everything any unit can **see or shoot** (max vision, max weapon range, artillery reach) plus a margin, and be derived from unit positions alone so it is the same on every machine. determinism is load-bearing here: replays, the search AI and the committed event stream all rest on it
+  - **`exit` objectives stop existing**; see the retreating item above
+- overworld elevation currently reads at the battle scale (see the correctness item near the top) — one more thing that has to be settled when the two views become one map
 - occupancy index: `unit_at` is a linear scan over all units, and it is called from `passable()` inside the dijkstra inner loop and from `claimed_by_friend` (another full scan) once per candidate hex in reachable's final retain. so `reachable()` is O(hexes x units) twice over, and MCTS calls it constantly. a `HashMap<Hex, UnitId>` kept up to date on move fixes both, and it is the same refactor the apc needs: "who is in this hex" becomes a real query instead of a first-match
 - `accuracy_falloff` is an integer per hex, which was fine when the longest band was 5 hexes and is coarse now that the 88 reaches 16. consider "accuracy lost per 10 hexes", or a float. **now the last term in `hit_chance_inner` that is neither data nor scale-aware** — the resolver-depth arc moved the other four into `balance` and added three more, so this one stands out
 - **artillery still does not lead a moving target**, and the shell-flight
@@ -88,6 +108,50 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 - overall start menu to pick gamemode, settings menu, choose campaign submenu, activate mods, etc
 ### Units
 - apc/ifv, can carry infantry that can dismount
+- ~~**more than one unit to a hex** (MVP)~~ built 2026-08-26.
+  `VehicleDef.footprint` against `TerrainDef.capacity`, opt-in per terrain so
+  clearing the capacities in data reproduces the old game exactly. The rules
+  and the traps are in CLAUDE.md under "Two crews on one hex"; the designer's
+  shot-at-a-stack question was answered as **the gunner aims and only a miss
+  is a lottery** (`balance.stray_percent`, weighted by `presence` = 100 +
+  profile).
+- **stacking has a mechanism and no reason.** Crews share ground in 69 of
+  ~460 rounds, the deepest stack anywhere is 2, and strays therefore fire 5
+  times in 1055 misses — the rule is live and almost never met, which is what
+  `balance.blind_penalty` turned out to be and is worth fixing before more is
+  built on it. **Nothing in the evaluator values sharing ground**: a hex with
+  room in it scores exactly what an empty one does, so the only reason anybody
+  ever stacks is a platoon dismounting where her carrier stands. Two candidate
+  levers, both in `Evaluator::score_tile` and both data-shaped rather than
+  Rust-shaped: cover is worth more to two crews than to one (a wood that hides
+  a platoon *and* its taxi is better ground than one that hides either), and
+  mutual support — a friend on the same hex is a friend who cannot be flanked
+  away from you. Measure with `--only sim` and read `crews shared ground in N
+  round(s)` and the stray count; both are printed for exactly this reason.
+  Note the interaction already measured: infantry survival fell 79 -> 65 of 96
+  when stacking landed, because they dismount more and stand where the
+  shooting is, and **that is not the strays** (64 survive with
+  `stray_percent: 0`). Anything that makes the AI stack *more* will push that
+  further, so re-read the infantry pricing item below at the same time.
+- **storming the same building as the enemy** (designer's example, 2026-08-26).
+  Stacking deliberately does not allow it: a spotted enemy blocks a
+  destination whatever the capacity says, and the movement tick ends the
+  advance on contact. Wanting it is reasonable and it is *not* a capacity
+  change — it is close assault, and it needs four rules stated rather than
+  fallen into. What a shot at range zero means (the whole to-hit gradient is
+  built on range and the minimum is 1 hex). Who counts as being *in* the
+  building for cover, since both sides would be. What a gunner outside can
+  see and shoot into a contested hex without picking her own side's crew off.
+  And how a shell that lands there sorts friend from enemy — `shell_lands`
+  currently resolves against every occupant, which is right for a stack of
+  friends and would be friendly fire here. Worth doing after the MVP, and
+  worth doing as its own arc.
+- **capacity has no per-hex override and no vision or spotting term.** A wood
+  full of infantry is currently exactly as easy to find as a wood with one
+  section in it, because `concealment` scales a spotter's range per *target*
+  and knows nothing about how many are there. A stack should be easier to
+  spot and easier to shell — the shell half already works, since
+  `shell_lands` resolves against every occupant.
 
 ## Mid Term Goals
 - separate engine from game if needed. I want to use this for a roguelike in the future. (mostly already true: tactics_core has no bevy dependency, the rng is seeded ChaCha8, BattleState is Clone for search branching, and the boundary really is intents-in/events-out. what is left is that VehicleDef/ArmorSpec/MovementSpec are tank-shaped — and those live behind the registry in data/defs.rs, so the seam is where it should be)
@@ -149,20 +213,40 @@ stalemate, so there is finally a baseline to measure a rewrite against.
 - cadet progression: xp, leveling, skills. fire emblem is a stated inspiration and this is the emotional engine of the genre. sketch the shape early since it lives on the cadet-instance model
 - basic requisition flow: vehicle costs, side funds, and income all exist but nothing spends money until academy mode. a minimal buy/reinforce loop shouldn't wait for the 4x layer
 ### Balance
-- **side B wins 56.6% of equal-skill battles on the mirrored arena**
-  (measured 2026-08-26, 16 seeds × `--games 36` = 1152 battles, the skill-gap
-  table's `the ends` row: 494–652, same direction on 14 of 16 seeds). CLAUDE.md
-  and DONE.md both had this struck through as fixed by the per-round
-  difficulty lean; it was not — that fix removed a *different* bias, the one
-  that scaled with reachable-tile count, and "20 and 20" was one draw of a
-  figure that ranges 16–27. The arena is mirror-symmetric and a battle is not,
-  so **resolution order is the first place to look**: within a tick, side 0's
-  movement and fire resolve before side 1's, and a tick is 5 s. Two things
-  follow. It taxes every reading of that table, which is why the table now
-  prints `both ends` rows that add the two orientations and cancel it — quote
-  those. And if it is resolution order, it is a *game* problem and not an
-  instrument one: a player who deploys on the wrong side of `river_crossing`
-  is paying it too.
+- ~~**side B wins 56.6% of equal-skill battles on the mirrored arena**~~ fixed
+  2026-08-26. Three faults pointing the same way, none of them the resolution
+  order this note kept naming: the arena was sheared by the offset conversion
+  and was never a mirror, and two tiebreaks read `(x, y)` — a *compass* — so
+  every crew in the game edged west wherever the real keys tied. 42.9% -> 49.2%
+  of 2304 equal-skill battles, and round one on the symmetric arena at equal
+  skill is now mirrored 8 of 8. The general rule is in CLAUDE.md's invariants;
+  the account is under "Difficulty is inverted in practice".
+- ~~**two of the three battle maps favour an end**~~ re-measured 2026-08-26
+  after the coordinate tiebreaks were fixed, and the answer changed: at 8
+  seeds x 36 battles the ground is nearly level everywhere.
+  `battle_forest` 45.8% west (-2.0 sd), `battle_plains` 55.6% west (+2.7 sd),
+  `river_crossing` 49.5% (-0.2 sd). The first reading — forest west 50-22,
+  plains east 29-43 at 72 battles — was one draw of a build in which every
+  crew edged west. Recorded and accepted in
+  `assets/wiki/reference/battlefields.md`, per the designer: ground advantage
+  is strategy, it just has to be labelled.
+- **`river_crossing`'s two orders of battle are wildly uneven**: side 1 wins
+  **436 of 576** (24.1% / 75.9%, -12.4 sd) with the ground cancelled, because
+  it fields a tank destroyer where side 0 fields artillery. Nothing to do with
+  the river — the ground there measures level. Two reasons it matters more
+  than a scenario being uneven usually would. It is the determinism baseline,
+  so it is fought in every snapshot; and it is one of the three maps
+  `balance --sim` samples, so **every doctrine conclusion the fought-out pass
+  prints is partly a conclusion about that tank destroyer**. Decide whether
+  the scenario means it (a river crossing with the defender better armed is a
+  perfectly good scenario) and if so consider dropping it from the `--sim`
+  sample or fielding a fourth, even map alongside it. Re-measure with
+  `--only ground`.
+- **difficulty 5 over difficulty 3 barely discriminates**: 51.9% of 2304
+  battles (+1.8 sd) against 61.1% for 5-over-1. Not a bias — the bias is gone
+  — but it is the measurement behind "the goal chooser is shallow" under
+  Immediate Goals, and it is the number that item should be judged against
+  when somebody deepens the chooser.
 - **infantry lose badly at their asking price** (measured 2026-08-14, first
   run of the mustered-forces table): given 60 points, elastic defence buys
   seven mixed units — two rifle platoons, two scout sections, their rides, a
@@ -217,6 +301,8 @@ stalemate, so there is finally a baseline to measure a rewrite against.
 - music, engine sounds, gun reports. even placeholder sfx changes game feel enormously
 - cadet voice barks — cheap characterization for the cute side of the identity
 ### Tooling
+- **run the dev tours in CI.** `scripts/dev/run-tours.sh` runs all ten with the boot environment each declares on its own `#!env` line, and is now step 5 of the change loop. `STAHL_HEADLESS=1` runs them with no display and no GPU, under `xvfb-run` with Mesa's lavapipe — **tried, and it works**: `battle-tour` and `after-action` both pass that way on a machine that has no screen of its own, so `ubuntu-latest` is not the obstacle.
+  what is left is the budget. it is **roughly an order of magnitude slower**, because everything a tour waits on is paced by animation, animation is paced by frames, and llvmpipe draws this scene at a few frames a second — the full set is minutes on a GPU and looked like half an hour without one. so: a nightly or a `workflow_dispatch` job rather than one on every push, or a fast subset on push and the rest nightly. the presentation layer is the half of this project nothing gates, which is exactly how a selection bug lived through a whole stacking arc
 - replay viewer: save the seed + order stream and re-watch. nearly free with the deterministic sim (the same intents replay tick for tick), doubles as a balance tool
 - the game crate is barely tested: 120 tests, 5 of them in `crates/game`, and four of those are devtools/iso unit tests. `nobody_deploys_onto_their_own_way_off_the_map` is the first real one and it caught a battle-ending bug on its first run, which is the argument for more. `finish_battle`'s survivor accounting and the `apply_battle_result` wiring still have no coverage, and that is the seam where campaign state can corrupt silently. a headless test that runs a field battle end to end and checks the roster afterwards would cover most of it
 

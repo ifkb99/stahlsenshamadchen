@@ -25,6 +25,17 @@ fn registry() -> DataRegistry {
     registry
 }
 
+/// The same game with the search switched off, exactly as `engine.rs`'s twin
+/// of this: a stage that puts a battery in sight of its quarry, or a crew on
+/// a bridge for a round, must not also be a test of whether anybody happened
+/// to find anybody on the tick it was set up. `detection_certain_percent` at
+/// 100 is the rule's neutral value, so this is its absence rather than a
+/// gentle version of it.
+fn seen(mut reg: DataRegistry) -> DataRegistry {
+    reg.balance.detection_certain_percent = 100;
+    reg
+}
+
 fn planner(reg: &DataRegistry, seed: u64) -> Box<dyn AiPlanner<BattleState, Order>> {
     make_battle_planner(
         &AiConfig {
@@ -176,7 +187,7 @@ fn a_save_written_before_objectives_existed_still_opens() {
 
 #[test]
 fn a_battle_saved_mid_fight_remembers_who_holds_the_ground() {
-    let reg = registry();
+    let reg = seen(registry());
     let mut state = BattleState::from_map(&reg, "river_crossing", 4).expect("battle");
     // Put someone on the bridge and let a round pay out, so there is control
     // and a score to lose rather than two empty vectors.
@@ -1189,7 +1200,7 @@ fn a_reloaded_crew_reacts_on_the_clock_she_was_already_running() {
 /// consequences.
 #[test]
 fn a_shell_in_flight_survives_a_save() {
-    let mut reg = registry();
+    let mut reg = seen(registry());
     // Ten metres a second: an absurd shell, and the cheapest way to hold one
     // in the air across a save on a map small enough to read.
     if let Some(ammo) = reg.ammo.get_mut("he_105") {

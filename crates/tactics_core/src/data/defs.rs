@@ -20,6 +20,33 @@ pub enum MovementClass {
     Air,
 }
 
+impl MovementClass {
+    /// Every class there is, so a per-class table can be built by walking
+    /// them rather than by remembering to add a row.
+    pub const ALL: [MovementClass; 5] = [
+        MovementClass::Foot,
+        MovementClass::Wheeled,
+        MovementClass::Tracked,
+        MovementClass::Boat,
+        MovementClass::Air,
+    ];
+
+    /// This class's slot in such a table.
+    ///
+    /// An exhaustive match rather than a cast, so adding a class fails to
+    /// compile here instead of quietly indexing past the end of somebody's
+    /// array. [`Self::ALL`] is checked against it in the tests below.
+    pub const fn index(self) -> usize {
+        match self {
+            MovementClass::Foot => 0,
+            MovementClass::Wheeled => 1,
+            MovementClass::Tracked => 2,
+            MovementClass::Boat => 3,
+            MovementClass::Air => 4,
+        }
+    }
+}
+
 /// A person. Rides in vehicles, has a face and a name.
 ///
 /// Characters are people; vehicles are hardware, and a unit on the battlefield
@@ -211,6 +238,16 @@ pub struct VehicleDef {
     /// effect on the balance tables attributable to this one number.
     #[serde(default)]
     pub profile: i32,
+    /// How much room she takes up on a hex, against a terrain's `capacity`.
+    ///
+    /// One by default, so a chassis that says nothing is what it always was.
+    /// A hex is 100 m across and a rifle platoon is thirty people lying in a
+    /// field, so *count* is the wrong unit for crowding: three platoons in a
+    /// wood is a defended wood, and three heavy tanks in it is a traffic jam.
+    /// Read it through [`Self::footprint`] rather than the field, which is
+    /// where the zero-means-one rule lives.
+    #[serde(default)]
+    pub footprint: u32,
     /// How many units she lifts, in whole units.
     ///
     /// Deliberately counted in units rather than in seats. A rifle platoon is
@@ -228,6 +265,15 @@ pub struct VehicleDef {
     /// Requisition cost on the overworld.
     #[serde(default)]
     pub cost: i32,
+}
+
+impl VehicleDef {
+    /// How much room she takes up. Zero in the file means one, so a chassis
+    /// that says nothing is the size it always was and nobody has to write
+    /// `"footprint": 1` on every vehicle in a mod.
+    pub fn footprint(&self) -> u32 {
+        self.footprint.max(1)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -399,6 +445,40 @@ pub struct DoctrineDef {
     /// Reserved for chain of command: how much a commander devolves
     /// decisions to subordinates.
     pub delegation: f32,
+    /// What a round of the march spent in front of an enemy gun is worth
+    /// avoiding, in the same points a piece of ground is scored in.
+    ///
+    /// The goal chooser prices the *road* to a goal, not only the goal: how
+    /// long the drive takes over real terrain, and what share of it is walked
+    /// where something that can shoot her can see her. This is the price of
+    /// that share. Set beside `IMPATIENCE` (0.35 a round) rather than beside
+    /// an objective's worth: at 0.8 an elastic-defence crew will spend two
+    /// extra rounds going the covered way round, and at 0.2 massed armour
+    /// takes the direct road and expects to trade.
+    ///
+    /// Defaulted to a competent value rather than to zero, for the same
+    /// reason [`Self::objective_value`] is: a doctrine written before the
+    /// chooser could see a road must not silently become one that marches
+    /// down the open one. The off switch for this whole family of terms is
+    /// difficulty — at difficulty 1 a commander's foresight is zero and none
+    /// of them is read at all, which is exactly the chooser as it stood.
+    pub route_caution: f32,
+    /// What arriving a round later than the enemy is worth, per round late,
+    /// when choosing which ground to march for.
+    ///
+    /// The cheapest possible answer to "what will the enemy do about it": if
+    /// somebody who can already be seen is nearer to that bridge than she is,
+    /// she will not have it to herself when she gets there. It is deliberately
+    /// a discount and never a veto — a doctrine that refused every contested
+    /// objective would be a doctrine that never fights for anything, which is
+    /// precisely the stalemate the objectives were introduced to end.
+    ///
+    /// Fog-honest: only spotted enemies count, so this cannot tell a crew
+    /// about ground she has no business knowing is threatened.
+    ///
+    /// Defaulted like [`Self::route_caution`], and turned off by the same
+    /// switch: a commander with no foresight never asks the question.
+    pub contest_aversion: f32,
 }
 
 fn default_objective_value() -> f32 {
@@ -424,6 +504,15 @@ impl Default for DoctrineDef {
             withdraw_threshold: 0.7,
             initiative: 0.5,
             delegation: 0.5,
+            // Competent, not zero. A doctrine that says nothing about the
+            // road is a doctrine with no opinion about it, and the opinion
+            // every real one holds is that being shot at on the way there is
+            // worth going round for. Set beside `IMPATIENCE` (0.35 a round):
+            // at 0.6 the balanced doctrine will spend most of an extra round
+            // to take a covered approach, and half a round to reach ground
+            // before the enemy does.
+            route_caution: 0.6,
+            contest_aversion: 0.3,
         }
     }
 }
@@ -454,6 +543,26 @@ pub struct TerrainDef {
     /// line of sight, e.g. forests and buildings.
     #[serde(default)]
     pub vision_block: i32,
+    /// How much harder this ground is to *find* somebody in, in percentage
+    /// points off a searching crew's chance each tick.
+    ///
+    /// The twin of [`VehicleDef::concealment`] and deliberately a separate
+    /// number from both of its neighbours here. `vision_block` is geometry:
+    /// a wood stands between two hexes and the sight line stops. `cover` is
+    /// what the ground is worth once the shooting starts. This is neither —
+    /// it is how long a crew already inside somebody's field of view can
+    /// keep from being picked out of it, which is the difference between
+    /// eyesight and detection and the reason a still tank in a wheatfield is
+    /// not the same problem as one on a road.
+    ///
+    /// Not derived from `cover`, because the two come apart in both
+    /// directions: a standing crop conceals and stops nothing, a low wall
+    /// covers and hides no one. Zero by default, and zero means the ground
+    /// gives her nothing — with [`crate::data::Balance::detection_base`] at
+    /// 100 that is the game before detection rolls existed, where being
+    /// looked at *was* being seen.
+    #[serde(default)]
+    pub concealment: i32,
     /// On the overworld, armies inside concealing terrain are hidden from
     /// enemies unless adjacent.
     #[serde(default)]
@@ -464,6 +573,19 @@ pub struct TerrainDef {
     /// Overworld: whether an army can capture this tile as an objective.
     #[serde(default)]
     pub capturable: bool,
+    /// How much [`VehicleDef::footprint`] this hex will hold, or `None` for
+    /// the rule this game had before stacking existed: one unit, whatever
+    /// size it is.
+    ///
+    /// `None` rather than `1` on purpose. A terrain that declares nothing has
+    /// to behave exactly as it always did, and "one unit of any size" is not
+    /// the same statement as "one footprint" — the latter would refuse a
+    /// medium tank onto grass the moment anything declared a footprint of 2,
+    /// which is an additivity break disguised as a default. So stacking is
+    /// opt-in per terrain, and a mod that never mentions capacity never gets
+    /// it.
+    #[serde(default)]
+    pub capacity: Option<u32>,
 }
 
 fn default_terrain_color() -> String {
@@ -474,5 +596,22 @@ impl TerrainDef {
     /// Movement cost for the class, `None` if impassable.
     pub fn cost_for(&self, class: MovementClass) -> Option<u32> {
         self.move_cost.get(&class).copied()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_movement_class_has_its_own_slot_in_a_per_class_table() {
+        // `MovementClass::index` is an exhaustive match, so adding a class
+        // fails to compile there; what nothing else checks is that `ALL`
+        // lists every one of them and that no two share a slot. A table
+        // sized from `ALL` with a gap in it is an array index past the end
+        // waiting to happen.
+        let mut slots: Vec<usize> = MovementClass::ALL.iter().map(|c| c.index()).collect();
+        slots.sort_unstable();
+        assert_eq!(slots, (0..MovementClass::ALL.len()).collect::<Vec<_>>());
     }
 }
