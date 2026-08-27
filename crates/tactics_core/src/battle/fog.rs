@@ -9,7 +9,7 @@
 //! `revealed` (they fired recently and haven't moved since).
 
 use super::{BattleState, Event, Unit, UnitId, stats};
-use crate::data::DataRegistry;
+use crate::data::{DataRegistry, Scale};
 use crate::map::HexMap;
 use hexx::Hex;
 use rand::RngExt;
@@ -21,8 +21,13 @@ use std::sync::Arc;
 // interpolated by its position along the hex line, which is already the
 // horizontal parameter, so how wide a hex is never enters the geometry.
 
-/// Height of one elevation level, in metres. One map elevation digit.
-const ELEVATION_STEP: f32 = 10.0;
+// How tall one elevation digit is belongs to the scale contract and is
+// therefore data: `Scale::elevation_meters`, read through
+// [`crate::data::Scale::elevation`]. It used to be a `const ELEVATION_STEP =
+// 10.0` here, which agreed with the mod only because both said ten — a mod
+// that raised `elevation_meters` got a steeper climb and a skyline that had
+// not moved.
+
 /// Observer eye height above their own tile surface: a commander's cupola.
 const EYE_HEIGHT: f32 = 2.5;
 /// How far above the target tile surface we must see to "see" the target.
@@ -183,13 +188,19 @@ struct Heights {
 }
 
 impl Heights {
-    /// Resolve one tile against the registry. **The one place this grid reads
-    /// a terrain definition.**
-    fn of(tile: &crate::map::Tile, terrain: Option<&crate::data::TerrainDef>) -> Self {
+    /// Resolve one tile against the registry. **The one place this module
+    /// turns a tile into heights** — [`los_clear`] comes through here too, so
+    /// the reference path and the cached one cannot disagree about what an
+    /// elevation digit is worth any more than they can about a sight line.
+    fn of(
+        tile: &crate::map::Tile,
+        terrain: Option<&crate::data::TerrainDef>,
+        scale: &Scale,
+    ) -> Self {
         let block = terrain.map(|t| t.vision_block).unwrap_or(0);
         Self {
-            surface: tile.elevation as f32 * ELEVATION_STEP,
-            obstacle: (tile.elevation + block) as f32 * ELEVATION_STEP,
+            surface: scale.elevation(tile.elevation),
+            obstacle: scale.elevation(tile.elevation + block),
         }
     }
 }
@@ -255,8 +266,10 @@ impl SightGrid {
 
     /// Resolve one tile.
     pub fn insert(&mut self, registry: &DataRegistry, hex: Hex, tile: &crate::map::Tile) {
-        self.tiles
-            .insert(hex, Heights::of(tile, registry.terrain(&tile.terrain)));
+        self.tiles.insert(
+            hex,
+            Heights::of(tile, registry.terrain(&tile.terrain), &registry.scale),
+        );
     }
 
     /// Whether this grid has been built. A deserialized battle carries an
@@ -339,16 +352,8 @@ fn sight_line_clear(heights: impl Fn(Hex) -> Option<Heights>, from: Hex, to: Hex
 pub fn los_clear(registry: &DataRegistry, map: &HexMap, from: Hex, to: Hex) -> bool {
     sight_line_clear(
         |hex| {
-            map.get(hex).map(|tile| {
-                let block = registry
-                    .terrain(&tile.terrain)
-                    .map(|t| t.vision_block)
-                    .unwrap_or(0);
-                Heights {
-                    surface: tile.elevation as f32 * ELEVATION_STEP,
-                    obstacle: (tile.elevation + block) as f32 * ELEVATION_STEP,
-                }
-            })
+            map.get(hex)
+                .map(|tile| Heights::of(tile, registry.terrain(&tile.terrain), &registry.scale))
         },
         from,
         to,

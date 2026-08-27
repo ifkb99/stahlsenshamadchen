@@ -6,7 +6,7 @@ use tactics_core::ai::{
 };
 use tactics_core::battle::{
     BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Latitude, Mission,
-    Order, STALEMATE_ROUNDS, SideState, UnitId, los_clear, reachable,
+    Order, STALEMATE_ROUNDS, SideState, SightGrid, UnitId, los_clear, reachable,
 };
 use tactics_core::data::{DataRegistry, MovementClass};
 use tactics_core::map::{HexMap, UnitPlacement};
@@ -875,6 +875,59 @@ fn elevation_blocks_and_grants_line_of_sight() {
     assert!(!los_clear(&reg, &map, a, b), "ridge should block flat LoS");
     assert!(los_clear(&reg, &map, peak, a), "high ground sees down");
     assert!(los_clear(&reg, &map, a, peak), "the peak itself is visible");
+}
+
+/// How tall an elevation digit is belongs to the scale contract, so a mod that
+/// changes it must change what a ridge hides.
+///
+/// This is the check that `Scale::elevation_meters` is *read*. It used to be
+/// declared in `mod.json`, printed by the validator, and consulted by nothing:
+/// `fog.rs` carried its own `const ELEVATION_STEP = 10.0` and the two agreed
+/// only because both said ten. A mod that raised the field got a steeper climb
+/// — `max_climb` did read it — and a skyline that had not moved, which is the
+/// scale contract quietly meaning two different things in two places.
+///
+/// Both sight paths are asserted because they resolve heights separately:
+/// [`los_clear`] walks the registry per step and [`SightGrid`] resolves every
+/// tile once. They share `Heights::of` so they cannot disagree, and this is
+/// what says so.
+#[test]
+fn a_mod_that_flattens_a_level_flattens_the_skyline() {
+    let mut reg = registry();
+    let file: tactics_core::map::MapFile = serde_json::from_str(
+        r##"{
+            "id": "elevation_scale",
+            "palette": { "g": "grass" },
+            "rows":      ["ggggg", "ggggg", "ggggg"],
+            "elevation": ["00000", "00300", "00000"]
+        }"##,
+    )
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let a = tactics_core::offset_to_hex(0, 1);
+    let b = tactics_core::offset_to_hex(4, 1);
+
+    // The base mod's 10 m a level: three levels is a 30 m ridge across a sight
+    // line drawn between a 2.5 m cupola and a 2.0 m target, so it blocks.
+    assert_eq!(reg.scale.elevation_meters, 10.0);
+    assert!(!los_clear(&reg, &map, a, b), "a 30 m ridge blocks");
+    assert!(
+        !SightGrid::build(&reg, &map).clear(a, b),
+        "and the cached path agrees"
+    );
+
+    // Half a metre a level makes the same three digits a 1.5 m hummock, which
+    // the sight line clears at 2.25 m over the ridge tile. Same map, same
+    // elevation digits, same terrain: only the scale moved.
+    reg.scale.elevation_meters = 0.5;
+    assert!(
+        los_clear(&reg, &map, a, b),
+        "a 1.5 m hummock does not, or the geometry is not reading the field"
+    );
+    assert!(
+        SightGrid::build(&reg, &map).clear(a, b),
+        "and the cached path agrees here too"
+    );
 }
 
 #[test]

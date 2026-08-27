@@ -49,7 +49,21 @@ ghost is genuinely presentation.
 
 ---
 
-## 2. `Scale::elevation_meters` is shadowed by a constant in Rust
+## 2. ~~`Scale::elevation_meters` is shadowed by a constant in Rust~~
+
+**Fixed 2026-08-26.** `Heights::of` takes the scale and calls
+`Scale::elevation`, and `los_clear` now goes through `Heights::of` instead of
+inlining its own copy — so the module reads `elevation_meters` in one place
+rather than the field being read nowhere and the number written three times.
+The determinism snapshot did not move, which is what says the change is a
+rearrangement and not a rule change.
+`a_mod_that_flattens_a_level_flattens_the_skyline` is the check that the field
+is read at all: on one map, at 10 m a level a three-digit ridge blocks and at
+0.5 m the same ridge does not, asserted against both sight paths.
+
+`EYE_HEIGHT` and `TARGET_HEIGHT` stayed in Rust — see item 8.
+
+<details><summary>The original finding</summary>
 
 `crates/tactics_core/src/battle/fog.rs:25` declares
 `const ELEVATION_STEP: f32 = 10.0` and uses it for all sight geometry
@@ -86,6 +100,8 @@ the same file. They are modder-facing by the same argument, but promoting them
 is a `mod.json` schema change with validation to match, and the reverse-slope
 rule depends on their *ratio* rather than either value — so it wants its own
 chunk and its own test. See item 8.
+
+</details>
 
 ---
 

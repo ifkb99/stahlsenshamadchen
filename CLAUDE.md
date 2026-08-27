@@ -1202,6 +1202,16 @@ Consequences that are easy to violate by accident:
 - **A small test map can no longer put units out of contact by distance.**
   Vision is 10–20 hexes; use a forest curtain. `tests/engine.rs::standoff` does
   this and explains why.
+- **`elevation_meters` is read by the climb rule *and* by line of sight**, so
+  a mod that changes it changes both what a vehicle can drive up and what a
+  ridge hides. That is one field and it was very nearly two: `fog.rs` carried
+  its own `const ELEVATION_STEP = 10.0` until 2026-08-26, agreeing with the
+  mod only because both said ten. Both sight paths — the per-step `los_clear`
+  and the cached `SightGrid` — resolve heights through `Heights::of`, which is
+  the one place a tile becomes metres;
+  `a_mod_that_flattens_a_level_flattens_the_skyline` asserts they agree. The
+  general rule: **a `Scale` field no rule reads is a bug**, the same way a
+  core no skill names is.
 - **Crew bonuses are percentages of the vehicle's base**, from the sibling
   `balance` block (`data::Balance`): +5% sight per awareness, +5% speed per
   driving, +3 percentage points of hit chance per gunnery. Stats run 0–5, so a
