@@ -1,6 +1,5 @@
 //! End-to-end tests against the real `assets/mods` content.
 
-use std::path::PathBuf;
 use tactics_core::ai::{
     AiConfig, AiDriver, AiPlanner, Evaluator, UtilityPlanner, make_battle_planner,
 };
@@ -15,46 +14,8 @@ use tactics_core::overworld::{
     make_overworld_planner,
 };
 
-fn mods_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods")
-}
-
-fn registry() -> DataRegistry {
-    let (registry, report) = DataRegistry::load_dir(&mods_root()).expect("mods load");
-    assert!(
-        report.is_ok(),
-        "base mod must validate: {:?}",
-        report.errors
-    );
-    registry
-}
-
-/// The base game with the radio switched off: command rules stripped, so a
-/// test about missions themselves — what they store, how they steer units,
-/// what the brain issues — is not also a test about latency and radio
-/// radius. The wire has its own tests, and its own zero-coefficient pin
-/// (`a_command_block_with_zero_coefficients_is_the_game_without_one`).
-fn registry_wireless() -> DataRegistry {
-    let mut reg = registry();
-    reg.command = None;
-    reg
-}
-
-/// The same game with the search switched off: a crew who can see a hex sees
-/// what is standing on it, exactly as she did before detection rolls existed.
-///
-/// The twin of [`registry_wireless`] and there for the same reason. A stage
-/// that puts two crews in plain sight in order to test shells, or a dismount
-/// reflex, or whether a binding order is obeyed, must not also be a test of
-/// whether anybody happened to *find* anybody on the tick it was set up —
-/// and at the base mod's numbers a target seven hexes off an eight-hex reach
-/// is found in about three ticks rather than instantly. Detection has tests
-/// of its own; `detection_certain_percent` at 100 is its neutral value, so
-/// this is the absence of the rule rather than a gentle version of it.
-fn seen(mut reg: DataRegistry) -> DataRegistry {
-    reg.balance.detection_certain_percent = 100;
-    reg
-}
+mod common;
+use common::{registry, registry_wireless, seen};
 
 /// Close every side's planning and play the round out.
 fn play_round(reg: &DataRegistry, state: &mut BattleState) -> Vec<BattleEvent> {

@@ -8,22 +8,13 @@
 //! fired costs exactly one round.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{BattleState, Order, OrderError, UnitId};
-use tactics_core::data::{AmmoClass, AmmoDef, DataRegistry, ValidationReport};
+use tactics_core::data::{AmmoClass, AmmoDef, ValidationReport};
 use tactics_core::save::SaveGame;
 
-fn registry() -> DataRegistry {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
-    let (registry, report) = DataRegistry::load_dir(&root).expect("mods load");
-    assert!(
-        report.is_ok(),
-        "base mod must validate: {:?}",
-        report.errors
-    );
-    registry
-}
+mod common;
+use common::registry;
 
 /// The first unit of `vehicle` in a freshly set-up `river_crossing`.
 fn a(state: &BattleState, vehicle: &str) -> UnitId {

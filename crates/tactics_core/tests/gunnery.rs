@@ -14,7 +14,6 @@
 //! existed, so the pins here come in pairs wherever that is checkable: what
 //! the term does, and that zeroing it in data does nothing at all.
 
-use std::path::PathBuf;
 use tactics_core::battle::{
     BattleState, MAX_HIT, MIN_HIT, Order, SideState, UnitId, hit_breakdown, hit_chance,
 };
@@ -22,16 +21,8 @@ use tactics_core::data::{DataRegistry, WeaponDef};
 use tactics_core::map::{Facing, HexMap, MapFile, UnitPlacement};
 use tactics_core::roster::Roster;
 
-fn registry() -> DataRegistry {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
-    let (registry, report) = DataRegistry::load_dir(&root).expect("mods load");
-    assert!(
-        report.is_ok(),
-        "base mod must validate: {:?}",
-        report.errors
-    );
-    registry
-}
+mod common;
+use common::registry;
 
 /// A strip of open grass with one vehicle at each end, `dist` hexes apart.
 ///

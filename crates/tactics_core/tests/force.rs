@@ -5,20 +5,11 @@
 //! A failure means either the picker changed or somebody re-priced a chassis,
 //! and the assertions are written to say which.
 
-use std::path::PathBuf;
 use tactics_core::data::DataRegistry;
 use tactics_core::force::{self, Role};
 
-fn registry() -> DataRegistry {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
-    let (registry, report) = DataRegistry::load_dir(&root).expect("mods load");
-    assert!(
-        report.is_ok(),
-        "base mod must validate: {:?}",
-        report.errors
-    );
-    registry
-}
+mod common;
+use common::registry;
 
 fn role(reg: &DataRegistry, id: &str) -> Role {
     force::role_of(reg, reg.vehicle(id).unwrap_or_else(|| panic!("{id}")))
