@@ -1598,6 +1598,12 @@ rule they defend (`unspotted_enemies_still_ambush`).
   systems in the game crate. A `Shot` struct may still be a good idea when
   penetration adds parameters to `hit_chance`/`raw_damage`, but it is a
   readability choice, not a lint fix.
-- `crates/game/src/battle.rs` is ~1500 lines and `overworld.rs` ~1060. Not
-  urgent, but they are the two files that will absorb the prep phase, objectives
-  and menus work, and they are already the hardest to navigate.
+- `crates/game/src/battle.rs` is ~3500 lines and `overworld.rs` ~2200 — this
+  note said 1500 and 1060 for a long time and had simply stopped being true.
+  They are the two files that absorb the prep phase, objectives and menus
+  work. The seam that has already been taken is the one to keep taking:
+  `battle/panel.rs` holds the ~600 lines of formatters that are pure over a
+  `BattleState` and touch no Bevy, `overworld::roster_page` is the same move,
+  and **"does it hold a Bevy type" is the line to draw** — a panel whose text
+  is written between a `Query` and a `Commands` is read by nobody who is not
+  already debugging the renderer. Tracked in [STRUCTURE.md](STRUCTURE.md).

@@ -1,4 +1,54 @@
 //! End-to-end tests against the real `assets/mods` content.
+//!
+//! Sectioned by subject. The sections used to be named after the chunk of
+//! work that produced them — "chunk 9b", "chunk 10c, second slice" — which
+//! is a changelog rather than an index: meaningful to whoever was there and
+//! to nobody else, and it left the first 1,400 lines with no headings at all.
+//! Grep a title below to land in its section.
+//!
+//! - content, the scale contract and validation
+//! - the resolved grids: one answer, computed once
+//! - fog of war and cached vision
+//! - detection: looking is not seeing
+//! - the goal chooser reads the road
+//! - line of sight, elevation and terrain
+//! - determinism, and a battle fought to the end
+//! - the overworld
+//! - gunnery previews: the arithmetic a player is shown
+//! - campaign missions: orders that outlive the map
+//! - defiance: what a crew does instead
+//! - goals: an intention that outlives a round
+//! - missions steering units
+//! - contact and order latency
+//! - the command picture
+//! - commander loss and succession
+//! - the net is two media
+//! - orders wait instead of dying
+//! - mission sequences
+//! - seeing the net
+//! - who is entitled to hear what
+//! - the battle drill
+//! - latitude: an order the crew may not set aside
+//! - fighting as one: the formation acts together
+//! - movement to contact versus the deliberate attack
+//! - radios as hardware
+//! - the commander's pulse
+//! - detachment: a personal order outranks the standing mission
+//! - base of fire
+//! - the crew's clock
+//! - the crew's loop: the mid-round drill
+//! - the penetration gate
+//! - the outcome engine: no hit points
+//! - soft targets and hidden ones
+//! - the ride: boarding, carrying, dismounting
+//! - the chain of command under adversarial load
+//! - shells in flight
+//! - what an order promises
+//! - wounds with teeth
+//!
+//! Shared setup — `registry()`, `registry_wireless()`, `seen()` — lives in
+//! `tests/common/mod.rs`, because two of those are mandatory for any staged
+//! test that needs a game without command rules or two crews in plain sight.
 
 use tactics_core::ai::{
     AiConfig, AiDriver, AiPlanner, Evaluator, UtilityPlanner, make_battle_planner,
@@ -28,6 +78,8 @@ fn play_round(reg: &DataRegistry, state: &mut BattleState) -> Vec<BattleEvent> {
     events.extend(state.resolve_round(reg));
     events
 }
+
+// --- content, the scale contract and validation ----------------------------
 
 #[test]
 fn base_mod_loads_and_validates() {
@@ -219,6 +271,8 @@ fn an_unknown_doctrine_is_a_validation_error() {
     );
 }
 
+// --- the resolved grids: one answer, computed once -------------------------
+
 #[test]
 fn the_sight_grid_answers_exactly_what_the_reference_does() {
     // The grid exists only to stop line of sight re-deriving tile heights
@@ -340,6 +394,8 @@ fn a_move_grid_folded_in_a_region_at_a_time_is_the_grid_of_the_whole_map() {
     assert!(checked > 5_000, "sampled too little of the map: {checked}");
 }
 
+// --- fog of war and cached vision ------------------------------------------
+
 #[test]
 fn cached_vision_is_the_same_answer_as_computing_it_fresh() {
     // Vision is cached per unit against (position, range) because the map
@@ -388,6 +444,8 @@ fn fog_hides_unseen_enemies() {
         "player should not start with every enemy spotted"
     );
 }
+
+// --- detection: looking is not seeing --------------------------------------
 
 /// A registry whose spotting is a search rather than a certainty, with the
 /// base mod's own tuning taken out of the way.
@@ -588,6 +646,8 @@ fn nobody_searches_for_what_is_plainly_in_front_of_her() {
         "the same crew at the limit of the same reach has to be found"
     );
 }
+
+// --- the goal chooser reads the road ---------------------------------------
 
 /// A doctrine with one field changed, so a test about the goal chooser's
 /// terms can hold every other appetite still.
@@ -816,6 +876,8 @@ fn ground_the_enemy_reaches_first_is_worth_less_marching_for() {
     );
 }
 
+// --- line of sight, elevation and terrain ----------------------------------
+
 #[test]
 fn elevation_blocks_and_grants_line_of_sight() {
     let reg = registry();
@@ -926,6 +988,8 @@ fn movement_respects_water_and_reaches_bridge() {
         assert_ne!(tile.terrain, "water", "tracked vehicles cannot enter water");
     }
 }
+
+// --- determinism, and a battle fought to the end ---------------------------
 
 #[test]
 fn battle_resolution_is_deterministic_per_seed() {
@@ -1160,6 +1224,8 @@ fn mcts_planner_produces_legal_orders() {
     );
 }
 
+// --- the overworld ---------------------------------------------------------
+
 #[test]
 fn overworld_income_capture_and_battle_trigger() {
     let reg = registry();
@@ -1307,6 +1373,8 @@ fn battle_results_are_returned_to_each_army() {
     );
 }
 
+// --- gunnery previews: the arithmetic a player is shown --------------------
+
 #[test]
 fn hit_breakdown_explains_the_same_number_hit_chance_returns() {
     let reg = registry();
@@ -1419,7 +1487,7 @@ fn overworld_ai_moves_armies() {
     assert!(moved > 0, "overworld AI should move at least one army");
 }
 
-// --- campaign missions (chunk 8 of chain of command) -----------------------
+// --- campaign missions: orders that outlive the map ------------------------
 
 /// The campaign under a stated radio net. The base mod's own figure is four
 /// overworld hexes; these tests state their own so that what they are about is
@@ -4615,7 +4683,7 @@ fn a_breaking_crew_refuses_to_advance_and_says_so() {
     );
 }
 
-// --- defiance: what a crew does instead (direction step 4, tax 2) -----------
+// --- defiance: what a crew does instead ------------------------------------
 
 /// Force one response for every crew, so a test about what flight *does* is
 /// not also a test about who reaches for it. `base` outranks the `core` term
@@ -5010,7 +5078,7 @@ fn a_side_that_sees_clearly_is_untouched_by_the_blur() {
     assert_eq!(sharp, orders_from(5));
 }
 
-// --- goals: an intention that outlives a round --------------------------
+// --- goals: an intention that outlives a round -----------------------------
 
 #[test]
 fn a_crew_keeps_the_goal_she_chose_until_it_is_finished() {
@@ -5230,7 +5298,7 @@ fn a_gentle_mod_has_girls_who_never_refuse() {
     );
 }
 
-// --- missions steering units (chunk 2 of chain of command) -----------------
+// --- missions steering units -----------------------------------------------
 
 /// A sharp-eyed utility planner for one side, for tests that assert where
 /// units choose to go: difficulty 5 is zero scoring noise, so the assertion
@@ -5879,7 +5947,7 @@ fn a_devolved_commander_issues_no_ground_missions() {
     );
 }
 
-// --- contact and order latency (chunk 4 of chain of command) ----------------
+// --- contact and order latency ---------------------------------------------
 
 /// Take the radio sets out of every vehicle, so a test that engineers a net
 /// with `command_rules(radius, ..)` is testing the radius it wrote rather
@@ -6411,7 +6479,7 @@ fn contact_lost_is_said_once_and_restored_out_loud() {
     );
 }
 
-// --- the command picture (chunk 5) -----------------------------------------
+// --- the command picture ---------------------------------------------------
 
 /// A long open road: a leader in the west, her scout far to the east with an
 /// enemy recon car beyond — inside the scout's eyes, outside everybody's
@@ -6553,7 +6621,7 @@ fn a_contact_no_longer_seen_goes_stale_not_absent() {
     );
 }
 
-// --- commander loss (chunk 6) ----------------------------------------------
+// --- commander loss and succession -----------------------------------------
 
 /// A battle on a map written out in the test, so a chain of command and the
 /// stakes a scenario places on it can be declared in one place and read in
@@ -6978,7 +7046,7 @@ fn a_loss_condition_must_name_a_formation_of_its_own_side() {
     );
 }
 
-// --- the net is two media (chunk 9a) ---------------------------------------
+// --- the net is two media --------------------------------------------------
 
 /// Two side-0 formations on a road: Alpha's leader far west, her one member
 /// far east beyond any radio — but two hexes from Bravo's leader, who is on
@@ -7077,7 +7145,7 @@ fn a_flag_carries_between_formations_where_no_radio_does() {
     );
 }
 
-// --- orders wait instead of dying (chunk 9b) --------------------------------
+// --- orders wait instead of dying ------------------------------------------
 
 /// A leader and one crew on an open road, with an enemy parked far enough
 /// east to be nobody's business. Under a two-hex radio with nobody relaying,
@@ -7427,7 +7495,7 @@ fn a_radioed_order_to_a_girl_on_the_net_is_just_an_order() {
     assert!(deaf.command.waiting().is_empty(), "and nothing was queued");
 }
 
-// --- mission sequences (chunk 9c) ------------------------------------------
+// --- mission sequences -----------------------------------------------------
 
 #[test]
 fn a_plan_advances_when_its_first_leg_is_done() {
@@ -7633,7 +7701,7 @@ fn an_amendment_travels_the_wire_like_any_order() {
     assert!(f.plan.is_empty(), "the countermand replaced the whole plan");
 }
 
-// --- seeing the net (chunk 9d) ----------------------------------------------
+// --- seeing the net --------------------------------------------------------
 
 #[test]
 fn the_ring_the_screen_draws_is_the_edge_the_engine_walks() {
@@ -8011,7 +8079,7 @@ fn an_event_about_nobody_is_not_silently_swallowed() {
     assert!(orphan.heard_by(&state, 0) && orphan.heard_by(&state, 1));
 }
 
-// --- the battle drill (chunk 10 opening move) ------------------------------
+// --- the battle drill ------------------------------------------------------
 
 /// Open grass with a forest stand to the west: her, unordered and outside
 /// any formation, and a gun tank well inside range to the east.
@@ -8343,7 +8411,7 @@ fn an_order_about_her_gun_says_nothing_about_her_march() {
     );
 }
 
-// --- fighting as one (chunk 10d) -------------------------------------------
+// --- fighting as one: the formation acts together --------------------------
 
 #[test]
 fn a_formation_keeps_its_interval_and_its_sight_lines() {
@@ -8882,7 +8950,7 @@ fn an_assault_presses_through_what_an_advance_pauses_for() {
     );
 }
 
-// --- radios as hardware (chunk 10a) ----------------------------------------
+// --- radios as hardware ----------------------------------------------------
 
 /// A leader with a transceiver and a wing with a receive-only set, ten hexes
 /// out — far beyond any flag, well inside the set — with an enemy scout
@@ -9014,7 +9082,7 @@ fn a_hill_masks_the_radio_and_a_forest_does_not() {
     );
 }
 
-// --- the commander's pulse (chunk 10b) -------------------------------------
+// --- the commander's pulse -------------------------------------------------
 
 /// Drive one planning round for a command side and count what it assigned.
 fn pulse_round(reg: &DataRegistry, state: &mut BattleState, ai: &mut AiDriver) -> usize {
@@ -9273,7 +9341,7 @@ fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
     );
 }
 
-// --- base of fire (chunk 10b slice 2) ---------------------------------------
+// --- base of fire ----------------------------------------------------------
 
 #[test]
 fn a_fires_formation_stands_base_of_fire_for_the_assault() {
@@ -9518,7 +9586,7 @@ fn a_plan_may_end_in_support_but_not_continue_past_it() {
     );
 }
 
-// --- the crew's clock (chunk 10c, first slice) -----------------------------
+// --- the crew's clock ------------------------------------------------------
 
 /// One watcher on overwatch and one enemy who will walk out from behind a
 /// forest wall mid-round. `gap` is how far from the wall the watcher stands.
@@ -9650,7 +9718,7 @@ fn a_target_watched_across_rounds_is_not_news_twice() {
     );
 }
 
-// --- the crew's loop (chunk 10c, second slice: the mid-round drill) --------
+// --- the crew's loop: the mid-round drill ----------------------------------
 
 /// Pull the 75's teeth without pulling its threat: one point of effect
 /// budget still prices the shot above zero — she is being shot at by
@@ -9891,7 +9959,7 @@ fn a_mod_that_prices_no_reactions_gets_the_drill_at_the_next_tick() {
     );
 }
 
-// --- the penetration gate (ballistics B1) ----------------------------------
+// --- the penetration gate --------------------------------------------------
 
 /// A recon car's machine gun and a heavy tank, adjacent on open grass. The
 /// oldest complaint in the balance tables, staged.
@@ -10166,7 +10234,7 @@ fn a_mod_without_ammunition_still_fights_with_its_guns_own_numbers() {
     }
 }
 
-// --- the outcome engine (ballistics B2): no hit points -----------------------
+// --- the outcome engine: no hit points -------------------------------------
 
 #[test]
 fn a_penetration_names_the_girl_it_hurt() {
@@ -10480,7 +10548,7 @@ fn an_emptied_rack_is_harder_to_torch() {
     assert!(!torch(&reg, true, 408), "empty racks cannot");
 }
 
-// --- soft targets and hidden ones (infantry N1) ----------------------------
+// --- soft targets and hidden ones ------------------------------------------
 
 #[test]
 fn a_platoon_in_the_trees_is_invisible_until_the_scout_closes() {
@@ -10748,7 +10816,7 @@ fn an_unseen_crew_holds_her_rockets_for_the_killing_shot() {
     );
 }
 
-// --- the ride (infantry N2) ------------------------------------------------
+// --- the ride: boarding, carrying, dismounting -----------------------------
 
 /// A taxi, her platoon beside her, and an enemy across the field. Which
 /// enemy matters: a recon car can watch the whole exercise and hurt none
@@ -12431,7 +12499,7 @@ fn a_personal_march_carries_across_rounds_and_ends_in_a_hold() {
     );
 }
 
-// --- shells in flight (ballistics B3) ---------------------------------------
+// --- shells in flight ------------------------------------------------------
 
 /// A battery west, a target east, and nothing but grass between them.
 ///
@@ -12967,7 +13035,7 @@ fn a_mod_without_ammunition_keeps_instant_artillery() {
     );
 }
 
-// --- what an order promises (direction step 2) ------------------------------
+// --- what an order promises ------------------------------------------------
 
 /// Every order the player can give says what it commits her to, and no two
 /// of them say the same thing.
@@ -13042,7 +13110,7 @@ fn insisting_on_a_march_promises_something_an_ordinary_one_does_not() {
     assert!(!Latitude::Binding.promise().is_empty());
 }
 
-// --- wounds with teeth (direction step 3) -----------------------------------
+// --- wounds with teeth -----------------------------------------------------
 
 /// One medium tank per side on open ground, crewed by name, so a wound
 /// carried in from a previous battle has somewhere to show.

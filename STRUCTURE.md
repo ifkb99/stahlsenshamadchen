@@ -288,7 +288,29 @@ declares which phase it belongs to rather than being dropped into a list.
 
 ---
 
-## 7. Two files are large in a way that has an obvious seam
+## 7. ~~Two files are large in a way that has an obvious seam~~
+
+**Fixed 2026-08-26.**
+
+- **`battle.rs` 4,121 → 3,500 lines.** The pure formatters moved to
+  `battle/panel.rs` (668 lines): twelve functions plus `MISSION_KEYS`, which is
+  the keys-to-promises join and belongs beside `order_menu` rather than in a
+  module of ECS systems. `every_mission_key_has_a_promise` moved with them.
+  Nothing in the new file touches Bevy — that is the line the split was drawn
+  on, and it is why `set_portrait` (takes a `Query`), `shown_to` (about
+  drawing) and `aim_at` (closer to input) stayed behind.
+- **`engine.rs` re-sectioned by subject.** 25 headers lost their chunk labels,
+  9 new ones went into the 1,400 unlabelled lines at the top, and the module
+  doc now carries a contents list of all 39 — titles rather than line numbers,
+  so it cannot rot. Verified by diffing `--list` output before and after:
+  byte-identical, so no test moved out of the run.
+
+What is **not** done: `engine.rs` is still 13,000 lines in one binary. Splitting
+it into several is now much cheaper than it was, because `tests/common/`
+exists (item 4) and a new binary inherits the stage-setup contract by
+importing it. That is a separate, larger job.
+
+<details><summary>The original finding</summary>
 
 - **`crates/game/src/battle.rs`, 4,121 lines.** Roughly 700 of them are
   `format_*` / `describe_*` functions that are pure over `&BattleState` and
@@ -308,6 +330,8 @@ declares which phase it belongs to rather than being dropped into a list.
   nothing and outlives the arcs that produced it.
 
 Neither is urgent. Both get worse monotonically.
+
+</details>
 
 ---
 
