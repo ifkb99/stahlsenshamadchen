@@ -1195,7 +1195,7 @@ fn pump_events(
     // the electronic-warfare future, not a freebie. Fighting events (shots,
     // spots, wrecks) stay side-blind exactly as before.
     let view_side = battle.view_side();
-    drained.retain(|event| heard_by(&battle.state, view_side, event));
+    drained.retain(|event| event.heard_by(&battle.state, view_side));
     if drained.is_empty() {
         return;
     }
@@ -1751,38 +1751,6 @@ fn spawn_puff(commands: &mut Commands, at: Hex, rotation: u32, center: Hex, colo
 /// player a beat of not being able to give orders. One `SetOut` a unit put
 /// nine of them in front of every planning phase, and the symptom was the
 /// infantry tour clicking on a game that was not listening.
-fn heard_by(state: &BattleState, side: u8, event: &BattleEvent) -> bool {
-    let own_formation = |formation: &str| {
-        state
-            .formations()
-            .iter()
-            .find(|f| f.id == formation)
-            .is_none_or(|f| f.side == side)
-    };
-    let own_unit = |unit: &UnitId| state.units.get(unit.index()).is_none_or(|u| u.side == side);
-    match event {
-        BattleEvent::MissionAssigned { formation, .. }
-        | BattleEvent::MissionReceived { formation, .. }
-        | BattleEvent::MissionCompleted { formation, .. }
-        | BattleEvent::CommandPassed { formation, .. } => own_formation(formation),
-        BattleEvent::OutOfContact { unit }
-        | BattleEvent::ContactRestored { unit }
-        | BattleEvent::OrdersWaiting { unit }
-        | BattleEvent::OrdersDelivered { unit }
-        | BattleEvent::TookCover { unit, .. }
-        | BattleEvent::SetOut { unit, .. }
-        | BattleEvent::ContactReported { by: unit, .. } => own_unit(unit),
-        // How much ammunition the enemy has left is her quartermaster's
-        // secret, not something the sound of her gun gives away — and what
-        // is broken or bleeding inside her hull even more so. A brew-up or
-        // a bail-out, by contrast, is visible across the battlefield.
-        BattleEvent::WeaponDry { unit, .. }
-        | BattleEvent::CrewHit { unit, .. }
-        | BattleEvent::ModuleHit { unit, .. } => own_unit(unit),
-        _ => true,
-    }
-}
-
 fn drive_ai(mods: Res<Mods>, mut battle: ResMut<Battle>, movers: Query<&Mover>) {
     if battle.state.is_over() || !battle.anim.is_empty() || !movers.is_empty() {
         return;
@@ -1809,7 +1777,7 @@ fn drive_ai(mods: Res<Mods>, mut battle: ResMut<Battle>, movers: Query<&Mover>) 
                 decision
                     .events
                     .into_iter()
-                    .filter(|e| heard_by(&battle.state, side, e)),
+                    .filter(|e| e.heard_by(&battle.state, side)),
             );
         }
     }

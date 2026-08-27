@@ -7680,6 +7680,245 @@ fn the_ring_the_screen_draws_is_the_edge_the_engine_walks() {
     assert_eq!(state.radio_reach(&reg, leader), None);
 }
 
+// --- who is entitled to hear what -------------------------------------------
+//
+// `Event::heard_by` spent its life in the game crate, where none of these
+// could reach it: the presentation layer is not linked into the engine's test
+// binaries, so the one rule deciding what the enemy is allowed to overhear was
+// the only rule in the battle with no test at all.
+
+/// Fighting happens in the open, and both sides fight the same battle.
+///
+/// Whether the *unit* can be seen is the fog's question and has already been
+/// asked by the time an event exists. This is the other half of the rule, and
+/// it is the half that must stay permissive: an over-tight audience here would
+/// silently drop shots and wrecks out of the log, which reads as the game
+/// freezing rather than as a fog rule working.
+#[test]
+fn what_happens_in_the_open_is_heard_by_both_sides() {
+    let reg = registry();
+    let state = two_side_battle(
+        &reg,
+        &["gggggfggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "West"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+        7,
+    );
+    let west = state.units[0].id;
+
+    for event in [
+        BattleEvent::RoundStarted { round: 1 },
+        BattleEvent::TickStarted { tick: 0 },
+        BattleEvent::BrewedUp { unit: west },
+        BattleEvent::Abandoned { unit: west },
+        BattleEvent::UnitDestroyed {
+            unit: west,
+            at: state.units[0].pos,
+        },
+        BattleEvent::ObjectiveTaken {
+            objective: "bridge".into(),
+            side: Some(0),
+            at: state.units[0].pos,
+        },
+    ] {
+        assert!(
+            event.heard_by(&state, 0) && event.heard_by(&state, 1),
+            "{event:?} happens in the open and belongs to nobody's net"
+        );
+    }
+}
+
+/// What is inside her hull, and what her radio is doing, is hers.
+///
+/// How much ammunition she has left is her quartermaster's secret rather than
+/// something the sound of her gun gives away, and what is broken or bleeding
+/// in there even more so.
+#[test]
+fn a_crews_own_net_is_not_read_out_to_the_enemy() {
+    let reg = registry();
+    let state = two_side_battle(
+        &reg,
+        &["gggggfggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "West"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+        7,
+    );
+    let west = state.units[0].id;
+    assert_eq!(state.units[0].side, 0, "the stage puts West on side 0");
+
+    for event in [
+        BattleEvent::WeaponDry {
+            unit: west,
+            weapon: "gun_75".into(),
+        },
+        BattleEvent::ModuleHit {
+            unit: west,
+            module: "optics".into(),
+            destroyed: true,
+        },
+        BattleEvent::OutOfContact { unit: west },
+        BattleEvent::OrdersWaiting { unit: west },
+        BattleEvent::OrdersDelivered { unit: west },
+        BattleEvent::ContactRestored { unit: west },
+        BattleEvent::TookCover {
+            unit: west,
+            at: state.units[0].pos,
+        },
+    ] {
+        assert!(
+            event.heard_by(&state, 0),
+            "{event:?} is her own side's business and hers to hear"
+        );
+        assert!(
+            !event.heard_by(&state, 1),
+            "{event:?} is on her net and the enemy is not on it"
+        );
+    }
+}
+
+/// A spot report belongs to the crew who made it, not to the crew reported.
+///
+/// The unit being reported is by definition the other side's, so reading
+/// `unit` here instead of `by` would invert the rule and hand every contact
+/// report straight to the side being looked at.
+#[test]
+fn a_contact_report_belongs_to_the_crew_who_made_it() {
+    let reg = registry();
+    let state = two_side_battle(
+        &reg,
+        &["gggggfggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "West"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+        7,
+    );
+    let west = state.units[0].id;
+    let east = state.units[1].id;
+    let report = BattleEvent::ContactReported {
+        unit: east,
+        by: west,
+        at: state.units[1].pos,
+    };
+    assert!(report.heard_by(&state, 0), "West reported it");
+    assert!(
+        !report.heard_by(&state, 1),
+        "East does not get told she has been seen"
+    );
+}
+
+/// A formation's orders are its own side's business.
+///
+/// Assigned, received, completed, and who is commanding it now: four events
+/// keyed by formation rather than by unit, so they need the other half of the
+/// lookup and would go side-blind if that half were dropped.
+#[test]
+fn a_formations_orders_are_not_overheard_by_the_enemy() {
+    let reg = registry_wireless();
+    let file = reg.map("river_crossing").expect("shipped battle map");
+    let map = HexMap::from_map_file(file).expect("map parses");
+    let placement = |col: i32, side: u8, formation: &str, leads: bool| UnitPlacement {
+        aboard_at: None,
+        at: [col, 20],
+        side,
+        vehicle: "medium_tank".into(),
+        crew: Vec::new(),
+        name: Some(format!("{formation}-{col}")),
+        facing: None,
+        formation: Some(formation.into()),
+        leads,
+    };
+    let placements = vec![
+        placement(10, 0, "kuhlmann_armor", true),
+        placement(11, 0, "kuhlmann_armor", false),
+        placement(30, 1, "valkyrie_line", true),
+    ];
+    let sides = vec![
+        SideState {
+            name: "Kuhlmann".into(),
+            ai: None,
+        },
+        SideState {
+            name: "Valkyries".into(),
+            ai: None,
+        },
+    ];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(&reg, &placements);
+    let state = BattleState::from_placements(
+        &reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        1,
+    );
+
+    let mission = Mission::Hold {
+        at: Some(state.units[0].pos),
+    };
+    for event in [
+        BattleEvent::MissionAssigned {
+            formation: "kuhlmann_armor".into(),
+            mission: mission.clone(),
+        },
+        BattleEvent::MissionReceived {
+            formation: "kuhlmann_armor".into(),
+            mission: mission.clone(),
+        },
+        BattleEvent::MissionCompleted {
+            formation: "kuhlmann_armor".into(),
+            mission: mission.clone(),
+        },
+        BattleEvent::CommandPassed {
+            formation: "kuhlmann_armor".into(),
+            from: state.units[0].id,
+            to: state.units[1].id,
+        },
+    ] {
+        assert!(event.heard_by(&state, 0), "{event:?} is Kuhlmann's traffic");
+        assert!(
+            !event.heard_by(&state, 1),
+            "{event:?} is Kuhlmann's traffic and the Valkyries are not on that net"
+        );
+    }
+}
+
+/// An event naming a unit this battle has never heard of is heard by
+/// everybody.
+///
+/// The safe direction for a stray: saying too much in a log is a bug somebody
+/// notices and reports, and silently swallowing events because a lookup missed
+/// is a bug that looks like the game having stopped.
+#[test]
+fn an_event_about_nobody_is_not_silently_swallowed() {
+    let reg = registry();
+    let state = two_side_battle(
+        &reg,
+        &["gggggfggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "West"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+        7,
+    );
+    let nobody = UnitId(9999);
+    let event = BattleEvent::OutOfContact { unit: nobody };
+    assert!(event.heard_by(&state, 0) && event.heard_by(&state, 1));
+
+    let orphan = BattleEvent::MissionAssigned {
+        formation: "no_such_formation".into(),
+        mission: Mission::Hold {
+            at: Some(state.units[0].pos),
+        },
+    };
+    assert!(orphan.heard_by(&state, 0) && orphan.heard_by(&state, 1));
+}
+
 // --- the battle drill (chunk 10 opening move) ------------------------------
 
 /// Open grass with a forest stand to the west: her, unordered and outside

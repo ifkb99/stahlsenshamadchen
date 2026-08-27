@@ -490,6 +490,116 @@ pub enum Event {
     },
 }
 
+impl Event {
+    /// Whether `side` is entitled to know this happened.
+    ///
+    /// **This is a rule about knowledge, not about presentation**, which is
+    /// why it lives here beside the events rather than in whichever screen
+    /// happens to be drawing them. Two divisions run through it:
+    ///
+    /// - **Fighting is side-blind.** A shot, a spot, a wreck, a brew-up, a
+    ///   crew baling out — anybody on the field can see those, and the fog
+    ///   already decides whether a given unit is visible at all. Nothing here
+    ///   needs to re-ask that question.
+    /// - **Command traffic is a side's own business.** Orders, contact
+    ///   troubles, the radio queue, where a crew has decided to go, and what
+    ///   is broken or bleeding inside her hull are all on her own net.
+    ///   Listening to the enemy's is the electronic-warfare future, not a
+    ///   freebie.
+    ///
+    /// **The match is exhaustive on purpose.** A catch-all would give every
+    /// event added tomorrow an audience by default instead of by decision,
+    /// and that is not hypothetical: three variants rode a `_ => true` for
+    /// months, two of which were printing an enemy crew's morale rung into
+    /// the player's log. A new event should fail to compile until somebody
+    /// has said who hears it — the same bargain `Mission::slot` makes.
+    ///
+    /// It has **two callers that must not drift**, and the second is not
+    /// tidiness: the log filters with this after draining, and the game's AI
+    /// driver filters with it *before queueing*, because planning events go
+    /// through the same paced animation queue as combat and an event nobody
+    /// will print still costs the player a beat of not being able to give
+    /// orders.
+    ///
+    /// An id this battle does not know is heard by everybody. That is the
+    /// safe direction for a stray event: saying too much in a log is a bug,
+    /// and silently dropping an event because a lookup missed is a bug that
+    /// looks like the game freezing.
+    pub fn heard_by(&self, state: &BattleState, side: u8) -> bool {
+        let own_formation = |formation: &str| {
+            state
+                .formations()
+                .iter()
+                .find(|f| f.id == formation)
+                .is_none_or(|f| f.side == side)
+        };
+        let own_unit = |unit: &UnitId| state.units.get(unit.index()).is_none_or(|u| u.side == side);
+        match self {
+            // The clock, and the end of it. Both sides fight the same battle.
+            Event::RoundStarted { .. } | Event::TickStarted { .. } | Event::BattleEnded { .. } => {
+                true
+            }
+
+            // Things that happen in the open. Whether the *unit* can be seen
+            // is the fog's question and it has already been asked; a crew
+            // driving, bogging down, shooting, being hit, burning, baling
+            // out, mounting, dismounting, dying or driving off the board is
+            // not a secret from anybody who can see her.
+            Event::UnitMoved { .. }
+            | Event::UnitTrapped { .. }
+            | Event::ShotFired { .. }
+            | Event::ShellLanded { .. }
+            | Event::ShotHit { .. }
+            | Event::ShotBounced { .. }
+            | Event::ShotStrayed { .. }
+            | Event::ShotMissed { .. }
+            | Event::BrewedUp { .. }
+            | Event::Abandoned { .. }
+            | Event::Mounted { .. }
+            | Event::Dismounted { .. }
+            | Event::UnitDestroyed { .. }
+            | Event::UnitExited { .. } => true,
+
+            // Who holds the bridge is not a secret from the side that does
+            // not: an objective changing hands is a fact about the ground.
+            Event::ObjectiveTaken { .. } => true,
+
+            // Her formation's net: what it was told, what it heard, what it
+            // finished, and who is commanding it now.
+            Event::MissionAssigned { formation, .. }
+            | Event::MissionReceived { formation, .. }
+            | Event::MissionCompleted { formation, .. }
+            | Event::CommandPassed { formation, .. } => own_formation(formation),
+
+            // Her own net, and her own hull. How much ammunition she has
+            // left is her quartermaster's secret, not something the sound of
+            // her gun gives away; what is broken or bleeding inside her even
+            // more so. Where she has decided to go and whether her radio is
+            // working are the same kind of fact.
+            Event::TookCover { unit, .. }
+            | Event::WeaponDry { unit, .. }
+            | Event::CrewHit { unit, .. }
+            | Event::ModuleHit { unit, .. }
+            | Event::SetOut { unit, .. }
+            | Event::OutOfContact { unit }
+            | Event::OrdersWaiting { unit }
+            | Event::OrdersDelivered { unit }
+            | Event::ContactRestored { unit } => own_unit(unit),
+
+            // A spot report belongs to whoever made it. `by` and not `unit`:
+            // the interesting party is the crew doing the reporting, and the
+            // unit being reported is by definition the other side's.
+            Event::ContactReported { by, .. } => own_unit(by),
+
+            // Riding a `_ => true` until the audience rule moved here. Kept
+            // at today's answer in this commit deliberately, so that moving
+            // the rule and changing it are two separate things to review.
+            // See STRUCTURE.md item 1.
+            Event::UnitSpotted { .. } | Event::MoraleChanged { .. } | Event::Defied { .. } => true,
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum OrderError {
     #[error("the battle is over")]
