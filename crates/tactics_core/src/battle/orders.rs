@@ -584,7 +584,17 @@ impl Event {
             | Event::OutOfContact { unit }
             | Event::OrdersWaiting { unit }
             | Event::OrdersDelivered { unit }
-            | Event::ContactRestored { unit } => own_unit(unit),
+            | Event::ContactRestored { unit }
+            // Her nerve is inside the hull with everything else. You can see
+            // her tank reverse out of the line — `UnitMoved` is side-blind
+            // and the sprite does it in front of you — and you may draw your
+            // own conclusion from that; what you cannot do is read the rung
+            // she is standing on. This is the same rule `CrewHit` and
+            // `ModuleHit` already follow, and morale was the lone exception
+            // to it: you could not see inside her tank but you could read her
+            // nerve.
+            | Event::MoraleChanged { unit, .. }
+            | Event::Defied { unit, .. } => own_unit(unit),
 
             // A spot report belongs to whoever made it. `by` and not `unit`:
             // the interesting party is the crew doing the reporting, and the
@@ -604,11 +614,6 @@ impl Event {
             // battle with reinforcing neighbours makes reachable in play.
             Event::UnitSpotted { by_side, .. } => *by_side == side,
 
-            // Riding a `_ => true` until the audience rule moved here. Kept
-            // at today's answer deliberately, so that moving the rule and
-            // changing it are separate things to review. See STRUCTURE.md
-            // item 1.
-            Event::MoraleChanged { .. } | Event::Defied { .. } => true,
         }
     }
 }

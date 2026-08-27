@@ -7811,6 +7811,63 @@ fn a_contact_report_belongs_to_the_crew_who_made_it() {
     );
 }
 
+/// Her nerve is inside the hull with everything else.
+///
+/// You can see her tank reverse out of the line and draw your own conclusion
+/// — `UnitMoved` is side-blind and the sprite does it in front of you — but
+/// you cannot read the rung she is standing on. `CrewHit` and `ModuleHit`
+/// already worked this way; morale was the lone exception, so the player's log
+/// printed "Wotan 3: Breaking — not going forward" about an enemy crew.
+#[test]
+fn an_enemy_crews_nerve_is_not_readable_from_across_the_field() {
+    let reg = registry();
+    let state = two_side_battle(
+        &reg,
+        &["gggggfggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "West"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+        7,
+    );
+    let west = state.units[0].id;
+
+    for event in [
+        BattleEvent::MoraleChanged {
+            unit: west,
+            rung: "breaking".into(),
+            obeys: false,
+        },
+        BattleEvent::Defied {
+            unit: west,
+            rung: "breaking".into(),
+            doing: "reversing out of it".into(),
+            to: Some(state.units[0].pos),
+        },
+    ] {
+        assert!(
+            event.heard_by(&state, 0),
+            "{event:?} is her own commander's to know"
+        );
+        assert!(
+            !event.heard_by(&state, 1),
+            "{event:?} is not readable from the other side of the field"
+        );
+    }
+
+    // ...and the deed still is. A crew reversing out of the line is a thing
+    // that visibly happens, so the enemy is not being denied the *event*, only
+    // the reading of her nerve.
+    let driving_off = BattleEvent::UnitMoved {
+        unit: west,
+        path: vec![state.units[0].pos],
+    };
+    assert!(
+        driving_off.heard_by(&state, 0) && driving_off.heard_by(&state, 1),
+        "the tank reversing is visible to anybody who can see her"
+    );
+}
+
 /// A spot belongs to the side that made it, and being found is not something
 /// the found party is told.
 ///

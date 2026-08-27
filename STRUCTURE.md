@@ -21,7 +21,35 @@ is.
 
 ---
 
-## 1. A knowledge rule lives in the Bevy layer
+## 1. ~~A knowledge rule lives in the Bevy layer~~
+
+**Fixed 2026-08-26**, in three commits, because investigating it turned up two
+behaviour questions the move itself should not have decided.
+
+1. **The move.** `Event::heard_by(&state, side)` now sits beside the event enum
+   in `battle/orders.rs`, exhaustive over all 35 variants — a new event fails
+   to compile until somebody has said who hears it. Every variant kept its
+   existing answer, so the move changed nothing. Six tests it could never have
+   had, with the negative halves being the point; verified by mutation, not by
+   reading.
+2. **`UnitSpotted`.** The finding understated the problem: there were *three*
+   callers, and the third was a different rule. The renderer filtered spots by
+   `sides[by_side].ai.is_none()` — "was the spotter human-controlled" — where
+   `heard_by` asks "was the spotter mine". Those agree at one human side and
+   diverge at two, which `battle.rs`'s own unit tests construct and a
+   reinforced field battle reaches in play. Now `by_side == side`, in one
+   place.
+3. **Morale and defiance.** Both rode the catch-all, so the player's log
+   printed enemy crews' morale rungs. Now own-unit, matching `CrewHit` and
+   `ModuleHit`: you see her tank reverse out of the line and draw your own
+   conclusion; you do not get to read the rung she is standing on.
+
+Only the third is visible in play, and it is deliberately its own commit so it
+can be reverted alone if the quieter log reads wrong. All ten tours pass, the
+determinism snapshot is untouched throughout (it records unfiltered core
+events, so none of this can reach it).
+
+<details><summary>The original finding</summary>
 
 `heard_by` — `crates/game/src/battle.rs:1747`.
 
@@ -46,6 +74,8 @@ reimplementation would be the drift the current note warns about.
 **Fix.** Move it to `battle::` as `BattleEvent::heard_by(&state, side)` and
 let the game crate call it. `shown_to` stays where it is — where to *draw* a
 ghost is genuinely presentation.
+
+</details>
 
 ---
 

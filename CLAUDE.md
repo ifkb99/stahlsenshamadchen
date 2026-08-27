@@ -489,19 +489,45 @@ the script harness and the replay read exactly what they read before.
 
 Two rules hold it together:
 
-- **`heard_by` is the one filter, and it has two callers that must not
-  drift.** The log filters with it after draining; `drive_ai` filters with it
-  *before queueing*. The second is not tidiness: planning events go through
-  the same paced animation queue as combat, and `accepting_orders` is false
-  while that queue has anything in it — so an event nobody will print still
-  costs the player a beat of not being able to give orders. One `SetOut` per
-  unit put nine of them in front of every planning phase, and the symptom was
-  the infantry tour clicking into a game that was not listening. Anything new
-  that emits events during **planning** must go through this.
-- **Command traffic is a side's own business.** Orders, contact troubles, the
-  radio queue and *where a crew has decided to go* are on her own net;
-  fighting events — shots, spots, wrecks, brew-ups — stay side-blind, because
-  anybody on the field can see them.
+- **`Event::heard_by` is the one filter, it lives in core, and its match is
+  exhaustive.** It is a rule about *knowledge*, not about drawing — the same
+  family as `spotted_enemy_at` and `picture()` — so it sits beside the event
+  enum in `battle/orders.rs` where the engine's own tests can reach it. It
+  spent a long time in `crates/game` instead, and everything that went wrong
+  with it follows from that: no test could touch it, `playthrough` printed
+  both sides' secrets, and the claim in this bullet that there was *one*
+  filter was simply false. `UnitSpotted` was being filtered separately in the
+  renderer by a differently-worded question ("was the spotter human-
+  controlled" rather than "was the spotter mine"), which agree at one human
+  side and diverge at two.
+
+  The exhaustiveness is the other half. A `_ => true` gives every event added
+  tomorrow an audience by default rather than by decision, and three variants
+  rode that default for months — two of them printing an enemy crew's morale
+  rung into the player's log. A new variant now fails to compile until
+  somebody has said who hears it, the same bargain `Mission::slot` makes.
+
+  **Two callers, and they must not drift.** The log filters after draining;
+  `drive_ai` filters *before queueing*. The second is not tidiness: planning
+  events go through the same paced animation queue as combat, and
+  `accepting_orders` is false while that queue has anything in it — so an
+  event nobody will print still costs the player a beat of not being able to
+  give orders. One `SetOut` per unit put nine of them in front of every
+  planning phase, and the symptom was the infantry tour clicking into a game
+  that was not listening. Anything new that emits events during **planning**
+  must go through this.
+- **Command traffic is a side's own business, and so is the inside of her
+  hull.** Orders, contact troubles, the radio queue, *where a crew has decided
+  to go*, what is broken or bleeding in there, how much ammunition is left,
+  and **what rung her nerve is on** are all on her own net. Fighting events —
+  shots, wrecks, brew-ups, a tank visibly reversing out of the line — stay
+  side-blind, because anybody on the field can see them. The line is drawn at
+  the deed rather than the reading of it: you watch her withdraw and draw your
+  own conclusion, and `Defied`'s named rung is not yours to have. Morale was
+  the lone exception to this until 2026-08-26 — you could not see inside her
+  tank but you could read her nerve.
+- **A spot belongs to the side that made it.** Being found is not something
+  the found crew is told; she learns it when the shooting starts.
 
 ### Goals: the seam the AI is meant to be replaced at
 
