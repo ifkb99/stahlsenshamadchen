@@ -428,7 +428,8 @@ read at all. This also closes the note left open under item 2.
 `HORIZON`, `DEVOLVED`, `EXIT_URGENCY`. They want a `planner` block of their
 own rather than a home in `balance` — they govern how the AI thinks rather
 than what the rules are, and `--sweep planner.horizon_rounds=2,4,6` is the
-prize. `IMPATIENCE` is already tracked in TODO.
+prize. Written up in [TODO.md](TODO.md) under Misc, beside the rest of the
+evaluator numbers that want to be data, rather than repeated here.
 
 <details><summary>The original finding</summary>
 
