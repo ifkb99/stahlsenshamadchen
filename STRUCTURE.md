@@ -217,7 +217,32 @@ genuinely local to `engine.rs` stay in `engine.rs` — the goal is to make the
 
 ---
 
-## 5. The measurement instrument has no calibration test
+## 5. ~~The measurement instrument has no calibration test~~
+
+**Fixed 2026-08-27.** `tactics_core::harness` holds the machinery whose
+contracts were being claimed in prose — `parallel` (`run_all`, the job-order
+guarantee), `overrides` (the `--set`/`--sweep` patch engine), `arena` (the
+mirrored skill-gap map), `tally` (`Tally::merge`) — and `tests/harness.rs`
+turns each claim into a test. The split is between the parts that have a
+*contract* and the parts that have a *layout*: every table, column and duel
+stayed in the example.
+
+Verified as a pure rearrangement: `balance --sim --games 12` prints
+byte-identical output, 399 lines, before and after. The two tests that matter
+most were mutation-checked — reversing `run_all`'s output and turning
+`deepest_stack` into last-value-wins each fail exactly one test.
+
+**It found a wrong claim immediately.** `Tally::merge`'s doc comment said every
+field must be "a sum, a concatenation or a union of sums" and listed *a
+maximum* among the things that would make printed numbers depend on which core
+finished first. `deepest_stack` has been a maximum all along and is perfectly
+safe — max is associative, which is the actual requirement. The rule was
+stated one notch too tight, and the comment now says associativity, notes that
+commutativity is deliberately *not* required (the sample vectors concatenate,
+which is why job order is guaranteed), and points at the test instead of
+asserting.
+
+<details><summary>The original finding</summary>
 
 `crates/tactics_core/examples/balance.rs` is 4,321 lines. It holds the
 mirrored arena fixture (`arena_map`, `assert_arena_is_mirrored`), the JSON
@@ -241,6 +266,8 @@ small `tools/` crate, and leave the example as argument parsing and printing.
 `Tally::merge`'s summability, the sweep/`mod.json` equivalence and
 `assert_arena_is_mirrored` then become three ordinary tests that run on every
 `cargo test`.
+
+</details>
 
 ---
 
