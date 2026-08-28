@@ -10,7 +10,6 @@
 //! They live apart from `engine.rs` because the thing under test is the data.
 //! A failure here means somebody edited a map, not the simulation.
 
-use std::path::PathBuf;
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{BattleState, Event, Order, SideState};
 use tactics_core::data::{DataRegistry, MovementClass};
@@ -21,16 +20,8 @@ use tactics_core::map::{HexMap, MapKind, UnitPlacement};
 /// test failure rather than a quietly smaller sample.
 const NEW_MAPS: [&str; 2] = ["battle_plains", "battle_forest"];
 
-fn registry() -> DataRegistry {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
-    let (registry, report) = DataRegistry::load_dir(&root).expect("mods load");
-    assert!(
-        report.is_ok(),
-        "base mod must validate: {:?}",
-        report.errors
-    );
-    registry
-}
+mod common;
+use common::registry;
 
 fn planner(
     reg: &DataRegistry,

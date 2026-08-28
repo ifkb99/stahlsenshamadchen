@@ -1,12 +1,61 @@
 //! End-to-end tests against the real `assets/mods` content.
+//!
+//! Sectioned by subject. The sections used to be named after the chunk of
+//! work that produced them — "chunk 9b", "chunk 10c, second slice" — which
+//! is a changelog rather than an index: meaningful to whoever was there and
+//! to nobody else, and it left the first 1,400 lines with no headings at all.
+//! Grep a title below to land in its section.
+//!
+//! - content, the scale contract and validation
+//! - the resolved grids: one answer, computed once
+//! - fog of war and cached vision
+//! - detection: looking is not seeing
+//! - the goal chooser reads the road
+//! - line of sight, elevation and terrain
+//! - determinism, and a battle fought to the end
+//! - the overworld
+//! - gunnery previews: the arithmetic a player is shown
+//! - campaign missions: orders that outlive the map
+//! - defiance: what a crew does instead
+//! - goals: an intention that outlives a round
+//! - missions steering units
+//! - contact and order latency
+//! - the command picture
+//! - commander loss and succession
+//! - the net is two media
+//! - orders wait instead of dying
+//! - mission sequences
+//! - seeing the net
+//! - who is entitled to hear what
+//! - the battle drill
+//! - latitude: an order the crew may not set aside
+//! - fighting as one: the formation acts together
+//! - movement to contact versus the deliberate attack
+//! - radios as hardware
+//! - the commander's pulse
+//! - detachment: a personal order outranks the standing mission
+//! - base of fire
+//! - the crew's clock
+//! - the crew's loop: the mid-round drill
+//! - the penetration gate
+//! - the outcome engine: no hit points
+//! - soft targets and hidden ones
+//! - the ride: boarding, carrying, dismounting
+//! - the chain of command under adversarial load
+//! - shells in flight
+//! - what an order promises
+//! - wounds with teeth
+//!
+//! Shared setup — `registry()`, `registry_wireless()`, `seen()` — lives in
+//! `tests/common/mod.rs`, because two of those are mandatory for any staged
+//! test that needs a game without command rules or two crews in plain sight.
 
-use std::path::PathBuf;
 use tactics_core::ai::{
     AiConfig, AiDriver, AiPlanner, Evaluator, UtilityPlanner, make_battle_planner,
 };
 use tactics_core::battle::{
     BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Latitude, Mission,
-    Order, STALEMATE_ROUNDS, SideState, UnitId, los_clear, reachable,
+    Order, SideState, SightGrid, UnitId, los_clear, reachable,
 };
 use tactics_core::data::{DataRegistry, MovementClass};
 use tactics_core::map::{HexMap, UnitPlacement};
@@ -15,46 +64,8 @@ use tactics_core::overworld::{
     make_overworld_planner,
 };
 
-fn mods_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods")
-}
-
-fn registry() -> DataRegistry {
-    let (registry, report) = DataRegistry::load_dir(&mods_root()).expect("mods load");
-    assert!(
-        report.is_ok(),
-        "base mod must validate: {:?}",
-        report.errors
-    );
-    registry
-}
-
-/// The base game with the radio switched off: command rules stripped, so a
-/// test about missions themselves — what they store, how they steer units,
-/// what the brain issues — is not also a test about latency and radio
-/// radius. The wire has its own tests, and its own zero-coefficient pin
-/// (`a_command_block_with_zero_coefficients_is_the_game_without_one`).
-fn registry_wireless() -> DataRegistry {
-    let mut reg = registry();
-    reg.command = None;
-    reg
-}
-
-/// The same game with the search switched off: a crew who can see a hex sees
-/// what is standing on it, exactly as she did before detection rolls existed.
-///
-/// The twin of [`registry_wireless`] and there for the same reason. A stage
-/// that puts two crews in plain sight in order to test shells, or a dismount
-/// reflex, or whether a binding order is obeyed, must not also be a test of
-/// whether anybody happened to *find* anybody on the tick it was set up —
-/// and at the base mod's numbers a target seven hexes off an eight-hex reach
-/// is found in about three ticks rather than instantly. Detection has tests
-/// of its own; `detection_certain_percent` at 100 is its neutral value, so
-/// this is the absence of the rule rather than a gentle version of it.
-fn seen(mut reg: DataRegistry) -> DataRegistry {
-    reg.balance.detection_certain_percent = 100;
-    reg
-}
+mod common;
+use common::{registry, registry_wireless, seen};
 
 /// Close every side's planning and play the round out.
 fn play_round(reg: &DataRegistry, state: &mut BattleState) -> Vec<BattleEvent> {
@@ -67,6 +78,8 @@ fn play_round(reg: &DataRegistry, state: &mut BattleState) -> Vec<BattleEvent> {
     events.extend(state.resolve_round(reg));
     events
 }
+
+// --- content, the scale contract and validation ----------------------------
 
 #[test]
 fn base_mod_loads_and_validates() {
@@ -258,6 +271,8 @@ fn an_unknown_doctrine_is_a_validation_error() {
     );
 }
 
+// --- the resolved grids: one answer, computed once -------------------------
+
 #[test]
 fn the_sight_grid_answers_exactly_what_the_reference_does() {
     // The grid exists only to stop line of sight re-deriving tile heights
@@ -379,6 +394,8 @@ fn a_move_grid_folded_in_a_region_at_a_time_is_the_grid_of_the_whole_map() {
     assert!(checked > 5_000, "sampled too little of the map: {checked}");
 }
 
+// --- fog of war and cached vision ------------------------------------------
+
 #[test]
 fn cached_vision_is_the_same_answer_as_computing_it_fresh() {
     // Vision is cached per unit against (position, range) because the map
@@ -427,6 +444,8 @@ fn fog_hides_unseen_enemies() {
         "player should not start with every enemy spotted"
     );
 }
+
+// --- detection: looking is not seeing --------------------------------------
 
 /// A registry whose spotting is a search rather than a certainty, with the
 /// base mod's own tuning taken out of the way.
@@ -627,6 +646,8 @@ fn nobody_searches_for_what_is_plainly_in_front_of_her() {
         "the same crew at the limit of the same reach has to be found"
     );
 }
+
+// --- the goal chooser reads the road ---------------------------------------
 
 /// A doctrine with one field changed, so a test about the goal chooser's
 /// terms can hold every other appetite still.
@@ -855,6 +876,8 @@ fn ground_the_enemy_reaches_first_is_worth_less_marching_for() {
     );
 }
 
+// --- line of sight, elevation and terrain ----------------------------------
+
 #[test]
 fn elevation_blocks_and_grants_line_of_sight() {
     let reg = registry();
@@ -875,6 +898,142 @@ fn elevation_blocks_and_grants_line_of_sight() {
     assert!(!los_clear(&reg, &map, a, b), "ridge should block flat LoS");
     assert!(los_clear(&reg, &map, peak, a), "high ground sees down");
     assert!(los_clear(&reg, &map, a, peak), "the peak itself is visible");
+}
+
+/// The hit clamp is data, so a mod can decide how much luck the game has.
+///
+/// `MIN_HIT`/`MAX_HIT` were Rust constants: the one pair of numbers deciding
+/// whether a certainty or an impossibility can exist on a battlefield were the
+/// only gunnery numbers a mod could not touch.
+#[test]
+fn how_much_luck_a_battlefield_has_is_a_mod_decision() {
+    let mut reg = seen(registry());
+    assert_eq!((reg.balance.min_hit, reg.balance.max_hit), (5, 95));
+    reg.balance.max_hit = 40;
+    reg.balance.min_hit = 30;
+
+    let state = two_side_battle(
+        &reg,
+        &["ggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "West"),
+            unit_at([1, 0], 1, "medium_tank", "East"),
+        ],
+        7,
+    );
+    let (west, east) = (state.units[0].id, state.units[1].id);
+    let weapon = reg
+        .vehicle(&state.units[0].vehicle)
+        .and_then(|v| v.weapons.first())
+        .and_then(|w| reg.weapon(w))
+        .expect("a medium tank has a gun");
+    let breakdown = tactics_core::battle::hit_breakdown(
+        &reg,
+        &state,
+        west,
+        state.units[0].pos,
+        weapon,
+        east,
+        false,
+    );
+    assert!(
+        (30..=40).contains(&breakdown.total),
+        "a point-blank shot should be clamped to the mod's ceiling, got {}",
+        breakdown.total
+    );
+}
+
+/// A taller cupola sees over a rise a shorter one does not.
+///
+/// `EYE_HEIGHT` and `TARGET_HEIGHT` were Rust constants too. They are
+/// centimetres in the `balance` block because that block is deliberately
+/// all-integer, so the sight arithmetic stays exact.
+#[test]
+fn a_mod_that_raises_the_cupola_sees_over_the_rise() {
+    let mut reg = registry();
+    let file: tactics_core::map::MapFile = serde_json::from_str(
+        r##"{
+            "id": "cupola",
+            "palette": { "g": "grass" },
+            "rows":      ["ggggg"],
+            "elevation": ["00100"]
+        }"##,
+    )
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let a = tactics_core::offset_to_hex(0, 0);
+    let b = tactics_core::offset_to_hex(4, 0);
+
+    assert_eq!(reg.balance.eye_height_cm, 250);
+    assert!(
+        !los_clear(&reg, &map, a, b),
+        "a 10 m rise blocks a 2.5 m cupola"
+    );
+
+    // Twenty-five metres up, the sight line passes over it. Absurd for a tank
+    // and exactly the point: the number is the mod's to choose.
+    reg.balance.eye_height_cm = 2500;
+    assert!(
+        los_clear(&reg, &map, a, b),
+        "a 25 m cupola should see over a 10 m rise, or the field is not read"
+    );
+    assert!(
+        SightGrid::build(&reg, &map).clear(a, b),
+        "and the cached path must agree, or it is holding stale heights"
+    );
+}
+
+/// How tall an elevation digit is belongs to the scale contract, so a mod that
+/// changes it must change what a ridge hides.
+///
+/// This is the check that `Scale::elevation_meters` is *read*. It used to be
+/// declared in `mod.json`, printed by the validator, and consulted by nothing:
+/// `fog.rs` carried its own `const ELEVATION_STEP = 10.0` and the two agreed
+/// only because both said ten. A mod that raised the field got a steeper climb
+/// — `max_climb` did read it — and a skyline that had not moved, which is the
+/// scale contract quietly meaning two different things in two places.
+///
+/// Both sight paths are asserted because they resolve heights separately:
+/// [`los_clear`] walks the registry per step and [`SightGrid`] resolves every
+/// tile once. They share `Heights::of` so they cannot disagree, and this is
+/// what says so.
+#[test]
+fn a_mod_that_flattens_a_level_flattens_the_skyline() {
+    let mut reg = registry();
+    let file: tactics_core::map::MapFile = serde_json::from_str(
+        r##"{
+            "id": "elevation_scale",
+            "palette": { "g": "grass" },
+            "rows":      ["ggggg", "ggggg", "ggggg"],
+            "elevation": ["00000", "00300", "00000"]
+        }"##,
+    )
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let a = tactics_core::offset_to_hex(0, 1);
+    let b = tactics_core::offset_to_hex(4, 1);
+
+    // The base mod's 10 m a level: three levels is a 30 m ridge across a sight
+    // line drawn between a 2.5 m cupola and a 2.0 m target, so it blocks.
+    assert_eq!(reg.scale.elevation_meters, 10.0);
+    assert!(!los_clear(&reg, &map, a, b), "a 30 m ridge blocks");
+    assert!(
+        !SightGrid::build(&reg, &map).clear(a, b),
+        "and the cached path agrees"
+    );
+
+    // Half a metre a level makes the same three digits a 1.5 m hummock, which
+    // the sight line clears at 2.25 m over the ridge tile. Same map, same
+    // elevation digits, same terrain: only the scale moved.
+    reg.scale.elevation_meters = 0.5;
+    assert!(
+        los_clear(&reg, &map, a, b),
+        "a 1.5 m hummock does not, or the geometry is not reading the field"
+    );
+    assert!(
+        SightGrid::build(&reg, &map).clear(a, b),
+        "and the cached path agrees here too"
+    );
 }
 
 #[test]
@@ -912,6 +1071,8 @@ fn movement_respects_water_and_reaches_bridge() {
         assert_ne!(tile.terrain, "water", "tracked vehicles cannot enter water");
     }
 }
+
+// --- determinism, and a battle fought to the end ---------------------------
 
 #[test]
 fn battle_resolution_is_deterministic_per_seed() {
@@ -1009,7 +1170,7 @@ fn a_battle_with_no_shots_fired_is_called_off() {
     let alive_before = state.alive_units().count();
 
     let mut ended = None;
-    for _ in 0..(STALEMATE_ROUNDS as usize + 2) {
+    for _ in 0..(reg.balance.stalemate_rounds as usize + 2) {
         let events = play_round(&reg, &mut state);
         if let Some(BattleEvent::BattleEnded { winner, reason }) = events
             .iter()
@@ -1031,7 +1192,7 @@ fn a_battle_with_no_shots_fired_is_called_off() {
         "a stalemate costs nobody their tanks"
     );
     assert!(
-        state.round <= STALEMATE_ROUNDS + 1,
+        state.round <= reg.balance.stalemate_rounds + 1,
         "the call should come promptly, not after {} rounds",
         state.round
     );
@@ -1100,7 +1261,7 @@ fn sides_that_can_see_each_other_are_never_called_off() {
         "test needs the two units to start in sight of one another"
     );
 
-    for _ in 0..(STALEMATE_ROUNDS as usize + 4) {
+    for _ in 0..(reg.balance.stalemate_rounds as usize + 4) {
         if state.is_over() {
             break;
         }
@@ -1145,6 +1306,8 @@ fn mcts_planner_produces_legal_orders() {
         "the planner should finish its round rather than stall"
     );
 }
+
+// --- the overworld ---------------------------------------------------------
 
 #[test]
 fn overworld_income_capture_and_battle_trigger() {
@@ -1293,6 +1456,8 @@ fn battle_results_are_returned_to_each_army() {
     );
 }
 
+// --- gunnery previews: the arithmetic a player is shown --------------------
+
 #[test]
 fn hit_breakdown_explains_the_same_number_hit_chance_returns() {
     let reg = registry();
@@ -1405,7 +1570,7 @@ fn overworld_ai_moves_armies() {
     assert!(moved > 0, "overworld AI should move at least one army");
 }
 
-// --- campaign missions (chunk 8 of chain of command) -----------------------
+// --- campaign missions: orders that outlive the map ------------------------
 
 /// The campaign under a stated radio net. The base mod's own figure is four
 /// overworld hexes; these tests state their own so that what they are about is
@@ -2745,7 +2910,7 @@ fn a_side_that_holds_the_ground_wins_a_battle_that_loses_contact() {
         .expect("west can drive to the crossroads");
 
     let mut ended = None;
-    for _ in 0..(STALEMATE_ROUNDS as usize + 2) {
+    for _ in 0..(reg.balance.stalemate_rounds as usize + 2) {
         let events = play_round(&reg, &mut state);
         if let Some(BattleEvent::BattleEnded { winner, reason }) = events
             .iter()
@@ -4601,7 +4766,7 @@ fn a_breaking_crew_refuses_to_advance_and_says_so() {
     );
 }
 
-// --- defiance: what a crew does instead (direction step 4, tax 2) -----------
+// --- defiance: what a crew does instead ------------------------------------
 
 /// Force one response for every crew, so a test about what flight *does* is
 /// not also a test about who reaches for it. `base` outranks the `core` term
@@ -4996,7 +5161,7 @@ fn a_side_that_sees_clearly_is_untouched_by_the_blur() {
     assert_eq!(sharp, orders_from(5));
 }
 
-// --- goals: an intention that outlives a round --------------------------
+// --- goals: an intention that outlives a round -----------------------------
 
 #[test]
 fn a_crew_keeps_the_goal_she_chose_until_it_is_finished() {
@@ -5216,7 +5381,7 @@ fn a_gentle_mod_has_girls_who_never_refuse() {
     );
 }
 
-// --- missions steering units (chunk 2 of chain of command) -----------------
+// --- missions steering units -----------------------------------------------
 
 /// A sharp-eyed utility planner for one side, for tests that assert where
 /// units choose to go: difficulty 5 is zero scoring noise, so the assertion
@@ -5865,7 +6030,7 @@ fn a_devolved_commander_issues_no_ground_missions() {
     );
 }
 
-// --- contact and order latency (chunk 4 of chain of command) ----------------
+// --- contact and order latency ---------------------------------------------
 
 /// Take the radio sets out of every vehicle, so a test that engineers a net
 /// with `command_rules(radius, ..)` is testing the radius it wrote rather
@@ -6397,7 +6562,7 @@ fn contact_lost_is_said_once_and_restored_out_loud() {
     );
 }
 
-// --- the command picture (chunk 5) -----------------------------------------
+// --- the command picture ---------------------------------------------------
 
 /// A long open road: a leader in the west, her scout far to the east with an
 /// enemy recon car beyond — inside the scout's eyes, outside everybody's
@@ -6539,7 +6704,7 @@ fn a_contact_no_longer_seen_goes_stale_not_absent() {
     );
 }
 
-// --- commander loss (chunk 6) ----------------------------------------------
+// --- commander loss and succession -----------------------------------------
 
 /// A battle on a map written out in the test, so a chain of command and the
 /// stakes a scenario places on it can be declared in one place and read in
@@ -6964,7 +7129,7 @@ fn a_loss_condition_must_name_a_formation_of_its_own_side() {
     );
 }
 
-// --- the net is two media (chunk 9a) ---------------------------------------
+// --- the net is two media --------------------------------------------------
 
 /// Two side-0 formations on a road: Alpha's leader far west, her one member
 /// far east beyond any radio — but two hexes from Bravo's leader, who is on
@@ -7063,7 +7228,7 @@ fn a_flag_carries_between_formations_where_no_radio_does() {
     );
 }
 
-// --- orders wait instead of dying (chunk 9b) --------------------------------
+// --- orders wait instead of dying ------------------------------------------
 
 /// A leader and one crew on an open road, with an enemy parked far enough
 /// east to be nobody's business. Under a two-hex radio with nobody relaying,
@@ -7413,7 +7578,7 @@ fn a_radioed_order_to_a_girl_on_the_net_is_just_an_order() {
     assert!(deaf.command.waiting().is_empty(), "and nothing was queued");
 }
 
-// --- mission sequences (chunk 9c) ------------------------------------------
+// --- mission sequences -----------------------------------------------------
 
 #[test]
 fn a_plan_advances_when_its_first_leg_is_done() {
@@ -7619,7 +7784,7 @@ fn an_amendment_travels_the_wire_like_any_order() {
     assert!(f.plan.is_empty(), "the countermand replaced the whole plan");
 }
 
-// --- seeing the net (chunk 9d) ----------------------------------------------
+// --- seeing the net --------------------------------------------------------
 
 #[test]
 fn the_ring_the_screen_draws_is_the_edge_the_engine_walks() {
@@ -7666,7 +7831,338 @@ fn the_ring_the_screen_draws_is_the_edge_the_engine_walks() {
     assert_eq!(state.radio_reach(&reg, leader), None);
 }
 
-// --- the battle drill (chunk 10 opening move) ------------------------------
+// --- who is entitled to hear what -------------------------------------------
+//
+// `Event::heard_by` spent its life in the game crate, where none of these
+// could reach it: the presentation layer is not linked into the engine's test
+// binaries, so the one rule deciding what the enemy is allowed to overhear was
+// the only rule in the battle with no test at all.
+
+/// Fighting happens in the open, and both sides fight the same battle.
+///
+/// Whether the *unit* can be seen is the fog's question and has already been
+/// asked by the time an event exists. This is the other half of the rule, and
+/// it is the half that must stay permissive: an over-tight audience here would
+/// silently drop shots and wrecks out of the log, which reads as the game
+/// freezing rather than as a fog rule working.
+#[test]
+fn what_happens_in_the_open_is_heard_by_both_sides() {
+    let reg = registry();
+    let state = two_side_battle(
+        &reg,
+        &["gggggfggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "West"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+        7,
+    );
+    let west = state.units[0].id;
+
+    for event in [
+        BattleEvent::RoundStarted { round: 1 },
+        BattleEvent::TickStarted { tick: 0 },
+        BattleEvent::BrewedUp { unit: west },
+        BattleEvent::Abandoned { unit: west },
+        BattleEvent::UnitDestroyed {
+            unit: west,
+            at: state.units[0].pos,
+        },
+        BattleEvent::ObjectiveTaken {
+            objective: "bridge".into(),
+            side: Some(0),
+            at: state.units[0].pos,
+        },
+    ] {
+        assert!(
+            event.heard_by(&state, 0) && event.heard_by(&state, 1),
+            "{event:?} happens in the open and belongs to nobody's net"
+        );
+    }
+}
+
+/// What is inside her hull, and what her radio is doing, is hers.
+///
+/// How much ammunition she has left is her quartermaster's secret rather than
+/// something the sound of her gun gives away, and what is broken or bleeding
+/// in there even more so.
+#[test]
+fn a_crews_own_net_is_not_read_out_to_the_enemy() {
+    let reg = registry();
+    let state = two_side_battle(
+        &reg,
+        &["gggggfggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "West"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+        7,
+    );
+    let west = state.units[0].id;
+    assert_eq!(state.units[0].side, 0, "the stage puts West on side 0");
+
+    for event in [
+        BattleEvent::WeaponDry {
+            unit: west,
+            weapon: "gun_75".into(),
+        },
+        BattleEvent::ModuleHit {
+            unit: west,
+            module: "optics".into(),
+            destroyed: true,
+        },
+        BattleEvent::OutOfContact { unit: west },
+        BattleEvent::OrdersWaiting { unit: west },
+        BattleEvent::OrdersDelivered { unit: west },
+        BattleEvent::ContactRestored { unit: west },
+        BattleEvent::TookCover {
+            unit: west,
+            at: state.units[0].pos,
+        },
+    ] {
+        assert!(
+            event.heard_by(&state, 0),
+            "{event:?} is her own side's business and hers to hear"
+        );
+        assert!(
+            !event.heard_by(&state, 1),
+            "{event:?} is on her net and the enemy is not on it"
+        );
+    }
+}
+
+/// A spot report belongs to the crew who made it, not to the crew reported.
+///
+/// The unit being reported is by definition the other side's, so reading
+/// `unit` here instead of `by` would invert the rule and hand every contact
+/// report straight to the side being looked at.
+#[test]
+fn a_contact_report_belongs_to_the_crew_who_made_it() {
+    let reg = registry();
+    let state = two_side_battle(
+        &reg,
+        &["gggggfggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "West"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+        7,
+    );
+    let west = state.units[0].id;
+    let east = state.units[1].id;
+    let report = BattleEvent::ContactReported {
+        unit: east,
+        by: west,
+        at: state.units[1].pos,
+    };
+    assert!(report.heard_by(&state, 0), "West reported it");
+    assert!(
+        !report.heard_by(&state, 1),
+        "East does not get told she has been seen"
+    );
+}
+
+/// Her nerve is inside the hull with everything else.
+///
+/// You can see her tank reverse out of the line and draw your own conclusion
+/// — `UnitMoved` is side-blind and the sprite does it in front of you — but
+/// you cannot read the rung she is standing on. `CrewHit` and `ModuleHit`
+/// already worked this way; morale was the lone exception, so the player's log
+/// printed "Wotan 3: Breaking — not going forward" about an enemy crew.
+#[test]
+fn an_enemy_crews_nerve_is_not_readable_from_across_the_field() {
+    let reg = registry();
+    let state = two_side_battle(
+        &reg,
+        &["gggggfggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "West"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+        7,
+    );
+    let west = state.units[0].id;
+
+    for event in [
+        BattleEvent::MoraleChanged {
+            unit: west,
+            rung: "breaking".into(),
+            obeys: false,
+        },
+        BattleEvent::Defied {
+            unit: west,
+            rung: "breaking".into(),
+            doing: "reversing out of it".into(),
+            to: Some(state.units[0].pos),
+        },
+    ] {
+        assert!(
+            event.heard_by(&state, 0),
+            "{event:?} is her own commander's to know"
+        );
+        assert!(
+            !event.heard_by(&state, 1),
+            "{event:?} is not readable from the other side of the field"
+        );
+    }
+
+    // ...and the deed still is. A crew reversing out of the line is a thing
+    // that visibly happens, so the enemy is not being denied the *event*, only
+    // the reading of her nerve.
+    let driving_off = BattleEvent::UnitMoved {
+        unit: west,
+        path: vec![state.units[0].pos],
+    };
+    assert!(
+        driving_off.heard_by(&state, 0) && driving_off.heard_by(&state, 1),
+        "the tank reversing is visible to anybody who can see her"
+    );
+}
+
+/// A spot belongs to the side that made it, and being found is not something
+/// the found party is told.
+///
+/// She learns it when the shooting starts. This was answered in the renderer
+/// until the audience rule moved into core, and answered there by a *different
+/// question* — whether the spotting side had no AI on it, rather than whether
+/// it was the side being drawn for. Those agree while exactly one side is
+/// human-controlled and part company as soon as two are, which is why the
+/// stage below puts `ai: None` on both.
+#[test]
+fn being_found_is_not_something_the_found_crew_is_told() {
+    let reg = registry();
+    let state = two_side_battle(
+        &reg,
+        &["gggggfggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "West"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+        7,
+    );
+    let east = state.units[1].id;
+    // West has picked East out of the ground.
+    let spot = BattleEvent::UnitSpotted {
+        unit: east,
+        by_side: 0,
+        at: state.units[1].pos,
+    };
+    assert!(spot.heard_by(&state, 0), "West found her and knows it");
+    assert!(
+        !spot.heard_by(&state, 1),
+        "East is not sent a note saying she has been seen"
+    );
+}
+
+/// A formation's orders are its own side's business.
+///
+/// Assigned, received, completed, and who is commanding it now: four events
+/// keyed by formation rather than by unit, so they need the other half of the
+/// lookup and would go side-blind if that half were dropped.
+#[test]
+fn a_formations_orders_are_not_overheard_by_the_enemy() {
+    let reg = registry_wireless();
+    let file = reg.map("river_crossing").expect("shipped battle map");
+    let map = HexMap::from_map_file(file).expect("map parses");
+    let placement = |col: i32, side: u8, formation: &str, leads: bool| UnitPlacement {
+        aboard_at: None,
+        at: [col, 20],
+        side,
+        vehicle: "medium_tank".into(),
+        crew: Vec::new(),
+        name: Some(format!("{formation}-{col}")),
+        facing: None,
+        formation: Some(formation.into()),
+        leads,
+    };
+    let placements = vec![
+        placement(10, 0, "kuhlmann_armor", true),
+        placement(11, 0, "kuhlmann_armor", false),
+        placement(30, 1, "valkyrie_line", true),
+    ];
+    let sides = vec![
+        SideState {
+            name: "Kuhlmann".into(),
+            ai: None,
+        },
+        SideState {
+            name: "Valkyries".into(),
+            ai: None,
+        },
+    ];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(&reg, &placements);
+    let state = BattleState::from_placements(
+        &reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        1,
+    );
+
+    let mission = Mission::Hold {
+        at: Some(state.units[0].pos),
+    };
+    for event in [
+        BattleEvent::MissionAssigned {
+            formation: "kuhlmann_armor".into(),
+            mission: mission.clone(),
+        },
+        BattleEvent::MissionReceived {
+            formation: "kuhlmann_armor".into(),
+            mission: mission.clone(),
+        },
+        BattleEvent::MissionCompleted {
+            formation: "kuhlmann_armor".into(),
+            mission: mission.clone(),
+        },
+        BattleEvent::CommandPassed {
+            formation: "kuhlmann_armor".into(),
+            from: state.units[0].id,
+            to: state.units[1].id,
+        },
+    ] {
+        assert!(event.heard_by(&state, 0), "{event:?} is Kuhlmann's traffic");
+        assert!(
+            !event.heard_by(&state, 1),
+            "{event:?} is Kuhlmann's traffic and the Valkyries are not on that net"
+        );
+    }
+}
+
+/// An event naming a unit this battle has never heard of is heard by
+/// everybody.
+///
+/// The safe direction for a stray: saying too much in a log is a bug somebody
+/// notices and reports, and silently swallowing events because a lookup missed
+/// is a bug that looks like the game having stopped.
+#[test]
+fn an_event_about_nobody_is_not_silently_swallowed() {
+    let reg = registry();
+    let state = two_side_battle(
+        &reg,
+        &["gggggfggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "West"),
+            unit_at([10, 0], 1, "medium_tank", "East"),
+        ],
+        7,
+    );
+    let nobody = UnitId(9999);
+    let event = BattleEvent::OutOfContact { unit: nobody };
+    assert!(event.heard_by(&state, 0) && event.heard_by(&state, 1));
+
+    let orphan = BattleEvent::MissionAssigned {
+        formation: "no_such_formation".into(),
+        mission: Mission::Hold {
+            at: Some(state.units[0].pos),
+        },
+    };
+    assert!(orphan.heard_by(&state, 0) && orphan.heard_by(&state, 1));
+}
+
+// --- the battle drill ------------------------------------------------------
 
 /// Open grass with a forest stand to the west: her, unordered and outside
 /// any formation, and a gun tank well inside range to the east.
@@ -7998,7 +8494,7 @@ fn an_order_about_her_gun_says_nothing_about_her_march() {
     );
 }
 
-// --- fighting as one (chunk 10d) -------------------------------------------
+// --- fighting as one: the formation acts together --------------------------
 
 #[test]
 fn a_formation_keeps_its_interval_and_its_sight_lines() {
@@ -8537,7 +9033,7 @@ fn an_assault_presses_through_what_an_advance_pauses_for() {
     );
 }
 
-// --- radios as hardware (chunk 10a) ----------------------------------------
+// --- radios as hardware ----------------------------------------------------
 
 /// A leader with a transceiver and a wing with a receive-only set, ten hexes
 /// out — far beyond any flag, well inside the set — with an enemy scout
@@ -8669,7 +9165,7 @@ fn a_hill_masks_the_radio_and_a_forest_does_not() {
     );
 }
 
-// --- the commander's pulse (chunk 10b) -------------------------------------
+// --- the commander's pulse -------------------------------------------------
 
 /// Drive one planning round for a command side and count what it assigned.
 fn pulse_round(reg: &DataRegistry, state: &mut BattleState, ai: &mut AiDriver) -> usize {
@@ -8928,7 +9424,7 @@ fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
     );
 }
 
-// --- base of fire (chunk 10b slice 2) ---------------------------------------
+// --- base of fire ----------------------------------------------------------
 
 #[test]
 fn a_fires_formation_stands_base_of_fire_for_the_assault() {
@@ -9173,7 +9669,7 @@ fn a_plan_may_end_in_support_but_not_continue_past_it() {
     );
 }
 
-// --- the crew's clock (chunk 10c, first slice) -----------------------------
+// --- the crew's clock ------------------------------------------------------
 
 /// One watcher on overwatch and one enemy who will walk out from behind a
 /// forest wall mid-round. `gap` is how far from the wall the watcher stands.
@@ -9305,7 +9801,7 @@ fn a_target_watched_across_rounds_is_not_news_twice() {
     );
 }
 
-// --- the crew's loop (chunk 10c, second slice: the mid-round drill) --------
+// --- the crew's loop: the mid-round drill ----------------------------------
 
 /// Pull the 75's teeth without pulling its threat: one point of effect
 /// budget still prices the shot above zero — she is being shot at by
@@ -9546,7 +10042,7 @@ fn a_mod_that_prices_no_reactions_gets_the_drill_at_the_next_tick() {
     );
 }
 
-// --- the penetration gate (ballistics B1) ----------------------------------
+// --- the penetration gate --------------------------------------------------
 
 /// A recon car's machine gun and a heavy tank, adjacent on open grass. The
 /// oldest complaint in the balance tables, staged.
@@ -9821,7 +10317,7 @@ fn a_mod_without_ammunition_still_fights_with_its_guns_own_numbers() {
     }
 }
 
-// --- the outcome engine (ballistics B2): no hit points -----------------------
+// --- the outcome engine: no hit points -------------------------------------
 
 #[test]
 fn a_penetration_names_the_girl_it_hurt() {
@@ -10135,7 +10631,7 @@ fn an_emptied_rack_is_harder_to_torch() {
     assert!(!torch(&reg, true, 408), "empty racks cannot");
 }
 
-// --- soft targets and hidden ones (infantry N1) ----------------------------
+// --- soft targets and hidden ones ------------------------------------------
 
 #[test]
 fn a_platoon_in_the_trees_is_invisible_until_the_scout_closes() {
@@ -10403,7 +10899,7 @@ fn an_unseen_crew_holds_her_rockets_for_the_killing_shot() {
     );
 }
 
-// --- the ride (infantry N2) ------------------------------------------------
+// --- the ride: boarding, carrying, dismounting -----------------------------
 
 /// A taxi, her platoon beside her, and an enemy across the field. Which
 /// enemy matters: a recon car can watch the whole exercise and hurt none
@@ -12086,7 +12582,7 @@ fn a_personal_march_carries_across_rounds_and_ends_in_a_hold() {
     );
 }
 
-// --- shells in flight (ballistics B3) ---------------------------------------
+// --- shells in flight ------------------------------------------------------
 
 /// A battery west, a target east, and nothing but grass between them.
 ///
@@ -12528,7 +13024,7 @@ fn a_bounce_that_achieves_nothing_does_not_hold_the_battle_open() {
     }
 
     let mut bounces = 0;
-    for _ in 0..STALEMATE_ROUNDS * 3 {
+    for _ in 0..reg.balance.stalemate_rounds * 3 {
         if state.is_over() {
             break;
         }
@@ -12622,7 +13118,7 @@ fn a_mod_without_ammunition_keeps_instant_artillery() {
     );
 }
 
-// --- what an order promises (direction step 2) ------------------------------
+// --- what an order promises ------------------------------------------------
 
 /// Every order the player can give says what it commits her to, and no two
 /// of them say the same thing.
@@ -12697,7 +13193,7 @@ fn insisting_on_a_march_promises_something_an_ordinary_one_does_not() {
     assert!(!Latitude::Binding.promise().is_empty());
 }
 
-// --- wounds with teeth (direction step 3) -----------------------------------
+// --- wounds with teeth -----------------------------------------------------
 
 /// One medium tank per side on open ground, crewed by name, so a wound
 /// carried in from a previous battle has somewhere to show.

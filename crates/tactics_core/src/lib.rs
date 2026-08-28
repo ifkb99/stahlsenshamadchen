@@ -22,6 +22,7 @@ pub mod ai;
 pub mod battle;
 pub mod data;
 pub mod force;
+pub mod harness;
 pub mod map;
 pub mod overworld;
 pub mod roster;

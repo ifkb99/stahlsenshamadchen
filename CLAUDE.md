@@ -10,6 +10,9 @@ TODO.md it is cross-referenced, not repeated. Finished work and the reasoning
 behind it lives in [DONE.md](DONE.md); read it before undoing a decision that
 looks arbitrary. [PARKED.md](PARKED.md) says why code with no callers is
 still in the tree, so that answer does not have to be carried here.
+[STRUCTURE.md](STRUCTURE.md) carries the seams that are in the wrong place —
+a rule living in the wrong crate, a contract asserted in prose that nothing
+checks — as against the rules that are wrong, which are here.
 
 **Start here:** `.claude/skills/tactics-dev/SKILL.md` is the working guide —
 the instruments this project has for answering questions about itself, the
@@ -486,19 +489,45 @@ the script harness and the replay read exactly what they read before.
 
 Two rules hold it together:
 
-- **`heard_by` is the one filter, and it has two callers that must not
-  drift.** The log filters with it after draining; `drive_ai` filters with it
-  *before queueing*. The second is not tidiness: planning events go through
-  the same paced animation queue as combat, and `accepting_orders` is false
-  while that queue has anything in it — so an event nobody will print still
-  costs the player a beat of not being able to give orders. One `SetOut` per
-  unit put nine of them in front of every planning phase, and the symptom was
-  the infantry tour clicking into a game that was not listening. Anything new
-  that emits events during **planning** must go through this.
-- **Command traffic is a side's own business.** Orders, contact troubles, the
-  radio queue and *where a crew has decided to go* are on her own net;
-  fighting events — shots, spots, wrecks, brew-ups — stay side-blind, because
-  anybody on the field can see them.
+- **`Event::heard_by` is the one filter, it lives in core, and its match is
+  exhaustive.** It is a rule about *knowledge*, not about drawing — the same
+  family as `spotted_enemy_at` and `picture()` — so it sits beside the event
+  enum in `battle/orders.rs` where the engine's own tests can reach it. It
+  spent a long time in `crates/game` instead, and everything that went wrong
+  with it follows from that: no test could touch it, `playthrough` printed
+  both sides' secrets, and the claim in this bullet that there was *one*
+  filter was simply false. `UnitSpotted` was being filtered separately in the
+  renderer by a differently-worded question ("was the spotter human-
+  controlled" rather than "was the spotter mine"), which agree at one human
+  side and diverge at two.
+
+  The exhaustiveness is the other half. A `_ => true` gives every event added
+  tomorrow an audience by default rather than by decision, and three variants
+  rode that default for months — two of them printing an enemy crew's morale
+  rung into the player's log. A new variant now fails to compile until
+  somebody has said who hears it, the same bargain `Mission::slot` makes.
+
+  **Two callers, and they must not drift.** The log filters after draining;
+  `drive_ai` filters *before queueing*. The second is not tidiness: planning
+  events go through the same paced animation queue as combat, and
+  `accepting_orders` is false while that queue has anything in it — so an
+  event nobody will print still costs the player a beat of not being able to
+  give orders. One `SetOut` per unit put nine of them in front of every
+  planning phase, and the symptom was the infantry tour clicking into a game
+  that was not listening. Anything new that emits events during **planning**
+  must go through this.
+- **Command traffic is a side's own business, and so is the inside of her
+  hull.** Orders, contact troubles, the radio queue, *where a crew has decided
+  to go*, what is broken or bleeding in there, how much ammunition is left,
+  and **what rung her nerve is on** are all on her own net. Fighting events —
+  shots, wrecks, brew-ups, a tank visibly reversing out of the line — stay
+  side-blind, because anybody on the field can see them. The line is drawn at
+  the deed rather than the reading of it: you watch her withdraw and draw your
+  own conclusion, and `Defied`'s named rung is not yours to have. Morale was
+  the lone exception to this until 2026-08-26 — you could not see inside her
+  tank but you could read her nerve.
+- **A spot belongs to the side that made it.** Being found is not something
+  the found crew is told; she learns it when the shooting starts.
 
 ### Goals: the seam the AI is meant to be replaced at
 
@@ -1128,15 +1157,23 @@ Two things about it are load-bearing:
   could not be selected by mouse at all. `ScriptFacts::selected` exists so a
   tour can assert *who* a click selected rather than discovering three actions
   later that a keystroke went nowhere.
-- **Every screen answers for every fact.** `ScriptFacts` is one resource
-  shared by all of them, so a field a publisher leaves alone is still holding
-  the *previous* screen's answer — a script would wait on a muster prompt
-  dismissed two screens ago. The campaign map publishes too now (`turn` as the
-  day, `idle`, `waiting`, `log`); it did not until the after-action report
-  gave it something worth waiting for, and every campaign tour was a
-  stopwatch. `waiting` means "held behind something the player must answer or
-  dismiss" — a muster prompt, an after-action page — and is the complement of
-  `idle`, not a second name for its negation.
+- **Every screen answers for every fact, and the shape enforces it.**
+  `ScriptFacts` is one resource shared by all of them, so a field a publisher
+  leaves alone is still holding the *previous* screen's answer — a script
+  would wait on a muster prompt dismissed two screens ago. That used to be a
+  paragraph asking people to remember, and it was already being forgotten:
+  the campaign publisher set seven of eight fields and left `selected` naming
+  the last crew clicked in a battle. **Each publisher now assigns the whole
+  struct through an exhaustive literal with no `..default()`**, so a field
+  added here fails to compile in every publisher until each screen has said
+  what it answers — the same bargain `Mission::slot`'s exhaustive match
+  makes. The campaign map publishes too (`turn` as the day, `idle`,
+  `waiting`, `log`, and `selected: None` said out loud, because a map has a
+  selected *army* and that is a different question); it did not until the
+  after-action report gave it something worth waiting for, and every campaign
+  tour was a stopwatch. `waiting` means "held behind something the player must
+  answer or dismiss" — a muster prompt, an after-action page — and is the
+  complement of `idle`, not a second name for its negation.
 - **`idle` is `Battle::listening`, and both must stay one predicate.** It
   means "a keystroke would be acted on this frame", which is not the same as
   "the phase is planning": sprites finishing a walk hold the keyboard, and a
@@ -1199,6 +1236,16 @@ Consequences that are easy to violate by accident:
 - **A small test map can no longer put units out of contact by distance.**
   Vision is 10–20 hexes; use a forest curtain. `tests/engine.rs::standoff` does
   this and explains why.
+- **`elevation_meters` is read by the climb rule *and* by line of sight**, so
+  a mod that changes it changes both what a vehicle can drive up and what a
+  ridge hides. That is one field and it was very nearly two: `fog.rs` carried
+  its own `const ELEVATION_STEP = 10.0` until 2026-08-26, agreeing with the
+  mod only because both said ten. Both sight paths — the per-step `los_clear`
+  and the cached `SightGrid` — resolve heights through `Heights::of`, which is
+  the one place a tile becomes metres;
+  `a_mod_that_flattens_a_level_flattens_the_skyline` asserts they agree. The
+  general rule: **a `Scale` field no rule reads is a bug**, the same way a
+  core no skill names is.
 - **Crew bonuses are percentages of the vehicle's base**, from the sibling
   `balance` block (`data::Balance`): +5% sight per awareness, +5% speed per
   driving, +3 percentage points of hit chance per gunnery. Stats run 0–5, so a
@@ -1551,6 +1598,12 @@ rule they defend (`unspotted_enemies_still_ambush`).
   systems in the game crate. A `Shot` struct may still be a good idea when
   penetration adds parameters to `hit_chance`/`raw_damage`, but it is a
   readability choice, not a lint fix.
-- `crates/game/src/battle.rs` is ~1500 lines and `overworld.rs` ~1060. Not
-  urgent, but they are the two files that will absorb the prep phase, objectives
-  and menus work, and they are already the hardest to navigate.
+- `crates/game/src/battle.rs` is ~3500 lines and `overworld.rs` ~2200 — this
+  note said 1500 and 1060 for a long time and had simply stopped being true.
+  They are the two files that absorb the prep phase, objectives and menus
+  work. The seam that has already been taken is the one to keep taking:
+  `battle/panel.rs` holds the ~600 lines of formatters that are pure over a
+  `BattleState` and touch no Bevy, `overworld::roster_page` is the same move,
+  and **"does it hold a Bevy type" is the line to draw** — a panel whose text
+  is written between a `Query` and a `Commands` is read by nobody who is not
+  already debugging the renderer. Tracked in [STRUCTURE.md](STRUCTURE.md).

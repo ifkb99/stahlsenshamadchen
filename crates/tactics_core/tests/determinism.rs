@@ -38,6 +38,9 @@
 //! and the field it forgets is exactly the field that will regress unnoticed.
 
 use std::path::PathBuf;
+
+mod common;
+use common::registry;
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{BattleState, Order};
 use tactics_core::data::DataRegistry;
@@ -54,7 +57,7 @@ const ROUNDS: usize = 12;
 
 #[test]
 fn the_event_stream_matches_the_committed_baseline() {
-    let registry = load_registry();
+    let registry = registry();
     let actual = record_all(&registry);
     let path = snapshot_path();
 
@@ -85,23 +88,12 @@ fn the_event_stream_matches_the_committed_baseline() {
 /// one fails too, the problem is not the baseline being stale.
 #[test]
 fn two_runs_in_one_process_agree_with_each_other() {
-    let registry = load_registry();
+    let registry = registry();
     assert_eq!(
         record_all(&registry),
         record_all(&registry),
         "the same seeds produced different event streams within a single process"
     );
-}
-
-fn load_registry() -> DataRegistry {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
-    let (registry, report) = DataRegistry::load_dir(&root).expect("mods load");
-    assert!(
-        report.is_ok(),
-        "base mod failed validation: {:?}",
-        report.errors
-    );
-    registry
 }
 
 fn snapshot_path() -> PathBuf {

@@ -31,7 +31,12 @@
     "detection_base": 100,
     "detection_certain_percent": 40,
     "detection_at_range_percent": 70,
-    "detection_per_hex_moved": 20
+    "detection_per_hex_moved": 20,
+    "min_hit": 5,
+    "max_hit": 95,
+    "stalemate_rounds": 8,
+    "eye_height_cm": 250,
+    "target_height_cm": 200
   },
   "casualties": {
     "harm_kinetic": 55,

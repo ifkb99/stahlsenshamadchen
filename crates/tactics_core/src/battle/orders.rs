@@ -5,7 +5,6 @@
 //! ticks via [`BattleState::step_tick`], and everyone's orders play out
 //! together.
 
-use super::STALEMATE_ROUNDS;
 use super::{
     BattleResult, BattleState, EndReason, FormationId, Goal, Latitude, Mission, Phase, Unit,
     UnitId, combat, fog, movement,
@@ -488,6 +487,134 @@ pub enum Event {
         winner: Option<u8>,
         reason: EndReason,
     },
+}
+
+impl Event {
+    /// Whether `side` is entitled to know this happened.
+    ///
+    /// **This is a rule about knowledge, not about presentation**, which is
+    /// why it lives here beside the events rather than in whichever screen
+    /// happens to be drawing them. Two divisions run through it:
+    ///
+    /// - **Fighting is side-blind.** A shot, a spot, a wreck, a brew-up, a
+    ///   crew baling out — anybody on the field can see those, and the fog
+    ///   already decides whether a given unit is visible at all. Nothing here
+    ///   needs to re-ask that question.
+    /// - **Command traffic is a side's own business.** Orders, contact
+    ///   troubles, the radio queue, where a crew has decided to go, and what
+    ///   is broken or bleeding inside her hull are all on her own net.
+    ///   Listening to the enemy's is the electronic-warfare future, not a
+    ///   freebie.
+    ///
+    /// **The match is exhaustive on purpose.** A catch-all would give every
+    /// event added tomorrow an audience by default instead of by decision,
+    /// and that is not hypothetical: three variants rode a `_ => true` for
+    /// months, two of which were printing an enemy crew's morale rung into
+    /// the player's log. A new event should fail to compile until somebody
+    /// has said who hears it — the same bargain `Mission::slot` makes.
+    ///
+    /// It has **two callers that must not drift**, and the second is not
+    /// tidiness: the log filters with this after draining, and the game's AI
+    /// driver filters with it *before queueing*, because planning events go
+    /// through the same paced animation queue as combat and an event nobody
+    /// will print still costs the player a beat of not being able to give
+    /// orders.
+    ///
+    /// An id this battle does not know is heard by everybody. That is the
+    /// safe direction for a stray event: saying too much in a log is a bug,
+    /// and silently dropping an event because a lookup missed is a bug that
+    /// looks like the game freezing.
+    pub fn heard_by(&self, state: &BattleState, side: u8) -> bool {
+        let own_formation = |formation: &str| {
+            state
+                .formations()
+                .iter()
+                .find(|f| f.id == formation)
+                .is_none_or(|f| f.side == side)
+        };
+        let own_unit = |unit: &UnitId| state.units.get(unit.index()).is_none_or(|u| u.side == side);
+        match self {
+            // The clock, and the end of it. Both sides fight the same battle.
+            Event::RoundStarted { .. } | Event::TickStarted { .. } | Event::BattleEnded { .. } => {
+                true
+            }
+
+            // Things that happen in the open. Whether the *unit* can be seen
+            // is the fog's question and it has already been asked; a crew
+            // driving, bogging down, shooting, being hit, burning, baling
+            // out, mounting, dismounting, dying or driving off the board is
+            // not a secret from anybody who can see her.
+            Event::UnitMoved { .. }
+            | Event::UnitTrapped { .. }
+            | Event::ShotFired { .. }
+            | Event::ShellLanded { .. }
+            | Event::ShotHit { .. }
+            | Event::ShotBounced { .. }
+            | Event::ShotStrayed { .. }
+            | Event::ShotMissed { .. }
+            | Event::BrewedUp { .. }
+            | Event::Abandoned { .. }
+            | Event::Mounted { .. }
+            | Event::Dismounted { .. }
+            | Event::UnitDestroyed { .. }
+            | Event::UnitExited { .. } => true,
+
+            // Who holds the bridge is not a secret from the side that does
+            // not: an objective changing hands is a fact about the ground.
+            Event::ObjectiveTaken { .. } => true,
+
+            // Her formation's net: what it was told, what it heard, what it
+            // finished, and who is commanding it now.
+            Event::MissionAssigned { formation, .. }
+            | Event::MissionReceived { formation, .. }
+            | Event::MissionCompleted { formation, .. }
+            | Event::CommandPassed { formation, .. } => own_formation(formation),
+
+            // Her own net, and her own hull. How much ammunition she has
+            // left is her quartermaster's secret, not something the sound of
+            // her gun gives away; what is broken or bleeding inside her even
+            // more so. Where she has decided to go and whether her radio is
+            // working are the same kind of fact.
+            Event::TookCover { unit, .. }
+            | Event::WeaponDry { unit, .. }
+            | Event::CrewHit { unit, .. }
+            | Event::ModuleHit { unit, .. }
+            | Event::SetOut { unit, .. }
+            | Event::OutOfContact { unit }
+            | Event::OrdersWaiting { unit }
+            | Event::OrdersDelivered { unit }
+            | Event::ContactRestored { unit }
+            // Her nerve is inside the hull with everything else. You can see
+            // her tank reverse out of the line — `UnitMoved` is side-blind
+            // and the sprite does it in front of you — and you may draw your
+            // own conclusion from that; what you cannot do is read the rung
+            // she is standing on. This is the same rule `CrewHit` and
+            // `ModuleHit` already follow, and morale was the lone exception
+            // to it: you could not see inside her tank but you could read her
+            // nerve.
+            | Event::MoraleChanged { unit, .. }
+            | Event::Defied { unit, .. } => own_unit(unit),
+
+            // A spot report belongs to whoever made it. `by` and not `unit`:
+            // the interesting party is the crew doing the reporting, and the
+            // unit being reported is by definition the other side's.
+            Event::ContactReported { by, .. } => own_unit(by),
+
+            // A spot belongs to the side that made it. Finding somebody is
+            // the reward for looking, and being found is not something the
+            // found party gets told — she learns it when the shooting starts.
+            //
+            // This used to be answered in the renderer instead, by asking
+            // whether `by_side` was a side with no AI on it. That is a
+            // different question wearing the same clothes — "was the spotter
+            // human-controlled" rather than "was the spotter mine" — and the
+            // two part company the moment more than one side has `ai: None`,
+            // which the game crate's own tests construct and which a field
+            // battle with reinforcing neighbours makes reachable in play.
+            Event::UnitSpotted { by_side, .. } => *by_side == side,
+
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -1242,7 +1369,7 @@ impl BattleState {
         if progress {
             self.last_contact_round = self.round;
         }
-        self.check_victory(&mut events);
+        self.check_victory(registry, &mut events);
         if self.is_over() {
             return events;
         }
@@ -2123,7 +2250,7 @@ impl BattleState {
         }
     }
 
-    fn check_victory(&mut self, events: &mut Vec<Event>) {
+    fn check_victory(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
         if self.over.is_some() {
             return;
         }
@@ -2186,7 +2313,7 @@ impl BattleState {
             self.finish(winner, EndReason::Eliminated, events);
             return;
         }
-        if self.round.saturating_sub(self.last_contact_round) >= STALEMATE_ROUNDS {
+        if self.round.saturating_sub(self.last_contact_round) >= registry.balance.stalemate_rounds {
             // Breaking contact ends the shooting; the points say who won it.
             let winner = self.leader();
             self.finish(winner, EndReason::Stalemate, events);

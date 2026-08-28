@@ -6,7 +6,6 @@
 //! baseline — rests on that not happening, so these tests compare what happens
 //! *after* the reload rather than what the file contains.
 
-use std::path::PathBuf;
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{BattleState, Event, Latitude, Order};
 use tactics_core::data::DataRegistry;
@@ -14,27 +13,8 @@ use tactics_core::overworld::{ArmyMission, OverworldOrder, OverworldState};
 use tactics_core::roster::CadetStatus;
 use tactics_core::save::{SAVE_VERSION, SaveGame};
 
-fn registry() -> DataRegistry {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
-    let (registry, report) = DataRegistry::load_dir(&root).expect("mods load");
-    assert!(
-        report.is_ok(),
-        "base mod must validate: {:?}",
-        report.errors
-    );
-    registry
-}
-
-/// The same game with the search switched off, exactly as `engine.rs`'s twin
-/// of this: a stage that puts a battery in sight of its quarry, or a crew on
-/// a bridge for a round, must not also be a test of whether anybody happened
-/// to find anybody on the tick it was set up. `detection_certain_percent` at
-/// 100 is the rule's neutral value, so this is its absence rather than a
-/// gentle version of it.
-fn seen(mut reg: DataRegistry) -> DataRegistry {
-    reg.balance.detection_certain_percent = 100;
-    reg
-}
+mod common;
+use common::{registry, seen};
 
 fn planner(reg: &DataRegistry, seed: u64) -> Box<dyn AiPlanner<BattleState, Order>> {
     make_battle_planner(

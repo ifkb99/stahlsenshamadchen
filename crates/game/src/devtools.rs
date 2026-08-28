@@ -171,6 +171,16 @@ pub(crate) fn debug_enabled() -> bool {
 /// would quietly answer for the last battle. The one thing a script wants
 /// history for — has this line ever appeared in the log — is accumulated by
 /// the runner instead, from the rolling window below.
+///
+/// **Every publisher assigns this whole struct, and the literal is exhaustive
+/// — no `..default()`.** One resource shared by every screen means a field a
+/// publisher leaves alone is still holding the *previous* screen's answer,
+/// which is a fact about a screen the player has left; the campaign map used
+/// to do exactly that with [`Self::selected`], so a tour could have waited on
+/// a selection made in a battle two screens ago. Adding a field here should
+/// therefore break the build in every publisher until each screen has said
+/// what it answers, the same way a new [`tactics_core::battle::Mission`]
+/// without a promise breaks `Mission::slot`.
 #[derive(Resource, Default)]
 pub(crate) struct ScriptFacts {
     /// Rounds on the battle screen, days on the campaign map. One name

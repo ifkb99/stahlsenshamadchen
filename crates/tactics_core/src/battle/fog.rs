@@ -9,7 +9,7 @@
 //! `revealed` (they fired recently and haven't moved since).
 
 use super::{BattleState, Event, Unit, UnitId, stats};
-use crate::data::DataRegistry;
+use crate::data::{DataRegistry, Scale};
 use crate::map::HexMap;
 use hexx::Hex;
 use rand::RngExt;
@@ -21,14 +21,38 @@ use std::sync::Arc;
 // interpolated by its position along the hex line, which is already the
 // horizontal parameter, so how wide a hex is never enters the geometry.
 
-/// Height of one elevation level, in metres. One map elevation digit.
-const ELEVATION_STEP: f32 = 10.0;
-/// Observer eye height above their own tile surface: a commander's cupola.
-const EYE_HEIGHT: f32 = 2.5;
-/// How far above the target tile surface we must see to "see" the target.
-/// Lower than [`EYE_HEIGHT`], so looking out is fractionally easier than
-/// being looked at — which is what makes a reverse slope worth taking.
-const TARGET_HEIGHT: f32 = 2.0;
+// How tall one elevation digit is belongs to the scale contract and is
+// therefore data: `Scale::elevation_meters`, read through
+// [`crate::data::Scale::elevation`]. It used to be a `const ELEVATION_STEP =
+// 10.0` here, which agreed with the mod only because both said ten — a mod
+// that raised `elevation_meters` got a steeper climb and a skyline that had
+// not moved.
+
+/// How high an observer's eye and a target's silhouette sit above their own
+/// tiles, in metres, read off `balance.eye_height_cm` / `target_height_cm`.
+///
+/// Resolved once and carried by [`SightGrid`] for the same reason the tile
+/// heights are: `SightGrid::clear` has no registry to ask, and threading one
+/// in would mean every line-of-sight query carried a lookup for an answer no
+/// battle can change.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Eyes {
+    /// Observer eye height above her own tile: a commander's cupola.
+    eye: f32,
+    /// How far above the target tile we must see to "see" her. Lower than
+    /// `eye`, so looking out is fractionally easier than being looked at,
+    /// which is what makes a reverse slope worth taking.
+    target: f32,
+}
+
+impl Eyes {
+    fn of(balance: &crate::data::Balance) -> Self {
+        Self {
+            eye: balance.eye_height_cm as f32 / 100.0,
+            target: balance.target_height_cm as f32 / 100.0,
+        }
+    }
+}
 
 /// What one side knows about the battlefield.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -183,13 +207,19 @@ struct Heights {
 }
 
 impl Heights {
-    /// Resolve one tile against the registry. **The one place this grid reads
-    /// a terrain definition.**
-    fn of(tile: &crate::map::Tile, terrain: Option<&crate::data::TerrainDef>) -> Self {
+    /// Resolve one tile against the registry. **The one place this module
+    /// turns a tile into heights** — [`los_clear`] comes through here too, so
+    /// the reference path and the cached one cannot disagree about what an
+    /// elevation digit is worth any more than they can about a sight line.
+    fn of(
+        tile: &crate::map::Tile,
+        terrain: Option<&crate::data::TerrainDef>,
+        scale: &Scale,
+    ) -> Self {
         let block = terrain.map(|t| t.vision_block).unwrap_or(0);
         Self {
-            surface: tile.elevation as f32 * ELEVATION_STEP,
-            obstacle: (tile.elevation + block) as f32 * ELEVATION_STEP,
+            surface: scale.elevation(tile.elevation),
+            obstacle: scale.elevation(tile.elevation + block),
         }
     }
 }
@@ -222,6 +252,10 @@ impl Heights {
 /// whole world and a wrong answer the moment it is a window onto one.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SightGrid {
+    /// The two observer heights, resolved with the tiles. `#[serde(skip)]`
+    /// like the rest of the grid, and put back by `save::rehydrate`.
+    #[serde(skip)]
+    eyes: Option<Eyes>,
     /// Not saved: derived entirely from the map and the terrain definitions,
     /// so a loaded game rebuilds it rather than carrying a copy. It is the
     /// single biggest structure in a battle — one entry per tile — and it
@@ -255,8 +289,11 @@ impl SightGrid {
 
     /// Resolve one tile.
     pub fn insert(&mut self, registry: &DataRegistry, hex: Hex, tile: &crate::map::Tile) {
-        self.tiles
-            .insert(hex, Heights::of(tile, registry.terrain(&tile.terrain)));
+        self.eyes = Some(Eyes::of(&registry.balance));
+        self.tiles.insert(
+            hex,
+            Heights::of(tile, registry.terrain(&tile.terrain), &registry.scale),
+        );
     }
 
     /// Whether this grid has been built. A deserialized battle carries an
@@ -275,7 +312,11 @@ impl SightGrid {
     /// [`los_clear`] — they share [`sight_line_clear`] precisely so the fast
     /// path cannot drift away from the reference one.
     pub fn clear(&self, from: Hex, to: Hex) -> bool {
-        sight_line_clear(|hex| self.tiles.get(&hex).copied(), from, to)
+        let eyes = self.eyes.unwrap_or(Eyes {
+            eye: 2.5,
+            target: 2.0,
+        });
+        sight_line_clear(|hex| self.tiles.get(&hex).copied(), eyes, from, to)
     }
 }
 
@@ -284,15 +325,20 @@ impl SightGrid {
 /// obstacle height. Higher ground therefore sees over lower obstacles.
 ///
 /// `heights` returns `None` for a tile that is not on the map.
-fn sight_line_clear(heights: impl Fn(Hex) -> Option<Heights>, from: Hex, to: Hex) -> bool {
+fn sight_line_clear(
+    heights: impl Fn(Hex) -> Option<Heights>,
+    eyes: Eyes,
+    from: Hex,
+    to: Hex,
+) -> bool {
     if from == to {
         return true;
     }
     let (Some(from_h), Some(to_h)) = (heights(from), heights(to)) else {
         return false;
     };
-    let eye = from_h.surface + EYE_HEIGHT;
-    let target = to_h.surface + TARGET_HEIGHT;
+    let eye = from_h.surface + eyes.eye;
+    let target = to_h.surface + eyes.target;
 
     // Walked as an iterator rather than collected. The line is as long as the
     // sight range, so a scout with 2 km of vision runs this over a thousand
@@ -339,17 +385,10 @@ fn sight_line_clear(heights: impl Fn(Hex) -> Option<Heights>, from: Hex, to: Hex
 pub fn los_clear(registry: &DataRegistry, map: &HexMap, from: Hex, to: Hex) -> bool {
     sight_line_clear(
         |hex| {
-            map.get(hex).map(|tile| {
-                let block = registry
-                    .terrain(&tile.terrain)
-                    .map(|t| t.vision_block)
-                    .unwrap_or(0);
-                Heights {
-                    surface: tile.elevation as f32 * ELEVATION_STEP,
-                    obstacle: (tile.elevation + block) as f32 * ELEVATION_STEP,
-                }
-            })
+            map.get(hex)
+                .map(|tile| Heights::of(tile, registry.terrain(&tile.terrain), &registry.scale))
         },
+        Eyes::of(&registry.balance),
         from,
         to,
     )
