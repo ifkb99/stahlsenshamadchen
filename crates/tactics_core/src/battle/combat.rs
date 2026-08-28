@@ -41,12 +41,7 @@ fn elevation_at(state: &BattleState, pos: Hex) -> i32 {
     state.map.get(pos).map(|t| t.elevation).unwrap_or(0)
 }
 
-/// Lowest and highest hit chance the engine will ever report: nothing is a
-/// sure thing and nothing is hopeless.
-pub const MIN_HIT: i32 = 5;
-pub const MAX_HIT: i32 = 95;
-
-/// Hit chance percentage, clamped to [`MIN_HIT`]..=[`MAX_HIT`].
+/// Hit chance percentage, clamped to `balance.min_hit ..= balance.max_hit`.
 ///
 /// `from` is passed explicitly so AI can evaluate hypothetical positions;
 /// the target is named by id rather than by hex because half of what makes
@@ -276,7 +271,7 @@ fn hit_chance_inner(
         note(HitFactor::Blind, -blind_penalty);
         chance -= blind_penalty;
     }
-    chance.clamp(MIN_HIT, MAX_HIT)
+    chance.clamp(registry.balance.min_hit, registry.balance.max_hit)
 }
 
 /// How many hexes of driving stand behind this shot: what she has actually

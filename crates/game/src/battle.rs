@@ -2988,7 +2988,7 @@ fn update_panel(
         if let Some(preview) =
             tactics_core::battle::preview_attack(registry, state, attacker, weapon, target, false)
         {
-            text.0 = format_attack(&registry.scale, &preview);
+            text.0 = format_attack(registry, &preview);
             set_portrait(&mut hud.portrait, &art, state, target);
             return;
         }

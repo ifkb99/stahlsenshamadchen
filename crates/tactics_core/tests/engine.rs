@@ -55,7 +55,7 @@ use tactics_core::ai::{
 };
 use tactics_core::battle::{
     BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Latitude, Mission,
-    Order, STALEMATE_ROUNDS, SideState, SightGrid, UnitId, los_clear, reachable,
+    Order, SideState, SightGrid, UnitId, los_clear, reachable,
 };
 use tactics_core::data::{DataRegistry, MovementClass};
 use tactics_core::map::{HexMap, UnitPlacement};
@@ -900,6 +900,89 @@ fn elevation_blocks_and_grants_line_of_sight() {
     assert!(los_clear(&reg, &map, a, peak), "the peak itself is visible");
 }
 
+/// The hit clamp is data, so a mod can decide how much luck the game has.
+///
+/// `MIN_HIT`/`MAX_HIT` were Rust constants: the one pair of numbers deciding
+/// whether a certainty or an impossibility can exist on a battlefield were the
+/// only gunnery numbers a mod could not touch.
+#[test]
+fn how_much_luck_a_battlefield_has_is_a_mod_decision() {
+    let mut reg = seen(registry());
+    assert_eq!((reg.balance.min_hit, reg.balance.max_hit), (5, 95));
+    reg.balance.max_hit = 40;
+    reg.balance.min_hit = 30;
+
+    let state = two_side_battle(
+        &reg,
+        &["ggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "West"),
+            unit_at([1, 0], 1, "medium_tank", "East"),
+        ],
+        7,
+    );
+    let (west, east) = (state.units[0].id, state.units[1].id);
+    let weapon = reg
+        .vehicle(&state.units[0].vehicle)
+        .and_then(|v| v.weapons.first())
+        .and_then(|w| reg.weapon(w))
+        .expect("a medium tank has a gun");
+    let breakdown = tactics_core::battle::hit_breakdown(
+        &reg,
+        &state,
+        west,
+        state.units[0].pos,
+        weapon,
+        east,
+        false,
+    );
+    assert!(
+        (30..=40).contains(&breakdown.total),
+        "a point-blank shot should be clamped to the mod's ceiling, got {}",
+        breakdown.total
+    );
+}
+
+/// A taller cupola sees over a rise a shorter one does not.
+///
+/// `EYE_HEIGHT` and `TARGET_HEIGHT` were Rust constants too. They are
+/// centimetres in the `balance` block because that block is deliberately
+/// all-integer, so the sight arithmetic stays exact.
+#[test]
+fn a_mod_that_raises_the_cupola_sees_over_the_rise() {
+    let mut reg = registry();
+    let file: tactics_core::map::MapFile = serde_json::from_str(
+        r##"{
+            "id": "cupola",
+            "palette": { "g": "grass" },
+            "rows":      ["ggggg"],
+            "elevation": ["00100"]
+        }"##,
+    )
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let a = tactics_core::offset_to_hex(0, 0);
+    let b = tactics_core::offset_to_hex(4, 0);
+
+    assert_eq!(reg.balance.eye_height_cm, 250);
+    assert!(
+        !los_clear(&reg, &map, a, b),
+        "a 10 m rise blocks a 2.5 m cupola"
+    );
+
+    // Twenty-five metres up, the sight line passes over it. Absurd for a tank
+    // and exactly the point: the number is the mod's to choose.
+    reg.balance.eye_height_cm = 2500;
+    assert!(
+        los_clear(&reg, &map, a, b),
+        "a 25 m cupola should see over a 10 m rise, or the field is not read"
+    );
+    assert!(
+        SightGrid::build(&reg, &map).clear(a, b),
+        "and the cached path must agree, or it is holding stale heights"
+    );
+}
+
 /// How tall an elevation digit is belongs to the scale contract, so a mod that
 /// changes it must change what a ridge hides.
 ///
@@ -1087,7 +1170,7 @@ fn a_battle_with_no_shots_fired_is_called_off() {
     let alive_before = state.alive_units().count();
 
     let mut ended = None;
-    for _ in 0..(STALEMATE_ROUNDS as usize + 2) {
+    for _ in 0..(reg.balance.stalemate_rounds as usize + 2) {
         let events = play_round(&reg, &mut state);
         if let Some(BattleEvent::BattleEnded { winner, reason }) = events
             .iter()
@@ -1109,7 +1192,7 @@ fn a_battle_with_no_shots_fired_is_called_off() {
         "a stalemate costs nobody their tanks"
     );
     assert!(
-        state.round <= STALEMATE_ROUNDS + 1,
+        state.round <= reg.balance.stalemate_rounds + 1,
         "the call should come promptly, not after {} rounds",
         state.round
     );
@@ -1178,7 +1261,7 @@ fn sides_that_can_see_each_other_are_never_called_off() {
         "test needs the two units to start in sight of one another"
     );
 
-    for _ in 0..(STALEMATE_ROUNDS as usize + 4) {
+    for _ in 0..(reg.balance.stalemate_rounds as usize + 4) {
         if state.is_over() {
             break;
         }
@@ -2827,7 +2910,7 @@ fn a_side_that_holds_the_ground_wins_a_battle_that_loses_contact() {
         .expect("west can drive to the crossroads");
 
     let mut ended = None;
-    for _ in 0..(STALEMATE_ROUNDS as usize + 2) {
+    for _ in 0..(reg.balance.stalemate_rounds as usize + 2) {
         let events = play_round(&reg, &mut state);
         if let Some(BattleEvent::BattleEnded { winner, reason }) = events
             .iter()
@@ -12941,7 +13024,7 @@ fn a_bounce_that_achieves_nothing_does_not_hold_the_battle_open() {
     }
 
     let mut bounces = 0;
-    for _ in 0..STALEMATE_ROUNDS * 3 {
+    for _ in 0..reg.balance.stalemate_rounds * 3 {
         if state.is_over() {
             break;
         }

@@ -362,7 +362,75 @@ Neither is urgent. Both get worse monotonically.
 
 ---
 
-## 8. Content ids are `String`, and two caches exist to work around it
+## 8. Content ids are `String` — measured, and half done
+
+**Measured 2026-08-27, and the premise turned out to be half right.** The
+constants half is **done**; the interning half is **not**, and should not be
+attempted on the strength of the original argument.
+
+### What the measurement says
+
+Instrumented every string-keyed registry lookup and fought five rounds of
+`river_crossing` at difficulty 3:
+
+| kind | per round | share |
+| --- | --- | --- |
+| `module` | 15,082 | **61.8%** |
+| `vehicle` | 3,362 | 13.8% |
+| `role` | 1,948 | 8.0% |
+| `weapon` | 1,501 | 6.1% |
+| `terrain` | 1,015 | 4.2% |
+| everything else | 1,503 | 6.1% |
+| **total** | **24,413** | |
+
+One lookup costs **12.2 ns** against the real registry, so the whole of it is
+**0.30 ms/round** against 1.41 ms of round resolution — about **21%**, and that
+is an *upper bound* on what interning could recover.
+
+Three things follow, and they change the plan:
+
+1. **The cost is real but not diffuse.** `module` alone is 62%, and it does not
+   come from `module_ok` (three call sites) — it comes from `substance`,
+   `troops` and `mobility_halves`, and `substance` is what the evaluator walks
+   *per candidate tile*. Attacking that one path gets most of the win.
+2. **`terrain` is already only 4%.** The premise that the grids are workarounds
+   for a terrain-lookup problem is right about history and wrong about now:
+   `SightGrid` and `MoveGrid` already took those, and they would still be worth
+   keeping after interning because they also precompute *derived* values.
+3. **Full interning has a real blocker.** Ids are serialised in saves and map
+   files, and serde cannot resolve a string to an interned id without the
+   registry. Every way around that is a cost the original item did not price: a
+   `#[serde(skip)]` side table is a third rehydrate trap — the very thing this
+   item complains about — and a global interner is process-wide mutable state
+   next to a determinism guarantee.
+
+**Recommended next step, when someone takes it:** make `substance` and its two
+neighbours stop hashing, measure again, and stop. That is a bounded change
+worth ~0.18 ms/round. Interning all twelve kinds is not justified by these
+numbers.
+
+### The constants: done
+
+Five of the ten Rust tuning constants are now data, in `balance`:
+`min_hit` (5), `max_hit` (95), `stalemate_rounds` (8), `eye_height_cm` (250)
+and `target_height_cm` (200). Centimetres because `Balance` is deliberately
+all-integer so the arithmetic stays exact — the module doc says so and derives
+`Eq`, which caught an `f32` attempt at compile time.
+
+Each `#[serde(default)]`s to exactly the constant it replaced, so a mod that
+says nothing gets the game it always had; the determinism snapshot did not
+move and `balance --sim` prints byte-identical output.
+`how_much_luck_a_battlefield_has_is_a_mod_decision` and
+`a_mod_that_raises_the_cupola_sees_over_the_rise` are the checks that they are
+read at all. This also closes the note left open under item 2.
+
+**Still in Rust**, all five in `ai/`: `BOARDING_ROUNDS`, `IMPATIENCE`,
+`HORIZON`, `DEVOLVED`, `EXIT_URGENCY`. They want a `planner` block of their
+own rather than a home in `balance` — they govern how the AI thinks rather
+than what the rules are, and `--sweep planner.horizon_rounds=2,4,6` is the
+prize. `IMPATIENCE` is already tracked in TODO.
+
+<details><summary>The original finding</summary>
 
 The registry exposes twelve `&str`-keyed lookups (`terrain`, `vehicle`,
 `weapon`, `ammo`, `module`, `skill`, `role`, `trait_def`, `radio`,
@@ -389,3 +457,5 @@ tracked in TODO), `DEVOLVED`, `EXIT_URGENCY`, `STALEMATE_ROUNDS`, `MIN_HIT`,
 `MAX_HIT`, `EYE_HEIGHT`, `TARGET_HEIGHT`. Each is individually defensible and
 collectively a drift; every one is a number a modder would want. They want a
 sweep to prove nothing moved, which is why they are one chunk and not ten.
+
+</details>

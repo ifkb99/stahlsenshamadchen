@@ -24,8 +24,8 @@ mod movement;
 mod orders;
 
 pub use combat::{
-    AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, MAX_HIT, MIN_HIT,
-    ShellInFlight, blast_overmatches, expected_damage, flight_ticks, hit_breakdown, hit_chance,
+    AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, ShellInFlight,
+    blast_overmatches, expected_damage, flight_ticks, hit_breakdown, hit_chance,
     penetration_chance, penetration_share, preview_attack, struck_facing, weapon_ready,
 };
 pub use command::{
@@ -417,11 +417,6 @@ pub enum EndReason {
     /// wrote the condition down can end this way.
     Decapitated,
 }
-
-/// Rounds without contact before the battle is called off. Contact means a
-/// hit landed or some side can see an enemy, so a long careful approach
-/// under observation is not mistaken for a stalemate.
-pub const STALEMATE_ROUNDS: u32 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BattleResult {

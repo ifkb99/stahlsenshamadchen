@@ -5,7 +5,6 @@
 //! ticks via [`BattleState::step_tick`], and everyone's orders play out
 //! together.
 
-use super::STALEMATE_ROUNDS;
 use super::{
     BattleResult, BattleState, EndReason, FormationId, Goal, Latitude, Mission, Phase, Unit,
     UnitId, combat, fog, movement,
@@ -1370,7 +1369,7 @@ impl BattleState {
         if progress {
             self.last_contact_round = self.round;
         }
-        self.check_victory(&mut events);
+        self.check_victory(registry, &mut events);
         if self.is_over() {
             return events;
         }
@@ -2251,7 +2250,7 @@ impl BattleState {
         }
     }
 
-    fn check_victory(&mut self, events: &mut Vec<Event>) {
+    fn check_victory(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
         if self.over.is_some() {
             return;
         }
@@ -2314,7 +2313,7 @@ impl BattleState {
             self.finish(winner, EndReason::Eliminated, events);
             return;
         }
-        if self.round.saturating_sub(self.last_contact_round) >= STALEMATE_ROUNDS {
+        if self.round.saturating_sub(self.last_contact_round) >= registry.balance.stalemate_rounds {
             // Breaking contact ends the shooting; the points say who won it.
             let winner = self.leader();
             self.finish(winner, EndReason::Stalemate, events);

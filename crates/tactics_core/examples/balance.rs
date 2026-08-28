@@ -872,8 +872,7 @@ fn hit_table(reg: &DataRegistry) {
          and the reason a crawl and a dash are priced differently. The crew\n  \
          columns set pressure to that rung's own threshold rather than naming\n  \
          a number here; a mod whose rungs cost no accuracy prints none.",
-        tactics_core::battle::MIN_HIT,
-        tactics_core::battle::MAX_HIT,
+        reg.balance.min_hit, reg.balance.max_hit,
     );
 }
 

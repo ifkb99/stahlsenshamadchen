@@ -365,9 +365,10 @@ pub(super) fn hex_label(hex: Hex) -> String {
 /// parentheses: the metre value is what tells the player whether this is a
 /// long shot, the hex count is what they need to count tiles on the board.
 pub(super) fn format_attack(
-    scale: &tactics_core::data::Scale,
+    registry: &tactics_core::data::DataRegistry,
     preview: &tactics_core::battle::AttackPreview,
 ) -> String {
+    let scale = &registry.scale;
     let mut lines = vec![
         format!("Attack: {}", preview.target_name),
         format!("{} - {}", preview.target_vehicle, preview.target_side),
@@ -400,8 +401,7 @@ pub(super) fn format_attack(
     if preview.hit.clamped {
         lines.push(format!(
             "  (capped at {}-{}%)",
-            tactics_core::battle::MIN_HIT,
-            tactics_core::battle::MAX_HIT
+            registry.balance.min_hit, registry.balance.max_hit
         ));
     }
     lines.push(String::new());

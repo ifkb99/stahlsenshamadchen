@@ -14,9 +14,7 @@
 //! existed, so the pins here come in pairs wherever that is checkable: what
 //! the term does, and that zeroing it in data does nothing at all.
 
-use tactics_core::battle::{
-    BattleState, MAX_HIT, MIN_HIT, Order, SideState, UnitId, hit_breakdown, hit_chance,
-};
+use tactics_core::battle::{BattleState, Order, SideState, UnitId, hit_breakdown, hit_chance};
 use tactics_core::data::{DataRegistry, WeaponDef};
 use tactics_core::map::{Facing, HexMap, MapFile, UnitPlacement};
 use tactics_core::roster::Roster;
@@ -352,7 +350,7 @@ fn every_new_term_is_shown_to_the_player_and_adds_up() {
 
     let summed: i32 = breakdown.base + breakdown.modifiers.iter().map(|m| m.delta).sum::<i32>();
     if breakdown.clamped {
-        assert!((MIN_HIT..=MAX_HIT).contains(&breakdown.total));
+        assert!((reg.balance.min_hit..=reg.balance.max_hit).contains(&breakdown.total));
     } else {
         assert_eq!(
             summed, breakdown.total,

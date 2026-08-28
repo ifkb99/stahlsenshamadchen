@@ -37,6 +37,25 @@ fn detection_certain() -> i32 {
     100
 }
 
+/// Serde defaults for the numbers that were Rust constants until 2026-08-27.
+/// Each returns exactly the constant it replaced, so a mod that declares a
+/// `balance` block and says nothing about them gets the game it always had.
+fn min_hit() -> i32 {
+    5
+}
+fn max_hit() -> i32 {
+    95
+}
+fn stalemate_rounds() -> u32 {
+    8
+}
+fn eye_height() -> i32 {
+    250
+}
+fn target_height() -> i32 {
+    200
+}
+
 /// Per-point value of each crew stat.
 ///
 /// Three different kinds of number live here, and which kind a new field is
@@ -151,6 +170,44 @@ pub struct Balance {
     /// whose whole trade is exactly that, is the weapon this number is
     /// really about.
     pub blind_penalty: i32,
+
+    /// The floor and ceiling a hit chance is clamped to, as percentages.
+    ///
+    /// There is no such thing as a certainty or an impossibility on a
+    /// battlefield: the best-laid shot can be spoiled and the wildest one can
+    /// connect. These were `MIN_HIT`/`MAX_HIT` in `combat.rs`, which made the
+    /// one pair of numbers deciding whether luck exists at all the only
+    /// gunnery numbers a mod could not touch.
+    #[serde(default = "min_hit")]
+    pub min_hit: i32,
+    #[serde(default = "max_hit")]
+    pub max_hit: i32,
+    /// Rounds of nothing happening before a battle is called off.
+    ///
+    /// "Nothing" is accomplishment, not effort — hits, breakages, burnings,
+    /// deaths and departures reset the clock and a bounce does not — so this
+    /// is how long two forces may fail to hurt each other before the fight is
+    /// declared over.
+    #[serde(default = "stalemate_rounds")]
+    pub stalemate_rounds: u32,
+    /// Observer eye height above her own tile surface, in centimetres: a
+    /// commander's cupola.
+    ///
+    /// Centimetres because this block is deliberately all-integer — see the
+    /// module doc — so that the arithmetic stays exact and the simulation
+    /// stays bit-for-bit reproducible. 250 is 2.5 m, and 250/100.0 is exact
+    /// in `f32`.
+    #[serde(default = "eye_height")]
+    pub eye_height_cm: i32,
+    /// How far above the target tile's surface must be visible for the target
+    /// to count as seen, in centimetres.
+    ///
+    /// Deliberately lower than [`Self::eye_height_cm`], so looking out is
+    /// fractionally easier than being looked at — which is the whole of what
+    /// makes a reverse slope worth taking. **The rule lives in the ratio**, so
+    /// a mod raising one should think about the other.
+    #[serde(default = "target_height")]
+    pub target_height_cm: i32,
     /// The overmatch, as a percent of the armor beaten, at which a
     /// penetration delivers everything it has.
     ///
@@ -291,6 +348,11 @@ pub struct Balance {
 impl Default for Balance {
     fn default() -> Self {
         Self {
+            min_hit: min_hit(),
+            max_hit: max_hit(),
+            stalemate_rounds: stalemate_rounds(),
+            eye_height_cm: eye_height(),
+            target_height_cm: target_height(),
             vision_per_observation: 5,
             speed_per_driving: 5,
             accuracy_per_gunnery: 3,
