@@ -418,11 +418,16 @@ impl UtilityPlanner {
         // preserves.** Distances do. A score does. A dot product of two
         // differences does, because a reflection negates both. A coordinate
         // does not, and no total order on coordinates can.
-        const PLATEAU: f32 = 0.3;
+        //
+        // The width of the band is `planner.plateau`, and it is one of the
+        // few numbers in that block whose zero is not the gentle setting:
+        // at zero there is no plateau, the argmax is bare again, and the
+        // pathology above comes back.
+        let plateau = registry.planner.plateau;
         let facing = Hex::from(state.unit(unit).map(|u| u.facing).unwrap_or_default());
         let best = scored
             .into_iter()
-            .filter(|(_, s, _)| *s >= top - PLATEAU)
+            .filter(|(_, s, _)| *s >= top - plateau)
             .min_by_key(|(tile, score, _)| {
                 (
                     pos.distance_to(*tile),

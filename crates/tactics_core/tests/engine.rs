@@ -1287,6 +1287,356 @@ fn how_badly_a_finished_crew_wants_the_lane_is_a_mod_decision() {
     );
 }
 
+// --- what an order is worth against the terrain ----------------------------
+//
+// Four more numbers that were bare Rust until 2026-08-28, and unlike the five
+// above they are not five separate knobs: they are four terms in one sum, and
+// the sum decides the thing DIRECTION.md's original complaint was about —
+// "the order competes with the terrain, so `take that hill` can lose to `this
+// hedge scores better`, and the unit ends up *near* where it was pointed."
+//
+// Each test below is the check that its field is *read*, and each was
+// mutation-checked by pinning the field back to the constant it replaced and
+// requiring the test to fail. But they are written as behaviour rather than
+// as arithmetic, because a designer reaching for one of these wants to know
+// what it does at the keyboard, not that a multiplication happened.
+
+/// A crew under orders, an enemy she cannot see, and a hedge worth stopping
+/// in: the stage on which an order argues with the ground.
+///
+/// The forest sits right beside her and the ordered hex is at the far end of
+/// a long field, so the two tiles disagree about everything at once — cover
+/// against no cover, arrived against sixteen hexes to go — which is what
+/// makes the crossover between them a statement about the *order's* weight
+/// rather than about a rounding difference. No enemy in sight on purpose: an
+/// advance under fire is a different question, and it is the next test.
+fn ordered_against_the_ground(reg: &DataRegistry, seed: u64) -> BattleState {
+    let rows: Vec<&str> = vec![
+        "gggggggggggggggggggg",
+        "ggfggggggggggggggggg",
+        "gggggggggggggggggggg",
+    ];
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "ordered",
+        "palette": { "g": "grass", "f": "forest" },
+        "rows": rows,
+        "formations": [{ "id": "platoon", "name": "Platoon", "side": 0 }],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let mut hers = unit_at([1, 1], 0, "medium_tank", "Subordinate");
+    hers.formation = Some("platoon".into());
+    hers.leads = true;
+    let placements = vec![hers, unit_at([19, 0], 1, "medium_tank", "Somebody")];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    let mut state = BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    );
+    state
+        .apply(
+            reg,
+            &Order::SetMission {
+                formation: formation_named(&state, "platoon"),
+                mission: Mission::Advance {
+                    to: tactics_core::offset_to_hex(18, 1),
+                },
+                latitude: tactics_core::battle::Latitude::Delegated,
+            },
+        )
+        .expect("a legal mission");
+    state
+}
+
+/// What the ground a commander names is worth is the mod's to choose.
+///
+/// This is the complaint the whole design memo opens with, made checkable:
+/// an order is a term in a sum, so there is some weight at which the hedge
+/// wins and some weight at which the hill does, and which of those the game
+/// ships at is a design decision rather than a constant nobody chose.
+#[test]
+fn what_the_ground_a_commander_names_is_worth_is_a_mod_decision() {
+    let mut reg = seen(registry_wireless());
+    let state = ordered_against_the_ground(&reg, 17);
+    assert!(
+        state.fog.side(0).spotted.is_empty(),
+        "the stage needs no enemy in sight — this is a test about ground, not about fire"
+    );
+    let hedge = tactics_core::offset_to_hex(2, 1);
+    let hill = tactics_core::offset_to_hex(18, 1);
+    let eval = Evaluator::new(reg.doctrine("massed_armor").cloned().unwrap());
+    let gap = |reg: &DataRegistry| {
+        eval.score_tile(reg, &state, UnitId(0), hill).score
+            - eval.score_tile(reg, &state, UnitId(0), hedge).score
+    };
+
+    // Worth nothing, and the order may as well not have been given: she reads
+    // the map exactly as an unordered crew does and the cover beside her
+    // wins.
+    reg.planner.mission_weight = 0.0;
+    assert!(
+        gap(&reg) < 0.0,
+        "an order worth nothing loses to a hedge, which is the complaint in one line"
+    );
+
+    // At what the base mod ships, the sixteen hexes she was told to cross are
+    // worth crossing.
+    reg.planner.mission_weight = 2.0;
+    let shipped = gap(&reg);
+    assert!(
+        shipped > 0.0,
+        "at the shipped weight the ground she was given beats the ground she is standing next to"
+    );
+
+    // And it is a weight rather than a switch: heavier orders pull harder,
+    // which is what makes sweeping it mean something.
+    reg.planner.mission_weight = 6.0;
+    assert!(
+        gap(&reg) > shipped,
+        "and a heavier order pulls harder still"
+    );
+}
+
+/// Whether being shot at suspends a movement to contact is the mod's to
+/// choose.
+///
+/// `Advance` halts and fights; `Assault` presses on. That distinction is the
+/// whole difference between the two verbs, so this field is the one number in
+/// the block whose neutral-looking value is a trap: at 1.0 nothing is turned
+/// off, the two orders have simply become synonyms.
+#[test]
+fn whether_fire_suspends_an_advance_is_a_mod_decision() {
+    let mut reg = seen(registry_wireless());
+    // `pressed_stage` is the one with an enemy in view who can shoot her
+    // where she stands, which is exactly the condition the damping asks
+    // about.
+    let (state, told) = pressed_stage(&reg, 41);
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "the damping only applies under fire, so the stage needs somebody shooting"
+    );
+    let behind = tactics_core::offset_to_hex(1, 0);
+    let eval = Evaluator::new(reg.doctrine("massed_armor").cloned().unwrap());
+    let pull = |reg: &DataRegistry| {
+        eval.score_tile(reg, &state, UnitId(0), told).score
+            - eval.score_tile(reg, &state, UnitId(0), behind).score
+    };
+
+    // Contact damping is a scale on the mission term alone, so what it moves
+    // is how much of the order survives the shooting.
+    reg.planner.pull_under_fire = 0.25;
+    let halted = pull(&reg);
+    reg.planner.pull_under_fire = 1.0;
+    let pressing = pull(&reg);
+    assert!(
+        pressing > halted,
+        "an advance that does not stop for fire pulls harder than one that does: \
+         {pressing} against {halted}"
+    );
+
+    // And the floor: an order that evaporates entirely on contact leaves her
+    // choosing ground for her own reasons, which is what a doctrine that
+    // never presses would be asking for.
+    reg.planner.pull_under_fire = 0.0;
+    assert!(
+        pull(&reg) < halted,
+        "and one suspended outright pulls less than the shipped quarter"
+    );
+}
+
+/// How far a piece of ground reaches is the mod's to choose — and it is one
+/// number for orders and objectives alike.
+///
+/// The slope exists because a greedy one-round planner can only see the tiles
+/// it can reach this round: ground whose value is flat until you arrive is
+/// ground it cannot navigate to. So at zero decay a crew twenty hexes off has
+/// no idea which way to drive, which is the failure this term prevents rather
+/// than the gentle setting of it.
+#[test]
+fn how_far_the_pull_of_ground_reaches_is_a_mod_decision() {
+    let mut reg = seen(registry_wireless());
+    let state = ordered_against_the_ground(&reg, 17);
+    // Two tiles on the same terrain, differing only in how far they are from
+    // the hex she was told to take.
+    let near = tactics_core::offset_to_hex(14, 1);
+    let far = tactics_core::offset_to_hex(4, 1);
+    let eval = Evaluator::new(reg.doctrine("massed_armor").cloned().unwrap());
+    let slope = |reg: &DataRegistry| {
+        eval.score_tile(reg, &state, UnitId(0), near).score
+            - eval.score_tile(reg, &state, UnitId(0), far).score
+    };
+
+    reg.planner.distance_decay = 0.0;
+    assert!(
+        slope(&reg).abs() < 1e-6,
+        "with no slope, ten hexes of progress toward the ordered ground is worth nothing \
+         and she cannot tell which way to drive"
+    );
+
+    reg.planner.distance_decay = 0.15;
+    let shipped = slope(&reg);
+    assert!(shipped > 0.0, "the shipped slope leads her there");
+
+    reg.planner.distance_decay = 0.45;
+    assert!(
+        slope(&reg) > shipped,
+        "and a steeper one leads her there harder"
+    );
+}
+
+/// The same field is the slope on a map objective, which is the thing that
+/// makes `mission_weight` quotable in objective-value units.
+///
+/// Two slopes would be two answers to one question — how far can ground tell
+/// you which way to drive — and the sentence "an order pulls about as hard as
+/// the ford" would quietly stop being true, because the two rewards would no
+/// longer be measured against the same yardstick.
+#[test]
+fn an_order_and_an_objective_are_led_to_by_the_same_slope() {
+    let mut reg = seen(registry_wireless());
+    let rows: Vec<&str> = vec!["gggggggggggggggggggg"; 3];
+    let state = goal_battle(
+        &reg,
+        &rows,
+        serde_json::json!([
+            { "id": "ford", "name": "The Ford", "at": [[18, 1]], "value": 2 },
+        ]),
+        vec![
+            unit_at([1, 1], 0, "medium_tank", "Chooser"),
+            unit_at([19, 0], 1, "medium_tank", "Somebody"),
+        ],
+        17,
+    );
+    let near = tactics_core::offset_to_hex(14, 1);
+    let far = tactics_core::offset_to_hex(4, 1);
+    let eval = Evaluator::new(reg.doctrine("massed_armor").cloned().unwrap());
+    let slope = |reg: &DataRegistry| {
+        eval.score_tile(reg, &state, UnitId(0), near).score
+            - eval.score_tile(reg, &state, UnitId(0), far).score
+    };
+
+    reg.planner.distance_decay = 0.0;
+    assert!(
+        slope(&reg).abs() < 1e-6,
+        "no mission anywhere on this stage, and the objective's slope answers to the \
+         same field"
+    );
+    reg.planner.distance_decay = 0.15;
+    assert!(
+        slope(&reg) > 0.0,
+        "and the shipped slope leads her to the ford"
+    );
+}
+
+/// How much better a tile has to be before she will drive for it is the mod's
+/// to choose.
+///
+/// The plateau band is a dispersion rule before it is a movement-economy one:
+/// open ground scores in broad plateaus, and without it every identical crew
+/// on a side makes the identical choice and arrives as a queue. That is what
+/// once made a noiseless side play *worse* than a randomly scattered one and
+/// inverted the entire difficulty ladder, so zero is emphatically not the
+/// gentle setting of this field.
+///
+/// **The stage declares no objectives, and it has to.** The band decides the
+/// tile sweep's answer, and since the goal layer landed that answer is one
+/// candidate among the goals rather than her destination: give this map a
+/// ford and she takes `Take(ford)` as a goal and walks a leg of it through
+/// `step_toward`, which never consults the band at all. So what this field
+/// still governs is the choice between pieces of ground that mean nothing in
+/// particular — which is exactly the case it was introduced for, a side
+/// spread over featureless grass, and is worth knowing before anyone sweeps
+/// it expecting a large number.
+#[test]
+fn how_much_better_a_tile_must_be_before_she_drives_for_it_is_a_mod_decision() {
+    let mut reg = seen(registry_wireless());
+    // A wood four hexes off: somewhere meaningfully better than the grass she
+    // is parked on, at a cost in driving. No objectives and nobody in sight,
+    // so the wood is the only thing on the map with an opinion.
+    let rows: Vec<&str> = vec![
+        "gggggggggggggggggggg",
+        "gggggffggggggggggggg",
+        "gggggggggggggggggggg",
+    ];
+    let state = goal_battle(
+        &reg,
+        &rows,
+        serde_json::json!([]),
+        vec![
+            unit_at([1, 1], 0, "medium_tank", "Chooser"),
+            unit_at([19, 0], 1, "medium_tank", "Somebody"),
+        ],
+        17,
+    );
+    assert!(
+        state.fog.side(0).spotted.is_empty(),
+        "nobody in sight, so nothing but the ground is speaking"
+    );
+    let home = tactics_core::offset_to_hex(1, 1);
+    let driven = |reg: &DataRegistry| {
+        move_chosen(reg, &state, UnitId(0)).map_or(0, |to| home.distance_to(to))
+    };
+
+    reg.planner.plateau = 0.0;
+    let bare = driven(&reg);
+    assert!(
+        bare > 0,
+        "with no band at all she takes the best tile she can reach, whatever it costs her"
+    );
+
+    // A band wider than anything this map has to offer makes every tile she
+    // can reach indistinguishable, and among ground she cannot tell apart she
+    // stays where she is.
+    reg.planner.plateau = 100.0;
+    assert_eq!(
+        driven(&reg),
+        0,
+        "and a crew who can tell no two hexes apart has no reason to burn a drop of fuel"
+    );
+}
+
+/// The destination the planner picks for `unit`, or `None` if it leaves her
+/// where she is. The twin of [`goal_with_foresight`], one layer down: that
+/// one asks what she means to do, this one asks where she actually drives.
+fn move_chosen(reg: &DataRegistry, state: &BattleState, unit: UnitId) -> Option<tactics_core::Hex> {
+    let doctrine = doctrine_with(reg, "massed_armor", |d| {
+        d.route_caution = 0.0;
+        d.contest_aversion = 0.0;
+    });
+    // Difficulty 5 so the per-round lean is exactly zero and the only thing
+    // deciding between two tiles is the band under test.
+    let mut planner = UtilityPlanner::new(Evaluator::new(doctrine), 5, 99);
+    planner.foresight = 1.0;
+    let mut state = state.clone();
+    loop {
+        let order = planner.next_order(reg, &state, 0);
+        if let Order::SetMove { unit: who, to } = order
+            && who == unit
+        {
+            return Some(to);
+        }
+        if matches!(order, Order::Commit { .. }) {
+            return None;
+        }
+        state.apply(reg, &order).ok()?;
+    }
+}
+
 // --- line of sight, elevation and terrain ----------------------------------
 
 #[test]

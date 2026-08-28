@@ -142,6 +142,61 @@ every line, every line wrapped.
 
 ## Battles
 
+**What an order is worth against the terrain, as four numbers a mod owns**
+(2026-08-28). `MISSION_WEIGHT`, `contact_scale`, the `0.15` distance decay and
+`PLATEAU` became `planner.mission_weight`, `pull_under_fire`, `distance_decay`
+and `plateau`. One chunk rather than four, because they are four terms in one
+sum and sweeping any of them alone says less than sweeping the shape.
+Determinism snapshot passed **unregenerated** — the whole of the evidence that
+the refactor changed no rules — and `perf` is unmoved at 1.41 ms a round,
+138 µs a `roads()` call, 0.09 ms a utility order. Five tests: one per field,
+each mutation-checked by pinning the field back to its old constant and
+requiring the test to fail, plus
+`an_order_and_an_objective_are_led_to_by_the_same_slope`.
+
+*Why one slope and not two.* `distance_decay` is shared between
+`objective_value` and `mission_value` on purpose. `mission_weight` is quoted
+in objective-value units — "an order pulls about as hard as the ford" — and
+that sentence is only true while the two gradients have the same shape; a
+second slope would silently change the units the first number is stated in and
+the two would drift. The centre-seeking `0.15` in `score_tile`'s `advance`
+term is deliberately *not* folded in despite matching in magnitude: that is
+the fallback for a map naming no ground at all, and a designer asking how far
+an order reaches should not also change how a lost crew searches an empty map.
+
+*The result.* Swept on the delegation tax table at 8 seeds × 36 = 288 battles
+a cell, with `--set planner.devolved=1.1` so both doctrines assign ground,
+elastic defence's delegation tax runs **37 / 36 / 35 / 27 / 2 / 10** at
+`mission_weight` 0 / 1 / 2 / 4 / 8 / 16 — against a `both flat` control that
+is *bit-identical* at every value, which is the additivity claim measured
+rather than asserted. The table's stated target is a tax of zero and 8 reaches
+it. The shipped 2.0 was left alone: the measurement needs `devolved=1.1`, and
+in the game as it ships elastic devolves (0.7 ≥ 0.6) and issues no ground
+missions, so its real tax is 11 of 288. Whether to raise the orders or keep
+elastic devolved is a content decision, in TODO.
+
+*The null, which is the more useful half.* `pull_under_fire` is
+**bit-identical at 0, 0.25, 0.6 and 1.0** across 576 battles — not inside the
+noise, identical. `contact_scale` applies to `Advance` and `Recon`;
+`ai/command.rs` picks a posture off `aggression`, so massed armour at 0.85
+orders `Assault` (exempt by design), elastic defence at 0.3 orders `Hold`, and
+`Recon` is issued by nobody. No doctrine the table fights ever issues an
+`Advance`. Proved rather than inferred: `--set
+doctrine.massed_armor.aggression=0.6` makes it order one, and the same sweep
+then moves 55 / 53 / 52 of 144 with the control still bit-identical. The term
+is live, correct, and **player-facing** — the player presses `G` and meets it,
+the AI never does. A sweep returning exactly zero is an instruction to find
+out why: "no effect" and "never evaluated" look identical in the table and
+mean opposite things.
+
+*What `plateau` turned out to govern.* Less than it used to. Since the goal
+layer landed, the tile sweep's answer is one candidate among the goals rather
+than a destination, and a chosen `Take(hex)` is walked by `step_toward`, which
+never consults the band. It still decides between pieces of ground that mean
+nothing in particular — the dispersion case it was introduced for — which is
+why its test stages a map with no objectives on it, and why sweeping it on the
+shipped maps produced nothing monotone.
+
 **Battle victory conditions.** A map declares `objectives` (id, name, `at`
 hexes, `value`, `kind`) and optionally a `victory_score`. Ground of kind
 `hold` pays its value each round to whoever holds it; an `exit` is ground

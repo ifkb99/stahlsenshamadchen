@@ -246,9 +246,9 @@ impl Evaluator {
         // Contact suspends a movement to contact. An `Advance` is exactly
         // that order — take the ground, fight what you meet on the way — so
         // while somebody is shooting at her where she stands, the pull toward
-        // the commander's hex is cut to a quarter and her own appetites (the
-        // shot in front of her, cover, the threat she is under) decide the
-        // round. Nothing is latched: when the enemy is dead or lost the
+        // the commander's hex is cut to `planner.pull_under_fire` and her own
+        // appetites (the shot in front of her, cover, the threat she is
+        // under) decide the round. Nothing is latched: when the enemy is dead or lost the
         // damping evaporates and the march resumes, which is why this is a
         // scale on the term rather than a state anybody has to clear.
         //
@@ -259,6 +259,9 @@ impl Evaluator {
         // the real-world shape agrees — movement to contact halts and fights,
         // and pressing on through fire is a *different order*, which is
         // [`Mission::Assault`] and is deliberately absent from this match.
+        // Which is also why a mod setting `pull_under_fire` to 1 has not
+        // turned a rule off but collapsed two verbs into one: `Advance` would
+        // then be `Assault` in every respect.
         // `Recon` damps too: eyes forward is even less of a reason to drive
         // into a gun than ground is.
         //
@@ -269,7 +272,7 @@ impl Evaluator {
             Some((
                 crate::battle::Mission::Advance { .. } | crate::battle::Mission::Recon { .. },
                 _,
-            )) if super::threatened(registry, state, unit) => 0.25,
+            )) if super::threatened(registry, state, unit) => registry.planner.pull_under_fire,
             _ => 1.0,
         };
         let objective = match standing {
@@ -307,6 +310,16 @@ impl Evaluator {
             // Under a mission the slope already says which way to walk, and
             // "inwards" would argue with it on a map with nothing to hold.
             None if standing.is_some() => 0.0,
+            // The 0.15 here is deliberately *not* `planner.distance_decay`,
+            // despite sharing its magnitude. That number is the slope of a
+            // gradient leading to a named piece of ground, and the reason it
+            // is one number for objectives and missions alike is that
+            // `mission_weight` is quoted in objective-value units. This is
+            // the fallback for a map that names no ground at all: "wander
+            // towards the middle and find somebody". Folding the two together
+            // would mean a designer asking how far an order reaches also
+            // changed how a lost crew searches an empty map, which is a
+            // different question with a different right answer.
             None if state.map.objectives().is_empty() => {
                 -(state.map.center().distance_to(tile) as f32) * 0.15 * doctrine.scouting
             }
@@ -341,8 +354,11 @@ impl Evaluator {
     ///   walking away hands it back for free — but not worth marching across
     ///   the map for when there is unclaimed ground somewhere else.
     ///
-    /// The two coefficients were swept over 24 battles. Both halves of the
-    /// curve are bad in different ways: at zero this is the old game, 11 of 24
+    /// The two coefficients — the reward for arriving and
+    /// [`distance_decay`](crate::data::PlannerRules::distance_decay) for the
+    /// slope — were swept over 24 battles, by hand, before the second of them
+    /// was data. Both halves of the curve are bad in different ways: at zero
+    /// this is the old game, 11 of 24
     /// decided and 302 shots fired in 16.5 rounds because nobody advances; at
     /// double these values it is 21 of 24 decided but only 517 shots in 8.1
     /// rounds, because units drive at the objective through fire and are
@@ -382,6 +398,7 @@ impl Evaluator {
         let breaking = (1.0 - self.doctrine.withdraw_threshold).clamp(0.01, 1.0);
         let flight = ((breaking - condition) / breaking).clamp(0.0, 1.0);
 
+        let decay = registry.planner.distance_decay;
         let mut best: Option<f32> = None;
         for (objective, held) in state.objectives() {
             // Ground reserved to the other side is somebody else's business.
@@ -416,7 +433,7 @@ impl Evaluator {
                 .min()
                 .unwrap_or(0);
             let reward = if objective.contains(tile) { 1.5 } else { 0.0 };
-            let score = weight * (reward - 0.15 * distance as f32);
+            let score = weight * (reward - decay * distance as f32);
             if best.is_none_or(|b| score > b) {
                 best = Some(score);
             }
@@ -430,12 +447,18 @@ impl Evaluator {
     /// slope leading there, because a greedy one-round planner can only
     /// follow a gradient it can see from the tiles it can reach.
     ///
-    /// The numbers are a first pass, stated against the map-objective scale
-    /// so they mean something: `MISSION_WEIGHT` is 2.0 because that is what
-    /// a typical piece of ground is worth in the shipped maps, so "go where
-    /// you were told" pulls about as hard as "take the ford" used to. The
-    /// balance harness's delegation-tax table is the instrument that judges
-    /// them.
+    /// The numbers are stated against the map-objective scale so they mean
+    /// something, and they are data:
+    /// [`PlannerRules::mission_weight`](crate::data::PlannerRules::mission_weight)
+    /// ships at 2.0 because that is what a typical piece of ground is worth
+    /// in the shipped maps, so "go where you were told" pulls about as hard
+    /// as "take the ford". The slope is
+    /// [`distance_decay`](crate::data::PlannerRules::distance_decay), shared
+    /// with [`Self::objective_value`] precisely so that comparison holds —
+    /// two slopes would make the two rewards incommensurable and quietly
+    /// change the units `mission_weight` is quoted in. The balance harness's
+    /// delegation-tax table is the instrument that judges them, and
+    /// `--sweep planner.mission_weight=...` is how to ask.
     ///
     /// `delegation` is the strictness knob, and this is where it is finally
     /// read: a commander who devolves little expects the letter of the order
@@ -467,8 +490,12 @@ impl Evaluator {
         latitude: crate::battle::Latitude,
     ) -> f32 {
         use crate::battle::Mission;
-        /// Worth of a mission's ground, in objective-value units.
-        const MISSION_WEIGHT: f32 = 2.0;
+        // Both read once rather than per arm: every arm below is the same
+        // shape — a reward for being on the ground, a slope leading to it —
+        // and that is what makes `mission_weight` quotable in objective-value
+        // units.
+        let weight = registry.planner.mission_weight;
+        let decay = registry.planner.distance_decay;
         let doctrine = &self.doctrine;
         let floor = match latitude {
             crate::battle::Latitude::Delegated => 0.5,
@@ -489,10 +516,7 @@ impl Evaluator {
             Mission::Advance { to } | Mission::Assault { to } => {
                 let dist = to.distance_to(tile);
                 let reward = if dist <= 1 { 1.5 } else { 0.0 };
-                MISSION_WEIGHT
-                    * strictness
-                    * doctrine.objective_value
-                    * (reward - 0.15 * dist as f32)
+                weight * strictness * doctrine.objective_value * (reward - decay * dist as f32)
             }
             // Stand where told. `None` anchors on the leader rather than a
             // stored hex or a centroid: she is where the formation is, the
@@ -509,10 +533,7 @@ impl Evaluator {
                 match anchor {
                     Some(anchor) => {
                         let dist = anchor.distance_to(tile) as f32;
-                        MISSION_WEIGHT
-                            * strictness
-                            * doctrine.objective_value
-                            * (0.75 - 0.15 * dist)
+                        weight * strictness * doctrine.objective_value * (0.75 - decay * dist)
                     }
                     // Nobody left to anchor on: the mission has no ground to
                     // say anything about.
@@ -527,7 +548,7 @@ impl Evaluator {
             Mission::Recon { toward } => {
                 let dist = toward.distance_to(tile);
                 let reward = if dist <= 2 { 0.75 } else { 0.0 };
-                MISSION_WEIGHT * strictness * doctrine.scouting * (reward - 0.15 * dist as f32)
+                weight * strictness * doctrine.scouting * (reward - decay * dist as f32)
             }
             // Leave by the named lane. Deliberately ungated by damage: the
             // per-unit flight gate in `objective_value` exists because an
@@ -550,7 +571,7 @@ impl Evaluator {
                         let reward = if objective.contains(tile) { 1.5 } else { 0.0 };
                         registry.planner.exit_urgency
                             * doctrine.objective_value
-                            * (reward - 0.15 * dist as f32)
+                            * (reward - decay * dist as f32)
                     }
                     // Validation refuses a mission naming no real exit, so
                     // this only happens if the lane was defined by a mod
@@ -594,10 +615,10 @@ impl Evaluator {
                 match anchor {
                     Some(anchor) => {
                         let dist = anchor.distance_to(tile) as f32;
-                        MISSION_WEIGHT
+                        weight
                             * strictness
                             * doctrine.objective_value
-                            * (0.75 - 0.15 * (dist - STANDOFF).abs())
+                            * (0.75 - decay * (dist - STANDOFF).abs())
                     }
                     None => 0.0,
                 }

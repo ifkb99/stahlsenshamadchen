@@ -182,11 +182,12 @@ fn a_swept_override_is_the_same_thing_as_editing_the_mod_by_hand() {
 /// base mod ships is the game the constants gave.
 ///
 /// Two claims in one test because they fail together and for the same reason.
-/// The five AI numbers became data on 2026-08-27, and **the prize is the
-/// sweep** — `--sweep planner.horizon_rounds=2,4,6` asks what looking further
-/// ahead is worth to a commander, which had never been measured because the
-/// only way to ask was to edit Rust and rebuild. A block nothing can address
-/// buys none of that.
+/// The AI's constants became data across 2026-08-27 and -28, and **the prize
+/// is the sweep** — `--sweep planner.horizon_rounds=2,4,6` asks what looking
+/// further ahead is worth to a commander, and `--sweep
+/// planner.mission_weight=1,2,4` asks what an order is worth against the
+/// terrain. Neither had ever been measured, because the only way to ask was
+/// to edit Rust and rebuild. A block nothing can address buys none of that.
 ///
 /// The second half is the additivity contract, checked the strong way: every
 /// field of the shipped block equals the constant it replaced, so a mod that
@@ -221,6 +222,23 @@ fn the_planner_numbers_can_be_swept_and_ship_at_the_values_they_replaced() {
         "the patched block differs from the hand-edited one somewhere other \
          than the field that was swept"
     );
+
+    // And a float field by the same path, written the way somebody actually
+    // types it on a command line. `--set planner.mission_weight=4` parses as
+    // a json integer, and a field that refused to take one would send a
+    // designer hunting for the mistake in their own sweep rather than in
+    // ours.
+    let was = apply_override(
+        &mut reg,
+        &Override::parse("planner.mission_weight=4").expect("a well-formed override"),
+    )
+    .expect("the field exists");
+    assert_eq!(
+        was, "2",
+        "a whole-numbered float reports its old value without the trailing zero, \
+         which is what a sweep's legend prints"
+    );
+    assert_eq!(reg.planner.mission_weight, 4.0);
 }
 
 /// A path that names nothing is an error, and the error says what was there.

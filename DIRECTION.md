@@ -570,11 +570,10 @@ campaign is a mod rather than a patch. That is the pattern the rest should
 follow. What is still bare Rust and shouldn't be, roughly in order of how much
 a designer would want to touch it:
 
-- `PLATEAU`, `MISSION_WEIGHT`, `contact_scale` and the `0.15` distance decay in
-  `ai/eval.rs` — the numbers that decide what an order is *worth* against
-  terrain, which is the exact knob the original complaint was about. **These
-  are now the ones to do**, and they are one chunk: they are four terms in one
-  sum and sweeping any of them alone says less than sweeping the shape.
+- ~~`PLATEAU`, `MISSION_WEIGHT`, `contact_scale` and the `0.15` distance decay
+  in `ai/eval.rs`~~ — **done 2026-08-28**, as one chunk, for the reason given
+  here: they are four terms in one sum. See the log entry below for what the
+  sweep said.
 - `AMBUSH_PATIENCE` in the battle layer.
 - The interior-effect and brew-up constants not already in `balance`.
 
@@ -594,6 +593,28 @@ than a belief held for another month. It also says something about the list
 above: if the horizon is worth nothing on the shipped maps, the four terms in
 `mission_value` are the more promising chunk, because those decide what an
 *order* is worth and orders are what the complaint was about.
+
+**Finished 2026-08-28, and that prediction was right.** The four terms became
+`planner.mission_weight`, `pull_under_fire`, `distance_decay` and `plateau`,
+and swept on the delegation tax table at 288 battles a cell they produced the
+first number this family has yielded: **elastic defence's delegation tax runs
+37 / 36 / 35 / 27 / 2 / 10 as `mission_weight` goes 0 / 1 / 2 / 4 / 8 / 16**,
+with the uncommanded control bit-identical at every value. The table's target
+is a tax of zero; the shipped 2.0 is about a third of what reaches it.
+
+Two caveats, and they matter more than the number. First, that measurement
+needs `--set planner.devolved=1.1`, because in the shipped game elastic
+defence devolves and issues no ground missions at all — so the *real* tax is
+11 of 288 and the threshold is already routing around the problem this found.
+Second, `pull_under_fire` — the `contact_scale = 0.25` this memo called "the
+whole problem in miniature" — swept to **exactly nothing**, bit-identical
+across 576 battles, because no doctrine in the base mod ever issues an
+`Advance`: massed armour assaults, elastic defence holds, and `Recon` is
+issued by nobody. The term this memo diagnosed as the sharpest instance of
+orders-not-landing is one **the AI never meets and only a human player
+does**, which is a sharper restatement of this memo's own conclusion than the
+memo managed: the design is right, the interface is what fails, and the
+instrument could not have told us because the instrument does not press `G`.
 
 Worth doing as one chunk with the `balance --sim` tables run before and after,
 rather than piecemeal: the value of moving a number into data is only realised
@@ -734,3 +755,29 @@ when somebody sweeps it, and a sweep needs an instrument.
   content rather than code: at `devolved: 0.6` two of three shipped doctrines
   issue no ground missions at all, so subordinate initiative has nothing to
   deviate from for either of them.
+
+- **2026-08-28** — the four terms that decide what an order is worth against
+  terrain became data (`planner.mission_weight`, `pull_under_fire`,
+  `distance_decay`, `plateau`), and the sweep answered this memo's opening
+  complaint with a number for the first time. **Elastic defence's delegation
+  tax falls from 35 wins in 288 at the shipped `mission_weight` to 2 at 8**,
+  with the uncommanded control bit-identical at every value.
+
+  What the chunk actually taught is a pattern, and it is now three for three.
+  *Every* order-related mechanism this arc has built — subordinate initiative,
+  and now both of these terms — turns out to be gated not by its own tuning
+  but by **which missions the doctrine roster causes to be issued at all**.
+  Initiative fires for one doctrine because two devolve. `mission_weight`
+  matters enormously and only in a configuration the game does not ship,
+  because elastic defence devolves. `pull_under_fire` is bit-identical across
+  576 battles because no doctrine ever issues an `Advance` — massed armour
+  assaults, elastic defence holds, and `Recon` is issued by nobody.
+
+  So the bottleneck for this whole line of work is not the numbers in
+  `mission_value`, which are now all data and all sweepable in seconds. It is
+  that **the base mod's three doctrines exercise a narrow slice of the command
+  model**, and every instrument this project has is therefore measuring that
+  slice. That is a content question — doctrine values, `devolved`, and a
+  doctrine that actually orders a movement to contact — and it belongs beside
+  the terrain-varied-arena item, which is the same finding arrived at from the
+  map side rather than the roster side.

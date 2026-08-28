@@ -75,7 +75,11 @@
     "boarding_rounds": 4.0,
     "deviation_cost": 2.0,
     "devolved": 0.6,
-    "exit_urgency": 3.0
+    "exit_urgency": 3.0,
+    "mission_weight": 2.0,
+    "pull_under_fire": 0.25,
+    "distance_decay": 0.15,
+    "plateau": 0.3
   },
   "cores": [
     {

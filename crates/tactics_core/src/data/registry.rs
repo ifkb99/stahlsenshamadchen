@@ -739,9 +739,11 @@ impl DataRegistry {
             }
         }
 
-        // The planner numbers. Only two of the five have a value that is
-        // *wrong* rather than merely aggressive, and both are quiet failures
-        // rather than loud ones, which is the whole reason to check them.
+        // The planner numbers. Only a handful have a value that is *wrong*
+        // rather than merely aggressive, and those are quiet failures rather
+        // than loud ones, which is the whole reason to check them: a game
+        // that plays subtly badly looks exactly like a game whose balance you
+        // disagree with.
         let p = &self.planner;
         if p.horizon_rounds == 0 {
             report.error(
@@ -780,6 +782,44 @@ impl DataRegistry {
                 "planner boarding_rounds is {}; mounting up saves time in itself, so a \
                  platoon will board to be carried nowhere",
                 p.boarding_rounds
+            ));
+        }
+        // A negative slope is the one genuinely inverted value in the
+        // order-versus-terrain family: every objective and every mission
+        // would then be worth *more* the further off it is, so a crew drives
+        // away from the ground she was sent to take and is behaving
+        // perfectly rationally about it. Nothing else in the game would
+        // report a fault.
+        if p.distance_decay < 0.0 {
+            report.error(format!(
+                "planner distance_decay is {}; a negative slope makes every objective and \
+                 every order worth more the further away it is, so a crew marches away from \
+                 the ground she was given",
+                p.distance_decay
+            ));
+        }
+        if p.plateau < 0.0 {
+            report.error(format!(
+                "planner plateau is {}; the band is a width, and a negative one excludes the \
+                 best tile from the choice between the best tiles",
+                p.plateau
+            ));
+        }
+        if p.mission_weight < 0.0 {
+            report.warn(format!(
+                "planner mission_weight is {}; a formation under orders is repelled by the \
+                 ground its commander named",
+                p.mission_weight
+            ));
+        }
+        // Warned rather than errored because 1.0 is a coherent thing for a
+        // mod to say — it just is not the thing it looks like. See the field.
+        if !(0.0..1.0).contains(&p.pull_under_fire) {
+            report.warn(format!(
+                "planner pull_under_fire is {}; at 1 or more an advance presses on through \
+                 fire, which is what an assault already is, so the two orders stop differing \
+                 in anything",
+                p.pull_under_fire
             ));
         }
     }

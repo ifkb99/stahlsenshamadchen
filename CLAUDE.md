@@ -715,19 +715,32 @@ difficulty level is worth the same to a howitzer as to a recon car.
 
 ### How the AI thinks is a mod, and it is not `balance`
 
-The five numbers that were the last tuning constants in `ai/` live in the
+The tuning constants that were the last bare numbers in `ai/` live in the
 `planner` block of `mod.json` (`data::PlannerRules`, one-in-effect like
-`scale`, `balance` and `casualties`): `impatience`, `horizon_rounds`,
-`boarding_rounds`, `devolved` and `exit_urgency`. The doc comment on each field
-carries the reasoning that used to sit on the constant, which is where to look
-before changing one.
+`scale`, `balance` and `casualties`). The doc comment on each field carries the
+reasoning that used to sit on the constant, which is where to look before
+changing one. There are two families:
+
+- **What she will drive for**, from the goal chooser: `impatience`,
+  `horizon_rounds`, `boarding_rounds`, `deviation_cost`, `devolved`.
+- **What ground is worth once she is looking at it**, from the evaluator:
+  `mission_weight`, `pull_under_fire`, `distance_decay`, `plateau`, and
+  `exit_urgency` beside them. These four are the ones DIRECTION.md's opening
+  complaint is about — *"the order competes with the terrain, so `take that
+  hill` can lose to `this hedge scores better`"* — and they are four terms in
+  **one sum**, which is why they landed as one chunk. Sweeping any of them
+  alone says less than sweeping the shape.
 
 - **It is a separate block from `balance` on purpose, and the line is
   load-bearing.** `balance` says what is *true on this battlefield* — what a
   point of gunnery is worth, how far through a plate a marginal round gets —
   and reaches a human player's shot exactly as it reaches a machine's. Nothing
-  in `planner` reaches a rule: a mod that rewrote all five would leave a
-  human-versus-human battle bit-for-bit identical. Putting a number in the
+  in `planner` reaches a rule: a mod that rewrote every one of them would
+  leave a human-versus-human battle bit-for-bit identical. That is *measured*
+  rather than asserted for the order terms — under `--sweep
+  planner.mission_weight=0,1,2,4,8,16` the delegation table's `both flat` row
+  is bit-identical at every value, because a side with nobody assigning
+  missions never reaches the term. Putting a number in the
   wrong one of these merges "what is true here" with "how well is this side
   played", which is the conflation difficulty spent a whole arc separating.
   **The test for which block a new number belongs in is that question**, not
@@ -746,9 +759,10 @@ before changing one.
   shipped doctrines devolve, which is one decision about the whole roster
   rather than one per doctrine.
 - **Each field has a test that it is read at all**, in `tests/engine.rs`
-  (`what_a_round_of_driving_costs_a_commander_is_a_mod_decision` and its four
-  siblings), and each was mutation-checked by pinning the field back to its
-  old constant and requiring the test to fail. That is not ceremony: the
+  (`what_a_round_of_driving_costs_a_commander_is_a_mod_decision` and its
+  siblings under *the planner numbers are data* and *what an order is worth
+  against the terrain*), and each was mutation-checked by pinning the field
+  back to its old constant and requiring the test to fail. That is not ceremony: the
   failure this guards against is a field declared, printed and consulted by
   nothing, which is exactly what `Scale::elevation_meters` was for months.
   `the_planner_numbers_can_be_swept_and_ship_at_the_values_they_replaced`
@@ -765,7 +779,25 @@ before changing one.
 - **`horizon_rounds` is the one with a performance cost attached.** It is the
   only thing bounding the Dijkstra in `battle::roads`: 61 / 106 / 155 / 219 µs
   at two, three, four and six rounds on the radius-20 map. Everything else
-  here is free.
+  here is free — the four order terms are field reads inside `score_tile`,
+  and round resolution measured 1.41 ms before and after.
+- **`distance_decay` is one number for objectives *and* missions, and that is
+  load-bearing.** `mission_weight` is quoted in objective-value units — "an
+  order pulls about as hard as the ford" — and that sentence is only true
+  while the two gradients have the same shape. A second slope would silently
+  change the units the first number is stated in, and the two would drift.
+  `an_order_and_an_objective_are_led_to_by_the_same_slope` pins it. Note the
+  consequence for sweeping: unlike the other three, `distance_decay` moves
+  the flat control too, because every planner reads the objective slope. It
+  is not an order-versus-terrain knob, it is a global one.
+- **`plateau` decides the tile sweep, and the tile sweep is one candidate
+  among the goals.** Since the goal layer landed, `best_dest` competes with
+  the objectives and a chosen `Take(hex)` is walked by `step_toward`, which
+  never consults the band. So what it still governs is the choice between
+  pieces of ground that mean nothing in particular — the case it was
+  introduced for, a side spread over featureless grass. Worth knowing before
+  sweeping it and expecting a large number; at 4 seeds × 36 it produced
+  nothing monotone.
 
 **The first sweep it made possible returned a null result, and that is worth
 knowing before reaching for it.** At 36 games across the three shipped maps, a
@@ -777,6 +809,49 @@ limitation the road-reading chunk already recorded rather than as a result
 about the number: the shipped maps and the radius-10 arena have very little for
 a longer-sighted commander to be better at. Re-measure on terrain-varied ground
 before concluding the horizon does nothing.
+
+**The order terms did better, and one of them is the first real number this
+family of sweeps has produced.** Measured 2026-08-28 on the delegation tax
+table at 8 seeds × 36 battles — 288 per cell — with `--set
+planner.devolved=1.1` so that *both* doctrines assign ground rather than only
+massed armour:
+
+| `mission_weight` | 0 | 1 | 2 (shipped) | 4 | 8 | 16 |
+| --- | --- | --- | --- | --- | --- | --- |
+| elastic's delegation tax, of 288 | 37 | 36 | **35** | 27 | **2** | 10 |
+| massed's delegation tax, of 288 | 11 | 5 | 4 | 8 | 6 | 4 |
+| both-flat control | 116 | 116 | 116 | 116 | 116 | 116 |
+
+The control being *bit-identical* down the row is what makes the rest of it
+readable: nothing here touches a side nobody is commanding. Read the elastic
+row against the delegation table's stated target, which is a tax of zero — at
+the shipped weight an order is worth about a third of what it would need to be
+for a commanded elastic defence to fight as well as an uncommanded one, and 8
+gets there. **This is not licence to change the shipped number.** The
+measurement needs `devolved=1.1`, and in the game as it ships elastic defence
+devolves (0.7 ≥ 0.6) and issues no ground missions at all, which is *why* its
+real tax is 11 of 288 rather than 35. The shipped `devolved` threshold is
+already routing around the problem this measurement found. Whether it should
+route around it or the orders should be worth more is a content decision, and
+it is in TODO.
+
+**And one hard null with a diagnosis, which is the more useful half.**
+`pull_under_fire` is **bit-identical at 0, 0.25, 0.6 and 1.0** across 576
+battles — not "inside the noise", identical. The reason is in the doctrine
+file rather than in the term: `contact_scale` applies to `Advance` and
+`Recon`, and `ai/command.rs` picks a posture off `aggression`, so massed
+armour at 0.85 orders `Assault` (exempt by design), elastic defence at 0.3
+orders `Hold`, and **`Recon` is never issued by anybody**. No doctrine the
+table fights ever issues an `Advance`, so the damping is unreachable in
+AI-versus-AI play on the shipped roster. Proved rather than inferred: with
+`--set doctrine.massed_armor.aggression=0.6` — which is the only change needed
+to make it order a real `Advance` — the same sweep moves 55 / 53 / 52 of 144
+with the flat control still bit-identical. **The term is live, correct and
+player-facing** (the player presses `G` and gets it); it is the AI that never
+meets it. This is the same shape as the resolver terms nobody's guns met, and
+the lesson is the same: a sweep that returns exactly zero is asking you to go
+and find out why, because "no effect" and "never evaluated" look identical in
+the table and mean completely different things.
 
 ### Defiance: what a crew does instead
 
