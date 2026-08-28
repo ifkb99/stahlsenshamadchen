@@ -4,7 +4,8 @@ use super::defs::*;
 use super::manifest::ModManifest;
 use super::{
     AmmoClass, AmmoDef, Balance, Casualties, CommandRules, CoreDef, CoreIndex, ModuleDef,
-    ModuleEffect, MoraleRules, ReactionRules, RoleDef, STANDARD_MODULES, Scale, SkillDef, TraitDef,
+    ModuleEffect, MoraleRules, PlannerRules, ReactionRules, RoleDef, STANDARD_MODULES, Scale,
+    SkillDef, TraitDef,
 };
 use crate::map::MapFile;
 use serde::Deserialize;
@@ -65,6 +66,12 @@ pub struct DataRegistry {
     /// What a battle costs the cadets who fought it. Single value, as
     /// [`Self::scale`].
     pub casualties: Casualties,
+    /// How the AI thinks. Single value, as [`Self::scale`]. Defaulted rather
+    /// than optional, unlike [`Self::command`]: there is no such thing as a
+    /// battle with no planner numbers — somebody has to decide whether a
+    /// march is worth making — so the neutral case is the shipped values
+    /// rather than the absence of the block.
+    pub planner: PlannerRules,
     /// How long crews take to act on orders.
     pub reaction: ReactionRules,
     /// What a crew can take before it stops doing as it is told.
@@ -147,6 +154,9 @@ impl DataRegistry {
             }
             if let Some(casualties) = manifest.casualties {
                 registry.casualties = casualties;
+            }
+            if let Some(planner) = manifest.planner {
+                registry.planner = planner;
             }
             if let Some(reaction) = &manifest.reaction {
                 registry.reaction = reaction.clone();
@@ -728,6 +738,50 @@ impl DataRegistry {
                 ));
             }
         }
+
+        // The planner numbers. Only two of the five have a value that is
+        // *wrong* rather than merely aggressive, and both are quiet failures
+        // rather than loud ones, which is the whole reason to check them.
+        let p = &self.planner;
+        if p.horizon_rounds == 0 {
+            report.error(
+                "planner horizon_rounds is 0, so no goal has a road at all and every crew \
+                 prices every march as if the ground beyond her were unreachable"
+                    .to_string(),
+            );
+        }
+        if p.impatience < 0.0 {
+            report.error(format!(
+                "planner impatience is {}; a negative price pays a crew to drive, so she \
+                 marches away from the ground she wants",
+                p.impatience
+            ));
+        }
+        // Warnings rather than errors, because both are legitimate things for
+        // a mod to say and neither is silent when it happens: `devolved`
+        // outside the doctrine range means every commander devolves or none
+        // does, which is a decision a difficulty mod might well make.
+        if !(0.0..=1.0).contains(&p.devolved) {
+            report.warn(format!(
+                "planner devolved is {}; doctrine delegation runs 0-1, so no commander will \
+                 change her mind about assigning ground",
+                p.devolved
+            ));
+        }
+        if p.exit_urgency < 0.0 {
+            report.warn(format!(
+                "planner exit_urgency is {}; a broken crew is repelled by the lane she is \
+                 trying to leave through",
+                p.exit_urgency
+            ));
+        }
+        if p.boarding_rounds < 0.0 {
+            report.warn(format!(
+                "planner boarding_rounds is {}; mounting up saves time in itself, so a \
+                 platoon will board to be carried nowhere",
+                p.boarding_rounds
+            ));
+        }
     }
 
     /// Convenience wrapper producing a fresh report.
@@ -892,6 +946,7 @@ mod tests {
                     scale: None,
                     balance: None,
                     casualties: None,
+                    planner: None,
                 },
             )
         };

@@ -876,6 +876,238 @@ fn ground_the_enemy_reaches_first_is_worth_less_marching_for() {
     );
 }
 
+// --- the planner numbers are data ------------------------------------------
+//
+// Five constants lived in `ai/` until 2026-08-27 against this project's own
+// rule that a number a modder would want to change does not belong in Rust.
+// They are the `planner` block now, and each of these tests is the check that
+// its field is *read* — the failure this guards against is not a wrong number
+// but a declared one that nothing consults, which is exactly what
+// `Scale::elevation_meters` was for months.
+//
+// The block is deliberately separate from `balance`: nothing in it reaches a
+// rule, so a mod that rewrote all five would leave a human-versus-human
+// battle bit-for-bit identical. What it changes is only what a commander
+// decides.
+
+/// How much a round of driving costs is the mod's to choose.
+///
+/// Without `impatience` nothing prices the walk at all and every crew on the
+/// field marches at whichever single hex scores highest, which is the queue
+/// the plateau rule was invented to break up rebuilt one layer higher.
+#[test]
+fn what_a_round_of_driving_costs_a_commander_is_a_mod_decision() {
+    // Two pieces of ground worth the same, one under her tracks and one at
+    // the far end of a long field. Standing on either is worth the same to
+    // the evaluator — an objective pays for being stood on — so after the
+    // terms are equalised the *only* thing separating them is the drive.
+    let mut reg = seen(registry_wireless());
+    let rows: Vec<&str> = vec!["gggggggggggggggggggg"; 3];
+    let state = goal_battle(
+        &reg,
+        &rows,
+        serde_json::json!([
+            { "id": "far", "name": "The Far End", "at": [[18, 1]], "value": 2 },
+            { "id": "near", "name": "Underfoot", "at": [[2, 1]], "value": 2 },
+        ]),
+        vec![
+            unit_at([1, 1], 0, "medium_tank", "Chooser"),
+            unit_at([19, 0], 1, "medium_tank", "Somebody"),
+        ],
+        23,
+    );
+    assert!(
+        state.fog.side(0).spotted.is_empty(),
+        "the stage needs no enemy in sight — this is a test about ground"
+    );
+    let far = tactics_core::offset_to_hex(18, 1);
+    let near = tactics_core::offset_to_hex(2, 1);
+    // Route caution and contest aversion off, so the drive is the only term
+    // foresight can be reading.
+    let doctrine = doctrine_with(&reg, "massed_armor", |d| {
+        d.route_caution = 0.0;
+        d.contest_aversion = 0.0;
+    });
+
+    // Free driving. The two goals tie on worth and the tie goes to the
+    // earlier candidate, which is the far one: map order, and `candidates`
+    // is ordered precisely so that this is decidable.
+    reg.planner.impatience = 0.0;
+    assert_eq!(
+        goal_with_foresight(&reg, &state, UnitId(0), doctrine.clone(), 1.0),
+        Some(tactics_core::battle::Goal::Take(far)),
+        "with the march free, ground at the far end is as good as ground underfoot"
+    );
+
+    // A crew who begrudges every round takes what she can reach.
+    reg.planner.impatience = 2.0;
+    assert_eq!(
+        goal_with_foresight(&reg, &state, UnitId(0), doctrine, 1.0),
+        Some(tactics_core::battle::Goal::Take(near)),
+        "and a crew charged for the drive takes the ground she is standing next to"
+    );
+}
+
+/// How far ahead a commander looks decides what she believes about a road she
+/// has not walked.
+///
+/// The horizon is not a tidy pruning parameter: ground with no road inside it
+/// is priced at the horizon rather than at its real cost, so a *short* one is
+/// a commander who cannot tell an unfordable river from a five-hex stroll.
+/// This is the same stage as
+/// `a_commander_who_reads_the_ground_goes_where_the_road_goes`, with
+/// foresight held at one, so the only thing varying is how far she looked.
+#[test]
+fn a_commander_who_looks_no_further_than_her_nose_marches_at_the_river() {
+    let mut reg = seen(registry_wireless());
+    let mut rows: Vec<&str> = vec!["gggwgggg"; 15];
+    rows.push("gggggggg");
+    let state = goal_battle(
+        &reg,
+        &rows,
+        serde_json::json!([
+            { "id": "far_bank", "name": "The Far Bank", "at": [[5, 0]], "value": 2 },
+            { "id": "down_river", "name": "Down River", "at": [[0, 8]], "value": 2 },
+        ]),
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "Chooser"),
+            unit_at([7, 15], 1, "medium_tank", "Somebody"),
+        ],
+        11,
+    );
+    let far = tactics_core::offset_to_hex(5, 0);
+    let down = tactics_core::offset_to_hex(0, 8);
+    let doctrine = doctrine_with(&reg, "massed_armor", |d| {
+        d.route_caution = 0.0;
+        d.contest_aversion = 0.0;
+    });
+
+    // A horizon of one round reaches neither objective, so both are priced at
+    // "further than I have looked" — which is the crow flight for anything
+    // beyond it, and by the crow the far bank is nearer.
+    reg.planner.horizon_rounds = 1;
+    assert_eq!(
+        goal_with_foresight(&reg, &state, UnitId(0), doctrine.clone(), 1.0),
+        Some(tactics_core::battle::Goal::Take(far)),
+        "full foresight over a road she never walked is still a straight line on a map"
+    );
+
+    // Far enough to find the one crossing, and she stops liking the far bank.
+    reg.planner.horizon_rounds = 12;
+    assert_eq!(
+        goal_with_foresight(&reg, &state, UnitId(0), doctrine, 1.0),
+        Some(tactics_core::battle::Goal::Take(down)),
+        "a horizon that reaches the crossing is what makes reading the ground possible"
+    );
+}
+
+/// What a ride costs over and above the driving is the mod's to choose.
+///
+/// The twin of `a_platoon_with_a_short_walk_ahead_of_her_walks`: three hexes
+/// is a walk *because boarding costs four rounds*, and at nothing a round it
+/// is a ride. Priced at two on the mechanics alone this was the live bug —
+/// a delivered platoon re-boarded for a three-hex hop and cost the commanded
+/// side a win and three platoons over 36 battles.
+#[test]
+fn what_climbing_in_and_out_of_a_taxi_costs_is_a_mod_decision() {
+    let mut reg = registry_wireless();
+    assert_eq!(reg.planner.boarding_rounds, 4.0);
+    let mut state = taxi_run_stage(&reg, 3, 56);
+    assert!(
+        !orders_planned(&reg, &mut state, 0, 56)
+            .iter()
+            .any(|o| matches!(o, Order::Mount { .. })),
+        "at four rounds a ride, three hexes is a walk"
+    );
+
+    reg.planner.boarding_rounds = 0.0;
+    let mut state = taxi_run_stage(&reg, 3, 56);
+    assert!(
+        orders_planned(&reg, &mut state, 0, 56)
+            .iter()
+            .any(|o| matches!(o, Order::Mount { .. })),
+        "and with mounting up free she takes the ride for the same three hexes"
+    );
+}
+
+/// Where a commander stops assigning ground is the mod's to choose.
+///
+/// The twin of `a_devolved_commander_issues_no_ground_missions`: elastic
+/// defence keeps its own judgment because its `delegation` of 0.7 is at or
+/// beyond `devolved`, and moving the threshold past it makes the same
+/// doctrine take orders. Which of a mod's *shipped* doctrines devolve is
+/// therefore this one number, which is exactly why it should not be in Rust.
+#[test]
+fn where_a_commander_stops_assigning_ground_is_a_mod_decision() {
+    let mut reg = registry_wireless();
+    assert_eq!(reg.doctrine("elastic_defense").unwrap().delegation, 0.7);
+    reg.planner.devolved = 0.8;
+
+    let mut state = BattleState::from_map(&reg, "river_crossing", 17).unwrap();
+    let mut ai = AiDriver::new();
+    ai.insert(
+        1,
+        make_battle_planner(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 5,
+                doctrine: Some("elastic_defense".into()),
+            },
+            17,
+            &reg,
+        ),
+    );
+    ai.plan_round(&reg, &mut state);
+    assert!(
+        state
+            .formations()
+            .iter()
+            .filter(|f| f.side == 1)
+            .any(|f| f.mission.is_some()),
+        "past the threshold the same doctrine is told where to stand"
+    );
+}
+
+/// How badly a finished crew wants the lane is the mod's to choose.
+///
+/// The twin of `an_intact_crew_will_not_run_for_the_exit_but_a_broken_one
+/// _will`: the same mauled crew, and at zero urgency the road home is worth
+/// nothing to her. It is deliberately not the exit's own `value` — what a
+/// lane *pays* and how badly somebody wants it are different quantities, and
+/// a retreat lane has to be worth almost no points while still pulling hard
+/// enough to cross a map.
+#[test]
+fn how_badly_a_finished_crew_wants_the_lane_is_a_mod_decision() {
+    let mut reg = registry();
+    let state = objective_battle(
+        &reg,
+        serde_json::json!([{
+            "id": "west_road", "at": [[0, 0]], "value": 5,
+            "kind": "exit", "side": 0
+        }]),
+        None,
+        curtained_pair(),
+    );
+    let eval = Evaluator::new(reg.doctrine("elastic_defense").cloned().unwrap());
+    let exit = tactics_core::offset_to_hex(0, 0);
+    let away = tactics_core::offset_to_hex(4, 0);
+    let mut hurt = state;
+    maul(&reg, &mut hurt, UnitId(0));
+
+    assert!(
+        eval.score_tile(&reg, &hurt, UnitId(0), exit).score
+            > eval.score_tile(&reg, &hurt, UnitId(0), away).score,
+        "at the shipped urgency a crew that is nearly finished runs for the road"
+    );
+
+    reg.planner.exit_urgency = 0.0;
+    assert!(
+        eval.score_tile(&reg, &hurt, UnitId(0), exit).score
+            <= eval.score_tile(&reg, &hurt, UnitId(0), away).score,
+        "and a mod that prices the lane at nothing has a crew who fights where she stands"
+    );
+}
+
 // --- line of sight, elevation and terrain ----------------------------------
 
 #[test]

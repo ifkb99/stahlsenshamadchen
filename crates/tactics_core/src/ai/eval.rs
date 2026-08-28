@@ -11,13 +11,6 @@ use crate::data::{DataRegistry, DoctrineDef};
 use crate::map::ObjectiveKind;
 use hexx::Hex;
 
-/// How much a crew that is finished wants the exit, in the same units as an
-/// objective's `value`. Set to the worth of a good piece of ground, so a tank
-/// down to its last hit point pulls toward the lane about as hard as a fresh
-/// one pulls toward the bridge — and, being independent of what the exit pays,
-/// lets a retreat lane be worth one point without being ignored.
-const EXIT_URGENCY: f32 = 3.0;
-
 /// What holding a tile is worth, and the shot that comes with it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TileScore {
@@ -282,6 +275,7 @@ impl Evaluator {
         let objective = match standing {
             Some((mission, formation)) => {
                 self.mission_value(
+                    registry,
                     state,
                     tile,
                     mission,
@@ -289,7 +283,7 @@ impl Evaluator {
                     formation.latitude_for(unit),
                 ) * contact_scale
             }
-            None => self.objective_value(state, me.side, tile, condition),
+            None => self.objective_value(registry, state, me.side, tile, condition),
         };
 
         // A crew ordered out stops valuing the fight. Without this, a shot
@@ -366,7 +360,14 @@ impl Evaluator {
     /// will run for it. That is the whole of withdrawal for now; who is
     /// *permitted* to leave belongs to the chain of command, not to the
     /// evaluator.
-    fn objective_value(&self, state: &BattleState, side: u8, tile: Hex, condition: f32) -> f32 {
+    fn objective_value(
+        &self,
+        registry: &DataRegistry,
+        state: &BattleState,
+        side: u8,
+        tile: Hex,
+        condition: f32,
+    ) -> f32 {
         // How badly this crew wants out.
         //
         // `withdraw_threshold` is a fraction of strength *lost* before a
@@ -401,7 +402,9 @@ impl Evaluator {
                     let appetite = if held == Some(side) { 0.5 } else { 1.0 };
                     objective.value as f32 * self.doctrine.objective_value * appetite
                 }
-                ObjectiveKind::Exit => EXIT_URGENCY * self.doctrine.objective_value * flight,
+                ObjectiveKind::Exit => {
+                    registry.planner.exit_urgency * self.doctrine.objective_value * flight
+                }
             };
             if weight <= 0.0 {
                 continue;
@@ -456,6 +459,7 @@ impl Evaluator {
     /// which is not a thing "I mean it" can be allowed to do.
     fn mission_value(
         &self,
+        registry: &DataRegistry,
         state: &BattleState,
         tile: Hex,
         mission: &crate::battle::Mission,
@@ -544,7 +548,9 @@ impl Evaluator {
                             .min()
                             .unwrap_or(0);
                         let reward = if objective.contains(tile) { 1.5 } else { 0.0 };
-                        EXIT_URGENCY * doctrine.objective_value * (reward - 0.15 * dist as f32)
+                        registry.planner.exit_urgency
+                            * doctrine.objective_value
+                            * (reward - 0.15 * dist as f32)
                     }
                     // Validation refuses a mission naming no real exit, so
                     // this only happens if the lane was defined by a mod

@@ -6,11 +6,12 @@
 //! build tests in examples, so every claim CLAUDE.md makes about the harness
 //! was verified once, by hand, and thereafter believed.
 //!
-//! Four claims, one test each:
+//! Five claims, one test each:
 //!
 //! - no printed number moves with `--jobs`
 //! - a run's accounting folds the same way however the battles were grouped
 //! - `--sweep balance.x=v` is the same thing as hand-editing `mod.json`
+//! - the `planner` block is addressable, and ships at the constants it replaced
 //! - the skill-gap arena is symmetric
 //!
 //! The point of a calibration test is that it fails when the *instrument* is
@@ -172,6 +173,51 @@ fn a_swept_override_is_the_same_thing_as_editing_the_mod_by_hand() {
     assert_eq!(
         serde_json::to_value(swept.balance).unwrap(),
         serde_json::to_value(by_hand.balance).unwrap(),
+        "the patched block differs from the hand-edited one somewhere other \
+         than the field that was swept"
+    );
+}
+
+/// The `planner` block is reachable from the command line, and the block the
+/// base mod ships is the game the constants gave.
+///
+/// Two claims in one test because they fail together and for the same reason.
+/// The five AI numbers became data on 2026-08-27, and **the prize is the
+/// sweep** — `--sweep planner.horizon_rounds=2,4,6` asks what looking further
+/// ahead is worth to a commander, which had never been measured because the
+/// only way to ask was to edit Rust and rebuild. A block nothing can address
+/// buys none of that.
+///
+/// The second half is the additivity contract, checked the strong way: every
+/// field of the shipped block equals the constant it replaced, so a mod that
+/// declares no `planner` block and the base mod that declares a full one are
+/// the same game. A typo in `mod.json` would otherwise be a silent balance
+/// change wearing a refactor's clothes.
+#[test]
+fn the_planner_numbers_can_be_swept_and_ship_at_the_values_they_replaced() {
+    use tactics_core::data::PlannerRules;
+
+    let mut reg = registry();
+    assert_eq!(
+        reg.planner,
+        PlannerRules::default(),
+        "the base mod's planner block must be the game the constants gave"
+    );
+
+    let was = apply_override(
+        &mut reg,
+        &Override::parse("planner.horizon_rounds=2").expect("a well-formed override"),
+    )
+    .expect("the field exists");
+    assert_eq!(was, "4");
+    assert_eq!(reg.planner.horizon_rounds, 2);
+    assert_eq!(
+        serde_json::to_value(reg.planner).unwrap(),
+        serde_json::to_value(PlannerRules {
+            horizon_rounds: 2,
+            ..PlannerRules::default()
+        })
+        .unwrap(),
         "the patched block differs from the hand-edited one somewhere other \
          than the field that was swept"
     );

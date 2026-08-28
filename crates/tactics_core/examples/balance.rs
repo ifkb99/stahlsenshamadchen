@@ -241,9 +241,9 @@ which game
   --mods DIR             mod tree to load (default assets/mods)
   --set PATH=VALUE       change one number before anything runs. Repeatable.
                          Blocks: balance, scale, casualties, morale, reaction,
-                         command. Content: vehicle.<id>, weapon.<id>, ammo.<id>,
-                         module.<id>, terrain.<id>, doctrine.<id>. Nesting and
-                         list indices work: morale.rungs[2].accuracy
+                         command, planner. Content: vehicle.<id>, weapon.<id>,
+                         ammo.<id>, module.<id>, terrain.<id>, doctrine.<id>.
+                         Nesting and list indices work: morale.rungs[2].accuracy
   --sweep PATH=A,B,C     run once per value and put the results side by side.
                          Repeatable; the axes multiply. Two axis names are
                          not fields: `--sweep mods=a,b` compares two versions
@@ -274,6 +274,7 @@ examples
   --sim --sweep weapon.howitzer_105.dispersion=0,4,8 --jobs 4
   --set balance.moving_target_per_hex=0 --set balance.firing_on_the_move_per_hex=0
   --sim --sweep mods=assets/mods,../old/assets/mods
+  --sim --sweep planner.horizon_rounds=2,4,6 --games 36  # how the AI thinks
   --sim --sweep seed=0,1000,2000 --games 36         # what is the noise floor?
   --sim --only skill --absolute --sweep seed=0,1000,2000,3000   # ...for one table";
 

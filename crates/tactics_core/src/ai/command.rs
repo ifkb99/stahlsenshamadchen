@@ -21,6 +21,19 @@
 //! that is *enough* brain is what the balance harness's delegation-tax table
 //! exists to say; making it clever belongs to the willingness work, not to
 //! the plumbing.
+//!
+//! **The brain never insists.** Every [`Order::SetMission`] below is issued at
+//! [`Latitude::Delegated`](crate::battle::Latitude::Delegated), spelled out
+//! rather than defaulted so that a reader can see it is a decision. `Binding`
+//! is a thing a *player* says, and keeping it out of AI-vs-AI play is what
+//! makes the determinism baseline still valid across the chunk that added it
+//! — if `tests/snapshots/event_stream.txt` moves when latitude is touched,
+//! the insistence has leaked in here.
+//!
+//! **When a commander stops assigning ground** is
+//! [`devolved`](crate::data::PlannerRules::devolved) in the `planner` block,
+//! read against each doctrine's own `delegation`. It was a constant here
+//! until 2026-08-27; the reasoning behind the number lives on the field now.
 
 use super::{AiConfig, AiPlanner, Evaluator, next_unplanned_unit, threatened};
 use crate::battle::{BattleState, FireIntent, Formation, FormationId, Mission, Order};
@@ -31,21 +44,6 @@ use std::cmp::Reverse;
 use std::collections::{HashMap, VecDeque};
 
 use super::UtilityPlanner;
-
-/// The brain never insists: every [`Order::SetMission`] below is issued at
-/// [`crate::battle::Latitude::Delegated`], spelled out rather than defaulted so
-/// that a reader can see it is a decision. `Binding` is a thing a *player*
-/// says, and keeping it out of AI-vs-AI play is what makes the determinism
-/// baseline still valid across the chunk that added it — if
-/// `tests/snapshots/event_stream.txt` moves when latitude is touched, the
-/// insistence has leaked in here.
-///
-/// The delegation level at or beyond which a commander stops assigning
-/// ground and trusts her formations' own judgment — directive command in
-/// the Auftragstaktik tradition, as opposed to the detailed orders a
-/// centralized doctrine writes. Withdrawal is exempt: whether to keep
-/// fighting is never devolved.
-const DEVOLVED: f32 = 0.6;
 
 /// The posture an unordered crew under fire falls back on. Mod data first —
 /// the base game ships a `drill` doctrine and a mod may retune what drilled
@@ -467,7 +465,7 @@ impl SideCommand {
             // *means*, and it was measured before it was believed: pinning
             // elastic defence to anchor hexes cost it 16 of 24 wins against
             // a flat opponent, because choosing its own ground is its game.
-            if doctrine.delegation >= DEVOLVED {
+            if doctrine.delegation >= registry.planner.devolved {
                 continue;
             }
             if ground.is_empty() {

@@ -9,6 +9,7 @@ mod defs;
 mod manifest;
 mod modules;
 mod morale;
+mod planner;
 mod registry;
 mod scale;
 
@@ -24,5 +25,6 @@ pub use defs::*;
 pub use manifest::ModManifest;
 pub use modules::{ModuleDef, ModuleEffect, STANDARD_MODULES};
 pub use morale::{DefianceDef, DefianceResponse, MoraleRules, MoraleRung, holds_together};
+pub use planner::PlannerRules;
 pub use registry::{DataError, DataRegistry, ValidationReport, parse_color};
 pub use scale::Scale;

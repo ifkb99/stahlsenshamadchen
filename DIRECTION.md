@@ -570,12 +570,30 @@ campaign is a mod rather than a patch. That is the pattern the rest should
 follow. What is still bare Rust and shouldn't be, roughly in order of how much
 a designer would want to touch it:
 
-- `PLATEAU`, `MISSION_WEIGHT`, `contact_scale`, the `0.15` distance decay and
-  the withdraw pull in `ai/eval.rs` — the numbers that decide what an order is
-  *worth* against terrain, which is the exact knob the original complaint was
-  about.
-- `AMBUSH_PATIENCE` and `BOARDING_ROUNDS` in the battle layer.
+- `PLATEAU`, `MISSION_WEIGHT`, `contact_scale` and the `0.15` distance decay in
+  `ai/eval.rs` — the numbers that decide what an order is *worth* against
+  terrain, which is the exact knob the original complaint was about. **These
+  are now the ones to do**, and they are one chunk: they are four terms in one
+  sum and sweeping any of them alone says less than sweeping the shape.
+- `AMBUSH_PATIENCE` in the battle layer.
 - The interior-effect and brew-up constants not already in `balance`.
+
+**Half-answered again on 2026-08-27**, and the answer is instructive. The five
+AI constants became the `planner` block — `impatience`, `horizon_rounds`,
+`boarding_rounds`, `devolved`, `exit_urgency` — deliberately *not* as fields on
+`balance`, because `balance` is what is true on the battlefield and these are
+only how well a side is played. The withdraw pull the list above named turned
+out to be `exit_urgency` and went with them.
+
+And the sweep the chunk was built for came back **null**: a horizon of one
+round and a horizon of eight are the same game at 36 battles a variant, inside
+a seed noise floor of ±3 wins. That is exactly the value this note asked for —
+"the value of moving a number into data is only realised when somebody sweeps
+it" — and what it bought was a negative result delivered in four seconds rather
+than a belief held for another month. It also says something about the list
+above: if the horizon is worth nothing on the shipped maps, the four terms in
+`mission_value` are the more promising chunk, because those decide what an
+*order* is worth and orders are what the complaint was about.
 
 Worth doing as one chunk with the `balance --sim` tables run before and after,
 rather than piecemeal: the value of moving a number into data is only realised
@@ -681,3 +699,16 @@ when somebody sweeps it, and a sweep needs an instrument.
   the determinism baseline. The campaign map publishes `ScriptFacts` now
   (`turn`, `idle`, `waiting`, `log`), which it never did, so a campaign tour
   can wait on the game rather than on a stopwatch.
+- **2026-08-27** — the last five tuning constants in `ai/` became the `planner`
+  block, and the first sweep they made possible answered a standing question
+  with a null result: the goal chooser's horizon is worth nothing measurable
+  between one round and eight. Two things to carry forward. The block is
+  separate from `balance` on purpose — nothing in `planner` reaches a rule, so
+  a mod that rewrote all five leaves a human-versus-human battle bit-identical
+  — and that test ("does this number decide what is *true*, or how well a side
+  is *played*?") is the one to apply to the next number somebody moves. And
+  the null result is an instrument result: it is the third measurement now
+  saying the shipped maps and the mirrored arena have too little terrain for a
+  better commander to be better *at*, after 5-over-3 barely discriminating and
+  the road-reading terms moving nothing. Terrain-varied ground is the
+  bottleneck, not the chooser's depth.

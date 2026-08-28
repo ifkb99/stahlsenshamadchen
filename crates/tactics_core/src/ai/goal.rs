@@ -15,6 +15,18 @@
 //! [`crate::battle::Goal::finished`] is the termination condition, and the
 //! executor in [`super::utility`] is the intra-option policy.
 //!
+//! # The numbers
+//!
+//! The two this module used to hold as constants — how much a round of
+//! driving costs and how many rounds ahead the chooser prices a road — are
+//! [`impatience`](crate::data::PlannerRules::impatience) and
+//! [`horizon_rounds`](crate::data::PlannerRules::horizon_rounds), in the
+//! `planner` block of `mod.json`. They moved there on 2026-08-27 for the
+//! reason the rest of this project's tuning did: a number a modder would want
+//! to try three values of does not belong in Rust, and until it is data the
+//! only way to ask what a horizon is *worth to a commander* is to edit this
+//! file and rebuild. Both default to exactly the constants they replaced.
+//!
 //! # What is deliberately NOT here
 //!
 //! A subordinate weighing her own goal against the one she was ordered.
@@ -30,42 +42,6 @@ use crate::map::ObjectiveKind;
 use hexx::Hex;
 use rand::RngExt;
 use rand_chacha::ChaCha8Rng;
-
-/// How much a round of driving costs, in the same units a tile is scored in.
-///
-/// Without it every crew on the field walks to whichever single hex scores
-/// highest, because nothing prices the walk — which is the queue the plateau
-/// rule was invented to break up, rebuilt one level higher. With it, ground
-/// three rounds away has to be worth about a point more than ground she can
-/// reach now.
-///
-/// Set against the scale the evaluator already speaks: a typical objective is
-/// worth 2–3 and `MISSION_WEIGHT` is 2.0, so a third of a point a round makes
-/// a crew willing to spend three or four rounds reaching real ground and
-/// unwilling to cross the map for a marginal tile. It belongs in `mod.json`
-/// with the rest of the evaluator's numbers — see TODO — and is a constant
-/// here for the same reason those still are.
-const IMPATIENCE: f32 = 0.35;
-
-/// How many rounds of driving the chooser bothers to price a road for.
-///
-/// At `IMPATIENCE` a fourth round of driving already costs a point and a
-/// half, which is most of a good objective, so ground further off than this
-/// is ground she is not going to pick however cheap the road turns out to be.
-///
-/// It is also the only thing bounding the walk, and it was set to six on the
-/// arithmetic alone without checking what six *covered*: six rounds is thirty
-/// to forty-two movement points, and the battle map is a radius-20 hexagon,
-/// so the horizon was the whole map and pruned nothing. Measured on
-/// `river_crossing`, `roads` costs 61 / 106 / 155 / 219 microseconds at a
-/// horizon of two, three, four and six rounds.
-///
-/// Four still reaches most of a battle map for a fast chassis, which is the
-/// honest reading of "how far ahead does a crew plan": it is a number in
-/// *rounds*, so a recon car looks further than a heavy tank, and that is
-/// right. Ground beyond it is priced at the horizon rather than at the crow
-/// flight — see `drive`.
-const HORIZON: u32 = 4;
 
 /// The goals worth considering for this crew right now.
 ///
@@ -288,7 +264,7 @@ fn drive(
     // gets there.
     let road = match roads.cost(to) {
         Some(cost) => cost as f32 / speed,
-        None => crow.max(HORIZON as f32),
+        None => crow.max(registry.planner.horizon_rounds as f32),
     };
 
     let exposed = match (guns.is_empty(), roads.path(to)) {
@@ -415,7 +391,8 @@ impl GoalChooser for UtilityChooser<'_> {
         // Every goal is a place to drive from the same hex, so one Dijkstra
         // answers all of them — and the A* per candidate this replaced cost
         // five to ten times as much per planned order.
-        let roads = roads(registry, state, unit, HORIZON);
+        let planner = &registry.planner;
+        let roads = roads(registry, state, unit, planner.horizon_rounds);
         // Who could shoot at the march, and from how far. Fog-honest: a crew
         // cannot route around a gun nobody has seen, and letting her would
         // leak the enemy's whole order of battle into her pathfinding.
@@ -447,7 +424,7 @@ impl GoalChooser for UtilityChooser<'_> {
             let rounds = drive.crow * (1.0 - sight) + drive.road * sight;
             // The two things she may not notice at all. Both are in rounds
             // and both are priced per round, so they read against each other
-            // and against `IMPATIENCE` with no conversion to remember: the
+            // and against `impatience` with no conversion to remember: the
             // part of the march spent under a gun, and the wait for ground
             // somebody else gets to first. Doctrine says how much she minds;
             // foresight says whether she sees it; either at zero is the
@@ -455,7 +432,7 @@ impl GoalChooser for UtilityChooser<'_> {
             let exposed = rounds * drive.exposed * sight;
             let late = (rounds - drive.theirs).max(0.0) * sight;
             let value = worth
-                - IMPATIENCE * rounds
+                - planner.impatience * rounds
                 - doctrine.route_caution * exposed
                 - doctrine.contest_aversion * late
                 + blur;

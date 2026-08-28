@@ -16,7 +16,7 @@ use crate::data::DataRegistry;
 /// One number to change before anything runs, named the way the json names it.
 ///
 /// The path is `<block>.<field>` for the single-value rule blocks — `balance`,
-/// `scale`, `casualties`, `morale`, `reaction`, `command` — and
+/// `scale`, `casualties`, `morale`, `reaction`, `command`, `planner` — and
 /// `<kind>.<id>.<field>` for the content maps, where `kind` is one of
 /// `vehicle`, `weapon`, `ammo`, `module`, `terrain`, `doctrine`. Nesting and
 /// list indices work throughout: `morale.rungs[2].accuracy` is a path.
@@ -185,6 +185,7 @@ pub fn apply_override(reg: &mut DataRegistry, ov: &Override) -> Result<String, S
         "balance" => patch!(reg.balance, rest),
         "scale" => patch!(reg.scale, rest),
         "casualties" => patch!(reg.casualties, rest),
+        "planner" => patch!(reg.planner, rest),
         "morale" => patch!(reg.morale, rest),
         "reaction" => patch!(reg.reaction, rest),
         "command" => match reg.command.as_mut() {
@@ -221,8 +222,8 @@ pub fn apply_override(reg: &mut DataRegistry, ov: &Override) -> Result<String, S
         }
         other => Err(format!(
             "`{other}` is not something to set. Blocks: balance, scale, casualties, \
-             morale, reaction, command. Content: vehicle.<id>, weapon.<id>, ammo.<id>, \
-             module.<id>, terrain.<id>, doctrine.<id>."
+             morale, reaction, command, planner. Content: vehicle.<id>, weapon.<id>, \
+             ammo.<id>, module.<id>, terrain.<id>, doctrine.<id>."
         )),
     }
 }

@@ -424,12 +424,32 @@ move and `balance --sim` prints byte-identical output.
 `a_mod_that_raises_the_cupola_sees_over_the_rise` are the checks that they are
 read at all. This also closes the note left open under item 2.
 
-**Still in Rust**, all five in `ai/`: `BOARDING_ROUNDS`, `IMPATIENCE`,
-`HORIZON`, `DEVOLVED`, `EXIT_URGENCY`. They want a `planner` block of their
-own rather than a home in `balance` — they govern how the AI thinks rather
-than what the rules are, and `--sweep planner.horizon_rounds=2,4,6` is the
-prize. Written up in [TODO.md](TODO.md) under Misc, beside the rest of the
-evaluator numbers that want to be data, rather than repeated here.
+**The other five landed 2026-08-27** as the `planner` block:
+`impatience`, `horizon_rounds`, `boarding_rounds`, `devolved` and
+`exit_urgency`, which were the last tuning constants in `ai/`. A block of their
+own rather than a home in `balance`, because they govern how the AI *thinks*
+rather than what the rules *are* — nothing in it reaches a rule, so a mod that
+rewrote all five would leave a human-versus-human battle bit-for-bit identical.
+Determinism snapshot passed unregenerated, and `perf` is unmoved.
+
+Five tests, one per field, each named for the rule it defends
+(`what_a_round_of_driving_costs_a_commander_is_a_mod_decision` and its four
+siblings in `tests/engine.rs`), plus
+`the_planner_numbers_can_be_swept_and_ship_at_the_values_they_replaced` in
+`tests/harness.rs`, which asserts both halves at once: the block is addressable
+from the command line, and what the base mod ships equals
+`PlannerRules::default()`. Every one of the five was mutation-checked — pin the
+field back to its old constant and its test fails — because a field-is-read
+test that passes without reading the field is the exact failure it exists to
+catch.
+
+**The prize was `--sweep planner.horizon_rounds=2,4,6`, and it returned a null
+result**: at 36 games across the three shipped maps a horizon of one round and
+a horizon of eight are the same game, inside a seed noise floor of ±3 wins. The
+table and what to read into it are in [DONE.md](DONE.md).
+
+This closes item 8's constants half entirely. Only the interning half remains,
+and the recommendation above stands.
 
 <details><summary>The original finding</summary>
 

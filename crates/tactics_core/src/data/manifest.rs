@@ -1,4 +1,4 @@
-use super::{Balance, Casualties, Scale};
+use super::{Balance, Casualties, PlannerRules, Scale};
 use serde::{Deserialize, Serialize};
 
 /// `mod.json` at the root of every mod directory.
@@ -63,4 +63,12 @@ pub struct ModManifest {
     /// this block and changes nothing else.
     #[serde(default)]
     pub casualties: Option<Casualties>,
+    /// How the AI thinks: what it will drive for, how far ahead it looks,
+    /// when a commander stops assigning ground. Deliberately its own block
+    /// rather than fields on [`Self::balance`] — nothing in it reaches a
+    /// rule, so a mod that rewrote every field would leave a human-versus-
+    /// human battle bit-for-bit identical. Same one-in-effect rule as
+    /// [`Self::scale`].
+    #[serde(default)]
+    pub planner: Option<PlannerRules>,
 }

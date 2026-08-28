@@ -662,6 +662,49 @@ battles across four seeds put every fought-out column inside the seed noise
 floor, no stalemates either way, because **nothing in the evaluator wants to be
 unseen**. Same shape as stacking — the mechanism waits on a preference.
 
+**The five AI numbers are the `planner` block** (2026-08-27): `impatience`,
+`horizon_rounds`, `boarding_rounds`, `devolved` and `exit_urgency`, which were
+the last tuning constants in `ai/`. Each `#[serde(default)]`s to exactly the
+constant it replaced, so a mod that declares nothing gets the game it always
+had — the determinism snapshot passed **unregenerated**, which is the whole of
+the evidence that this refactor changed no rules, and `perf` measures the same
+1.41–1.47 ms a round and 143–146 µs a `roads` call as `develop` does.
+
+**A block of its own rather than five more fields on `balance`**, and the
+distinction is the point. `balance` says what is *true on the battlefield* and
+applies to a human's shot exactly as it does to a machine's; nothing in
+`planner` reaches a rule, so a mod that rewrote all five would leave a
+human-versus-human battle bit-for-bit identical. Filing them under `balance`
+would have merged "what is true here" with "how well is this side played",
+which is the same conflation difficulty spent a whole arc separating when it
+stopped being a lottery and became a lens.
+
+**And the prize was the sweep, which returned a null result.** What a horizon
+is *worth to a commander* had never been measured, because until now the only
+way to ask was to edit Rust and rebuild. Asked properly at 36 games across the
+three shipped maps:
+
+| `planner.horizon_rounds` | 1 | 2 | 3 | 4 | 6 | 8 |
+| --- | --- | --- | --- | --- | --- | --- |
+| wins | 20–16 | 19–17 | 19–17 | 19–17 | 20–16 | 19–17 |
+| rounds | 13.3 | 13.5 | 13.3 | 12.9 | 13.1 | 13.1 |
+
+Against a seed noise floor measured in the same session (`--sweep
+seed=0,1000,2000`: ±3 wins, 1.2 rounds, heavy-tank kills 31–44), **a horizon of
+one round and a horizon of eight are the same game.** Two sharper facts sit
+under that. On the mirrored arena, `horizon_rounds` 4 and 6 produce *identical*
+skill tables in every row — which turns the old note that six "pruned nothing"
+from a tile count into a statement about behaviour. And the only consistent
+signal anywhere is that 4 and 6 pay the better commander about three battles of
+72 over 2 in the `both ends` rows, which is inside the band.
+
+Read it as an instrument result rather than a result about the number, and it
+is the same instrument limitation the road-reading chunk already recorded: the
+shipped maps and the radius-10 arena have very little for a longer-sighted
+commander to be better at. The value of moving a number into data is only
+realised when somebody sweeps it — and the first sweep says the thing to build
+next is ground worth reading, not a different horizon.
+
 **Saves record which mods were playing.** `SaveGame.mods` stamps id and
 version; mismatched ids are refused (the rules genuinely differ), version drift
 on the same set warns and loads (a content patch must not cost the player their

@@ -30,25 +30,6 @@ struct Choice {
 /// attack the evaluator found from it.
 type Candidate = (Hex, f32, Option<(UnitId, usize)>);
 
-/// Rounds a taxi run costs over and above the driving: walking to the
-/// tailgate, climbing in, and stepping off at the far end.
-///
-/// An AI pricing constant in the same family as the evaluator's `SUPPORT` and
-/// the brain's `DEVOLVED` — it exists to stop a platoon mounting up to save
-/// herself half a hex, which is the failure mode a pure time comparison has.
-///
-/// Priced at two rounds first, on the mechanics alone: a mount resolves the
-/// tick she reaches the carrier and a dismount the tick after it is ordered.
-/// That was too cheap, and the harness said so. A platoon delivered near her
-/// objective would re-board for a three-hex hop, ride one hex, meet the
-/// at-the-objective dismount reflex, and step off again — costing the
-/// commanded side a win and three platoons over 36 battles. Four is the
-/// measured price: it removes the short-hop churn entirely while leaving
-/// every genuinely long journey (six a run, unchanged at six rounds and
-/// beyond) still worth taking. The mechanical cost was never the whole cost;
-/// a ride is not door to door, and the walk at each end is real.
-const BOARDING_ROUNDS: f32 = 4.0;
-
 /// Where this unit is ultimately trying to be, as far as anyone can say.
 ///
 /// Her formation's standing mission first — the commander has already decided
@@ -238,7 +219,7 @@ impl UtilityPlanner {
                 .min(rounds_to_cover(registry, state, carrier.id, gap));
             let driven =
                 rounds_to_cover(registry, state, carrier.id, carrier.pos.distance_to(goal));
-            let by_taxi = closing + driven + BOARDING_ROUNDS;
+            let by_taxi = closing + driven + registry.planner.boarding_rounds;
             if by_taxi < on_foot && best.is_none_or(|(t, _)| by_taxi < t) {
                 best = Some((by_taxi, carrier.id));
             }

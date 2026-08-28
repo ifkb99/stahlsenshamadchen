@@ -38,6 +38,9 @@ cargo run --release -p tactics_core --example balance -- \
     --sim --games 36 --sweep balance.partial_penetration_percent=40,55,70
 # ...and how much of that was the dice?
 cargo run --release -p tactics_core --example balance -- --sim --games 36 --sweep seed=0,1000,2000
+# what is a longer-sighted commander worth?
+cargo run --release -p tactics_core --example balance -- \
+    --sim --games 36 --sweep planner.horizon_rounds=2,4,6
 # ...for one table, in about three seconds
 cargo run --release -p tactics_core --example balance -- \
     --sim --games 36 --only skill --absolute --sweep seed=0,1000,2000,3000
@@ -69,7 +72,8 @@ path=a,b,c` runs the whole thing once per value and prints the rows side by
 side, with a second table of differences from the first row. Both address
 fields by the name the json uses — `balance.partial_penetration_percent`,
 `weapon.howitzer_105.dispersion`, `morale.rungs[2].accuracy`,
-`vehicle.medium_tank.profile` — and they reach *every* field of every block
+`planner.horizon_rounds`, `vehicle.medium_tank.profile` — and they reach
+*every* field of every block
 and every content map, because the patch is a serde round trip through the
 same representation a save file holds rather than a hand-written list of the
 knobs somebody thought to expose. A field added to `Balance` tomorrow is
@@ -684,6 +688,63 @@ follow that are easy to undo by accident:
 
 `span` normalises the lean against how far she can actually get, so a
 difficulty level is worth the same to a howitzer as to a recon car.
+
+### How the AI thinks is a mod, and it is not `balance`
+
+The five numbers that were the last tuning constants in `ai/` live in the
+`planner` block of `mod.json` (`data::PlannerRules`, one-in-effect like
+`scale`, `balance` and `casualties`): `impatience`, `horizon_rounds`,
+`boarding_rounds`, `devolved` and `exit_urgency`. The doc comment on each field
+carries the reasoning that used to sit on the constant, which is where to look
+before changing one.
+
+- **It is a separate block from `balance` on purpose, and the line is
+  load-bearing.** `balance` says what is *true on this battlefield* — what a
+  point of gunnery is worth, how far through a plate a marginal round gets —
+  and reaches a human player's shot exactly as it reaches a machine's. Nothing
+  in `planner` reaches a rule: a mod that rewrote all five would leave a
+  human-versus-human battle bit-for-bit identical. Putting a number in the
+  wrong one of these merges "what is true here" with "how well is this side
+  played", which is the conflation difficulty spent a whole arc separating.
+  **The test for which block a new number belongs in is that question**, not
+  which file it currently sits in.
+- **Every field `#[serde(default)]`s to exactly the constant it replaced**, so
+  a mod that declares no block — or declares the block and omits a field —
+  gets the game it always had. That is checked the strong way: the determinism
+  snapshot passed unregenerated when this landed, which is the whole of the
+  evidence that the refactor changed no rules.
+- **A number that differs per doctrine belongs on the doctrine, not here.**
+  `route_caution` and `contest_aversion` are the worked examples: how much a
+  commander minds driving under a gun is a thing doctrines disagree about,
+  while how far ahead anybody looks is not. `devolved` is the interesting
+  boundary case and is here rather than there because it is a *threshold read
+  against* `DoctrineDef::delegation` — moving it changes which of a mod's
+  shipped doctrines devolve, which is one decision about the whole roster
+  rather than one per doctrine.
+- **Each field has a test that it is read at all**, in `tests/engine.rs`
+  (`what_a_round_of_driving_costs_a_commander_is_a_mod_decision` and its four
+  siblings), and each was mutation-checked by pinning the field back to its
+  old constant and requiring the test to fail. That is not ceremony: the
+  failure this guards against is a field declared, printed and consulted by
+  nothing, which is exactly what `Scale::elevation_meters` was for months.
+  `the_planner_numbers_can_be_swept_and_ship_at_the_values_they_replaced`
+  covers the other two halves — that the block is addressable from `--set`,
+  and that what the base mod ships equals `PlannerRules::default()`.
+- **`horizon_rounds` is the one with a performance cost attached.** It is the
+  only thing bounding the Dijkstra in `battle::roads`: 61 / 106 / 155 / 219 µs
+  at two, three, four and six rounds on the radius-20 map. Everything else
+  here is free.
+
+**The first sweep it made possible returned a null result, and that is worth
+knowing before reaching for it.** At 36 games across the three shipped maps, a
+horizon of one round and a horizon of eight are the same game — 19–17 to 20–16,
+12.9 to 13.5 rounds — against a seed noise floor of ±3 wins and 1.2 rounds
+measured in the same session. On the mirrored arena, `horizon_rounds` 4 and 6
+produce *identical* skill tables in every row. Read it as the instrument
+limitation the road-reading chunk already recorded rather than as a result
+about the number: the shipped maps and the radius-10 arena have very little for
+a longer-sighted commander to be better at. Re-measure on terrain-varied ground
+before concluding the horizon does nothing.
 
 ### Defiance: what a crew does instead
 
