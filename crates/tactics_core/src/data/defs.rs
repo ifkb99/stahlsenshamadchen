@@ -439,8 +439,37 @@ pub struct DoctrineDef {
     /// Fraction of starting strength lost before the side looks for a way
     /// out. Reserved until morale and withdrawal exist.
     pub withdraw_threshold: f32,
-    /// Reserved for chain of command: acting without orders when out of
-    /// contact with a commander.
+    /// How much of her own judgment a subordinate acts on while carrying out
+    /// an order.
+    ///
+    /// Read by the goal chooser and nowhere else. A doctrine with initiative
+    /// puts the tile her own sweep picked on the candidate list beside the
+    /// ground she was sent to, and pays
+    /// [`PlannerRules::deviation_cost`](super::PlannerRules::deviation_cost)
+    /// `* (1 - initiative)` for taking it — so at 1 she weighs her orders as
+    /// one option among two and at 0 there is no second option to weigh, and
+    /// the game is the one before subordinate initiative existed.
+    ///
+    /// **It governs *how* she carries out an order, never *whether* she
+    /// believes it.** She may fight from ground she chose short of the map
+    /// reference; she may not decide the far objective was the better idea.
+    /// That distinction is not a nicety — pricing her own objectives as an
+    /// unordered crew prices them makes an order systematically cheaper than
+    /// terrain, and it is `Unit::detached` that excuses a unit from her
+    /// formation's mission, which is a chain-of-command decision rather than
+    /// an evaluator one.
+    ///
+    /// The field's original note read "acting without orders when out of
+    /// contact with a commander", which is the obvious next rule and
+    /// deliberately not this one: a cut-off crew keeps the orders she had, and
+    /// scaling her initiative by having lost the wire is a second rule with
+    /// its own measurement.
+    ///
+    /// At the shipped `deviation_cost` the base mod's doctrines straddle the
+    /// threshold — massed armour at 0.3 drives at the hex she was given while
+    /// elastic defence at 0.7 and recon pull at 0.9 stop to fight from ground
+    /// of their own — which is what makes the number mean something rather
+    /// than sitting outside every value in the mod.
     pub initiative: f32,
     /// Reserved for chain of command: how much a commander devolves
     /// decisions to subordinates.

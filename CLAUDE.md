@@ -554,8 +554,32 @@ is deliberate and is the thing to preserve:
   mission compete as one candidate among the objectives silently undid step 1
   of DIRECTION.md — a crew under orders and a crew with none started choosing
   the same ground, and `a_cut_off_unit_keeps_the_orders_she_had` caught it.
-  **Subordinate initiative is the widening of this list**, by doctrine, and
-  nothing else has to move for it to arrive.
+- **Subordinate initiative widens that list by exactly one entry**, and the
+  boundary is the thing to preserve. `DoctrineDef::initiative` admits the tile
+  this round's own sweep picked beside the ordered ground, and
+  `planner.deviation_cost * (1 - initiative)` is charged for taking it. It
+  governs **how she carries out an order, never whether she believes it** —
+  step 1 part 3 of the memo, applied one layer down: she may fight from ground
+  she chose short of the map reference, and she may not decide the far
+  objective was the better idea.
+
+  **The obvious wider version was built and is wrong.** Admitting her own
+  objectives and pricing them the way an unordered crew prices them fails
+  three tests, the sharpest being `a_cut_off_unit_keeps_the_orders_she_had`,
+  because a mission's ground is worth 2.0 on the evaluator's scale and a
+  shipped objective is worth 2 to 5 — so an order becomes systematically
+  cheaper than terrain, which is DIRECTION.md's original complaint rebuilt
+  inside the fix for it. No setting of `deviation_cost` repairs that: a flat
+  charge large enough to hold a 0.9-initiative crew is one that freezes a
+  0.3-initiative one, which is the tell that the model is wrong rather than
+  the tuning. Deciding another objective matters more is `Unit::detached`, and
+  it is a chain-of-command decision.
+
+  At `initiative: 0` the list is the two entries it always was — the widening
+  is a membership guard rather than a coefficient, so the chooser draws
+  exactly as many blurs from the rng as before and a doctrine with no
+  initiative is bit-for-bit the old game. Same shape as the `noise > 0.0`
+  guard beside it, and for the same reason.
 - **A long march is walked through `movement::step_toward`**, shared with a
   commander's personal `tasking`. `SetMove` is refused past this round's
   budget — correct for an order, and the reason the planner only ever *scored*
@@ -730,6 +754,14 @@ before changing one.
   `the_planner_numbers_can_be_swept_and_ship_at_the_values_they_replaced`
   covers the other two halves — that the block is addressable from `--set`,
   and that what the base mod ships equals `PlannerRules::default()`.
+- **`deviation_cost` is the sixth field and the one that is not a refactor.**
+  It arrived with subordinate initiative and is the price a crew under orders
+  pays for acting on her own judgment, eroded by her doctrine's `initiative`.
+  At the shipped 2.0 the base mod's three doctrines straddle it — massed
+  armour drives at the hex she was given, elastic defence and recon pull stop
+  to fight from ground of their own — which is the property that keeps a
+  number meaningful, and the one `balance.blind_penalty` turned out not to
+  have.
 - **`horizon_rounds` is the one with a performance cost attached.** It is the
   only thing bounding the Dijkstra in `battle::roads`: 61 / 106 / 155 / 219 µs
   at two, three, four and six rounds on the radius-20 map. Everything else

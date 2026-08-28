@@ -469,6 +469,7 @@ impl UtilityPlanner {
                         .formation_of(unit)
                         .and_then(|f| f.mission_for(unit)),
                     Some(best_dest),
+                    self.evaluator.doctrine.initiative,
                 );
                 let mut chooser = goal::UtilityChooser {
                     evaluator: &self.evaluator,

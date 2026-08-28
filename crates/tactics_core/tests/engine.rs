@@ -876,6 +876,185 @@ fn ground_the_enemy_reaches_first_is_worth_less_marching_for() {
     );
 }
 
+// --- subordinate initiative ------------------------------------------------
+
+/// A crew under orders to distant ground, with a reason to fight where she
+/// stands: an enemy in view, and the whole march still ahead of her.
+///
+/// The comparison the chunk turns on. What she may deviate to is the tile her
+/// own sweep picked — a firing position — and not some other objective, so
+/// this map declares no objectives at all: with orders in hand they would not
+/// be candidates anyway, and leaving them out says so.
+fn pressed_stage(reg: &DataRegistry, seed: u64) -> (BattleState, tactics_core::Hex) {
+    let rows: Vec<&str> = vec!["gggggggggggggggggggg"; 3];
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "pressed",
+        "palette": { "g": "grass" },
+        "rows": rows,
+        "formations": [{ "id": "platoon", "name": "Platoon", "side": 0 }],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let mut hers = unit_at([1, 0], 0, "medium_tank", "Subordinate");
+    hers.formation = Some("platoon".into());
+    hers.leads = true;
+    let placements = vec![hers, unit_at([8, 0], 1, "medium_tank", "Somebody")];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    let mut state = BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    );
+    let told = tactics_core::offset_to_hex(18, 2);
+    state
+        .apply(
+            reg,
+            &Order::SetMission {
+                formation: formation_named(&state, "platoon"),
+                mission: Mission::Advance { to: told },
+                latitude: tactics_core::battle::Latitude::Delegated,
+            },
+        )
+        .expect("a legal mission");
+    (state, told)
+}
+
+/// The goal a doctrine of this initiative chooses on that stage, with route
+/// caution and contest aversion held at zero so that initiative is the only
+/// thing moving.
+fn goal_at_initiative(
+    reg: &DataRegistry,
+    state: &BattleState,
+    initiative: f32,
+) -> Option<tactics_core::battle::Goal> {
+    let doctrine = doctrine_with(reg, "massed_armor", |d| {
+        d.initiative = initiative;
+        d.route_caution = 0.0;
+        d.contest_aversion = 0.0;
+    });
+    goal_with_foresight(reg, state, UnitId(0), doctrine, 1.0)
+}
+
+#[test]
+fn a_crew_with_no_initiative_marches_at_the_map_reference() {
+    // The additivity half, as behaviour rather than as a list length: a
+    // doctrine that devolves nothing drives at the hex she was given, past
+    // every reason of her own to stop, exactly as every ordered crew did
+    // before initiative existed.
+    let reg = seen(registry_wireless());
+    let (state, told) = pressed_stage(&reg, 41);
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "the stage needs the enemy in sight, or she has nothing to stop for"
+    );
+    assert_eq!(
+        goal_at_initiative(&reg, &state, 0.0),
+        Some(tactics_core::battle::Goal::Take(told)),
+        "no initiative is no deviation"
+    );
+}
+
+#[test]
+fn a_subordinate_who_is_trusted_fights_from_the_ground_she_chose() {
+    // The other half, and the same stage, same seed, same doctrine: the only
+    // difference between these two tests is `initiative`. That is what makes
+    // it a comparison rather than a preference — a test that only showed the
+    // trusted crew stopping would pass against an engine in which nobody ever
+    // obeys anything.
+    //
+    // And it is a *deviation*, not a refusal: she is still fighting the fight
+    // her orders sent her to, from a position her own sweep picked, which is
+    // the whole of what "how, not whether" means.
+    let reg = seen(registry_wireless());
+    let (state, told) = pressed_stage(&reg, 41);
+    let chose = goal_at_initiative(&reg, &state, 0.9);
+    assert_ne!(
+        chose,
+        Some(tactics_core::battle::Goal::Take(told)),
+        "a subordinate trusted with her own judgment is still driving at the map reference"
+    );
+    assert!(
+        matches!(chose, Some(tactics_core::battle::Goal::Take(_))),
+        "and she chose ground rather than giving up on the order: {chose:?}"
+    );
+}
+
+#[test]
+fn the_shipped_doctrines_straddle_the_price_of_deviating() {
+    // The calibration, and the reason to believe the number means anything.
+    // At the shipped `deviation_cost` massed armour (initiative 0.3) presses
+    // on to the hex she was given and elastic defence (0.7) and recon pull
+    // (0.9) stop to fight from ground of their own — so the field separates
+    // the doctrines that ship rather than sitting outside all of them, which
+    // is what `balance.blind_penalty` turned out to be doing.
+    let reg = seen(registry_wireless());
+    let (state, told) = pressed_stage(&reg, 41);
+    let ordered = Some(tactics_core::battle::Goal::Take(told));
+    assert_eq!(
+        reg.doctrine("massed_armor").unwrap().initiative,
+        0.3,
+        "the shipped value moved; re-read this test before changing it"
+    );
+    assert_eq!(
+        goal_at_initiative(&reg, &state, 0.3),
+        ordered,
+        "massed armour devolves little and should drive at the hex she was given"
+    );
+    for (doctrine, initiative) in [("elastic_defense", 0.7), ("recon_pull", 0.9)] {
+        assert_eq!(
+            reg.doctrine(doctrine).unwrap().initiative,
+            initiative,
+            "the shipped value moved; re-read this test before changing it"
+        );
+        assert_ne!(
+            goal_at_initiative(&reg, &state, initiative),
+            ordered,
+            "{doctrine} trusts its subordinates and should let her fight where she is"
+        );
+    }
+}
+
+#[test]
+fn what_it_costs_a_subordinate_to_have_her_own_idea_is_a_mod_decision() {
+    // `planner.deviation_cost` is the price and `initiative` is how much of
+    // it she pays, so the same crew with the same idea obeys or does not
+    // depending on one number in `mod.json`. This is the check that the field
+    // is read at all, and it is the knob a mod reaches for when its
+    // subordinates are too literal or not literal enough.
+    let mut reg = seen(registry_wireless());
+    let (state, told) = pressed_stage(&reg, 41);
+    let ordered = Some(tactics_core::battle::Goal::Take(told));
+    assert_eq!(reg.planner.deviation_cost, 2.0);
+
+    reg.planner.deviation_cost = 0.0;
+    assert_ne!(
+        goal_at_initiative(&reg, &state, 0.3),
+        ordered,
+        "costing nothing, even a literal-minded doctrine backs its own judgment"
+    );
+
+    reg.planner.deviation_cost = 100.0;
+    assert_eq!(
+        goal_at_initiative(&reg, &state, 0.9),
+        ordered,
+        "and priced out of reach, the most trusting doctrine in the mod does as she is told"
+    );
+}
+
 // --- the planner numbers are data ------------------------------------------
 //
 // Five constants lived in `ai/` until 2026-08-27 against this project's own
@@ -5454,20 +5633,24 @@ fn a_crew_keeps_the_goal_she_chose_until_it_is_finished() {
 fn an_order_replaces_her_own_ideas_rather_than_competing_with_them() {
     // The rule the direction memo exists to defend, restated where the goal
     // layer could most easily have undone it. A mission that names ground is
-    // not one candidate among the objectives she likes the look of — it is
-    // the only one. Letting it compete was the first draft, and it meant a
-    // crew under orders and a crew with none chose the same ground, which is
-    // an order that has stopped being one.
+    // not one candidate among the objectives she likes the look of. Letting
+    // it compete was the first draft, and it meant a crew under orders and a
+    // crew with none chose the same ground, which is an order that has
+    // stopped being one.
     //
-    // Note this is also the hook for subordinate initiative: that chunk
-    // widens this list by doctrine, and nothing else has to move.
+    // Since subordinate initiative landed this is the **additivity contract**
+    // for it, stated at zero: a doctrine with no initiative gets exactly the
+    // two-entry list it always got. Not a list her own ideas are on and then
+    // scored out of — on it, because the length of this list is how many
+    // blurs the chooser draws from the rng, and a game that is the old game
+    // must draw them at the old stream position too.
     let reg = registry_wireless();
     let state = BattleState::from_map(&reg, "battle_plains", 102).expect("a shipped map");
     let unit = UnitId(0);
-    let free = tactics_core::ai::goal::candidates(&reg, &state, unit, None, None);
+    let free = tactics_core::ai::goal::candidates(&reg, &state, unit, None, None, 0.0);
     assert!(
         free.len() > 2,
-        "with no orders she has the run of the map: {free:?}"
+        "with no orders she has the run of the map whatever her doctrine: {free:?}"
     );
 
     let told = tactics_core::offset_to_hex(30, 30);
@@ -5477,6 +5660,7 @@ fn an_order_replaces_her_own_ideas_rather_than_competing_with_them() {
         unit,
         Some(&tactics_core::battle::Mission::Advance { to: told }),
         None,
+        0.0,
     );
     assert_eq!(
         under_orders,
@@ -5485,6 +5669,53 @@ fn an_order_replaces_her_own_ideas_rather_than_competing_with_them() {
             tactics_core::battle::Goal::Hold
         ],
         "told where to go, that is where she is going"
+    );
+}
+
+#[test]
+fn a_doctrine_with_initiative_puts_her_own_judgment_on_the_list_behind_the_order() {
+    // The widening, and the two things about it that matter. The tile her own
+    // sweep picked is *on* the list — that is the whole mechanism — and the
+    // order is still at the head of it, because the chooser compares strictly
+    // and this list's order is the tie-break. A widening that shuffled the
+    // order into the middle would be the first draft all over again.
+    //
+    // What is deliberately *not* admitted is the map's other objectives.
+    // Initiative is how she carries out an order, not whether she believes
+    // it; deciding the far objective mattered more is `Unit::detached`.
+    let reg = registry_wireless();
+    let state = BattleState::from_map(&reg, "battle_plains", 102).expect("a shipped map");
+    let unit = UnitId(0);
+    let told = tactics_core::offset_to_hex(30, 30);
+    let mine = tactics_core::offset_to_hex(3, 3);
+    let mission = tactics_core::battle::Mission::Advance { to: told };
+    let list = |initiative: f32| {
+        tactics_core::ai::goal::candidates(
+            &reg,
+            &state,
+            unit,
+            Some(&mission),
+            Some(mine),
+            initiative,
+        )
+    };
+
+    assert_eq!(
+        list(0.0),
+        vec![
+            tactics_core::battle::Goal::Take(told),
+            tactics_core::battle::Goal::Hold
+        ],
+        "no initiative is the two-entry list the goal layer always had"
+    );
+    assert_eq!(
+        list(0.9),
+        vec![
+            tactics_core::battle::Goal::Take(told),
+            tactics_core::battle::Goal::Take(mine),
+            tactics_core::battle::Goal::Hold
+        ],
+        "and initiative adds her own answer, behind the order rather than in front of it"
     );
 }
 
@@ -5504,7 +5735,7 @@ fn two_crews_do_not_drive_for_the_same_hex() {
         "this test needs two crews of the same side"
     );
 
-    let mine = tactics_core::ai::goal::candidates(&reg, &state, first, None, None);
+    let mine = tactics_core::ai::goal::candidates(&reg, &state, first, None, None, 0.0);
     let taken = mine
         .iter()
         .find_map(|g| match g {
@@ -5515,7 +5746,7 @@ fn two_crews_do_not_drive_for_the_same_hex() {
     state.unit_mut(first).expect("on the field").goal =
         Some(tactics_core::battle::Goal::Take(taken));
 
-    let hers = tactics_core::ai::goal::candidates(&reg, &state, second, None, None);
+    let hers = tactics_core::ai::goal::candidates(&reg, &state, second, None, None, 0.0);
     assert!(
         !hers.contains(&tactics_core::battle::Goal::Take(taken)),
         "somebody is already going there: {hers:?}"

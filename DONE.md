@@ -705,6 +705,60 @@ commander to be better at. The value of moving a number into data is only
 realised when somebody sweeps it — and the first sweep says the thing to build
 next is ground worth reading, not a different horizon.
 
+**Subordinate initiative** (2026-08-27), the chunk `ai/goal.rs` had been
+holding a seam open for. `DoctrineDef::initiative` — declared for months and
+read by nothing — now widens an ordered crew's candidate list by one entry:
+the tile this round's own sweep picked, charged
+`planner.deviation_cost * (1 - initiative)` for not being what she was told to
+do. At `initiative: 0` the list is the two entries it always was, so a
+doctrine with none plays the old game down to the rng stream position.
+
+**Where the boundary ended up, and why it moved.** The written plan was that a
+high-initiative doctrine "admits her own candidates alongside the ordered
+one", which reads naturally as *her own objectives*. Built that way it fails
+three tests, and the sharpest is `a_cut_off_unit_keeps_the_orders_she_had`: a
+crew under orders and a crew with none went to the same hex, which is
+DIRECTION.md's original complaint rebuilt inside the fix for it. The cause is
+arithmetic rather than taste — a mission's ground is worth 2.0 on the
+evaluator's scale and a shipped objective 2 to 5 — and no `deviation_cost`
+repairs it, because a flat charge big enough to hold a 0.9-initiative crew
+freezes a 0.3-initiative one. **That is the tell the skill guide names: a test
+that fails at every setting of a new knob means the model is wrong, not the
+tuning.**
+
+So initiative governs **how she carries out an order, never whether she
+believes it** — step 1 part 3 of the memo applied one layer down. Deciding
+another objective matters more is `Unit::detached`, which already exists and
+is a chain-of-command decision rather than an evaluator one.
+
+**Calibration, which is the part worth keeping.** At `deviation_cost: 2.0` the
+three shipped doctrines straddle the threshold on a staged march: massed
+armour (0.3) drives at the hex she was given, elastic defence (0.7) and recon
+pull (0.9) stop to fight from ground of their own. A number that separates the
+content that ships is a number that means something; `balance.blind_penalty`
+is the counter-example this was checked against.
+
+**And in fought-out play it is inside the noise**, which is the third finding
+of this shape after detection and stacking. Sweeping massed armour's own
+`initiative` 0 → 0.3 → 0.9 at 36 games moves its wins under command by 1, its
+carriers by 3 and its foot units by 2, against a seed spread on the same
+columns of 1, 8 and 2. Two rows of that table are *byte-identical* across
+every variant, and for checkable reasons rather than luck: `both flat` has no
+missions to deviate from, and `elastic under command` issues none because its
+`delegation` of 0.7 is at or past `planner.devolved`. Forcing every doctrine
+to assign ground (`--set planner.devolved=1.1`, which the planner block made
+possible the same afternoon) brings elastic into the sample and it moves by
+one win.
+
+**The determinism baseline passed unregenerated**, and the reason is
+checkable: the snapshot contains zero `MissionAssigned` events, because
+`river_crossing`'s only commanded side fights `elastic_defense`, which
+devolves. There is nothing on that map for a subordinate to deviate from.
+
+So on the shipped content this rule fires for exactly one doctrine and that
+doctrine is calibrated not to use it — which points at the doctrine values and
+at `devolved`, both of them data, rather than at the mechanism.
+
 **Saves record which mods were playing.** `SaveGame.mods` stamps id and
 version; mismatched ids are refused (the rules genuinely differ), version drift
 on the same set warns and loads (a content patch must not cost the player their

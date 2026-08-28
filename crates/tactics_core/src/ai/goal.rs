@@ -27,14 +27,57 @@
 //! only way to ask what a horizon is *worth to a commander* is to edit this
 //! file and rebuild. Both default to exactly the constants they replaced.
 //!
+//! # Subordinate initiative
+//!
+//! A subordinate weighing her own judgment against the one she was ordered is
+//! [`DoctrineDef::initiative`](crate::data::DoctrineDef::initiative), and it
+//! attaches here and nowhere else: a doctrine with initiative admits the tile
+//! her own sweep picked alongside the ordered ground, and charges her
+//! [`deviation_cost`](crate::data::PlannerRules::deviation_cost) `* (1 -
+//! initiative)` for taking it.
+//!
+//! **It governs how she carries out an order, never whether she believes
+//! it** — step 1 part 3 of DIRECTION.md, applied one layer down. She may
+//! fight from the wood short of the map reference, where her cover, her shot
+//! and the threat she is under say she should be. She may not decide the far
+//! objective was the better idea; that is `Unit::detached`, and it is a
+//! chain-of-command decision rather than an evaluator one.
+//!
+//! That line was drawn by three failing tests rather than by taste. Admitting
+//! her own objectives and pricing them as an unordered crew prices them made
+//! an order systematically cheaper than terrain — a mission's ground is worth
+//! 2.0 on the evaluator's scale and a shipped objective 2 to 5 — and
+//! `a_cut_off_unit_keeps_the_orders_she_had` failed with a crew under orders
+//! and a crew with none choosing the same hex. That is DIRECTION.md's
+//! original complaint rebuilt inside the fix for it.
+//!
+//! **A price on deviation, not a vote on the order.** The ordered goal is
+//! still the only candidate that pays nothing, and it is still first in the
+//! list so that a tie goes to the order.
+//!
+//! **At `initiative: 0` this is exactly the game before it existed**, and by
+//! construction rather than by tuning: her own candidates are never added, so
+//! the list is the two entries it always was, the deviation charge is never
+//! levied on anything, and no extra blur is drawn from the rng. That last
+//! clause is why the widening is a membership guard rather than a coefficient
+//! — the same shape `UtilityChooser`'s `noise > 0.0` guard has, and for the
+//! same reason.
+//!
 //! # What is deliberately NOT here
 //!
-//! A subordinate weighing her own goal against the one she was ordered.
-//! `DoctrineDef::initiative` exists for exactly that and is still unread; the
-//! comparison belongs here and is the next chunk. It is left out so that this
-//! one can be measured on its own — landing both at once would mean not
-//! knowing which of them moved the numbers, which is the attribution problem
-//! that has already cost this project a day.
+//! **Initiative is not scaled by being out of contact**, though the field's
+//! own doc comment once framed it that way and it is the obvious next rule: a
+//! crew who cannot reach her commander is exactly the one who should act on
+//! her own. It is left out so that this chunk can be measured on its own —
+//! landing both at once would mean not knowing which of them moved the
+//! numbers, which is the attribution problem that has already cost this
+//! project a day.
+//!
+//! **Initiative is not a difficulty axis either.** Acting on your own
+//! judgment badly is still acting on your own judgment, so willingness and
+//! competence are different questions and this is the willingness one. They
+//! compose without being mixed: a blurred commander already misjudges the
+//! candidates she is weighing, her own included.
 
 use crate::battle::{BattleState, Goal, Mission, Roads, Unit, UnitId, roads};
 use crate::data::DataRegistry;
@@ -63,6 +106,7 @@ pub fn candidates(
     unit: UnitId,
     mission: Option<&Mission>,
     best_reachable: Option<Hex>,
+    initiative: f32,
 ) -> Vec<Goal> {
     let Some(me) = state.unit(unit) else {
         return vec![Goal::Hold];
@@ -75,22 +119,58 @@ pub fn candidates(
         }
     };
 
-    // **Orders first, and orders alone.** A mission that names ground does
-    // not compete with the crew's own ideas here — it replaces them. That is
-    // not timidity about the goal layer, it is the rule the whole direction
-    // memo was written to restore: an order that a subordinate may outbid
-    // because she likes a different hill is a weighted opinion, not an order.
-    // Making the mission merely one more candidate silently undid step 1, and
-    // `a_cut_off_unit_keeps_the_orders_she_had` caught it — a crew under
-    // orders and a crew with none started choosing the same ground.
+    // **Orders first, and orders cheapest.** A mission that names ground is
+    // pushed ahead of everything the crew might think of herself, so that a
+    // tie goes to the order — the chooser compares strictly and this list's
+    // order *is* the tie-break.
     //
-    // This is also exactly the seam the next chunk needs. Subordinate
-    // initiative is *the widening of this list*: a doctrine with high
-    // `initiative` admits her own candidates alongside the ordered one and
-    // lets her weigh them, and a doctrine with none never does. Nothing else
-    // has to move for that to arrive.
-    if let Some(hex) = mission.and_then(ordered_ground) {
-        return vec![Goal::Take(hex), Goal::Hold];
+    // What the order must never become is one candidate among equals. Making
+    // it one silently undid step 1 of the direction memo and
+    // `a_cut_off_unit_keeps_the_orders_she_had` caught it: a crew under
+    // orders and a crew with none started choosing the same ground. What
+    // subordinate initiative changes is *membership*, not precedence — her
+    // own candidates join the list, and `UtilityChooser` charges each of them
+    // `deviation_cost * (1 - initiative)` for not being what she was told to
+    // do. An order she may outbid because she likes a different hill is a
+    // weighted opinion; an order she may set aside when her own idea is worth
+    // a doctrine-sized margin more is a subordinate.
+    //
+    // **What she may deviate to is the ground in front of her, and not the
+    // other objective.** That line is step 1 part 3 of the memo — `delegation`
+    // governs *how* a subordinate achieves an order, never how much she
+    // believes it — and initiative is the *how*. So the widening admits
+    // exactly one thing: the tile this round's own sweep picked, which is
+    // where her cover, her shot and the threat she is under say she should
+    // be. She may fight from the wood short of the map reference; she may not
+    // decide the far objective was the better idea.
+    //
+    // Deciding the other objective matters more is a real thing to want and
+    // it is not this. It is `Unit::detached` — which already exists and
+    // already excuses a unit from her formation's mission — and it is a
+    // chain-of-command decision rather than an evaluator one. Building it
+    // here was tried: her own objectives were admitted and priced as an
+    // unordered crew prices them, and three tests failed, the sharpest being
+    // `a_cut_off_unit_keeps_the_orders_she_had`, because a mission's ground
+    // is worth 2.0 on the evaluator's scale and a shipped objective is worth
+    // 2 to 5. An order was systematically cheaper than terrain, which is
+    // DIRECTION.md's original complaint rebuilt one layer down.
+    //
+    // A doctrine with no initiative skips the widening outright rather than
+    // adding a candidate a coefficient would then have to neutralise. That is
+    // deliberate and it is what makes `initiative: 0` bit-for-bit the game
+    // before this existed: the list is the two entries it always was, so the
+    // chooser draws exactly as many blurs from the rng as it always did.
+    let ordered = mission.and_then(ordered_ground);
+    if let Some(hex) = ordered {
+        push(hex);
+        if initiative > 0.0
+            && let Some(mine) = best_reachable
+            && mine != me.pos
+        {
+            push(mine);
+        }
+        out.push(Goal::Hold);
+        return out;
     }
 
     // Ground the map says is worth having. Exits are not here: leaving is
@@ -125,6 +205,27 @@ pub fn candidates(
 
     out.push(Goal::Hold);
     out
+}
+
+/// The ground this crew's standing orders name, if she has any and they name
+/// ground.
+///
+/// One lookup shared by [`candidates`], which needs it to put the order at the
+/// head of the list, and by [`UtilityChooser`], which needs it to know which
+/// candidate is free of the deviation charge. Two answers to "where was she
+/// told to go" would be two answers to whether she is obeying.
+///
+/// `mission_for` rather than the formation's current mission, so a crew who
+/// has lost contact is measured against **the orders she actually has** — the
+/// `CutOff` snapshot — and not against ones her commander has since changed
+/// and she has never heard.
+pub fn ordered_goal(state: &BattleState, unit: UnitId) -> Option<Goal> {
+    state
+        .command
+        .formation_of(unit)
+        .and_then(|f| f.mission_for(unit))
+        .and_then(ordered_ground)
+        .map(Goal::Take)
 }
 
 /// The ground a mission names, if it names any. `Hold` with no hex, a
@@ -392,6 +493,12 @@ impl GoalChooser for UtilityChooser<'_> {
         // answers all of them — and the A* per candidate this replaced cost
         // five to ten times as much per planned order.
         let planner = &registry.planner;
+        // What she was told to do, so the deviation charge below knows what
+        // it is a deviation *from*. `None` for a crew with no orders, and
+        // then nothing is charged: initiative is about setting orders aside,
+        // and a crew who has none is not defying anybody by choosing ground.
+        let ordered = ordered_goal(state, unit);
+        let initiative = self.evaluator.doctrine.initiative;
         let roads = roads(registry, state, unit, planner.horizon_rounds);
         // Who could shoot at the march, and from how far. Fog-honest: a crew
         // cannot route around a gun nobody has seen, and letting her would
@@ -406,6 +513,28 @@ impl GoalChooser for UtilityChooser<'_> {
                 Goal::Hold => me.pos,
                 Goal::Take(hex) => *hex,
             };
+            // Every candidate is priced the same way, her orders included.
+            //
+            // Pricing her own ground *as if she were unordered* was tried and
+            // is wrong, and it is worth saying why here because it is the
+            // obvious next idea. Under a standing mission `score_tile` values
+            // a tile by what it is worth locally plus how near it is to where
+            // she was sent; `objective_value` would instead pay her the full
+            // worth of an objective her commander never named. Those two are
+            // not commensurable — a mission's ground is worth 2.0 on the
+            // evaluator's scale and a shipped objective is worth 2 to 5 — so
+            // comparing them makes an order systematically cheaper than
+            // terrain, which is DIRECTION.md's original complaint restored
+            // one layer down. Three tests caught it, and the sharpest was
+            // `a_cut_off_unit_keeps_the_orders_she_had`: a crew under orders
+            // and a crew with none went to the same hex.
+            //
+            // So initiative governs **how she carries out an order, never
+            // whether she believes it**, which is the line step 1 part 3 of
+            // the memo drew. She may take the good firing position instead of
+            // the exact map reference; she may not decide the other objective
+            // was the better idea.
+            let mine = ordered.is_some_and(|order| *goal != order) && *goal != Goal::Hold;
             let worth = self.evaluator.score_tile(registry, state, unit, hex).score;
             let drive = drive(registry, state, unit, &roads, &guns, hex, speed);
             let doctrine = &self.evaluator.doctrine;
@@ -431,10 +560,29 @@ impl GoalChooser for UtilityChooser<'_> {
             // chooser before it could see a road at all.
             let exposed = rounds * drive.exposed * sight;
             let late = (rounds - drive.theirs).max(0.0) * sight;
+            // Acting on her own idea under orders costs her something, and
+            // her doctrine's `initiative` is how little. A price rather than
+            // a veto: at full initiative she weighs her orders as one option
+            // among several, and at none she never sees another option at all
+            // — `candidates` did not put one on the list, so this term is
+            // never levied and the game is the one before it existed.
+            //
+            // `Hold` is exempt, and that exemption is load-bearing rather
+            // than a kindness. Standing still was already on an ordered
+            // crew's list before initiative existed, so charging her for it
+            // would move a game a doctrine with no initiative plays — and
+            // "stay where I am" is not a rival plan, it is the absence of
+            // one.
+            let defiance = if mine {
+                planner.deviation_cost * (1.0 - initiative).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
             let value = worth
                 - planner.impatience * rounds
                 - doctrine.route_caution * exposed
                 - doctrine.contest_aversion * late
+                - defiance
                 + blur;
             // Strictly greater, so ties go to the earlier candidate and the
             // list's order is the tie-break. That is why `candidates` is

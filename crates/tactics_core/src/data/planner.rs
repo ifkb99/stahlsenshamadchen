@@ -55,6 +55,11 @@ fn boarding_rounds() -> f32 {
     4.0
 }
 
+/// Serde's default for [`PlannerRules::deviation_cost`].
+fn deviation_cost() -> f32 {
+    2.0
+}
+
 /// Serde's default for [`PlannerRules::devolved`].
 fn devolved() -> f32 {
     0.6
@@ -121,6 +126,31 @@ pub struct PlannerRules {
     /// and the walk at each end is real.
     #[serde(default = "boarding_rounds")]
     pub boarding_rounds: f32,
+    /// What it costs a subordinate under orders to act on her own idea
+    /// instead, before her doctrine's `initiative` erodes it.
+    ///
+    /// The price of deviation, not a veto on it. A crew under orders has her
+    /// own candidates on the list in proportion to
+    /// [`DoctrineDef::initiative`](super::DoctrineDef::initiative), and each
+    /// of them is charged `deviation_cost * (1 - initiative)` for not being
+    /// what she was told to do — so massed armour at 0.3 needs her own idea
+    /// to be worth 1.4 more than her orders and recon pull at 0.9 needs 0.2.
+    /// At `initiative: 1` there is no charge and she weighs her orders as one
+    /// option among several; at `initiative: 0` there are no other options to
+    /// weigh and the charge is never levied, which is the game before
+    /// subordinate initiative existed.
+    ///
+    /// Set against the scale the evaluator already speaks, like
+    /// [`Self::impatience`]: a mission's ground is worth 2.0 and a typical
+    /// objective 2–3, so 2.0 makes a low-initiative crew hold her course
+    /// against anything short of a clearly better piece of ground and lets a
+    /// high-initiative one take the good firing position she is driving past.
+    ///
+    /// `Hold` is deliberately exempt: standing still was already on an
+    /// ordered crew's list before initiative existed, and charging her for it
+    /// would change the game a doctrine with no initiative plays.
+    #[serde(default = "deviation_cost")]
+    pub deviation_cost: f32,
     /// The `delegation` level at or beyond which a commander stops assigning
     /// ground and trusts her formations' own judgment.
     ///
@@ -157,6 +187,7 @@ impl Default for PlannerRules {
             impatience: impatience(),
             horizon_rounds: horizon_rounds(),
             boarding_rounds: boarding_rounds(),
+            deviation_cost: deviation_cost(),
             devolved: devolved(),
             exit_urgency: exit_urgency(),
         }

@@ -73,6 +73,7 @@
     "impatience": 0.35,
     "horizon_rounds": 4,
     "boarding_rounds": 4.0,
+    "deviation_cost": 2.0,
     "devolved": 0.6,
     "exit_urgency": 3.0
   },

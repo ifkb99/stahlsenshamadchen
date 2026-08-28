@@ -712,3 +712,25 @@ when somebody sweeps it, and a sweep needs an instrument.
   better commander to be better *at*, after 5-over-3 barely discriminating and
   the road-reading terms moving nothing. Terrain-varied ground is the
   bottleneck, not the chooser's depth.
+- **2026-08-27** — subordinate initiative landed, and the chunk's own boundary
+  moved while it was being built. `DoctrineDef::initiative` widens an ordered
+  crew's candidate list by one entry — the ground her own sweep picked — and
+  charges her `planner.deviation_cost * (1 - initiative)` for taking it. The
+  wider version everyone would write first, in which she may pursue a
+  different *objective*, fails three tests including
+  `a_cut_off_unit_keeps_the_orders_she_had`, and the reason is arithmetic this
+  memo already diagnosed: a mission's ground is worth 2.0 on the evaluator's
+  scale and a shipped objective 2 to 5, so an order priced against terrain
+  loses. That is this memo's opening complaint, reconstructed inside the
+  chunk meant to extend the fix for it. Step 1 part 3's wording turns out to
+  be the exact rule — `delegation` governs *how* a subordinate achieves an
+  order, never how much she believes it — and initiative is the *how*.
+
+  This also sharpens the open question above about whether `delegation` is
+  still wanted. It is, and the two are now clearly different: `delegation` is
+  a commander deciding how much to specify, `initiative` is a subordinate
+  deciding how literally to take it, and `planner.devolved` is where the first
+  turns into the second. Worth noting the practical consequence, which is
+  content rather than code: at `devolved: 0.6` two of three shipped doctrines
+  issue no ground missions at all, so subordinate initiative has nothing to
+  deviate from for either of them.
