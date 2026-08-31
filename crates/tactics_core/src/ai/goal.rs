@@ -186,11 +186,38 @@ pub fn candidates(
         // candidate list says it once — the alternative is a tie-break buried
         // in whatever does the scoring, which is where this problem lived
         // before and where it was hard to see.
-        for hex in &objective.hexes {
-            if claimed_by_another(registry, state, unit, *hex) {
-                continue;
-            }
-            push(*hex);
+        // **Nearest hex of the objective first, and that ordering is a rule
+        // rather than a nicety.** This list's position *is* the chooser's
+        // tie-break, so pushing an objective's hexes in the order the map
+        // file happens to declare them makes ties break toward an absolute
+        // hex — the same one for both ends of the battlefield. That is a
+        // tie-break reading a quantity the point reflection does not
+        // preserve, which this project has already shipped twice (in
+        // `movement::step_toward` and in the planner's plateau argmax) and
+        // forbids in the invariants: the mirror of "the first hex somebody
+        // typed" is not "the first hex somebody typed".
+        //
+        // It stayed invisible for as long as the skill arena was open grass,
+        // because interchangeable ground makes an asymmetric choice between
+        // two hexes cost nothing. On ground where the near end of an
+        // objective differs from the far end it costs a great deal: measured
+        // on the varied arena at difficulty 5 both sides — where the blur is
+        // exactly zero and nothing else can break a tie — side B took 46 of
+        // 72 equal battles, and levelled at 36-36 with this sort in place.
+        //
+        // Distance from the crew's own position is the invariant key, being
+        // a quantity a reflection preserves; the coordinate goes last and
+        // decides nothing but left-or-right between two hexes she is equally
+        // far from, which is the form the invariants allow.
+        let mut hexes: Vec<Hex> = objective
+            .hexes
+            .iter()
+            .copied()
+            .filter(|hex| !claimed_by_another(registry, state, unit, *hex))
+            .collect();
+        hexes.sort_by_key(|hex| (hex.distance_to(me.pos), hex.x, hex.y));
+        for hex in hexes {
+            push(hex);
         }
     }
 
