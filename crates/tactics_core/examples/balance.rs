@@ -1832,8 +1832,8 @@ fn planner_with(
 /// different number depending on how the battles were split across cores.
 #[derive(Default, Clone, Copy)]
 struct Delegation {
-    wins_massed: usize,
-    wins_elastic: usize,
+    wins_side0: usize,
+    wins_side1: usize,
     draws: usize,
     rounds: u32,
     taxis_lost: usize,
@@ -1843,8 +1843,8 @@ struct Delegation {
 
 impl Delegation {
     fn merge(&mut self, o: &Self) {
-        self.wins_massed += o.wins_massed;
-        self.wins_elastic += o.wins_elastic;
+        self.wins_side0 += o.wins_side0;
+        self.wins_side1 += o.wins_side1;
         self.draws += o.draws;
         self.rounds += o.rounds;
         self.taxis_lost += o.taxis_lost;
@@ -1871,11 +1871,12 @@ fn delegation_battle(
     seed: u64,
     p0: &str,
     p1: &str,
+    d0: &str,
 ) -> Delegation {
     let mut d = Delegation::default();
     let mut state = BattleState::from_map(reg, map_for(maps, seed), seed).expect("battle");
     let mut ai = AiDriver::new();
-    ai.insert(0, planner_with(reg, seed, p0, "massed_armor"));
+    ai.insert(0, planner_with(reg, seed, p0, d0));
     ai.insert(1, planner_with(reg, seed + 1, p1, "elastic_defense"));
     let mut rounds = 0;
     while !state.is_over() && rounds < 60 {
@@ -1905,8 +1906,8 @@ fn delegation_battle(
         .filter(|u| u.side == 0 && is_afoot(reg, u))
         .count();
     match state.over.and_then(|r| r.winner) {
-        Some(0) => d.wins_massed += 1,
-        Some(1) => d.wins_elastic += 1,
+        Some(0) => d.wins_side0 += 1,
+        Some(1) => d.wins_side1 += 1,
         _ => d.draws += 1,
     }
     d
@@ -1914,9 +1915,9 @@ fn delegation_battle(
 
 fn delegation_tax(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
     let maps = battle_maps(reg);
-    let run = |p0: &str, p1: &str| -> Delegation {
+    let run = |p0: &str, p1: &str, d0: &str| -> Delegation {
         let fought = fight_all(reg, games, |reg, game| {
-            delegation_battle(reg, &maps, DELEGATION_SEED + seed + game, p0, p1)
+            delegation_battle(reg, &maps, DELEGATION_SEED + seed + game, p0, p1, d0)
         });
         let mut total = Delegation::default();
         for one in &fought {
@@ -1926,17 +1927,39 @@ fn delegation_tax(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
     };
     let per = games.max(1) as f64;
     let rows = [
-        ("both flat", run("utility", "utility")),
-        ("massed under command", run("command", "utility")),
-        ("elastic under command", run("utility", "command")),
+        ("massed flat", run("utility", "utility", "massed_armor")),
+        (
+            "massed under command",
+            run("command", "utility", "massed_armor"),
+        ),
+        (
+            "elastic under command",
+            run("utility", "command", "massed_armor"),
+        ),
+        // The doctrine that orders a *movement to contact*, and the reason it
+        // is here. Every row above it fights an `Assault` or nothing at all,
+        // because massed armour's aggression is 0.85 and both of the other
+        // shipped doctrines devolve — so `planner.pull_under_fire`, the term
+        // this project diagnosed as "the whole problem in miniature", was
+        // unreachable in AI-versus-AI play and swept to bit-identical across
+        // 576 battles. These two rows are the first ones in this instrument
+        // that meet it.
+        (
+            "bounding flat",
+            run("utility", "utility", "bounding_overwatch"),
+        ),
+        (
+            "bounding under command",
+            run("command", "utility", "bounding_overwatch"),
+        ),
     ]
     .into_iter()
     .map(|(name, t)| {
         (
             name.to_string(),
             vec![
-                t.wins_massed as f64,
-                t.wins_elastic as f64,
+                t.wins_side0 as f64,
+                t.wins_side1 as f64,
                 t.draws as f64,
                 t.rounds as f64 / per,
                 t.taxis_lost as f64,
@@ -1955,8 +1978,8 @@ fn delegation_tax(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
         preamble: Vec::new(),
         row_head: "pairing",
         columns: vec![
-            col("massed", 0),
-            col("elastic", 0),
+            col("side 0", 0),
+            col("side 1", 0),
             col("draws", 0),
             col("rounds", 1),
             col("taxis", 0),
@@ -1968,8 +1991,9 @@ fn delegation_tax(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
             "\n  a side's tax is its win drop against the same flat opponent when it\n  \
              fights through missions instead; zero is the target.\n\n  \
              the last three columns are always side 0's — carriers lost, foot units\n  \
-             lost, and rounds fired by anybody on their feet — so the middle row is\n  \
-             the commanded force and the two rows around it are the same force flat.\n\
+             lost, and rounds fired by anybody on their feet — so a `under command`\n  \
+             row is the commanded force and the `flat` row above it is the same\n  \
+             force fighting for itself. side 1 is elastic defence throughout.\n\
              {}",
             level_note(games)
         ),
@@ -2071,7 +2095,12 @@ fn muster_battle(
 }
 
 fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32, seed: u64) -> Grid {
-    let doctrines = ["massed_armor", "elastic_defense", "recon_pull"];
+    let doctrines = [
+        "massed_armor",
+        "elastic_defense",
+        "recon_pull",
+        "bounding_overwatch",
+    ];
     let forces: Vec<(&str, Vec<String>)> = doctrines
         .iter()
         .filter_map(|id| {
