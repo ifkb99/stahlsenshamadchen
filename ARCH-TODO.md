@@ -76,25 +76,24 @@ Branch `feat/one-system`, off `feat/planner-block`.
 
 ---
 
-## Phase 1 — the instruments
+## Phase 1 — the instruments — **DONE**
 
-- [ ] **1a. A terrain-varied arena.** `harness/arena.rs` is a radius-10
-      hexagon with a handful of forest hexes and no objectives worth arguing
-      about, and it is now the third measurement to have blamed it by name.
-      It must stay exactly mirrored — `assert_arena_is_mirrored` is the check,
-      and the side-B edge is what happens when it is not — so every feature is
-      declared once and reflected. Elevation, cover, a road, ground that is
-      slow to cross: enough for a road-reader and a cover-reader to be visibly
-      better than a crow-flight commander.
-- [ ] **1b. A fourth shipped doctrine that issues a movement to contact.**
-      `pull_under_fire` is bit-identical across 576 battles because no shipped
-      doctrine ever orders an `Advance` — massed armour assaults, elastic
-      defence holds, `Recon` is issued by nobody. Aggression in the `Advance`
-      band with delegation below `planner.devolved`, in `assets/mods/base`
-      beside the other three, existing values untouched.
-- [ ] **1c. Re-baseline.** `balance --sim` and the skill table on the new
-      arena, seed-swept, with the numbers written into this file. Everything
-      Phase 2 claims is a difference from these rows.
+- [x] **1a. A terrain-varied arena.** A road down the axis, a hilltop village
+      on the objective, woods on the flanks, soft going short of the middle,
+      water to go around — and symmetric under **two** reflections rather than
+      one, because point symmetry alone is not enough once left and right stop
+      being worth the same. Two objectives rather than one, because a single
+      one is a funnel and the funnel showed up in the control row.
+      `4efab1c`.
+- [x] **1a′. Line of sight is a mirror-symmetric relation.** Not on the plan,
+      and the biggest thing in the arc. See below. `46ff581`.
+- [x] **1a″. `candidates` orders an objective's hexes by distance.** A
+      tie-break with no invariant key in front of it. `9ffb8a6`.
+- [x] **1b. A fourth shipped doctrine that issues a movement to contact.**
+      Bounding Overwatch — aggression 0.6 (the `Advance` band), delegation 0.35
+      (under `planner.devolved`). `planner.pull_under_fire` is reached for the
+      first time. `f31c949`.
+- [x] **1c. Re-baseline.** Below.
 
 ## Phase 2 — one currency
 
@@ -215,16 +214,71 @@ was stated about.
 fought over woods or a ridge is decided partly by which absolute direction
 the sight rays happen to round. `river_crossing` has both.
 
-### Where that leaves Phase 1
+### The fix
 
-Blocked on the sight fix, and deliberately so: any re-baseline taken now is
-contaminated by it, and so is any before-and-after the evaluator change is
-judged on.
+A step that lands on a hex boundary now resolves to **every** hex it could be
+in, and the ray is blocked if any of them blocks. That set is what a reflection
+preserves — reflecting the ray reflects the whole set rather than picking its
+other member — and so is reversing the ray. Census afterwards: **0 and 0**.
+
+The boundary test is exact and costs three subtractions, so the seven-distance
+scan only runs where it is needed: writing `d` for the offset to the nearest
+centre and `e` for a neighbour direction, a neighbour is `2(d·e) + 2` further
+off, so the widest of `|dx-dy|`, `|dx-dz|`, `|dy-dz|` reaching 1 *is* the point
+being on a boundary. Cost: `unit_vision` 71.9 → 90.5 µs, round resolution
+1.42 → 1.66 ms.
+
+`a_reflection_leaves_a_sight_line_alone` pins it over every ordered pair of the
+arena's 331 tiles under both reflections, and was mutation-checked (1,416
+disagreements with the boundary test pinned off).
 
 ## Measurements
 
+### The arc, step by step
+
 Skill table, `--sim --only skill --absolute --games 36 --sweep
-seed=0,1000,2000,3000`, read off the `both ends` rows (288 battles each).
+seed=0,1000,2000,3000`.
+
+| | 5 vs 5 | 1 vs 1 | the ends | 5 over 1 | 5 over 3 |
+| --- | --- | --- | --- | --- | --- |
+| arena alone | 54.3% | 54.2% | 54.3% | 50.0% | 46.8% |
+| + sight fix | 62.7% | 51.1% | 56.9% | 45.9% | 46.5% |
+| + `candidates` fix | **54.2%** | **50.0%** | **52.1%** | **51.2%** | **47.5%** |
+
+Note the middle row: fixing sight made the *side* lean worse before the third
+commit fixed it. That is not a contradiction — sight being exactly symmetric
+keeps play mirrored for longer, so when a tie finally breaks it breaks on the
+one remaining asymmetry (movement resolves in unit id order, and side A holds
+the even ids) more cleanly and more consistently. That residue is real, is
+difficulty-5-only (the `1 vs 1` row is level at 50.0%), and is the next thing
+of its kind if anybody wants it.
+
+### The Phase 2 baseline
+
+Everything Phase 2 claims is a difference from these. `--sim --games 36`,
+seed 0, full output saved outside the repo.
+
+| | |
+| --- | --- |
+| outcome | Valkyries 24, Kuhlmann 12, 0 draws, 0 stalemates |
+| length | 13.2 rounds mean (3–23) |
+| contact | first found round 3.5, 26 acquisitions a battle at 11.0 hexes |
+| gunnery | 1894 shots, 618 penetrated (33%), 242 bounced, 953 missed |
+| on the move | 956 of 1894 shots (50%) laid from a moving vehicle |
+| crew cost | 2.7 wounded and 11.4 out per battle |
+| skill | 5 over 1 **51.2%**, 5 over 3 **47.5%** |
+| perf | round 1.66 ms, `unit_vision` 90.5 µs, `reachable` 15.4 µs, `roads` 111.6 µs, utility order 0.08 ms |
+
+**The prediction Phase 2 is making**, written down before the work so it can be
+wrong: if the defensive half of the evaluator starts reading the resolver, the
+skill rows should rise, because there will at last be something on this ground
+for a commander to be better at. If they do not move, the currency argument is
+wrong and the next place to look is the goal chooser rather than `score_tile`.
+
+### Superseded
+
+Read the rows below only for the shape of the argument; every one of them was
+measured over a sight rule that is not mirror-symmetric.
 
 | arena | 5 over 1 | 5 over 3 | the ends (A/B) |
 | --- | --- | --- | --- |
