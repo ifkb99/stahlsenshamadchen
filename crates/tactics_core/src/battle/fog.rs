@@ -320,6 +320,113 @@ impl SightGrid {
     }
 }
 
+/// How far a residual may be from another before the two count as tied, when
+/// deciding which hex a sight ray passes through.
+///
+/// Four orders of magnitude above `f32`'s resolution at these magnitudes and
+/// four below a hex, so it catches every ray that genuinely runs along a hex
+/// boundary and no ray that merely passes near one. It has to be far above
+/// the noise: the whole point is that two arithmetically identical queries
+/// which differ by an ulp must land on the *same* side of it.
+const RAY_TIE: f32 = 1e-3;
+
+/// The hexes a sight ray is passing through at one step, and why there can be
+/// more than one.
+///
+/// Rounding a point on the ray to a hex is a nearest-centre question, and a
+/// ray that runs exactly along the boundary between two hexes has no nearest
+/// centre — the answer is a coin toss decided by the last bit of a float.
+/// `hexx::Hex::round` has to make that choice, and it makes it consistently
+/// **in absolute terms**, which is precisely the thing the invariants forbid:
+/// the mirror image of a ray is a ray travelling the other way, its
+/// arithmetic differs by an ulp, and the coin lands the other way up.
+///
+/// Measured before this existed, on the mirror-symmetric skill arena:
+/// **1.27% of the 109,230 ordered hex pairs disagreed with their own mirror
+/// image** about whether one could see the other, and side B won 46 of 72
+/// equal battles at difficulty 5, where nothing else can break a tie.
+///
+/// So an ambiguous step resolves to *every* hex it could be in, and the
+/// caller blocks if any of them blocks. That set is what a reflection
+/// preserves — reflecting the ray reflects the whole set rather than picking
+/// its other member — and so is reversing the ray, which is the second
+/// symmetry sight ought to have and mostly did.
+///
+/// It is a small rule change as well as a symmetry fix, and in the honest
+/// direction: a ray grazing the boundary of a wood is now stopped by the
+/// wood. The alternative reading — clear if *any* candidate is clear — is
+/// equally symmetric and says that a crew can see down the crack between two
+/// blocks of timber, which is not a thing.
+fn ray_hexes(from: Hex, to: Hex, i: usize, steps: f32) -> ([Hex; 3], usize) {
+    let t = i as f32 / steps;
+    let fx = from.x as f32 + (to.x - from.x) as f32 * t;
+    let fy = from.y as f32 + (to.y - from.y) as f32 * t;
+    // Cube coordinates sum to zero, so the third is not an independent number.
+    // Deriving it rather than rounding it is what makes the three distances
+    // below comparable, and cube coordinates are why a plain squared distance
+    // is the right metric at all: they are a projection of 3-space onto the
+    // plane `x + y + z == 0`, on which Euclidean distance is
+    // `sqrt((dx² + dy² + dz²) / 2)` — and the constant does not survive a
+    // comparison, so it is not computed.
+    let fz = -fx - fy;
+    let dist2 = |h: Hex| {
+        let (dx, dy, dz) = (h.x as f32 - fx, h.y as f32 - fy, h.z() as f32 - fz);
+        dx * dx + dy * dy + dz * dz
+    };
+
+    // Nearest centre, and everything tied with it. Asking the question this
+    // way rather than by inspecting the rounding is what makes it *complete*:
+    // a first attempt tested the residuals for a tie between the two
+    // coordinates cube rounding chooses between, which halved the disagreement
+    // and did not remove it, because `f32::round` breaks its own halfway cases
+    // away from zero — a rule that is symmetric about the origin and not about
+    // anywhere else, so a map whose centre is not the origin still leaked.
+    let start = Hex::round([fx, fy]);
+
+    // Almost every step of almost every ray is nowhere near a boundary, and
+    // this is the hottest arithmetic in the simulation, so the ties are found
+    // rather than searched for. Writing `d` for the offset from the point to
+    // the nearest centre and `e` for a neighbour direction, the neighbour is
+    // `2(d·e) + 2` further away, so it ties exactly when `d·e` is `-1`; the
+    // six neighbour directions make `d·e` one of `±(dx - dy)`, `±(dx - dz)`,
+    // `±(dy - dz)`. So the widest of those three differences reaching 1 *is*
+    // the point being on a boundary, exactly, for three subtractions — and it
+    // can never exceed 1, because `start` is the nearest centre.
+    let [dx, dy, dz] = [
+        start.x as f32 - fx,
+        start.y as f32 - fy,
+        start.z() as f32 - fz,
+    ];
+    let edge = (dx - dy).abs().max((dx - dz).abs()).max((dy - dz).abs());
+    if edge < 1.0 - RAY_TIE {
+        return ([start, Hex::ZERO, Hex::ZERO], 1);
+    }
+
+    // On a boundary, the true nearest is `start` or one of its six
+    // neighbours, so seven distances settle it — and every one of them is a
+    // quantity a reflection preserves.
+    let mut best = dist2(start);
+    for hex in start.all_neighbors() {
+        best = best.min(dist2(hex));
+    }
+    let mut out = [Hex::ZERO; 3];
+    let mut n = 0;
+    for hex in std::iter::once(start).chain(start.all_neighbors()) {
+        if dist2(hex) - best > RAY_TIE || out[..n].contains(&hex) {
+            continue;
+        }
+        out[n] = hex;
+        n += 1;
+        // Three is the geometric maximum — a point equidistant from four hex
+        // centres does not exist — and stopping is cheaper than proving it
+        // again every step.
+        if n == out.len() {
+            break;
+        }
+    }
+    (out, n)
+}
+
 /// Terrain-aware line of sight with elevation: the sight line from the
 /// observer's eye to the target point must clear every intermediate tile's
 /// obstacle height. Higher ground therefore sees over lower obstacles.
@@ -340,36 +447,41 @@ fn sight_line_clear(
     let eye = from_h.surface + eyes.eye;
     let target = to_h.surface + eyes.target;
 
-    // Walked as an iterator rather than collected. The line is as long as the
-    // sight range, so a scout with 2 km of vision runs this over a thousand
-    // times per look; there is no reason for each one to build a Vec first.
+    // Walked by index rather than through `Hex::line_to`, and that is the
+    // symmetry fix rather than a micro-optimisation: `line_to` resolves a ray
+    // running along a hex boundary to one of the two hexes by an absolute
+    // rule, so the mirror image of a sight query gets the other one. See
+    // [`ray_hexes`], which returns every hex the step could be in.
+    //
+    // Still no `Vec`: the line is as long as the sight range, so a scout with
+    // 2 km of vision runs this over a thousand times per look.
     let steps = from.distance_to(to) as usize;
     let last = steps as f32;
-    for (i, hex) in from.line_to(to).enumerate() {
-        if i == 0 || i == steps {
-            continue;
-        }
-        let Some(h) = heights(hex) else {
-            // A tile nobody knows about does not block sight.
-            //
-            // Correct while the map is the whole world — "not on the map"
-            // then means there is genuinely nothing there — and a **wrong
-            // answer the day the map is a window onto a streamed one**, where
-            // it would mean "not loaded". A ridge in an unloaded chunk would
-            // stop blocking, so whether a crew can see a tank would depend on
-            // what the renderer happened to have paged in, which is the one
-            // kind of non-determinism this engine cannot survive: replays,
-            // the search AI and the committed event stream all rest on it.
-            //
-            // The fix is not here. It is the loading rule: the resolved
-            // region has to cover everything any unit can see or shoot, not
-            // merely where the units are standing. See TODO under hex
-            // streaming.
-            continue;
-        };
-        let ray = eye + (target - eye) * (i as f32 / last);
-        if h.obstacle >= ray {
-            return false;
+    for i in 1..steps {
+        let (candidates, n) = ray_hexes(from, to, i, last);
+        for hex in &candidates[..n] {
+            let Some(h) = heights(*hex) else {
+                // A tile nobody knows about does not block sight.
+                //
+                // Correct while the map is the whole world — "not on the map"
+                // then means there is genuinely nothing there — and a **wrong
+                // answer the day the map is a window onto a streamed one**, where
+                // it would mean "not loaded". A ridge in an unloaded chunk would
+                // stop blocking, so whether a crew can see a tank would depend on
+                // what the renderer happened to have paged in, which is the one
+                // kind of non-determinism this engine cannot survive: replays,
+                // the search AI and the committed event stream all rest on it.
+                //
+                // The fix is not here. It is the loading rule: the resolved
+                // region has to cover everything any unit can see or shoot, not
+                // merely where the units are standing. See TODO under hex
+                // streaming.
+                continue;
+            };
+            let ray = eye + (target - eye) * (i as f32 / last);
+            if h.obstacle >= ray {
+                return false;
+            }
         }
     }
     true

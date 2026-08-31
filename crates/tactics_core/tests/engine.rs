@@ -1639,6 +1639,69 @@ fn move_chosen(reg: &DataRegistry, state: &BattleState, unit: UnitId) -> Option<
 
 // --- line of sight, elevation and terrain ----------------------------------
 
+/// Sight is the same relation seen from either end of the battlefield.
+///
+/// The invariants say a tiebreak may only read quantities a reflection
+/// preserves. That rule was written about the AI and broken in the
+/// **geometry**: resolving a ray to a hex is a nearest-centre question, a ray
+/// running exactly along a hex boundary has no nearest centre, and
+/// `hexx::Hex::round` settles it consistently in absolute terms. Reflecting a
+/// query reverses the ray, its arithmetic differs by an ulp, and the coin
+/// lands the other way up.
+///
+/// Measured on this very map before the fix: **1,382 of 109,230 ordered hex
+/// pairs — 1.27% — disagreed with their own mirror image**, and side B took 46
+/// of 72 equal-skill battles at difficulty 5, where the blur is zero and
+/// nothing else can break a tie. It stayed invisible for as long as the arena
+/// was open grass, because a ray that clips the corner of nothing blocks
+/// nothing.
+///
+/// The arena is the fixture because it is the one map in the tree built to be
+/// symmetric, and it is symmetric under two reflections rather than one, so
+/// this pins both at once. Note what is deliberately **not** asserted:
+/// `clear(a, b) == clear(b, a)`. Sight is not reciprocal here and should not
+/// be — the ray runs from the observer's eye to the target's hull, and a crew
+/// on a ridge can see a hull that cannot see her back.
+#[test]
+fn a_reflection_leaves_a_sight_line_alone() {
+    use tactics_core::harness::arena::{arena_flip, arena_map, arena_mirror};
+
+    let reg = registry();
+    let map = arena_map().expect("the arena builds");
+    let sight = SightGrid::build(&reg, &map);
+    let hexes: Vec<_> = map.iter().map(|(hex, _)| hex).collect();
+    assert!(
+        hexes.len() > 300,
+        "the arena should be a proper battlefield, got {} tiles",
+        hexes.len()
+    );
+
+    let mut broken = Vec::new();
+    for &a in &hexes {
+        for &b in &hexes {
+            if a == b {
+                continue;
+            }
+            let here = sight.clear(a, b);
+            for (name, image) in [
+                ("mirror", arena_mirror as fn(_) -> _),
+                ("flip", arena_flip as fn(_) -> _),
+            ] {
+                if here != sight.clear(image(a), image(b)) {
+                    broken.push(format!("{name}: {a:?} -> {b:?}"));
+                }
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "{} of {} ordered pairs disagree with their own image; first few: {:?}",
+        broken.len(),
+        hexes.len() * (hexes.len() - 1),
+        &broken[..broken.len().min(5)]
+    );
+}
+
 #[test]
 fn elevation_blocks_and_grants_line_of_sight() {
     let reg = registry();

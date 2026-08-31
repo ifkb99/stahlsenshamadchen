@@ -54,7 +54,14 @@ fn round_trips_and_keeps_the_future_identical() {
 
     // Run a battle a few rounds in, then fork it: one copy carries straight
     // on, the other goes through a save file first.
-    let mut original = BattleState::from_map(&reg, "river_crossing", 11).expect("battle");
+    //
+    // The seed is 12 rather than 11 because 11 stopped reaching round eight
+    // when line of sight became a mirror-symmetric relation: sight got
+    // slightly stricter, `river_crossing` decides sooner, and the guard at the
+    // bottom of this test caught its own fixture going stale. The assertion
+    // that matters — that the two futures agree — passed throughout. Any seed
+    // whose battle is still live at round eight does the job.
+    let mut original = BattleState::from_map(&reg, "river_crossing", 12).expect("battle");
     play(&reg, &mut original, 3, 7);
 
     let text = SaveGame::new(&reg, None, Some(original.clone()))
