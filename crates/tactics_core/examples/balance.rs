@@ -2265,7 +2265,17 @@ fn muster_deployment(wanted: usize) -> Vec<(Hex, Hex)> {
 fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
     let map = arena_map()?;
 
-    let roster_of = ["medium_tank", "medium_tank", "tank_destroyer", "light_tank"];
+    // One pair per chassis, and the pairs line up with `arena_deployment`'s
+    // flip pairs — so the force is symmetric across the axis of advance as
+    // well as through the centre. See the note on `arena_deployment`: a
+    // laterally asymmetric force on laterally symmetric ground puts the
+    // left-or-right confound straight back.
+    let roster_of = [
+        "medium_tank",
+        "medium_tank",
+        "tank_destroyer",
+        "tank_destroyer",
+    ];
     let mut placements = Vec::new();
     // The i-th vehicle of each side stands on the i-th mirror pair, so the two
     // forces are one force and its reflection. `arena_deployment` is the only
