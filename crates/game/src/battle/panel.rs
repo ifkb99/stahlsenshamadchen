@@ -532,7 +532,7 @@ pub(super) fn format_danger(
             lines.push(format!("    {gun}"));
         }
     }
-    lines.push(format!("  {total:.1} a round expected"));
+    lines.push(format!("  {total:.1} expected, one shot each"));
     // ...and what that is worth against her, which is the number that
     // actually decides anything. Two points is a scratch to a heavy tank and
     // the end of a scout car, and a bare figure cannot say which.
@@ -871,7 +871,7 @@ mod tests {
             total += bearing.expected;
         }
         assert!(
-            here.contains(&format!("{total:.1} a round expected")),
+            here.contains(&format!("{total:.1} expected, one shot each")),
             "the total should be the sum of the guns above it ({total:.1}):\n{here}"
         );
 

@@ -392,7 +392,7 @@ Danger at (15,20):
     75mm KwK
   Nadja Orlov  82% for 10.6
     88mm PaK
-  13.6 a round expected
+  13.6 expected, one shot each
   151% of what she has left
 ```
 
