@@ -181,6 +181,22 @@ interior) and the near side (`hit_chance_inner`) are both data
 - **`hit_chance` names a target by id, not by hex.** Half of what makes a
   shot hard is a fact about *her*. Every firing path has a real target, blind
   fire included: `fire_at_tile` resolves against whoever is standing there.
+- **A shot has two ends, and both are ground.** `hit_chance`,
+  `hit_breakdown`, `shot_profile`, `expected_damage` and
+  `ai::best_weapon_against` take the target's hypothetical hex `at` beside
+  the attacker's `from`; every real firing path passes her real hex. Range,
+  cover, downhill, struck facing and obliquity resolve against `at`. **Two
+  things deliberately do not**: `tgt.moved` (the mirror of `hexes_under_way`
+  — charging a discount for a drive she has not made is the same bias with
+  the sign flipped) and the loader's round choice (`best_round_against`
+  judges from real positions). Her facing at `at` is her facing now.
+- **`battle::danger::fire_on(registry, state, unit, at)` is the one answer to
+  "what could the enemy put on her there".** Spotted enemies only, best
+  weapon each through `combat::best_weapon_from` (the three gates — range
+  band, sight unless indirect, expectation above zero — in one place), the
+  resolver's arithmetic and nothing else: no doctrine weight, no planner
+  number, no falloff. The evaluator's threat term and the player's danger
+  overlay both read it, or they are two answers to one question.
 - **`Unit.moved` is hexes crossed this round, incremented at the single place
   a unit changes hex** and zeroed in `begin_round`. It is not `move_credit`.
   One increment site is what makes an ordered march, a dash for cover and a
