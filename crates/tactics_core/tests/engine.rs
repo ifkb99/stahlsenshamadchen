@@ -45,6 +45,7 @@
 //! - shells in flight
 //! - what an order promises
 //! - wounds with teeth
+//! - what the ground can put on her
 //!
 //! Shared setup — `registry()`, `registry_wireless()`, `seen()` — lives in
 //! `tests/common/mod.rs`, because two of those are mandatory for any staged
@@ -1758,6 +1759,7 @@ fn how_much_luck_a_battlefield_has_is_a_mod_decision() {
         state.units[0].pos,
         weapon,
         east,
+        state.units[1].pos,
         false,
     );
     assert!(
@@ -2300,6 +2302,7 @@ fn hit_breakdown_explains_the_same_number_hit_chance_returns() {
             attacker.pos,
             weapon,
             target.id,
+            target.pos,
             blind,
         );
         let breakdown = tactics_core::battle::hit_breakdown(
@@ -2309,6 +2312,7 @@ fn hit_breakdown_explains_the_same_number_hit_chance_returns() {
             attacker.pos,
             weapon,
             target.id,
+            target.pos,
             blind,
         );
         assert_eq!(
@@ -13763,12 +13767,26 @@ fn a_shell_is_priced_against_the_plate_it_will_strike() {
     let facing_the_guns = state.unit(quarry).expect("on the field").pos;
     state.unit_mut(quarry).expect("on the field").facing = facing_the_guns.main_direction_to(from);
     let front = tactics_core::battle::expected_damage(
-        &reg, &state, battery, from, &howitzer, quarry, false,
+        &reg,
+        &state,
+        battery,
+        from,
+        &howitzer,
+        quarry,
+        facing_the_guns,
+        false,
     );
 
     state.unit_mut(quarry).expect("on the field").facing = from.main_direction_to(facing_the_guns);
     let rear = tactics_core::battle::expected_damage(
-        &reg, &state, battery, from, &howitzer, quarry, false,
+        &reg,
+        &state,
+        battery,
+        from,
+        &howitzer,
+        quarry,
+        facing_the_guns,
+        false,
     );
 
     assert!(
@@ -13817,7 +13835,7 @@ fn a_gun_with_nothing_left_to_break_expects_nothing() {
 
     assert!(
         tactics_core::battle::expected_damage(
-            &reg, &state, battery, from, &howitzer, quarry, false
+            &reg, &state, battery, from, &howitzer, quarry, hull, false
         ) > 0.0,
         "while her running gear and her radio are intact the harassment is worth something"
     );
@@ -13843,7 +13861,7 @@ fn a_gun_with_nothing_left_to_break_expects_nothing() {
 
     assert_eq!(
         tactics_core::battle::expected_damage(
-            &reg, &state, battery, from, &howitzer, quarry, false
+            &reg, &state, battery, from, &howitzer, quarry, hull, false
         ),
         0.0,
         "with both of them gone the shell has nothing left to reach"
@@ -13855,6 +13873,7 @@ fn a_gun_with_nothing_left_to_break_expects_nothing() {
             battery,
             from,
             state.unit(quarry).expect("on the field"),
+            hull,
         )
         .is_none(),
         "so the battery is not armed against her at all, and stops firing"
@@ -14469,4 +14488,199 @@ fn a_battle_does_not_enlist_anybody_into_the_academy() {
             );
         }
     }
+}
+
+// --- what the ground can put on her ----------------------------------------
+
+/// Two crews at the west end of a strip, two of the other side in the open
+/// three hexes off, and a belt of wood at six with more open ground behind
+/// it.
+///
+/// The wood is two columns thick and spans every row on purpose. A
+/// single-column curtain is something a diagonal ray gets round, and the
+/// question these tests ask — *could anything at all reach her there* — is
+/// answered by the whole enemy side rather than by whichever gunner happens
+/// to be directly opposite.
+fn firing_positions(reg: &DataRegistry, seed: u64) -> BattleState {
+    let row = "ggggggffgg";
+    two_side_battle(
+        reg,
+        &[row, row, row],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "Gunner"),
+            unit_at([0, 2], 0, "tank_destroyer", "Overwatch"),
+            unit_at([3, 1], 1, "medium_tank", "Mark"),
+            unit_at([3, 2], 1, "rifle_platoon", "Section"),
+        ],
+        seed,
+    )
+}
+
+/// The preview asked about the ground she is already standing on is the shot
+/// the resolver would take, for every pair on the field.
+///
+/// This is the pin that makes the symmetric parameter a rearrangement rather
+/// than a rule change: `fire_on(unit, unit.pos)` may not be a *model* of the
+/// danger a crew is in, it has to be the resolver's own arithmetic with the
+/// real hex passed in. Checked against [`expected_damage`] and [`hit_chance`]
+/// directly, and against `best_weapon_against` for who is on the list at all,
+/// because a roster that quietly dropped an enemy would agree beautifully
+/// with itself on the ones it kept.
+#[test]
+fn a_bearing_taken_at_her_own_hex_is_the_shot_the_resolver_would_take() {
+    let reg = seen(registry());
+    let state = firing_positions(&reg, 11);
+    assert_eq!(
+        (
+            state.fog.side(0).spotted.len(),
+            state.fog.side(1).spotted.len()
+        ),
+        (2, 2),
+        "the stage is four crews in plain sight of each other"
+    );
+
+    let mut pairs = 0;
+    for me in state.units.iter() {
+        let bearings = tactics_core::battle::fire_on(&reg, &state, me.id, me.pos);
+
+        // Who is on the list, and in what order. `visible_enemies` walks the
+        // units in id order, so this pins the ordering contract at the same
+        // time as the membership one.
+        let listed: Vec<UnitId> = bearings.iter().map(|b| b.enemy).collect();
+        let armed: Vec<UnitId> = tactics_core::ai::visible_enemies(&state, me.side)
+            .iter()
+            .filter(|e| {
+                tactics_core::ai::best_weapon_against(&reg, &state, e.id, e.pos, me, me.pos)
+                    .is_some()
+            })
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(
+            listed, armed,
+            "{} should be told about exactly the enemies who are armed against her",
+            me.name
+        );
+
+        for bearing in &bearings {
+            let enemy = state.unit(bearing.enemy).expect("on the field");
+            let weapon = reg
+                .vehicle(&enemy.vehicle)
+                .and_then(|v| v.weapons.get(bearing.weapon))
+                .and_then(|w| reg.weapon(w))
+                .expect("the bearing names a gun she actually has");
+            assert_eq!(
+                bearing.expected,
+                tactics_core::battle::expected_damage(
+                    &reg, &state, enemy.id, enemy.pos, weapon, me.id, me.pos, false,
+                ),
+                "{} -> {} must be priced by the resolver and nothing else",
+                enemy.name,
+                me.name
+            );
+            assert_eq!(
+                bearing.hit_percent,
+                tactics_core::battle::hit_chance(
+                    &reg, &state, enemy.id, enemy.pos, weapon, me.id, me.pos, false,
+                ),
+                "{} -> {} must be rolled by the resolver and nothing else",
+                enemy.name,
+                me.name
+            );
+            pairs += 1;
+        }
+    }
+    assert!(
+        pairs >= 4,
+        "the stage should produce several pairs, got {pairs}"
+    );
+}
+
+/// Where she would stand is what decides what can be put on her.
+///
+/// The whole point of the symmetric parameter: before it, every one of these
+/// three hexes priced identically, because the arithmetic resolved against
+/// the hex she was already on and the tile under discussion reached it only
+/// as a distance. Now the wood costs the gunner his cover term and the far
+/// side of the belt costs him the shot outright.
+///
+/// The open hex is one nearer than the wood, so range and cover push the same
+/// way here; this test claims only that the ground reaches the arithmetic at
+/// all, and `gunnery.rs` is where each term is isolated.
+#[test]
+fn where_she_would_stand_decides_what_can_be_put_on_her() {
+    let reg = seen(registry());
+    let state = firing_positions(&reg, 11);
+    let mark = UnitId(2);
+    let gunner = UnitId(0);
+
+    let open = tactics_core::offset_to_hex(5, 1);
+    let wood = tactics_core::offset_to_hex(6, 1);
+    let behind = tactics_core::offset_to_hex(9, 1);
+    assert_eq!(
+        state.map.get(wood).map(|t| t.terrain.as_str()),
+        Some("forest"),
+        "the middle hex has to be the wood or this test is about nothing"
+    );
+
+    let from_the_gunner = |at| {
+        tactics_core::battle::fire_on(&reg, &state, mark, at)
+            .into_iter()
+            .find(|b| b.enemy == gunner)
+    };
+    let in_the_open = from_the_gunner(open).expect("open ground is a clear shot");
+    let in_the_wood = from_the_gunner(wood).expect("the near edge of the wood is still visible");
+
+    assert!(
+        in_the_wood.hit_percent < in_the_open.hit_percent,
+        "standing in the timber has to be harder to hit: {} in the wood \
+         against {} in the open",
+        in_the_wood.hit_percent,
+        in_the_open.hit_percent
+    );
+    assert!(
+        in_the_wood.expected < in_the_open.expected,
+        "and worth less to shoot at: {} against {}",
+        in_the_wood.expected,
+        in_the_open.expected
+    );
+    assert!(
+        tactics_core::battle::fire_on(&reg, &state, mark, behind).is_empty(),
+        "and the far side of the belt is out of everybody's sight, which is \
+         not a smaller number but no shot at all"
+    );
+}
+
+/// A crew is never told about a gun her side has not found.
+///
+/// The same fog rule the order system lives under: an answer that flinched
+/// away from an unspotted tank would announce that the tank is there. Staged
+/// so that the shot provably exists — `best_weapon_from` says the gunner is
+/// armed against her, at that range, with line of sight — and only the
+/// knowledge is missing.
+#[test]
+fn a_bearing_is_never_taken_from_an_enemy_nobody_has_found() {
+    let mut reg = registry();
+    // No near band and no base chance: a look never becomes an acquisition,
+    // which is this rule's absence rather than a gentle version of it.
+    reg.balance.detection_base = 0;
+    reg.balance.detection_certain_percent = 0;
+    let state = firing_positions(&reg, 11);
+    let (mark, gunner) = (UnitId(2), UnitId(0));
+
+    assert!(
+        state.fog.side(1).spotted.is_empty(),
+        "the stage is a side that has found nobody"
+    );
+    let mark_pos = state.unit(mark).expect("on the field").pos;
+    let gunner_pos = state.unit(gunner).expect("on the field").pos;
+    assert!(
+        tactics_core::battle::best_weapon_from(&reg, &state, gunner, gunner_pos, mark, mark_pos)
+            .is_some(),
+        "the shot itself exists: she is in range, in the open, and in his sights"
+    );
+
+    assert!(
+        tactics_core::battle::fire_on(&reg, &state, mark, mark_pos).is_empty(),
+        "but her side has not found him, so nothing may be said about his gun"
+    );
 }

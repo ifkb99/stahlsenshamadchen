@@ -845,6 +845,7 @@ fn hit_table(reg: &DataRegistry) {
                         state.units[0].pos,
                         w,
                         UnitId(1),
+                        state.units[1].pos,
                         blind,
                     )
                     .total,

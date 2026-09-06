@@ -103,6 +103,7 @@ fn chance(reg: &DataRegistry, state: &BattleState) -> i32 {
         state.units[0].pos,
         gun(reg, state),
         UnitId(1),
+        state.units[1].pos,
         false,
     )
 }
@@ -222,6 +223,7 @@ fn a_chassis_that_declares_no_profile_is_the_target_she_always_was() {
             state.units[0].pos,
             gun(&reg, &state),
             UnitId(1),
+            state.units[1].pos,
             false,
         );
         assert!(
@@ -297,10 +299,29 @@ fn scoring_a_tile_she_has_not_driven_to_does_not_charge_her_for_the_drive() {
     let weapon = gun(&reg, &state);
     let here = state.units[0].pos;
 
-    let from_here = hit_chance(&reg, &state, UnitId(0), here, weapon, UnitId(1), false);
+    let there = state.units[1].pos;
+    let from_here = hit_chance(
+        &reg,
+        &state,
+        UnitId(0),
+        here,
+        weapon,
+        UnitId(1),
+        there,
+        false,
+    );
     // Somewhere she is not standing, at the same range so nothing else moves.
     let elsewhere = here + tactics_core::Hex::new(0, 1);
-    let from_there = hit_chance(&reg, &state, UnitId(0), elsewhere, weapon, UnitId(1), false);
+    let from_there = hit_chance(
+        &reg,
+        &state,
+        UnitId(0),
+        elsewhere,
+        weapon,
+        UnitId(1),
+        there,
+        false,
+    );
 
     assert_eq!(
         from_there, from_here,
@@ -335,6 +356,7 @@ fn every_new_term_is_shown_to_the_player_and_adds_up() {
         state.units[0].pos,
         gun(&reg, &state),
         UnitId(1),
+        state.units[1].pos,
         false,
     );
     for expected in ["profile", "Target under way", "Firing on the move", "Crew"] {

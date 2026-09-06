@@ -53,7 +53,8 @@ impl Evaluator {
         // values a howitzer opportunity less than one that spends them.
         let mut best_attack: Option<(UnitId, usize, f32)> = None;
         for enemy in &enemies {
-            let Some((weapon, dmg, kill)) = best_weapon_against(registry, state, unit, tile, enemy)
+            let Some((weapon, dmg, kill)) =
+                best_weapon_against(registry, state, unit, tile, enemy, enemy.pos)
             else {
                 continue;
             };
@@ -71,7 +72,8 @@ impl Evaluator {
         // unit under a doctrine that expects to withdraw weighs this more.
         let mut threat = 0.0;
         for enemy in &enemies {
-            if let Some((_, dmg, _)) = best_weapon_against(registry, state, enemy.id, enemy.pos, me)
+            if let Some((_, dmg, _)) =
+                best_weapon_against(registry, state, enemy.id, enemy.pos, me, me.pos)
             {
                 // Cheap positional check: could they reach/see this tile?
                 let dist = enemy.pos.distance_to(tile);

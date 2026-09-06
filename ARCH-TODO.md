@@ -97,11 +97,15 @@ Branch `feat/one-system`, off `feat/planner-block`.
 
 ## Phase 2 — one currency
 
-- [ ] **2a. Symmetric previews.** `hit_chance`, `shot_profile` and
-      `expected_damage` learn the target's hypothetical position, the way they
-      already know the attacker's. Pure addition: every existing caller passes
-      the target's real hex and the determinism snapshot must not move. That
-      is the check that this step is a rearrangement.
+- [x] **2a. Symmetric previews, and the one shared currency function.**
+      `hit_chance`, `hit_breakdown`, `hit_chance_inner`, `shot_profile`,
+      `expected_damage` and `ai::best_weapon_against` all take the target's
+      hypothetical hex beside the attacker's. Every existing caller passes the
+      two real hexes, and the checks say the step was a rearrangement:
+      determinism snapshot passed **unregenerated**, `--sim --games 12`
+      **byte-identical**, perf unmoved (round 1.61 → 1.61 ms, `reachable`
+      15.0 → 14.6 µs, `roads` 109.1 → 105.5 µs, `unit_vision` 89.4 → 88.6 µs,
+      utility order 0.08 ms). See below.
 - [ ] **2b. The threat term reads the candidate tile.** `score_tile`'s danger
       becomes the real expected damage of the visible enemies shooting at her
       *there*. Watch the cost: `score_tile` is the hottest function the AI has
@@ -295,6 +299,79 @@ What the rows do already say, and it is worth having: **richer ground did not
 by itself make skill discriminate.** `5 over 3` moved from 52.6% to 53.3%,
 inside its own noise. That is the fourth measurement pointing at the evaluator
 rather than at the map, and it is Phase 2's case restated.
+
+## Phase 2a — what landed
+
+**The symmetric parameter.** Six signatures gained `at: Hex` (or, in
+`shot_profile`, `target_pos: Hex`) beside the target's id, exactly as they
+already carried `from` beside the attacker's. Inside `hit_chance_inner` the
+whole positional half now resolves against it — range, cover, downhill,
+and through `shot_profile` the struck facing and obliquity; `best_weapon_from`
+checks range and `sight.clear(from, at)` against it too.
+
+**What deliberately did *not* follow the hypothesis, with the reasoning
+written on it:**
+
+- **`tgt.moved`.** The plan listed the moving-target term among the things
+  that must resolve against `at`, and it should not: it is the mirror of
+  `hexes_under_way`, which reads state and never the hypothetical `from` for a
+  reason this tree already measured (three stalemates and +2.3 rounds when a
+  draft charged the drive to a candidate tile). Charging the enemy a
+  moving-target discount because she *would have driven* to the tile under
+  discussion is that same bias with the sign flipped — far ground would read
+  as systematically safer. So the term reads her state, and the doc comment
+  says why.
+- **Her facing at `at`** is the facing she has now, stated in the doc comment
+  on `hit_chance`. The planner turns her toward the enemy with
+  `face_units_at_enemies` after she moves, so her bearing at a tile is a
+  consequence of the fight she finds there; predicting it is a later change
+  and this is where it goes.
+- **Which round the loader chambers.** `best_round_against` still judges from
+  the real positions — as it already did for `from`, which nobody had noticed.
+  Threading a hypothesis through it would price a rack against ground nobody
+  has driven to.
+
+**The shared currency.** Two new things, and the split between them is the
+point:
+
+- `battle::combat::best_weapon_from(registry, state, attacker, from, target,
+  at) -> Option<(usize, f32)>` — the three gates a shot has to pass (range
+  band, sight unless indirect, expectation above zero) in **one** place.
+  `ai::best_weapon_against` is now a five-line wrapper that adds the *would
+  this kill her* judgment on top, which is the only part of it that was ever
+  an AI question.
+- `battle::danger::fire_on(registry, state, unit, at) -> Vec<Bearing>` with
+  `Bearing { enemy, weapon, hit_percent, expected }` — every spotted enemy who
+  could put fire on `unit` if she stood at `at`, in enemy id order, best
+  weapon each. Fog-honest through `ai::visible_enemies`. No doctrine weight,
+  no planner number, no falloff: 2b's threat term and the player's danger
+  overlay both read this or they are two answers to one question.
+
+Its own module rather than more of `combat.rs` because it is the currency the
+rest of Phase 2 is denominated in, and a named file is where the next reader
+looks.
+
+**Tests** (`tests/engine.rs`, section *what the ground can put on her*), all
+three mutation-checked:
+
+| test | mutation that must fail it | result |
+| --- | --- | --- |
+| `a_bearing_taken_at_her_own_hex_is_the_shot_the_resolver_would_take` | `hit_chance` called with `blind: true` | FAILED as required |
+| `where_she_would_stand_decides_what_can_be_put_on_her` | `fire_on` ignores `at` and uses `me.pos` | FAILED as required |
+| `a_bearing_is_never_taken_from_an_enemy_nobody_has_found` | fog gate replaced by every alive enemy | FAILED as required |
+
+The middle one is the one that matters: on its stage the open hex, the wood
+and the far side of the belt priced *identically* before this chunk, because
+the arithmetic resolved against the hex she was already on.
+
+**One thing to know before 2b.** `hit_chance`, `hit_breakdown` and
+`expected_damage` now trip `clippy::too_many_arguments` at 8, which
+`combat.rs` never has before — CLAUDE.md's hygiene note predicted this exact
+moment. They carry `#[allow]` with the reasoning, following the precedent of
+`resolve_impact` next door. The cleanup it points at is a `Shot` struct
+bundling each end of the shot (a crew and a hex); that is a readability
+decision about every call site in the game and was deliberately not taken
+inside a chunk whose whole claim is that nothing changed.
 
 ## Scratch
 

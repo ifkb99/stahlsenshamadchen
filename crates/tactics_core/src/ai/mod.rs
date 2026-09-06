@@ -261,53 +261,39 @@ pub(crate) fn threats(registry: &DataRegistry, state: &BattleState, unit: UnitId
     };
     visible_enemies(state, me.side)
         .iter()
-        .filter(|enemy| best_weapon_against(registry, state, enemy.id, enemy.pos, me).is_some())
+        .filter(|enemy| {
+            best_weapon_against(registry, state, enemy.id, enemy.pos, me, me.pos).is_some()
+        })
         .map(|enemy| enemy.id)
         .collect()
 }
 
 /// The best (weapon index, expected damage, would-kill) attack `unit` could
-/// make against `target` if it were standing at `from`.
+/// make against `target` if `unit` were standing at `from` and `target` at
+/// `at`.
+///
+/// Both ends are hypothetical, because both ends of a shot are ground: the
+/// evaluator varies `from` when it is deciding where a crew should drive,
+/// and varies `at` when it is asking what could be done to her there. Every
+/// caller that means "where they actually are" passes the real hexes.
+///
+/// The gun and the arithmetic are [`crate::battle::best_weapon_from`]'s;
+/// what this adds is the *judgment* on top — whether the shot would
+/// plausibly finish her, which is a comparison against what is left aboard
+/// and therefore an AI question rather than a rule of the battlefield.
 pub fn best_weapon_against(
     registry: &DataRegistry,
     state: &BattleState,
     unit: UnitId,
     from: hexx::Hex,
     target: &Unit,
+    at: hexx::Hex,
 ) -> Option<(usize, f32, bool)> {
-    let u = state.unit(unit)?;
-    let vehicle = registry.vehicle(&u.vehicle)?;
-    let dist = from.distance_to(target.pos);
-    let mut best: Option<(usize, f32, bool)> = None;
-    for (i, weapon_id) in vehicle.weapons.iter().enumerate() {
-        let Some(weapon) = registry.weapon(weapon_id) else {
-            continue;
-        };
-        if !(weapon.range[0] as i32..=weapon.range[1] as i32).contains(&dist) {
-            continue;
-        }
-        if !weapon.indirect && !state.sight.clear(from, target.pos) {
-            continue;
-        }
-        let dmg =
-            crate::battle::expected_damage(registry, state, unit, from, weapon, target.id, false);
-        // A gun that expects nothing — racks empty, or a round that cannot
-        // beat the plate it would strike — is not a weapon against this
-        // target at all. This is the line that makes `threatened` honest
-        // now that the damage floor is gone: a machine gun in range of a
-        // heavy tank no longer counts as somebody shooting at her, so the
-        // drill stops breaking cover for it and a movement to contact
-        // stops pausing for it.
-        if dmg <= 0.0 {
-            continue;
-        }
-        // "Could this plausibly finish her": the expected outcome against
-        // what is actually left aboard. Same shape as the old hit-point
-        // comparison, with substance as the pool.
-        let kill = dmg >= state.substance(registry, target).0 as f32 * 0.9;
-        if best.is_none_or(|(_, d, _)| dmg > d) {
-            best = Some((i, dmg, kill));
-        }
-    }
-    best
+    let (weapon, dmg) =
+        crate::battle::best_weapon_from(registry, state, unit, from, target.id, at)?;
+    // "Could this plausibly finish her": the expected outcome against
+    // what is actually left aboard. Same shape as the old hit-point
+    // comparison, with substance as the pool.
+    let kill = dmg >= state.substance(registry, target).0 as f32 * 0.9;
+    Some((weapon, dmg, kill))
 }

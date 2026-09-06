@@ -43,12 +43,35 @@ fn elevation_at(state: &BattleState, pos: Hex) -> i32 {
 
 /// Hit chance percentage, clamped to `balance.min_hit ..= balance.max_hit`.
 ///
-/// `from` is passed explicitly so AI can evaluate hypothetical positions;
-/// the target is named by id rather than by hex because half of what makes
-/// a shot hard is a fact about *her* — how big she is and whether she is
-/// moving — and a bare coordinate cannot answer either. Every path that
-/// fires has a real target, including blind fire, which shells a tile and
-/// hits whoever turns out to be standing on it.
+/// Both ends of the shot are named the same way: by id, so the arithmetic
+/// can read the facts that are about *them* — the attacker's gunnery and
+/// nerve, the target's size and whether she has driven — and by a
+/// hypothetical hex, so a planner can ask what a shot would look like from
+/// ground nobody is standing on yet. `from` is where the attacker would
+/// fire; `at` is where the target would be standing. Every existing caller
+/// passes the two real positions, and a planner varies whichever end it is
+/// deciding about.
+///
+/// What `at` does *not* carry is a hypothetical facing: the target is taken
+/// to be pointed the way she is pointed now. That is the honest
+/// approximation rather than a shrug — the planner turns a crew toward the
+/// enemy with `face_units_at_enemies` when she finishes moving, so her
+/// facing at a tile is a consequence of the fight she finds there rather
+/// than of the drive. A later change that wants to predict it belongs here.
+///
+/// Every path that fires has a real target, including blind fire, which
+/// shells a tile and hits whoever turns out to be standing on it.
+// Eight parameters, and this is the first time the shot functions have
+// tripped the lint — the hygiene note in CLAUDE.md predicted exactly this
+// moment. The list is genuinely eight things now, because a shot has two
+// ends and each end is a crew *and* a piece of ground: the content, the
+// world, the shooter, her ground, the gun, the target, her ground, and
+// whether anybody has actually seen her. Bundling the two ends into a
+// `Shot` struct is the cleanup this points at and it is a readability
+// decision about every call site in the game rather than a way of quieting
+// a lint, so it is deliberately not done here, where the whole claim is
+// that nothing changed.
+#[allow(clippy::too_many_arguments)]
 pub fn hit_chance(
     registry: &DataRegistry,
     state: &BattleState,
@@ -56,6 +79,7 @@ pub fn hit_chance(
     from: Hex,
     weapon: &WeaponDef,
     target: UnitId,
+    at: Hex,
     blind: bool,
 ) -> i32 {
     // The no-op closure compiles away, keeping this the allocation-free
@@ -67,6 +91,7 @@ pub fn hit_chance(
         from,
         weapon,
         target,
+        at,
         blind,
         |_, _| {},
     )
@@ -152,6 +177,9 @@ pub struct HitBreakdown {
 
 /// Hit chance with every modifier itemised. Mirrors [`hit_chance`] exactly:
 /// both run the same code, this one just listens in.
+// Eight, for the reason given on [`hit_chance`]: two ends, each a crew and
+// a hex.
+#[allow(clippy::too_many_arguments)]
 pub fn hit_breakdown(
     registry: &DataRegistry,
     state: &BattleState,
@@ -159,6 +187,7 @@ pub fn hit_breakdown(
     from: Hex,
     weapon: &WeaponDef,
     target: UnitId,
+    at: Hex,
     blind: bool,
 ) -> HitBreakdown {
     let mut modifiers = Vec::new();
@@ -169,6 +198,7 @@ pub fn hit_breakdown(
         from,
         weapon,
         target,
+        at,
         blind,
         |factor, delta| {
             if delta != 0 {
@@ -198,6 +228,7 @@ fn hit_chance_inner(
     from: Hex,
     weapon: &WeaponDef,
     target: UnitId,
+    at: Hex,
     blind: bool,
     mut note: impl FnMut(HitFactor<'_>, i32),
 ) -> i32 {
@@ -207,7 +238,10 @@ fn hit_chance_inner(
     let Some(tgt) = state.unit(target) else {
         return 0;
     };
-    let target_pos = tgt.pos;
+    // Everything the ground decides — range, the cover she is in, who is
+    // shooting down on whom — is asked of `at`. Everything that is a fact
+    // about the crews themselves is asked of them.
+    let target_pos = at;
     let mut chance = weapon.accuracy;
 
     let dist = from.distance_to(target_pos).max(1);
@@ -594,6 +628,7 @@ pub fn best_round_against<'r>(
         return chambered(registry, state, unit, weapon);
     }
     let u = state.unit(unit)?;
+    let tgt_pos = state.unit(target)?.pos;
     let mut best: Option<(f32, Round<'r>)> = None;
     for id in &weapon.ammo {
         if u.ammo.get(id).copied().unwrap_or(0) == 0 {
@@ -603,7 +638,8 @@ pub fn best_round_against<'r>(
             continue;
         };
         let round = mustered(registry, state, unit, Round::loaded(ammo, weapon));
-        let Some(profile) = shot_profile(registry, state, weapon, &round, u.pos, target) else {
+        let Some(profile) = shot_profile(registry, state, weapon, &round, u.pos, target, tgt_pos)
+        else {
             continue;
         };
         let worth = round_worth(registry, state, target, &profile, Some(ammo));
@@ -1093,7 +1129,15 @@ pub struct ShotProfile {
     pub damage: i32,
 }
 
-/// Work out what `round` fired from `attacker_pos` does to `target`'s armor.
+/// Work out what `round` fired from `attacker_pos` does to the armor of
+/// `target` standing at `target_pos`.
+///
+/// Both positions are hypothetical for the same reason [`hit_chance`]'s
+/// are: which plate a shot strikes and how steeply it strikes it is a fact
+/// about the bearing between two pieces of ground, so a planner asking
+/// about ground nobody occupies yet has to be able to name both ends. Her
+/// *facing* at `target_pos` is the one she has now — see [`hit_chance`] for
+/// why that is the honest approximation.
 pub fn shot_profile(
     registry: &DataRegistry,
     state: &BattleState,
@@ -1101,18 +1145,19 @@ pub fn shot_profile(
     round: &Round<'_>,
     attacker_pos: Hex,
     target: UnitId,
+    target_pos: Hex,
 ) -> Option<ShotProfile> {
     let tgt = state.unit(target)?;
     let vehicle = registry.vehicle(&tgt.vehicle)?;
-    let facing = struck_facing(tgt.pos, tgt.facing, attacker_pos);
+    let facing = struck_facing(target_pos, tgt.facing, attacker_pos);
     let plate = vehicle.armor.value(facing).max(0);
     // Nothing to slope: an unarmored bed is an unarmored bed from any angle.
     let effective_armor = if plate == 0 {
         0.0
     } else {
-        plate as f32 * obliquity_scale(tgt.pos, attacker_pos)
+        plate as f32 * obliquity_scale(target_pos, attacker_pos)
     };
-    let pen = round.pen_at(attacker_pos.distance_to(tgt.pos), weapon.range);
+    let pen = round.pen_at(attacker_pos.distance_to(target_pos), weapon.range);
     Some(ShotProfile {
         facing,
         plate,
@@ -1134,7 +1179,19 @@ pub fn shot_profile(
 /// for a dry gun. A gun whose best round can neither penetrate nor blast
 /// expects nothing and holds its fire; one that can only rattle tracks
 /// with high explosive expects a little, and harasses.
-/// `from` is where the attacker would fire from (hypothetical or real).
+/// `from` is where the attacker would fire from and `at` is where the
+/// target would be standing; either may be hypothetical, and every caller
+/// that is asking about the world as it stands passes the two real hexes.
+///
+/// One thing deliberately stays behind: *which round the loader chambers*
+/// is still judged from where the two of them actually are
+/// ([`best_round_against`] reads real positions, as it already did for
+/// `from`). Choosing AP or HE is a decision made in the vehicle at the
+/// moment of firing, not a property of ground, and threading a hypothesis
+/// through it would price a rack against a hex nobody has driven to yet.
+// Eight, for the reason given on [`hit_chance`]: two ends, each a crew and
+// a hex.
+#[allow(clippy::too_many_arguments)]
 pub fn expected_damage(
     registry: &DataRegistry,
     state: &BattleState,
@@ -1142,6 +1199,7 @@ pub fn expected_damage(
     from: Hex,
     weapon: &WeaponDef,
     target: UnitId,
+    at: Hex,
     blind: bool,
 ) -> f32 {
     if state.unit(target).is_none() {
@@ -1150,11 +1208,61 @@ pub fn expected_damage(
     let Some(round) = best_round_against(registry, state, attacker, weapon, target) else {
         return 0.0;
     };
-    let Some(profile) = shot_profile(registry, state, weapon, &round, from, target) else {
+    let Some(profile) = shot_profile(registry, state, weapon, &round, from, target, at) else {
         return 0.0;
     };
-    let p = hit_chance(registry, state, attacker, from, weapon, target, blind) as f32 / 100.0;
+    let p = hit_chance(registry, state, attacker, from, weapon, target, at, blind) as f32 / 100.0;
     p * round_worth(registry, state, target, &profile, round.ammo)
+}
+
+/// The best gun `attacker` standing at `from` could bring to bear on
+/// `target` standing at `at`, and what it expects to do — the shared half
+/// of every "could she hurt her from there" question in the game.
+///
+/// Three gates, and they are the ones a shot really has to pass: the range
+/// band, line of sight unless the piece shoots indirect, and an expectation
+/// above zero. That last one is the line that keeps the danger arithmetic
+/// honest now the damage floor is gone — a machine gun looking at a heavy
+/// tank's glacis expects nothing, so it is not a weapon against her at all,
+/// and nobody should break cover for it.
+///
+/// It exists as one function because it is asked from three directions that
+/// must not drift: what a crew can do from a tile she is thinking about
+/// ([`crate::ai::best_weapon_against`]), what the enemy could do to her
+/// there ([`super::fire_on`]), and whether anybody is shooting at her at
+/// all. Two implementations of this loop would be two answers to whether a
+/// hex is dangerous.
+pub fn best_weapon_from(
+    registry: &DataRegistry,
+    state: &BattleState,
+    attacker: UnitId,
+    from: Hex,
+    target: UnitId,
+    at: Hex,
+) -> Option<(usize, f32)> {
+    let u = state.unit(attacker)?;
+    let vehicle = registry.vehicle(&u.vehicle)?;
+    let dist = from.distance_to(at);
+    let mut best: Option<(usize, f32)> = None;
+    for (i, weapon_id) in vehicle.weapons.iter().enumerate() {
+        let Some(weapon) = registry.weapon(weapon_id) else {
+            continue;
+        };
+        if !(weapon.range[0] as i32..=weapon.range[1] as i32).contains(&dist) {
+            continue;
+        }
+        if !weapon.indirect && !state.sight.clear(from, at) {
+            continue;
+        }
+        let dmg = expected_damage(registry, state, attacker, from, weapon, target, at, false);
+        if dmg <= 0.0 {
+            continue;
+        }
+        if best.is_none_or(|(_, d)| dmg > d) {
+            best = Some((i, dmg));
+        }
+    }
+    best
 }
 
 /// Everything the player should know before committing to a shot.
@@ -1263,14 +1371,16 @@ pub fn preview_attack(
 
     let distance = att.pos.distance_to(tgt.pos);
     let in_range = (weapon.range[0] as i32..=weapon.range[1] as i32).contains(&distance);
-    let hit = hit_breakdown(registry, state, attacker, att.pos, weapon, target, blind);
+    let hit = hit_breakdown(
+        registry, state, attacker, att.pos, weapon, target, tgt.pos, blind,
+    );
     // A dry gun previews honestly: the round is named as missing and every
     // consequence of it is zero, which tells the player exactly why the
     // shot she is hovering cannot happen.
     let round = best_round_against(registry, state, attacker, weapon, target);
     let profile = round
         .as_ref()
-        .and_then(|r| shot_profile(registry, state, weapon, r, att.pos, target));
+        .and_then(|r| shot_profile(registry, state, weapon, r, att.pos, target, tgt.pos));
     let facing = struck_facing(tgt.pos, tgt.facing, att.pos);
     let (pen_chance, pen_share, damage, effective_armor) = profile
         .as_ref()
@@ -1306,13 +1416,15 @@ pub fn preview_attack(
                 })
                 .map(|(_, w)| {
                     let damage = best_round_against(registry, state, target, w, attacker)
-                        .and_then(|r| shot_profile(registry, state, w, &r, tgt.pos, attacker))
+                        .and_then(|r| {
+                            shot_profile(registry, state, w, &r, tgt.pos, attacker, att.pos)
+                        })
                         .map(|p| (p.pen_chance * p.damage as f32).round() as i32)
                         .unwrap_or(0);
                     CounterPreview {
                         weapon_name: w.name.clone(),
                         hit_chance: hit_chance(
-                            registry, state, target, tgt.pos, w, attacker, false,
+                            registry, state, target, tgt.pos, w, attacker, att.pos, false,
                         ),
                         damage,
                     }
@@ -1385,7 +1497,9 @@ fn resolve_shot(
         moving,
     });
 
-    let chance = hit_chance(registry, state, attacker, att_pos, weapon, target, blind);
+    let chance = hit_chance(
+        registry, state, attacker, att_pos, weapon, target, tgt_pos, blind,
+    );
     let roll = state.rng.random_range(0..100);
     if roll >= chance {
         events.push(Event::ShotMissed {
@@ -1531,7 +1645,7 @@ fn resolve_impact(
     let Some(tgt_pos) = state.unit(target).map(|t| t.pos) else {
         return;
     };
-    let Some(profile) = shot_profile(registry, state, weapon, round, from, target) else {
+    let Some(profile) = shot_profile(registry, state, weapon, round, from, target, tgt_pos) else {
         return;
     };
     let pen = round.pen_at(from.distance_to(tgt_pos), weapon.range);
@@ -2359,7 +2473,9 @@ pub fn best_opportunity_shot(
             // gun whose round cannot beat the plate — or whose racks are
             // empty — expects zero, and a crew that used to plink now
             // holds fire and keeps her position quiet instead.
-            let value = expected_damage(registry, state, unit, att.pos, weapon, enemy.id, false);
+            let value = expected_damage(
+                registry, state, unit, att.pos, weapon, enemy.id, enemy.pos, false,
+            );
             if value <= 0.0 {
                 continue;
             }

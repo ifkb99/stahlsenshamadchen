@@ -19,19 +19,21 @@
 
 mod combat;
 mod command;
+mod danger;
 mod fog;
 mod movement;
 mod orders;
 
 pub use combat::{
     AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, ShellInFlight,
-    blast_overmatches, expected_damage, flight_ticks, hit_breakdown, hit_chance,
+    best_weapon_from, blast_overmatches, expected_damage, flight_ticks, hit_breakdown, hit_chance,
     penetration_chance, penetration_share, preview_attack, struck_facing, weapon_ready,
 };
 pub use command::{
     CommandState, Contact, CutOff, Formation, FormationId, Goal, Latitude, Mission, MissionChange,
     WaitingOrders, nearest_exit,
 };
+pub use danger::{Bearing, fire_on};
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
     MoveGrid, Roads, along_the_bearing, destination_blocked, edge_cost as movement_edge_cost,
