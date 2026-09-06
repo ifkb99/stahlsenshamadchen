@@ -1,0 +1,72 @@
+# What the ground would cost her: the player's half of the currency the
+#!env STAHL_BATTLE=river_crossing STAHL_SEED=7
+# evaluator prices danger in. `fire_on` answers one question — which spotted
+# enemy could put a gun on this crew if she stood on that hex, and for how
+# much — and the AI and this panel read the same answer, which is the whole
+# claim. If they ever disagreed, the player would be pricing a different
+# game from the one her opponent is playing.
+#
+#   STAHL_PRESENT=immediate STAHL_DEBUG=1 STAHL_BATTLE=river_crossing \
+#     STAHL_SEED=7 STAHL_SCRIPT=scripts/dev/danger-overlay.txt \
+#     cargo run -p stahlsenshamädchen
+#
+# The seed is pinned because this tour asserts about *positions*: it clicks
+# the hex a particular crew is standing on, and where the enemy has got to by
+# round two decides whether anything bears on her at all. Hexes are axial.
+# river_crossing places side 0's medium tank at offset [10, 20] -> (0, 20),
+# and row 20 is road all the way across, which is the ground the enemy comes
+# down.
+
+at 3.0
+hex 0,20
+wait 0.4
+click left
+wait 0.4
+expect selected "Anka Weiss"
+shot /tmp/danger-01-selected.png
+
+# One round, so that somebody has actually been *found*. On the deployment
+# round the picture is empty and an honest overlay has nothing to say, which
+# is a feature and a poor screenshot.
+key Enter
+until idle
+hex 0,20
+wait 0.4
+click left
+wait 0.4
+expect selected "Anka Weiss"
+expect log "Contact"
+
+# The panel line first, on ground she is not standing on: the road east, down
+# which the enemy is coming. This is the sentence the whole feature exists
+# for — every gun that bears, named, with the resolver's own chance of
+# hitting and what it expects to be worth.
+hex 5,20
+wait 0.6
+shot /tmp/danger-02-panel.png
+
+# ...and then the same arithmetic over her whole reach at once, which is the
+# question she actually has: not "how bad is that hex" but "where can I go".
+# The count comes off the cached tint rather than being worked out again, so
+# this assertion is about the tiles the player is looking at.
+key D
+wait 0.8
+expect log "Danger overlay on."
+expect danger >= 1
+shot /tmp/danger-03-overlay.png
+
+# Her own ground reads correctly too, in its own words. "Danger at (0,20)"
+# for the hex she is parked on would send a player looking for somewhere
+# else, so the heading says where she stands.
+hex 0,20
+wait 0.6
+shot /tmp/danger-04-where-she-stands.png
+
+# A toggle, not a mode: it goes away again, and the move range goes back to
+# being a move range.
+key D
+wait 0.6
+expect log "Danger overlay off."
+shot /tmp/danger-05-off.png
+
+quit

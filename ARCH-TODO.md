@@ -373,6 +373,115 @@ bundling each end of the shot (a crew and a hex); that is a readability
 decision about every call site in the game and was deliberately not taken
 inside a chunk whose whole claim is that nothing changed.
 
+## Danger overlay — what landed
+
+The player-facing half of "one currency". `battle::danger::fire_on` is now
+read from the battle screen as well as from the evaluator, so the sentence in
+DIRECTION.md — *friction the player can predict and price is drama; friction
+she cannot see is a bug report* — is literally true of the most expensive
+decision in the game, which is where to put a tank. Nothing in core changed;
+this is presentation, and the determinism snapshot passed unregenerated.
+
+**The panel line** is `panel::format_danger`, pure over a `BattleState` like
+everything else in that file, and it leads the panel whenever the player has
+one of her own crews selected and a hex under the cursor:
+
+```
+Danger at (15,20):
+  Irma Krieger  45% for 3.0
+    75mm KwK
+  Nadja Orlov  82% for 10.6
+    88mm PaK
+  13.6 a round expected
+  151% of what she has left
+```
+
+Two lines per gun because the panel is 300 px and a line that wraps to three
+is one nobody reads: the name and the arithmetic lead, the gun that will do
+it sits under them. On the hex she is already standing on the heading reads
+`Danger where she stands:`, because "Danger at (10,20)" for her own tile sends
+a player looking somewhere else. A hex nothing bears on says
+`nothing spotted can reach her` rather than printing an empty heading. The
+percentages and the expectations are `Bearing::hit_percent` and
+`Bearing::expected` verbatim — the panel does no arithmetic of its own except
+the total and its share of `substance().0`.
+
+Three placement decisions worth knowing before moving it:
+
+- **It leads rather than follows.** A full crew's description already fills
+  the panel on its own, so appending put the one part that changes as the
+  mouse moves below the fold on exactly the crews worth looking at. A
+  datasheet loses less by being second than a live answer does by being
+  invisible.
+- **Never for an enemy crew**, the rule the unit panel's order hints already
+  follow: an enemy's exposure is not the player's to read.
+- **Not on the shot preview or the ghost report.** Both are already an answer
+  about a hex somebody *else* is standing on, and "what could be put on you if
+  you stood where that tank is" is a question nobody asked.
+
+**The overlay** is `D`, toggled, and it tints the selected crew's reachable
+tiles — the same set the move highlight draws, through the same `HexOverlay` /
+`MoveHighlight` machinery, *replacing* the blue rather than stacking on it
+(two translucent fills over one tile make a third colour that means neither).
+Four bands, as a share of what she has left to lose in one round: blue nothing
+bears on it, yellow under a tenth of her, orange under a third, red a third or
+more. `panel::DANGER_LEGEND` holds the words and `battle::DANGER_COLORS` the
+colours, the second sized off the first so they cannot come apart; the legend
+prints in the panel only while the overlay is up. `D` doubles as the camera's
+pan-right key, which is the bargain `A` and `W` already make on this screen.
+
+**Cost, and how it is paid.** `fire_on` over a 42-tile reach with four spotted
+enemies is 228 µs in release — call it half a millisecond over a full
+radius-20 reach, which is real money per frame and nothing at all once a
+round. So it is computed in `update_highlights` under the existing
+`range_dirty` gate, beside the reach it is about, and cached in
+`Battle::danger`; every order already raises that flag and nothing else can
+move a unit during planning. Toggling `D` raises it too.
+
+**The tour** is `scripts/dev/danger-overlay.txt`
+(`STAHL_BATTLE=river_crossing STAHL_SEED=7`) — the seed is pinned because the
+tour asserts about positions. It commits one round so that somebody has
+actually been *found* (an honest overlay has nothing to say on the deployment
+round), re-selects the medium tank at (0,20), photographs the panel line on
+open road to the east, toggles the overlay, photographs her own ground, and
+toggles it off. `ScriptFacts` gained one field, `danger: Option<u32>` — how
+many reachable tiles the overlay is painting as under fire, `None` when it is
+not up — counted off the cached tint rather than recomputed, so what the tour
+asserts is the arithmetic the tiles were painted from. Both publishers answer
+for it; the campaign map says `None` out loud. The predicate is
+`danger <cmp> <n>` and it is *false* when the overlay is off, so
+`until danger >= 1` waits for the overlay and for it to have found something.
+
+**What it cannot show yet, and why.**
+
+- **Only what her side has spotted.** That is `fire_on`'s contract and not a
+  gap, but it means a clear-looking tile can still hold an ambush, and the
+  panel is not lying when it says so — it reports the picture.
+- **The enemy where she is now, not where she will be.** `fire_on`'s `at` is
+  hypothetical and the enemies' positions are real, which is the asymmetry the
+  question has; a tile that is safe this round because the tank covering it
+  has not arrived yet reads as safe.
+- **Her facing at the tile is the facing she has now**, inherited from
+  `hit_chance`'s own documented limitation, so the overlay cannot yet tell her
+  that turning in would show a thinner plate.
+- **The yellow band is nearly unreachable in the base mod.** In the tour's own
+  screenshot the tiles go blue → orange → red with no yellow anywhere: an 88
+  expects 10.6 points against a medium tank's ~9, so any tile it covers is
+  instantly a third or more. The bands are linear in a quantity that is not,
+  and the honest fix is either a log scale or a denominator that is the
+  vehicle's full complement rather than what is left of it. Left as it is
+  because the reading is *correct* — that ground really is lethal — and
+  because picking the curve wants more than one map's worth of looking.
+- **`fire_on` returns the best weapon per enemy, so the panel names one gun
+  each.** A tank with a coaxial that also bears is under-reported. Adding a
+  second bearing per enemy is a change to core's shape and belongs to whoever
+  owns `danger.rs`.
+- **No total was added to core.** The overlay sums `Bearing::expected` in the
+  game crate rather than asking for a helper beside `fire_on`, deliberately:
+  `danger.rs` is another agent's file this week and a one-line sum is not
+  worth a merge conflict. If the evaluator ends up wanting the same sum, that
+  is where it should live.
+
 ## Scratch
 
 Temporary probes, to be deleted with this file:

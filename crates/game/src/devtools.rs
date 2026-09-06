@@ -61,7 +61,7 @@
 //!
 //! Predicates: `idle`, `waiting`, `over`, `turn <cmp> <n>`,
 //! `score <side> <cmp> <n>`, `unit "<name>" alive|dead|aboard|afoot`,
-//! `log "<text>"`, `selected "<name>"`.
+//! `log "<text>"`, `selected "<name>"`, `danger <cmp> <n>`.
 //! | `expect <predicate>` | assert now; a failure makes the run exit nonzero |
 //! | `quit` | exit once every pending screenshot has been written |
 //!
@@ -97,6 +97,7 @@
 //! | `score <side> >= <n>` | that side's objective points |
 //! | `unit "<name>" alive\|dead\|aboard\|afoot` | what became of her |
 //! | `log "<text>"` | that text has appeared in the on-screen log |
+//! | `danger >= <n>` | the danger overlay is up and tinting `n` tiles |
 //!
 //! Facts are published by whichever screen is on ([`ScriptFacts`]), so a
 //! script that asks a battle question on the campaign map simply never comes
@@ -214,6 +215,17 @@ pub(crate) struct ScriptFacts {
     /// stacked-hex selection bug survived — see the click handler in
     /// `battle::handle_input`.
     pub selected: Option<String>,
+    /// How many tiles of the selected crew's reach the danger overlay is
+    /// currently painting as under fire, or `None` where the overlay is not
+    /// up at all.
+    ///
+    /// Two facts in one field on purpose, because a tour needs both and they
+    /// are useless apart. `Some(0)` and `None` are different states — the
+    /// overlay is on and the ground is clear, versus nobody asked — and a
+    /// bare boolean would let a tour pass while the overlay painted every
+    /// tile the same colour, which is the exact failure a screenshot is
+    /// least likely to catch.
+    pub danger: Option<u32>,
 }
 
 /// One unit, as a script may ask about her.
@@ -281,11 +293,29 @@ enum Predicate {
     Idle,
     Waiting,
     Over,
-    Turn { op: Cmp, n: u32 },
-    Score { side: usize, op: Cmp, n: u32 },
-    Unit { name: String, is: UnitIs },
+    Turn {
+        op: Cmp,
+        n: u32,
+    },
+    Score {
+        side: usize,
+        op: Cmp,
+        n: u32,
+    },
+    Unit {
+        name: String,
+        is: UnitIs,
+    },
     Log(String),
     Selected(String),
+    /// How many reachable tiles the danger overlay is painting as under
+    /// fire. False whenever the overlay is not up, so `until danger >= 1`
+    /// waits for the overlay *and* for it to have found something rather
+    /// than coming true on an empty answer.
+    Danger {
+        op: Cmp,
+        n: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -348,6 +378,9 @@ impl Predicate {
             }
             Predicate::Log(text) => seen_log.iter().any(|line| line.contains(text.as_str())),
             Predicate::Selected(name) => facts.selected.as_deref() == Some(name.as_str()),
+            // `None` is the overlay being off, and a question about a
+            // thing that is not on screen is false rather than zero.
+            Predicate::Danger { op, n } => facts.danger.is_some_and(|d| op.holds(d, *n)),
         }
     }
 }
@@ -507,6 +540,10 @@ fn parse_predicate(text: &str) -> Option<Predicate> {
         }
         "log" => parse_quoted(rest).map(|(text, _)| Predicate::Log(text)),
         "selected" => parse_quoted(rest).map(|(name, _)| Predicate::Selected(name)),
+        "danger" => {
+            let (op, n) = parse_comparison(rest)?;
+            Some(Predicate::Danger { op, n })
+        }
         _ => None,
     }
 }
@@ -854,6 +891,7 @@ mod tests {
             ],
             log: Vec::new(),
             selected: Some("Grenadier 1".into()),
+            danger: Some(4),
         }
     }
 
@@ -890,6 +928,17 @@ mod tests {
             parse_predicate("selected \"Grenadier 2\""),
             Some(Predicate::Selected("Grenadier 2".into()))
         );
+        assert_eq!(
+            parse_predicate("danger >= 1"),
+            Some(Predicate::Danger { op: Cmp::Ge, n: 1 })
+        );
+        // ...and it is false, not zero, when the overlay is not up at all,
+        // so `until danger >= 1` waits for the overlay rather than coming
+        // true on a screen that never drew one.
+        let mut off = facts();
+        off.danger = None;
+        assert!(!Predicate::Danger { op: Cmp::Ge, n: 0 }.holds(&off, &HashSet::new()));
+        assert!(Predicate::Danger { op: Cmp::Ge, n: 4 }.holds(&facts(), &HashSet::new()));
         // A closed vocabulary: anything else is a warning at load, not a
         // silently-false question at run time.
         assert!(parse_predicate("vibes good").is_none());

@@ -433,6 +433,133 @@ pub(super) fn format_attack(
     lines.join("\n")
 }
 
+/// The bands the danger overlay paints in, worst last, and the words the
+/// panel puts beside them.
+///
+/// The thresholds are shares of what the crew has *left to lose*, not of her
+/// paper complement: a half-wrecked tank is in far more trouble from the same
+/// gun than a fresh one, and a legend quoted against the datasheet would tell
+/// her otherwise. Index 0 is "nothing spotted bears on it", which is a
+/// different statement from "a little" and gets the ordinary move-range blue
+/// rather than a colour of its own.
+///
+/// The words live here and the colours live in `battle.rs`, joined by index,
+/// because this file holds no Bevy types — the array the renderer keeps is
+/// sized off this one so the two cannot come apart in length.
+pub(super) const DANGER_LEGEND: [&str; 4] = [
+    "blue nothing bears on it",
+    "yellow under a tenth of her",
+    "orange under a third",
+    "red a third or more",
+];
+
+/// Which band a tile falls in, given the expected fire on it as a share of
+/// what the crew standing there has left.
+///
+/// Pure and separately testable on purpose: it is the one piece of judgment
+/// in the overlay — every other number in it comes from the resolver — and a
+/// band boundary that moved without anybody noticing would recolour the whole
+/// map while every test still passed.
+pub(super) fn danger_band(share: f32) -> usize {
+    if share <= 0.0 {
+        0
+    } else if share < 0.10 {
+        1
+    } else if share < 0.33 {
+        2
+    } else {
+        3
+    }
+}
+
+/// What can be put on the selected crew if she stands on a given hex: every
+/// enemy her own side has *found* who could bring a gun to bear, with the
+/// resolver's own chance of hitting and what the round is expected to be
+/// worth, and the total she would be standing in for a round.
+///
+/// This is the player's half of `battle::danger::fire_on`, and it is the
+/// same call the evaluator makes — that identity is the whole point. The
+/// governing principle in DIRECTION.md is that friction the player can
+/// predict and price is drama and friction she cannot see is a bug report;
+/// until this, the single most expensive decision in the game — where to put
+/// a tank — was priced by the AI in numbers no player could read.
+///
+/// Fog-honest by construction rather than by care taken here: `fire_on` lists
+/// only enemies the side has already spotted, so a hex that reads clear may
+/// still hold an ambush and the panel is not lying when it says so. It is
+/// reporting the *picture*, which is the only thing anybody in this game gets
+/// to act on.
+///
+/// Empty for a crew who is not there. A hex nothing bears on says so out
+/// loud, because a section that simply vanished would be indistinguishable
+/// from one that had not been written yet.
+pub(super) fn format_danger(
+    registry: &tactics_core::data::DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    at: Hex,
+) -> String {
+    let Some(me) = state.unit(unit) else {
+        return String::new();
+    };
+    let bearings = tactics_core::battle::fire_on(registry, state, unit, at);
+    // Named as a place when it is one and as her own ground when it is not.
+    // "Danger at (10,20)" for the hex she is already parked on reads as a
+    // question about somewhere else, and the player would go looking for it.
+    let mut lines = vec![if at == me.pos {
+        "Danger where she stands:".to_string()
+    } else {
+        format!("Danger at {}:", hex_label(at))
+    }];
+    if bearings.is_empty() {
+        lines.push("  nothing spotted can reach her".into());
+        return lines.join("\n");
+    }
+    let mut total = 0.0;
+    for bearing in &bearings {
+        total += bearing.expected;
+        // Two lines per gun rather than one: the panel is 300 px wide and a
+        // line that wraps to three is a line nobody reads. The name and the
+        // arithmetic are what a player scans down, so they lead, and the
+        // gun that will do it is the detail underneath.
+        lines.push(format!(
+            "  {}  {}% for {:.1}",
+            unit_name(state, bearing.enemy),
+            bearing.hit_percent,
+            bearing.expected
+        ));
+        if let Some(gun) = weapon_name(registry, state, bearing) {
+            lines.push(format!("    {gun}"));
+        }
+    }
+    lines.push(format!("  {total:.1} a round expected"));
+    // ...and what that is worth against her, which is the number that
+    // actually decides anything. Two points is a scratch to a heavy tank and
+    // the end of a scout car, and a bare figure cannot say which.
+    let (have, full) = state.substance(registry, me);
+    let left = if have > 0 { have } else { full }.max(1);
+    lines.push(format!(
+        "  {}% of what she has left",
+        ((total / left as f32) * 100.0).round() as i32
+    ));
+    lines.join("\n")
+}
+
+/// The gun behind a bearing, by name. `Bearing::weapon` is an index into the
+/// firing chassis' own weapon list, which is the cheapest thing for the
+/// engine to carry and the least useful thing to show somebody, so the two
+/// lookups happen here rather than in core.
+fn weapon_name(
+    registry: &tactics_core::data::DataRegistry,
+    state: &BattleState,
+    bearing: &tactics_core::battle::Bearing,
+) -> Option<String> {
+    let enemy = state.unit(bearing.enemy)?;
+    let vehicle = registry.vehicle(&enemy.vehicle)?;
+    let id = vehicle.weapons.get(bearing.weapon)?;
+    Some(registry.weapon(id)?.name.clone())
+}
+
 /// One crew, as the panel describes her. `own` says whether she is the
 /// viewer's to order, which is the only thing that decides whether the
 /// order hints belong on the page: telling the player which key would press
@@ -633,6 +760,150 @@ pub(super) fn format_tile(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tactics_core::battle::SideState;
+    use tactics_core::map::{HexMap, UnitPlacement};
+
+    fn registry() -> tactics_core::data::DataRegistry {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
+        let mut reg = tactics_core::data::DataRegistry::load_dir(&root)
+            .expect("mods load")
+            .0;
+        // The whole reach becomes the near band, so nobody has to be *found*
+        // before this stage means anything. The twin of `seen()` in the
+        // engine's own tests and here for the same reason: a test about what
+        // the panel says must not also be a test of whether anybody happened
+        // to roll a spot on the tick it was set up.
+        reg.balance.detection_certain_percent = 100;
+        reg
+    }
+
+    /// Two crews facing each other across three hexes of open grass — close
+    /// enough that every gun on the field bears, and in plain sight.
+    fn face_to_face(reg: &tactics_core::data::DataRegistry) -> BattleState {
+        let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+            "id": "panel_test_map",
+            "palette": { "g": "grass" },
+            "rows": ["gggggggg", "gggggggg", "gggggggg"],
+        }))
+        .expect("the stage parses");
+        let map = HexMap::from_map_file(&file).expect("the stage builds");
+        let placements = vec![
+            placement([0, 1], 0, "medium_tank", "Ours"),
+            placement([3, 1], 1, "medium_tank", "Theirs"),
+        ];
+        let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+        BattleState::from_placements(
+            reg,
+            map,
+            vec![
+                SideState {
+                    name: "West".into(),
+                    ai: None,
+                },
+                SideState {
+                    name: "East".into(),
+                    ai: None,
+                },
+            ],
+            &placements,
+            &crews,
+            std::sync::Arc::new(roster),
+            7,
+        )
+    }
+
+    fn placement(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> UnitPlacement {
+        UnitPlacement {
+            aboard_at: None,
+            at,
+            side,
+            vehicle: vehicle.into(),
+            crew: Vec::new(),
+            name: Some(name.into()),
+            facing: None,
+            formation: None,
+            leads: false,
+        }
+    }
+
+    /// The danger section prices a piece of ground in the resolver's own
+    /// numbers, names every gun that bears on it, and says so plainly when
+    /// none does.
+    ///
+    /// Three promises, and each is a way this section would quietly stop
+    /// being worth reading. A total that is not the sum of the lines above it
+    /// is a number a player learns to distrust. A gun that bears and is not
+    /// named is exactly the silence the whole feature exists to end. And a
+    /// hex nothing can reach that prints a bare heading reads as a panel that
+    /// has broken rather than as ground that is safe.
+    #[test]
+    fn the_danger_line_prices_the_ground_the_way_the_resolver_would() {
+        let reg = registry();
+        let state = face_to_face(&reg);
+        let me = state.units.iter().find(|u| u.side == 0).expect("ours");
+        let bearings = tactics_core::battle::fire_on(&reg, &state, me.id, me.pos);
+        assert!(
+            !bearings.is_empty(),
+            "the stage is meaningless if nothing bears on her"
+        );
+
+        let here = format_danger(&reg, &state, me.id, me.pos);
+        // Her own ground is named as hers: "Danger at (0,1)" for the hex she
+        // is parked on sends the player looking for somewhere else.
+        assert!(
+            here.starts_with("Danger where she stands:"),
+            "the heading should say it is her own ground:\n{here}"
+        );
+        let mut total = 0.0;
+        for bearing in &bearings {
+            let who = unit_name(&state, bearing.enemy);
+            assert!(
+                here.contains(&who),
+                "{who} bears on her and the panel does not say so:\n{here}"
+            );
+            assert!(
+                here.contains(&format!(
+                    "{}% for {:.1}",
+                    bearing.hit_percent, bearing.expected
+                )),
+                "{who}'s shot is not priced the way the resolver prices it:\n{here}"
+            );
+            total += bearing.expected;
+        }
+        assert!(
+            here.contains(&format!("{total:.1} a round expected")),
+            "the total should be the sum of the guns above it ({total:.1}):\n{here}"
+        );
+
+        // Ground nothing on the field can reach says so, and names itself,
+        // because a heading with nothing under it is indistinguishable from a
+        // panel that has stopped working.
+        let far = tactics_core::offset_to_hex(0, 0);
+        let away = format_danger(&reg, &state, me.id, far);
+        assert!(
+            away.starts_with(&format!("Danger at {}:", hex_label(far))),
+            "ground she is not standing on is named:\n{away}"
+        );
+    }
+
+    /// The overlay's bands and the words beside them are one table read two
+    /// ways, and the boundaries are the only judgment in the whole feature.
+    #[test]
+    fn every_danger_band_has_a_colour_and_a_sentence() {
+        assert_eq!(danger_band(0.0), 0, "nothing bearing is its own band");
+        assert_eq!(danger_band(0.05), 1);
+        assert_eq!(danger_band(0.2), 2);
+        assert_eq!(danger_band(0.9), 3);
+        // Monotone, and every band reachable: a boundary typed backwards
+        // would recolour the whole map with every other test still green.
+        let mut last = 0;
+        for step in 0..100 {
+            let band = danger_band(step as f32 / 100.0);
+            assert!(band >= last, "the bands must not go backwards");
+            last = band;
+        }
+        assert_eq!(last, DANGER_LEGEND.len() - 1);
+    }
 
     /// Every key the order menu offers explains itself.
     ///

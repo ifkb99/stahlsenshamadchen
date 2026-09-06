@@ -11,8 +11,8 @@ mod panel;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use panel::{
-    format_attack, format_contact, format_formation, format_tile, format_unit, formation_name,
-    hex_label, mission_sentence, report_age, unit_name,
+    format_attack, format_contact, format_danger, format_formation, format_tile, format_unit,
+    formation_name, hex_label, mission_sentence, report_age, unit_name,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -112,6 +112,24 @@ struct Battle {
     /// reviewed would review every one of them again.
     delegate: Option<AiDriver>,
     move_range: HashMap<Hex, u32>,
+    /// Whether the danger overlay is up: the move range tinted by what the
+    /// spotted enemy could put on the selected crew if she stood there.
+    ///
+    /// A toggle rather than an always-on tint because the two questions are
+    /// different — *where can I get to* and *what would it cost me* — and
+    /// painting both at once in one set of hexes makes neither readable.
+    show_danger: bool,
+    /// What each reachable tile would cost her, in substance points a round,
+    /// summed over every gun that bears.
+    ///
+    /// Cached beside `move_range` and rebuilt on exactly the same signal.
+    /// One `fire_on` is a walk over every spotted enemy asking the resolver
+    /// two questions apiece; doing that for a hundred reachable tiles every
+    /// frame would price the overlay at roughly a round of AI planning per
+    /// sixteen milliseconds, for an answer that cannot change while the
+    /// player is holding still. Nothing on this map moves during planning
+    /// except by an order, and every order already raises `range_dirty`.
+    danger: HashMap<Hex, f32>,
     /// Move-range highlights need respawning.
     range_dirty: bool,
     mode: InputMode,
@@ -390,6 +408,26 @@ struct UnitWidgets<'w, 's> {
 #[derive(Component)]
 struct MoveHighlight;
 
+/// The move range's own blue, and the three warmer tints the danger overlay
+/// paints over the tiles something can reach.
+///
+/// Indexed by [`panel::danger_band`], and sized off [`panel::DANGER_LEGEND`]
+/// so the colours and the words the panel prints beside them cannot come
+/// apart in length — the words live in `panel.rs` because that file holds no
+/// Bevy types, and this is the join.
+///
+/// Band 0 is the ordinary move-range blue rather than a fourth warm colour,
+/// which is what makes the overlay readable at a glance: the eye is looking
+/// for the tiles that are *not* blue. The danger tints run at a higher alpha
+/// than the blue because they are the answer to a question the player asked,
+/// and a warning that has to be hunted for is not one.
+const DANGER_COLORS: [Color; panel::DANGER_LEGEND.len()] = [
+    Color::srgba(0.35, 0.55, 1.0, 0.4),
+    Color::srgba(0.95, 0.85, 0.25, 0.45),
+    Color::srgba(1.0, 0.55, 0.15, 0.5),
+    Color::srgba(1.0, 0.2, 0.2, 0.58),
+];
+
 /// Overlay showing what your own units have been ordered to do this round.
 #[derive(Component)]
 struct PlanHighlight;
@@ -642,6 +680,12 @@ fn publish_script_facts(
             .selected
             .and_then(|id| battle.state.unit(id))
             .map(|unit| unit.name.clone()),
+        // Counted off the cached map rather than recomputed, so what a tour
+        // asserts is the same arithmetic the tiles were painted from — a
+        // fact derived twice is a fact that can disagree with the screen.
+        danger: battle
+            .show_danger
+            .then(|| battle.danger.values().filter(|d| **d > 0.0).count() as u32),
     };
 }
 
@@ -846,6 +890,8 @@ fn setup_battle(
         formation: None,
         delegate: None,
         move_range: HashMap::new(),
+        show_danger: false,
+        danger: HashMap::new(),
         range_dirty: false,
         mode: InputMode::Normal,
         field,
@@ -1907,6 +1953,33 @@ fn handle_input(
         return;
     }
 
+    // D shows what the ground would cost her: the move range tinted by the
+    // fire every *spotted* enemy could put on each tile she can reach.
+    //
+    // `D` doubles as the camera's pan-right key, which is the bargain `A` and
+    // `W` already make on this screen: a tap does the thing, a hold moves the
+    // camera. It is worth paying again here because the mnemonic is the whole
+    // of a toggle's discoverability and there is no other free letter that
+    // says "danger".
+    //
+    // A toggle rather than a modal because it answers a question the player
+    // asks *while* choosing — she wants the tint under the cursor she is
+    // already moving — and because leaving it on across rounds is a
+    // legitimate way to play. Announced in the log for the same reason every
+    // silent state change in this game is: a key that changes a colour the
+    // player was not looking at is indistinguishable from a key that does
+    // nothing.
+    if keys.just_pressed(KeyCode::KeyD) {
+        battle.show_danger = !battle.show_danger;
+        battle.range_dirty = true;
+        log.push(if battle.show_danger {
+            "Danger overlay on."
+        } else {
+            "Danger overlay off."
+        });
+        return;
+    }
+
     let hovered = view.hovered(&battle.state.map);
 
     // Mission orders. These go through `Order::SetMission` — the same entry
@@ -2734,12 +2807,58 @@ fn update_highlights(
     for entity in &existing {
         commands.entity(entity).despawn();
     }
+
+    // What the ground would cost her, for the whole reach at once. Rebuilt
+    // here rather than in the panel because this is the one place that
+    // already knows the reach could have changed, and because a per-frame
+    // `fire_on` over a hundred tiles is real money — see the note on
+    // `Battle::danger`.
+    //
+    // Only her own crews, and only while the overlay is up: an enemy's
+    // reachable ground is not a thing the player is entitled to be shown, and
+    // computing the tints for an overlay nobody asked for would pay the cost
+    // for nothing.
+    battle.danger.clear();
+    if battle.show_danger {
+        let view_side = battle.view_side();
+        if let Some(unit) = battle
+            .selected
+            .filter(|id| battle.state.unit(*id).is_some_and(|u| u.side == view_side))
+        {
+            let tiles: Vec<Hex> = battle.move_range.keys().copied().collect();
+            let battle = &mut *battle;
+            for hex in tiles {
+                let total: f32 = tactics_core::battle::fire_on(&mods.0, &battle.state, unit, hex)
+                    .iter()
+                    .map(|bearing| bearing.expected)
+                    .sum();
+                battle.danger.insert(hex, total);
+            }
+        }
+    }
+
+    // The danger tint replaces the move-range blue rather than sitting on top
+    // of it. Two translucent fills over one tile make a third colour that
+    // means neither of them, and the set of hexes is identical anyway — this
+    // is the same overlay answering a second question about the same ground.
+    let left = battle
+        .selected
+        .and_then(|id| battle.state.unit(id))
+        .map(|u| {
+            let (have, full) = battle.state.substance(&mods.0, u);
+            if have > 0 { have } else { full }.max(1) as f32
+        })
+        .unwrap_or(1.0);
     for hex in battle.move_range.keys() {
         let overlay = HexOverlay::face(*hex);
+        let band = match battle.danger.get(hex) {
+            Some(expected) => panel::danger_band(expected / left),
+            None => 0,
+        };
         commands.spawn((
             Sprite {
                 image: art.face.clone(),
-                color: Color::srgba(0.35, 0.55, 1.0, 0.4),
+                color: DANGER_COLORS[band],
                 ..default()
             },
             Transform::from_translation(overlay.translation(&map, view.rotation(), view.center())),
@@ -2960,6 +3079,53 @@ fn update_panel(
         return;
     };
 
+    // What the ground under the cursor would cost the crew the player has
+    // picked, joined onto the two branches that are about ground.
+    //
+    // Keyed off the *selection* rather than off whoever the panel happens to
+    // be describing, because that is whose decision this is — the question is
+    // "what could they do to *her* over there", and the crew it is about is
+    // the one the player has in hand. Never for an enemy crew, which is the
+    // rule the unit panel's order hints already follow and for the same
+    // reason: an enemy's exposure is not the player's to read, and offering
+    // it would be an offer.
+    //
+    // Deliberately not on the shot preview or the ghost report. Both are
+    // already an answer about a hex somebody *else* is standing on, and
+    // "what could be put on you if you stood where that tank is" is a
+    // question nobody asked.
+    //
+    // A formation being commanded makes this empty on its own, without a
+    // branch: picking one drops the unit selection.
+    //
+    // It leads the panel rather than following it, which is a decision about
+    // what falls off the bottom rather than about importance. A full crew's
+    // description — chassis, armour, speed, sight, every weapon's range and
+    // cadence, every cadet's two best skills — already fills the panel on its
+    // own, and appending this put the one part that *changes as the mouse
+    // moves* below the fold on exactly the crews worth looking at. A
+    // datasheet the player can scroll to later loses less by being second
+    // than a live answer does by being invisible.
+    let danger = battle
+        .selected
+        .filter(|id| state.unit(*id).is_some_and(|u| u.side == view_side))
+        .zip(hovered_tile)
+        .map(|(unit, hex)| {
+            let mut section = format_danger(registry, state, unit, hex);
+            // The legend goes with the overlay and not with the section: the
+            // bands only exist while something is painted in them, and a key
+            // to colours nobody can see is furniture.
+            if battle.show_danger {
+                section.push_str("\n\nOverlay bands (D):");
+                for band in panel::DANGER_LEGEND {
+                    section.push_str(&format!("\n  {band}"));
+                }
+            }
+            section.push_str("\n\n");
+            section
+        })
+        .unwrap_or_default();
+
     // Commanding a formation is a mode: while one is picked the panel is
     // about it and about the ground under the cursor, which is what the
     // mission keys are aimed at.
@@ -3022,18 +3188,21 @@ fn update_panel(
     if let Some(unit) = shown {
         // Describe the tile under the cursor rather than the unit's own, so
         // terrain can be read without dropping the selection.
-        text.0 = format_unit(
-            registry,
-            state,
-            unit,
-            hovered_tile.unwrap_or(unit.pos),
-            unit.side == view_side,
+        text.0 = format!(
+            "{danger}{}",
+            format_unit(
+                registry,
+                state,
+                unit,
+                hovered_tile.unwrap_or(unit.pos),
+                unit.side == view_side,
+            )
         );
         set_portrait(&mut hud.portrait, &art, state, unit.id);
         return;
     }
     if let Some(hex) = hovered_tile {
-        text.0 = format_tile(registry, state, hex);
+        text.0 = format!("{danger}{}", format_tile(registry, state, hex));
         return;
     }
     text.0 = "Hover a tile for terrain\n\nLMB: select / set route\nA: engage hovered enemy\nB: blind fire a tile\nV: hold and watch\nM: mount the hovered ride\nU: unload (her, or all aboard)\nC: clear orders\nEnter: commit the round\nF: pick a formation\nQ/E: rotate view".into();

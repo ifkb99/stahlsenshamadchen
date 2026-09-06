@@ -283,6 +283,11 @@ fn publish_script_facts(
         units: Vec::new(),
         log: log.0.iter().cloned().collect(),
         selected: None,
+        // Said out loud rather than defaulted, like `selected` above it: the
+        // campaign map has no danger overlay because it has no gunners, and
+        // leaving the field alone would answer a battle's question with a
+        // battle's answer two screens after it was true.
+        danger: None,
     };
 }
 
