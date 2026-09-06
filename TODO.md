@@ -233,7 +233,7 @@ stalemate, so there is finally a baseline to measure a rewrite against.
   every crew in the game edged west wherever the real keys tied. 42.9% -> 49.2%
   of 2304 equal-skill battles, and round one on the symmetric arena at equal
   skill is now mirrored 8 of 8. The general rule is in CLAUDE.md's invariants;
-  the account is under "Difficulty is inverted in practice".
+  the account is in DONE.md under "The skill arena's side-B edge".
 - ~~**two of the three battle maps favour an end**~~ re-measured 2026-08-26
   after the coordinate tiebreaks were fixed, and the answer changed: at 8
   seeds x 36 battles the ground is nearly level everywhere.
