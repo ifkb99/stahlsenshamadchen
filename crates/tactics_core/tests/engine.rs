@@ -1680,50 +1680,54 @@ fn move_chosen(reg: &DataRegistry, state: &BattleState, unit: UnitId) -> Option<
 /// was open grass, because a ray that clips the corner of nothing blocks
 /// nothing.
 ///
-/// The arena is the fixture because it is the one map in the tree built to be
-/// symmetric, and it is symmetric under two reflections rather than one, so
-/// this pins both at once. Note what is deliberately **not** asserted:
-/// `clear(a, b) == clear(b, a)`. Sight is not reciprocal here and should not
-/// be — the ray runs from the observer's eye to the target's hull, and a crew
-/// on a ridge can see a hull that cannot see her back.
+/// The arenas are the fixtures because they are the maps in the tree built to
+/// be symmetric, and they are symmetric under two reflections rather than one,
+/// so this pins both at once. **Every** arena is walked, not only the one the
+/// numbers were measured on: the rule is about the geometry, and a second
+/// battlefield with a second set of ridges is a second sample of it. Note what
+/// is deliberately **not** asserted: `clear(a, b) == clear(b, a)`. Sight is not
+/// reciprocal here and should not be — the ray runs from the observer's eye to
+/// the target's hull, and a crew on a ridge can see a hull that cannot see her
+/// back.
 #[test]
 fn a_reflection_leaves_a_sight_line_alone() {
-    use tactics_core::harness::arena::{arena_flip, arena_map, arena_mirror};
+    use tactics_core::harness::arena::{ARENAS, REFLECTIONS};
 
     let reg = registry();
-    let map = arena_map().expect("the arena builds");
-    let sight = SightGrid::build(&reg, &map);
-    let hexes: Vec<_> = map.iter().map(|(hex, _)| hex).collect();
-    assert!(
-        hexes.len() > 300,
-        "the arena should be a proper battlefield, got {} tiles",
-        hexes.len()
-    );
+    for arena in ARENAS {
+        let map = arena.map().expect("the arena builds");
+        let sight = SightGrid::build(&reg, &map);
+        let hexes: Vec<_> = map.iter().map(|(hex, _)| hex).collect();
+        assert!(
+            hexes.len() > 300,
+            "{} should be a proper battlefield, got {} tiles",
+            arena.id,
+            hexes.len()
+        );
 
-    let mut broken = Vec::new();
-    for &a in &hexes {
-        for &b in &hexes {
-            if a == b {
-                continue;
-            }
-            let here = sight.clear(a, b);
-            for (name, image) in [
-                ("mirror", arena_mirror as fn(_) -> _),
-                ("flip", arena_flip as fn(_) -> _),
-            ] {
-                if here != sight.clear(image(a), image(b)) {
-                    broken.push(format!("{name}: {a:?} -> {b:?}"));
+        let mut broken = Vec::new();
+        for &a in &hexes {
+            for &b in &hexes {
+                if a == b {
+                    continue;
+                }
+                let here = sight.clear(a, b);
+                for (name, image) in REFLECTIONS {
+                    if here != sight.clear(image(arena, a), image(arena, b)) {
+                        broken.push(format!("{name}: {a:?} -> {b:?}"));
+                    }
                 }
             }
         }
+        assert!(
+            broken.is_empty(),
+            "{}: {} of {} ordered pairs disagree with their own image; first few: {:?}",
+            arena.id,
+            broken.len(),
+            hexes.len() * (hexes.len() - 1),
+            &broken[..broken.len().min(5)]
+        );
     }
-    assert!(
-        broken.is_empty(),
-        "{} of {} ordered pairs disagree with their own image; first few: {:?}",
-        broken.len(),
-        hexes.len() * (hexes.len() - 1),
-        &broken[..broken.len().min(5)]
-    );
 }
 
 #[test]

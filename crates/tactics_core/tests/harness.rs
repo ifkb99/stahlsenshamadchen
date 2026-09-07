@@ -12,12 +12,13 @@
 //! - a run's accounting folds the same way however the battles were grouped
 //! - `--sweep balance.x=v` is the same thing as hand-editing `mod.json`
 //! - the `planner` block is addressable, and ships at the constants it replaced
-//! - the skill-gap arena is symmetric
+//! - every arena is symmetric, under both reflections
+//! - every arena is one a table can be pointed at by name
 //!
 //! The point of a calibration test is that it fails when the *instrument* is
 //! wrong rather than when the game changes, so none of these fight a battle.
 
-use tactics_core::harness::arena::{ARENA_RADIUS, arena_centre, arena_map, arena_mirror};
+use tactics_core::harness::arena::{ARENAS, DEFAULT_ARENA, REFLECTIONS, arena_named};
 use tactics_core::harness::overrides::{Override, apply_override};
 use tactics_core::harness::parallel::{JOBS, run_all};
 use tactics_core::harness::tally::Tally;
@@ -260,7 +261,7 @@ fn an_override_that_names_nothing_says_what_was_there() {
     );
 }
 
-/// Every feature of the arena has a mirror.
+/// Every feature of every arena has a mirror, and a flip.
 ///
 /// The skill-gap table measures commanders against each other, so any
 /// asymmetry in the ground is measured as skill. This is not hypothetical: the
@@ -269,44 +270,164 @@ fn an_override_that_names_nothing_says_what_was_there() {
 /// — which gave side A nine forest hexes near its deployment against side B's
 /// four, and cost about four points of measured win rate.
 ///
-/// `arena_map` asserts this itself before handing the map back. This test
-/// checks it independently, so a mistake in the assertion is caught too.
+/// `Arena::map` asserts this itself before handing the map back. This test
+/// checks it independently, so a mistake in the assertion is caught too — and
+/// it walks **every** arena, because the failure this defends against is
+/// somebody adding a battlefield and believing its symmetry rather than
+/// asserting it, which is exactly how the first one went wrong.
 #[test]
-fn every_feature_of_the_arena_has_a_mirror() {
-    let map = arena_map().expect("the arena builds");
-    let centre = arena_centre();
+fn every_feature_of_every_arena_has_a_mirror() {
+    for arena in ARENAS {
+        let map = arena.map().expect("the arena builds");
+        let centre = arena.centre_hex();
 
-    let tiles: std::collections::HashMap<_, _> =
-        map.iter().map(|(h, t)| (h, t.terrain.clone())).collect();
-    assert!(!tiles.is_empty(), "the arena has tiles at all");
+        let tiles: std::collections::HashMap<_, _> = map
+            .iter()
+            .map(|(h, t)| (h, (t.terrain.clone(), t.elevation)))
+            .collect();
+        assert!(!tiles.is_empty(), "{} has tiles at all", arena.id);
 
-    for (hex, terrain) in &tiles {
-        let mirror = arena_mirror(*hex);
-        assert_eq!(
-            tiles.get(&mirror),
-            Some(terrain),
-            "{hex:?} is '{terrain}' and its mirror {mirror:?} is not"
+        for (name, image) in REFLECTIONS {
+            for (hex, ground) in &tiles {
+                let there = image(arena, *hex);
+                assert_eq!(
+                    tiles.get(&there),
+                    Some(ground),
+                    "{}: {hex:?} is {ground:?} and its {name} {there:?} is not",
+                    arena.id
+                );
+            }
+        }
+        for hex in tiles.keys() {
+            assert!(
+                hex.distance_to(centre) <= arena.radius as i32,
+                "{}: {hex:?} lies outside its own radius",
+                arena.id
+            );
+        }
+
+        // Both reflections have to be genuine reflections, or the checks above
+        // are comparing a tile with itself and passing for free.
+        //
+        // The probe is written down rather than taken off the map, and both of
+        // its arena coordinates are non-zero on purpose. A hex on the axis of
+        // advance is *supposed* to be fixed by the flip — the axis is the
+        // flip's mirror line — so a probe picked out of a `HashMap` fails this
+        // check whenever hash order happens to hand back an axis hex, which is
+        // a flaky test rather than a defect found. `rel(2, 2)` is four hexes
+        // from the middle and off both lines, so every arena of any size has
+        // it and neither reflection can fix it.
+        let off_centre = arena.rel(2, 2);
+        assert!(
+            tiles.contains_key(&off_centre),
+            "{}: the probe hex is not on the map",
+            arena.id
         );
         assert!(
-            hex.distance_to(centre) <= ARENA_RADIUS as i32,
-            "{hex:?} lies outside the arena's own radius"
+            off_centre.distance_to(centre) > 3,
+            "{}: the probe hex is too close to the middle to prove anything",
+            arena.id
+        );
+        for (name, image) in REFLECTIONS {
+            let there = image(arena, off_centre);
+            assert_ne!(
+                there, off_centre,
+                "{}: the {name} maps a distant hex to itself, so it is not a reflection",
+                arena.id
+            );
+            assert_eq!(
+                image(arena, there),
+                off_centre,
+                "{}: reflecting twice through the {name} must come back",
+                arena.id
+            );
+        }
+    }
+}
+
+/// A feature written as a band is doubly symmetric because of what a band is.
+///
+/// [`Arena::band`] is the primitive the ridge arena is built out of, and its
+/// whole claim is that `|s|` and `|t|` — the along-axis and lateral
+/// coordinates — are precisely the quantities both reflections preserve. That
+/// claim is what lets somebody draw new ground on paper and be *sure* it comes
+/// out symmetric, instead of drawing it, running the assertion and moving it
+/// until the assertion stops firing. If it stopped holding, a band would be a
+/// suggestion rather than a guarantee and the next arena would drift the way
+/// the ASCII one did.
+#[test]
+fn a_band_is_the_same_band_from_either_end_and_either_flank() {
+    for arena in ARENAS {
+        // A deliberately lopsided band: no reflection symmetry of its own, and
+        // both ranges offset from zero, so a bug that happened to be symmetric
+        // for a centred band would still show.
+        let band = arena.band(3..=9, 2..=5);
+        assert!(
+            !band.is_empty(),
+            "{}: the probe band should land on some tiles",
+            arena.id
+        );
+        let set: std::collections::HashSet<_> = band.iter().copied().collect();
+        for hex in &band {
+            for (name, there) in [
+                ("mirror", arena.mirror(*hex)),
+                ("flip", arena.flip(*hex)),
+                ("both", arena.mirror(arena.flip(*hex))),
+            ] {
+                assert!(
+                    set.contains(&there),
+                    "{}: the band holds {hex:?} but not its {name} {there:?}",
+                    arena.id
+                );
+            }
+        }
+        // ...and the coordinates really are what the module doc says they are:
+        // the mirror negates both and the flip negates only the lateral one.
+        let probe = arena.rel(-3, 2);
+        assert_eq!(arena.axis_key(probe), (-4, 2));
+        assert_eq!(arena.axis_key(arena.mirror(probe)), (4, -2));
+        assert_eq!(arena.axis_key(arena.flip(probe)), (-4, -2));
+    }
+}
+
+/// Every arena a table can fight on is one `--arena` can name, and the default
+/// is the one the numbers were measured on.
+///
+/// The failure this catches is an arena added to [`ARENAS`] under a name
+/// nothing accepts, or — much worse — a default quietly moved, which would
+/// re-point every quoted figure in the tree at a battlefield it was never
+/// measured on.
+#[test]
+fn every_arena_can_be_named_and_the_default_is_the_measured_one() {
+    assert_eq!(
+        DEFAULT_ARENA.id, "skill_arena",
+        "every number this project has quoted was measured on the skill arena"
+    );
+    assert!(
+        ARENAS.iter().any(|a| std::ptr::eq(*a, DEFAULT_ARENA)),
+        "the default must be one of the arenas the flag lists"
+    );
+    for arena in ARENAS {
+        let found = arena_named(arena.id).expect("an arena answers to its own name");
+        assert!(
+            std::ptr::eq(found, *arena),
+            "{} resolved elsewhere",
+            arena.id
+        );
+        assert!(!arena.blurb.is_empty(), "{} has no blurb", arena.id);
+        // Four vehicles a side is what the skill table stages, and the two
+        // halves of each flip pair have to be adjacent for that force to be
+        // laterally symmetric. `assert_is_mirrored` checks the pairing; this
+        // checks there is enough of it to fight the table at all.
+        assert!(
+            arena.deployment().len() >= 4,
+            "{} has standing room for only {} vehicles a side",
+            arena.id,
+            arena.deployment().len()
         );
     }
-
-    // The reflection has to be a genuine point reflection, or "mirrored" above
-    // is checking a tile against itself and passing for free.
-    let off_centre = tiles
-        .keys()
-        .find(|h| h.distance_to(centre) > 3)
-        .expect("the arena is bigger than a handful of hexes");
-    assert_ne!(
-        arena_mirror(*off_centre),
-        *off_centre,
-        "the mirror maps a distant hex to itself, so it is not a reflection"
-    );
-    assert_eq!(
-        arena_mirror(arena_mirror(*off_centre)),
-        *off_centre,
-        "reflecting twice must come back"
+    assert!(
+        arena_named("no_such_arena").is_none(),
+        "a name nothing answers to must not resolve to something"
     );
 }
