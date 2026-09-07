@@ -79,7 +79,7 @@ fn boarding_rounds() -> f32 {
 
 /// Serde's default for [`PlannerRules::deviation_cost`].
 fn deviation_cost() -> f32 {
-    3.0
+    12.0
 }
 
 /// Serde's default for [`PlannerRules::devolved`].
@@ -193,25 +193,41 @@ pub struct PlannerRules {
     /// subordinate initiative existed.
     ///
     /// Set against the scale the evaluator already speaks, like
-    /// [`Self::impatience`]: a mission's ground is worth 2.0 and a typical
-    /// objective 2–3, so 3.0 makes a low-initiative crew hold her course
+    /// [`Self::impatience`]: it makes a low-initiative crew hold her course
     /// against anything short of a clearly better piece of ground and lets a
     /// high-initiative one take the good firing position she is driving past.
     ///
-    /// **It shipped at 2.0 until Phase 2**, and the move to 3.0 is what
-    /// keeping its stated meaning cost. The number's job is to sit between
-    /// the shipped doctrines' `initiative` values —
-    /// `the_shipped_doctrines_straddle_the_price_of_deviating` is that
-    /// property as a test — and it is quoted in the evaluator's currency.
-    /// Phase 2 changed that currency: the threat term used to be zero over
-    /// most of the map (a six-hex gate with a distance falloff) and is now
-    /// the resolver's own expected damage everywhere a found gun can reach,
-    /// which is three to eight points of it. A weight denominated in a
-    /// currency has to move when the currency does, and at 2.0 massed armour
-    /// — the doctrine whose whole character is driving at the hex it was
-    /// given — stopped to fight from ground of its own. 3.0 is the smallest
-    /// value that restores the straddle and 3.0 through 6.0 all do, so it is
-    /// not a knife edge; at 8.0 elastic defence stops deviating too.
+    /// **It has now moved twice, 2.0 → 3.0 → 12.0, and both moves are the same
+    /// event.** The number's job is to sit between the shipped doctrines'
+    /// `initiative` values — `the_shipped_doctrines_straddle_the_price_of_deviating`
+    /// is that property as a test — and it is quoted in the evaluator's
+    /// currency, so it has to move whenever the currency does.
+    ///
+    /// Phase 2 was the first: the threat term used to be zero over most of the
+    /// map (a six-hex gate with a distance falloff) and became the resolver's
+    /// own expected damage everywhere a found gun can reach, three to eight
+    /// points of it. At 2.0 massed armour — the doctrine whose whole character
+    /// is driving at the hex it was given — stopped to fight from ground of
+    /// its own, and 3.0 was the smallest value that restored the straddle
+    /// (3.0 through 6.0 all did; at 8.0 elastic defence stopped deviating
+    /// too).
+    ///
+    /// Wave 1 was the second, and larger: both the attack and the threat term
+    /// are now a *round* of fire rather than one shot, and every gun in the
+    /// base mod fires between two and twelve times in a round; on top of that
+    /// the fire a crew cannot be hurt by is priced at all now. So the fighting
+    /// half of the score grew by roughly its cadence while the price of
+    /// disobedience did not, and at 3.0 every doctrine deviated again.
+    ///
+    /// Measured on `pressed_stage`, where the crew and the gun she can see are
+    /// both mediums, and measured **twice** because the mechanism and the
+    /// content it enables move the currency by different amounts: with
+    /// suppression declared nowhere the straddle holds from 8.5 to 19, and
+    /// with the base mod's shipped suppression and `point_worth` it holds from
+    /// 12 to 29. One value has to serve both, or the field would mean
+    /// something different in a mod that declines the new rule; 12.0 is the
+    /// bottom of the intersection and the band is still eight points wide, so
+    /// this is not a knife edge either.
     ///
     /// `Hold` is deliberately exempt: standing still was already on an
     /// ordered crew's list before initiative existed, and charging her for it

@@ -121,6 +121,34 @@ pub struct AmmoDef {
     /// racks with high explosive is the tank that burns.
     #[serde(default = "default_volatility")]
     pub volatility: f32,
+    /// Pressure a round that *strikes* puts on the crew it struck, whether or
+    /// not it got through, on top of whatever the morale block already
+    /// charges for the outcome.
+    ///
+    /// This is where suppression lives, and the reason it lives on the round
+    /// rather than on the weapon is that the loader chooses rounds: a belt of
+    /// machine-gun fire and a solid shot from the same coaxial mount are
+    /// different experiences for the crew being shot at, and a gun that can
+    /// chamber both ought to be able to say so. It is also why the field is
+    /// here rather than on [`crate::data::MoraleRules`]: the price list on the
+    /// ladder says what an *outcome* costs — hit, bounced, penetrated — and
+    /// this says what a *round* costs, which is a fact about the ammunition.
+    ///
+    /// `#[serde(default)]` to zero, and zero is exactly the game before this
+    /// existed: a mod that says nothing about suppression charges nothing for
+    /// it and its crews feel precisely what they always felt. Note the
+    /// interaction with [`crate::data::MoraleRules::bounced`], which is
+    /// deliberately *not* charged for small arms — a belt that declares
+    /// suppression is the designer overruling that for this particular round,
+    /// which is the point: bullets on plate frighten nobody through the
+    /// hit-point ledger and frighten a crew through this one.
+    ///
+    /// What it is worth to anybody *weighing* a shot is a separate number,
+    /// [`crate::data::MoraleRules::point_worth`], because the exchange rate
+    /// between fear and substance is a judgment about the whole game and not
+    /// a property of the round.
+    #[serde(default)]
+    pub suppression: u32,
     /// Muzzle velocity in metres per second.
     ///
     /// Data for flight time, which at this scale is invisible for direct fire

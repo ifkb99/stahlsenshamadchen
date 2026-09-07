@@ -22,12 +22,17 @@ use hexx::Hex;
 
 /// One enemy's best shot at a crew standing on a particular hex.
 ///
-/// `hit_percent` and `expected` are the two halves a reader wants kept
+/// `hit_percent` and the expectations are the halves a reader wants kept
 /// apart: a near-certain scratch and an unlikely killing blow are both
 /// "some expected damage", and a player owed an explanation is owed both
-/// numbers. `expected` already has the hit chance in it — it is
-/// [`combat::expected_damage`], the same currency the offense half of the
-/// evaluator has always spent.
+/// numbers. Everything below `hit_percent` already has the hit chance in it.
+///
+/// **The three expectations are per shot and `shots` is the cadence.** They
+/// are kept apart rather than multiplied together because the two readers of
+/// this struct are asking different questions: the panel names a gun and its
+/// rate, and anything pricing ground for a round multiplies. Folding cadence
+/// in would leave the panel unable to say "45% for 3.0, four times a round",
+/// which is the sentence that explains where the total came from.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Bearing {
     /// Who could shoot.
@@ -36,9 +41,58 @@ pub struct Bearing {
     pub weapon: usize,
     /// Her chance of hitting, as the resolver would roll it.
     pub hit_percent: i32,
-    /// Expected damage in substance points: hit chance times what the round
-    /// is worth against the plate it would strike.
+    /// Expected damage in substance points from **one shot**: hit chance
+    /// times what the round is worth against the plate it would strike.
     pub expected: f32,
+    /// Expected pressure in ladder points from one shot — what arriving does
+    /// to the crew's nerve whether or not it gets through. Nonzero where
+    /// `expected` is flatly zero, which is the whole reason it is here: a
+    /// burst against a glacis is not nothing.
+    pub pressure: f32,
+    /// The two above in one number, per shot:
+    /// `expected + pressure * morale.point_worth`. What anything *choosing*
+    /// should read.
+    pub worth: f32,
+    /// How many times this gun fires in a round.
+    pub shots: f32,
+}
+
+impl Bearing {
+    /// What this gun expects to take out of her over a whole round.
+    pub fn damage_per_round(&self) -> f32 {
+        self.expected * self.shots
+    }
+
+    /// What it expects to do to her nerve over a whole round.
+    pub fn pressure_per_round(&self) -> f32 {
+        self.pressure * self.shots
+    }
+
+    /// The two together over a whole round — the number the tint and the
+    /// evaluator's threat term are both denominated in.
+    pub fn worth_per_round(&self) -> f32 {
+        self.worth * self.shots
+    }
+}
+
+/// What the spotted enemies could put on a crew standing on a hex, over one
+/// round.
+///
+/// **Every field is per round**, which is the unit ground is priced in now
+/// that cadence is in the currency: a machine gun firing six times and an 88
+/// firing three are not the same threat, and until this struct existed they
+/// read alike. `substance` and `pressure` are the two currencies apart, and
+/// `worth` is them together at the mod's exchange rate — the one the
+/// evaluator spends.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Incoming {
+    /// Expected damage in substance points, summed over every bearing, per
+    /// round.
+    pub substance: f32,
+    /// Expected pressure in ladder points, per round.
+    pub pressure: f32,
+    /// `substance + pressure * morale.point_worth`, per round.
+    pub worth: f32,
 }
 
 /// Every spotted enemy that could put fire on `unit` if she stood at `at`,
@@ -65,7 +119,7 @@ pub fn fire_on(
     at: Hex,
 ) -> Vec<Bearing> {
     let mut bearings = Vec::new();
-    guns_bearing_on(registry, state, unit, at, |enemy, weapon, expected| {
+    guns_bearing_on(registry, state, unit, at, |enemy, weapon, value| {
         // The gun is known to exist by the walk above; asking the chassis
         // for it again only to name it would be a second lookup for a
         // number we would then have to keep in step.
@@ -79,14 +133,23 @@ pub fn fire_on(
             enemy: enemy.id,
             weapon,
             hit_percent,
-            expected,
+            expected: value.expected,
+            pressure: value.pressure,
+            worth: value.worth,
+            shots: value.shots,
         });
     });
     bearings
 }
 
-/// The same question, summed: total expected damage the spotted enemies
-/// could put on `unit` if she stood at `at`, in substance points.
+/// The same question, summed over a round: what the spotted enemies could put
+/// on `unit` if she stood at `at`, in both currencies and in the one that
+/// combines them.
+///
+/// **Per round, not per shot.** Every term in this engine used to be per
+/// trigger pull, which priced a machine gun firing six times a round and an
+/// 88 firing three identically; the multiplication happens here because this
+/// is the answer to *how bad is that ground*, and ground is held for rounds.
 ///
 /// This is what the evaluator's threat term spends, and it exists beside
 /// [`fire_on`] rather than as `fire_on(..).iter().sum()` for one reason,
@@ -98,16 +161,19 @@ pub fn fire_on(
 /// same [`guns_bearing_on`], so there is still exactly one answer to *who
 /// can shoot her there and with what*; they differ only in what they do
 /// with it.
-pub fn incoming(registry: &DataRegistry, state: &BattleState, unit: UnitId, at: Hex) -> f32 {
-    let mut total = 0.0;
-    guns_bearing_on(registry, state, unit, at, |_, _, expected| {
-        total += expected
+pub fn incoming(registry: &DataRegistry, state: &BattleState, unit: UnitId, at: Hex) -> Incoming {
+    let mut total = Incoming::default();
+    guns_bearing_on(registry, state, unit, at, |_, _, value| {
+        total.substance += value.expected * value.shots;
+        total.pressure += value.pressure * value.shots;
+        total.worth += value.worth_per_round();
     });
     total
 }
 
 /// Every spotted enemy who could put fire on `unit` at `at`, handed to
-/// `each` as (enemy, weapon index, expected damage) in enemy id order.
+/// `each` as (enemy, weapon index, what one shot is worth) in enemy id
+/// order.
 ///
 /// The shared half of this module: [`fire_on`] and [`incoming`] are two
 /// readings of one walk, and the walk is here so they cannot disagree about
@@ -119,16 +185,16 @@ fn guns_bearing_on(
     state: &BattleState,
     unit: UnitId,
     at: Hex,
-    mut each: impl FnMut(&Unit, usize, f32),
+    mut each: impl FnMut(&Unit, usize, combat::ShotValue),
 ) {
     let Some(me) = state.unit(unit) else {
         return;
     };
     for enemy in crate::ai::visible_enemies(state, me.side) {
-        if let Some((weapon, expected)) =
+        if let Some((weapon, value)) =
             combat::best_weapon_from(registry, state, enemy.id, enemy.pos, unit, at)
         {
-            each(enemy, weapon, expected);
+            each(enemy, weapon, value);
         }
     }
 }

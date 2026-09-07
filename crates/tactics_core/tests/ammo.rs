@@ -313,6 +313,7 @@ fn penetration_falls_off_with_range_for_shot_and_holds_for_a_shaped_charge() {
         post_pen: 1.0,
         volatility: 1.0,
         blast: 2,
+        suppression: 0,
         velocity: 450,
     };
     for hexes in 0..20 {
@@ -335,6 +336,7 @@ fn a_chemical_round_that_loses_penetration_downrange_is_a_warning() {
             post_pen: 1.0,
             volatility: 1.0,
             blast: 2,
+            suppression: 0,
             velocity: 450,
         },
     );

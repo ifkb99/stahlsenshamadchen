@@ -474,8 +474,15 @@ pub(super) fn danger_band(share: f32) -> usize {
 
 /// What can be put on the selected crew if she stands on a given hex: every
 /// enemy her own side has *found* who could bring a gun to bear, with the
-/// resolver's own chance of hitting and what the round is expected to be
-/// worth, and the total she would be standing in for a round.
+/// resolver's own chance of hitting, what one shot is expected to be worth,
+/// how often that gun fires, and the totals she would be standing in for a
+/// round.
+///
+/// Per gun the figures are per *shot* and the cadence is stated beside the
+/// weapon's name; the totals are per round, which is the unit the AI prices
+/// ground in. Two totals, because there are two currencies: what the fire
+/// would take out of her, and what it would do to her crew's nerve whether or
+/// not it gets through.
 ///
 /// This is the player's half of `battle::danger::fire_on`, and it is the
 /// same call the evaluator makes — that identity is the whole point. The
@@ -516,12 +523,19 @@ pub(super) fn format_danger(
         return lines.join("\n");
     }
     let mut total = 0.0;
+    let mut fear = 0.0;
     for bearing in &bearings {
-        total += bearing.expected;
+        total += bearing.damage_per_round();
+        fear += bearing.pressure_per_round();
         // Two lines per gun rather than one: the panel is 300 px wide and a
         // line that wraps to three is a line nobody reads. The name and the
         // arithmetic are what a player scans down, so they lead, and the
         // gun that will do it is the detail underneath.
+        //
+        // The cadence rides on the gun's own line, where it explains that
+        // gun's contribution to the total below: a machine gun at six shots
+        // a round and an 88 at three are not the same threat, and until the
+        // currency learned to say so this panel could not either.
         lines.push(format!(
             "  {}  {}% for {:.1}",
             unit_name(state, bearing.enemy),
@@ -529,10 +543,16 @@ pub(super) fn format_danger(
             bearing.expected
         ));
         if let Some(gun) = weapon_name(registry, state, bearing) {
-            lines.push(format!("    {gun}"));
+            lines.push(format!("    {gun}, {} a round", shots(bearing.shots)));
         }
     }
-    lines.push(format!("  {total:.1} expected, one shot each"));
+    lines.push(format!("  {total:.1} expected this round"));
+    // ...and what she would be under whether or not it gets through. Printed
+    // only when there is some, because a line reading "0.0 pressure" on every
+    // hex of a mod that declares no suppression is furniture.
+    if fear > 0.0 {
+        lines.push(format!("  {fear:.1} pressure, hit or bounce"));
+    }
     // ...and what that is worth against her, which is the number that
     // actually decides anything. Two points is a scratch to a heavy tank and
     // the end of a scout car, and a bare figure cannot say which.
@@ -543,6 +563,19 @@ pub(super) fn format_danger(
         ((total / left as f32) * 100.0).round() as i32
     ));
     lines.join("\n")
+}
+
+/// A gun's cadence as a person would say it: whole shots when it fires whole
+/// shots, and a fraction when a piece takes longer than a round to load.
+///
+/// "0.5 a round" for a howitzer is the honest reading and "1 a round" would
+/// be a lie in the direction that gets a tank killed.
+fn shots(per_round: f32) -> String {
+    if (per_round - per_round.round()).abs() < 0.05 {
+        format!("{} shot(s)", per_round.round() as i32)
+    } else {
+        format!("{per_round:.1} shots")
+    }
 }
 
 /// The gun behind a bearing, by name. `Bearing::weapon` is an index into the
@@ -869,11 +902,22 @@ mod tests {
                 )),
                 "{who}'s shot is not priced the way the resolver prices it:\n{here}"
             );
-            total += bearing.expected;
+            // The line is per shot and the total is per round, so the cadence
+            // has to be in the panel for the arithmetic to close. A gun named
+            // without its rate of fire leaves the reader unable to get from
+            // the lines to the total, which is the same silence as not
+            // printing the gun.
+            assert!(
+                here.contains("a round") && bearing.shots > 0.0,
+                "{who}'s cadence is missing, so the total cannot be checked \
+                 against the lines:\n{here}"
+            );
+            total += bearing.damage_per_round();
         }
         assert!(
-            here.contains(&format!("{total:.1} expected, one shot each")),
-            "the total should be the sum of the guns above it ({total:.1}):\n{here}"
+            here.contains(&format!("{total:.1} expected this round")),
+            "the total should be a round of fire from the guns above it \
+             ({total:.1}):\n{here}"
         );
 
         // Ground nothing on the field can reach says so, and names itself,

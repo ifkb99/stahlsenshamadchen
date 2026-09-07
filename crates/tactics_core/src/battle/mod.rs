@@ -25,15 +25,16 @@ mod movement;
 mod orders;
 
 pub use combat::{
-    AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, ShellInFlight,
-    best_weapon_from, blast_overmatches, expected_damage, flight_ticks, hit_breakdown, hit_chance,
-    penetration_chance, penetration_share, preview_attack, struck_facing, weapon_ready,
+    AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, ShellInFlight, ShotValue,
+    best_weapon_from, blast_overmatches, expected_damage, expected_pressure, expected_shot,
+    flight_ticks, hit_breakdown, hit_chance, penetration_chance, penetration_share, preview_attack,
+    round_worth, struck_facing, weapon_ready,
 };
 pub use command::{
     CommandState, Contact, CutOff, Formation, FormationId, Goal, Latitude, Mission, MissionChange,
     WaitingOrders, nearest_exit,
 };
-pub use danger::{Bearing, fire_on, incoming};
+pub use danger::{Bearing, Incoming, fire_on, incoming};
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
     MoveGrid, Roads, along_the_bearing, destination_blocked, edge_cost as movement_edge_cost,

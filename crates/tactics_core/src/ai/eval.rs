@@ -48,17 +48,25 @@ impl Evaluator {
         let doctrine = &self.doctrine;
         let enemies = visible_enemies(state, me.side);
 
-        // Offense: the best shot available from this tile. Indirect appetite
-        // scales what artillery is worth, so a doctrine that hoards shells
-        // values a howitzer opportunity less than one that spends them.
+        // Offense: the best round of fire available from this tile. Indirect
+        // appetite scales what artillery is worth, so a doctrine that hoards
+        // shells values a howitzer opportunity less than one that spends them.
+        //
+        // `worth` here is per *round*, not per shot — cadence and pressure
+        // both reach it through `best_weapon_against`. It has to be, because
+        // the threat term below is per round as well and the two are
+        // subtracted from each other; a score that added a round of incoming
+        // to a single outgoing trigger pull would be an argument about
+        // nothing. The kill bonus stays a judgment about one decisive shot,
+        // for the reason written on `best_weapon_against`.
         let mut best_attack: Option<(UnitId, usize, f32)> = None;
         for enemy in &enemies {
-            let Some((weapon, dmg, kill)) =
+            let Some((weapon, worth, kill)) =
                 best_weapon_against(registry, state, unit, tile, enemy, enemy.pos)
             else {
                 continue;
             };
-            let mut value = dmg + if kill { 4.0 } else { 0.0 };
+            let mut value = worth + if kill { 4.0 } else { 0.0 };
             if self.is_indirect(registry, state, unit, weapon) {
                 value *= doctrine.indirect_appetite;
             }
@@ -97,7 +105,17 @@ impl Evaluator {
         // Fog-honest by construction — only enemies this side has found are
         // on the list — so a crew cannot flinch away from a tank nobody has
         // seen and thereby tell the player it is there.
-        let threat = crate::battle::incoming(registry, state, unit, tile);
+        //
+        // Two things joined the sum after Phase 2 and both are read through
+        // `.worth`. **Cadence**: the figure is per *round* now, so a machine
+        // gun firing six times and an 88 firing three no longer read alike —
+        // both sides of this score are in the same unit, since the attack
+        // term above is a round of fire too. **Pressure**: fire that cannot
+        // beat her plate used to expect exactly zero and was invisible here,
+        // which is the designer's `threatened` note in DIRECTION.md; it is
+        // now priced at `morale.point_worth` substance points per point of
+        // fear, and at the neutral zero this term is exactly what it was.
+        let threat = crate::battle::incoming(registry, state, unit, tile).worth;
         // ...and what that costs *her*, which is a different question and was
         // not being asked. The sum above is in substance points, an absolute
         // quantity, so five points of expected damage read exactly the same to
@@ -358,11 +376,27 @@ impl Evaluator {
         // river_crossing, the chance to shoot a spotted scout was worth ~4.6
         // to a withdrawing tank against the ~0.5 per hex its lane could pull,
         // so the "withdrawal" stood on the best firing line instead. A rear
-        // guard still answers what is in front of it (a quarter, not zero),
-        // but it does not *seek* — and the advance-toward-contact term is
-        // actively arguing with the order, so it goes entirely.
+        // guard still answers what is in front of it (a quarter of a shot,
+        // not zero), but it does not *seek* — and the advance-toward-contact
+        // term is actively arguing with the order, so it goes entirely.
+        //
+        // The number is 0.25 divided by four, and the four is cadence. It was
+        // a flat quarter while the attack term was one trigger pull; the term
+        // is a *round* of fire now, and the medium tank the measurement above
+        // was taken on fires four times a round, so a flat quarter would put
+        // the same 4.6 points back in front of a withdrawing crew and
+        // reinstate the exact defect this line exists to remove — which it
+        // did: `an_ordered_withdrawal_needs_no_wounds` caught Anka Weiss
+        // planning *away* from her lane, ten hexes off it to fifteen. What is
+        // preserved is the sentence rather than the digit: a quarter of what
+        // one shot is worth to a crew who was not ordered out. Measured on
+        // that stage, anything at or below 0.15 keeps the withdrawal a
+        // withdrawal and 0.20 does not, so this is not a knife edge either.
+        //
+        // The lane's own pull is `planner.mission_weight`, and re-quoting
+        // *that* in the new currency is a chunk of its own (ARCH-TODO).
         let withdrawing = matches!(standing, Some((crate::battle::Mission::Withdraw { .. }, _)));
-        let attack_scale = if withdrawing { 0.25 } else { 1.0 };
+        let attack_scale = if withdrawing { 0.0625 } else { 1.0 };
 
         // Advance: with something to shoot, close on it. With no contact and
         // no objectives, push toward the middle of the map to find some —

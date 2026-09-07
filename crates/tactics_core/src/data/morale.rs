@@ -134,7 +134,7 @@ fn yes() -> bool {
 
 /// What frightens a crew, how fast they recover, and what it takes to hold on
 /// anyway.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MoraleRules {
     /// The skill that resists deviation. Discipline in the base game: Will to
     /// stand it, Intellect to have understood what was asked.
@@ -210,6 +210,64 @@ pub struct MoraleRules {
     /// honest reading of a game that does not model isolation at all.
     #[serde(default)]
     pub recovery_near_leader: u32,
+    /// How many substance points one point of pressure is worth to anybody
+    /// weighing a shot.
+    ///
+    /// The exchange rate between the two currencies this engine now prices
+    /// ground in. Everything that decides where to stand, which gun to bring
+    /// to bear or which round to chamber spends [`crate::battle::round_worth`],
+    /// and this is the only number that lets the pressure half of it reach
+    /// that decision: `worth = expected damage + expected pressure *
+    /// point_worth`.
+    ///
+    /// **In `morale` and not in `planner`,** by CLAUDE.md's own test for
+    /// which block a number belongs in: it reaches the loader's AP-or-HE
+    /// choice, which is a crew's decision and therefore a human player's
+    /// crew's decision too. A mod that rewrote every `planner` field leaves a
+    /// human-versus-human battle bit-identical; a mod that moves this one
+    /// does not, because the loader in a player's tank reaches for a
+    /// different round.
+    ///
+    /// `#[serde(default)]` to 0.0, which is the game before this existed:
+    /// suppression is still *charged* — the crew still feels it — but it is
+    /// invisible to every chooser, so nobody fires a belt at a glacis for the
+    /// noise it makes. That is the additivity rule applied to an exchange
+    /// rate rather than to a rule.
+    #[serde(default)]
+    pub point_worth: f32,
+}
+
+/// What a shot that arrived did to the plate, as the pressure ladder prices
+/// it.
+///
+/// Two cases and not three: whether the crew were *rattled* by a bounce is a
+/// property of the round rather than of the outcome, and it travels in
+/// [`RoundPressure`] beside the suppression the round carries. Keeping it out
+/// of here is what stops the price list growing a case every time a round
+/// gains a property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShotFelt {
+    /// The round came through.
+    Penetrated,
+    /// The round struck and the armour held.
+    Bounced,
+}
+
+/// The two things about a round that the pressure ladder charges for.
+///
+/// A tiny struct rather than two arguments because it travels together
+/// everywhere: from the racks to the resolver, from the resolver to the event
+/// stream, and from the event stream back to [`MoraleRules::pressure_for`].
+/// It lives in `data` rather than beside `battle::combat::Round` because
+/// `data` may not depend on `battle`, and because this is the shape of the
+/// question the ladder asks rather than the shape of a round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RoundPressure {
+    /// Bullets rather than shells. The morale block's `bounced` price is
+    /// deliberately not charged for these.
+    pub small_arms: bool,
+    /// [`crate::data::AmmoDef::suppression`] for the round that arrived.
+    pub suppression: u32,
 }
 
 impl Default for MoraleRules {
@@ -256,6 +314,10 @@ impl Default for MoraleRules {
             recovery: 2,
             recovery_per_skill: 4,
             recovery_near_leader: 0,
+            // A mod that declares no morale block at all gets a game in which
+            // fear is felt and never weighed, which is what every planner in
+            // this engine did before suppression joined the currency.
+            point_worth: 0.0,
         }
     }
 }
@@ -283,6 +345,37 @@ impl MoraleRules {
                     accuracy: 0,
                 })
             })
+    }
+
+    /// What one shot that arrived costs the crew it arrived at, in pressure.
+    ///
+    /// **The one price list.** Two things ask it and they must not drift:
+    /// [`crate::battle::BattleState`] charging a tick's events after the
+    /// shooting (`apply_pressure`), and
+    /// [`crate::battle::expected_pressure`] telling a planner what a shot is
+    /// expected to be worth before it is fired. Two copies of these three
+    /// lines would be a gunner aiming at a number no resolver honours, which
+    /// is the exact defect `round_worth` was written to remove on the damage
+    /// side.
+    ///
+    /// The shape: an outcome price from the ladder, plus whatever the round
+    /// itself brings. A penetration costs [`Self::hit`] *and*
+    /// [`Self::penetrated`], because the shell that came through is both a
+    /// hit and the news that the armour did not hold. A bounce costs
+    /// [`Self::bounced`] only when the round was heavy enough to ring the
+    /// hull. Suppression is charged on top in every case, which is what makes
+    /// a belt of machine-gun fire against a glacis worth firing.
+    pub fn pressure_for(&self, outcome: ShotFelt, round: RoundPressure) -> u32 {
+        let outcome_price = match outcome {
+            ShotFelt::Penetrated => self.hit + self.penetrated,
+            // Bullets pattering on plate frighten nobody buttoned up behind
+            // it — through *this* price. A belt that declares suppression
+            // frightens them through that one, which is the designer saying
+            // so per round rather than the engine deciding it per class.
+            ShotFelt::Bounced if round.small_arms => 0,
+            ShotFelt::Bounced => self.bounced,
+        };
+        outcome_price + round.suppression
     }
 
     /// Pressure shed at the end of a round by a crew with this much of the

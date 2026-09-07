@@ -24,7 +24,9 @@ pub use cores::{
 pub use defs::*;
 pub use manifest::ModManifest;
 pub use modules::{ModuleDef, ModuleEffect, STANDARD_MODULES};
-pub use morale::{DefianceDef, DefianceResponse, MoraleRules, MoraleRung, holds_together};
+pub use morale::{
+    DefianceDef, DefianceResponse, MoraleRules, MoraleRung, RoundPressure, ShotFelt, holds_together,
+};
 pub use planner::PlannerRules;
 pub use registry::{DataError, DataRegistry, ValidationReport, parse_color};
 pub use scale::Scale;

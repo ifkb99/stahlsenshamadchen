@@ -357,6 +357,14 @@ pub struct Round<'r> {
     pub damage: i32,
     /// Bullets bouncing off plate frighten nobody buttoned up behind it.
     pub small_arms: bool,
+    /// What arriving costs the crew's nerve whether or not it gets through:
+    /// [`AmmoDef::suppression`], and zero on the legacy path.
+    ///
+    /// Zero there for the same reason `legacy_pen` exists at all — a mod
+    /// written before ammunition was content has no rounds to declare it on,
+    /// and the guarantee that keeps such a mod fighting its own game is that
+    /// every field added since reads as the absence of the rule.
+    pub suppression: u32,
 }
 
 impl<'r> Round<'r> {
@@ -372,6 +380,18 @@ impl<'r> Round<'r> {
             legacy_pen: 0.0,
             damage: (weapon.damage as f32 * ammo.post_pen).round().max(0.0) as i32,
             small_arms: matches!(ammo.class, AmmoClass::SmallArms),
+            suppression: ammo.suppression,
+        }
+    }
+
+    /// The two facts the pressure ladder charges for, in the shape it asks
+    /// them in. One accessor rather than two field reads at every call site,
+    /// so the resolver and the pricing cannot disagree about what a round
+    /// does to a crew's nerve.
+    pub fn pressure(&self) -> crate::data::RoundPressure {
+        crate::data::RoundPressure {
+            small_arms: self.small_arms,
+            suppression: self.suppression,
         }
     }
 
@@ -427,6 +447,7 @@ pub fn chambered<'r>(
                 legacy_pen,
                 damage: weapon.damage,
                 small_arms: matches!(weapon.damage_type, DamageType::SmallArms),
+                suppression: 0,
             },
         ));
     }
@@ -445,6 +466,14 @@ pub fn chambered<'r>(
 /// remnant with the cadets alone left rounds down to nearly nothing, which
 /// is what makes her want the exit rather than the fight. A unit with no
 /// troops modules (every tank there is) passes through untouched.
+///
+/// **Suppression is scaled by the same fraction, and for the same reason.**
+/// What frightens a crew is volume of fire, and a section that has lost half
+/// its riflemen puts out half of it; leaving it unscaled would give a remnant
+/// with two cadets left the same power to pin a tank as a full platoon, which
+/// is `a_remnant_platoon_is_a_story_not_a_gun`'s whole complaint restated in
+/// the other currency. The troops module already means three things at once
+/// (interior weight, firepower, effectiveness) and this is firepower.
 fn mustered<'r>(
     registry: &DataRegistry,
     state: &BattleState,
@@ -455,16 +484,58 @@ fn mustered<'r>(
         && let Some((have, total)) = u.troops(registry)
     {
         round.damage = (round.damage as u32 * have / total.max(1)) as i32;
+        round.suppression = round.suppression * have / total.max(1);
     }
     round
 }
 
-/// What one round is expected to accomplish against one profile: the
-/// penetration chain's value plus what the burst does from outside if the
-/// plate holds.
+/// What one round that arrives is expected to be worth against one profile,
+/// in the currency everything that weighs a shot spends.
+///
 /// The one value function behind both the loader's choice and the AI's shot
 /// pricing — if they read different formulas, the crew would load a round
 /// the planner did not price, and every number upstream would quietly lie.
+///
+/// It is deliberately **not** multiplied by the hit chance and deliberately
+/// not multiplied by cadence: this is what one round that arrives is worth,
+/// and the two ends that scale it — the odds of arriving and how often the
+/// gun gets to try — belong to the callers that know which question they are
+/// asking.
+///
+/// Since suppression joined the currency this is the sum of two halves in
+/// two units: [`round_damage`] in substance points and [`round_pressure`] in
+/// pressure, converted at [`crate::data::MoraleRules::point_worth`]. At the
+/// shipped default of zero that second term vanishes and this is exactly the
+/// number it always was.
+pub fn round_worth(
+    registry: &DataRegistry,
+    state: &BattleState,
+    target: UnitId,
+    profile: &ShotProfile,
+    round: &Round<'_>,
+) -> f32 {
+    worth_of(
+        registry,
+        round_damage(registry, state, target, profile, round.ammo),
+        round_pressure(registry, profile, round),
+    )
+}
+
+/// The two currencies added up at the rate the mod declares.
+///
+/// One line, and it is a function because it is the *only* place the exchange
+/// rate is applied: [`round_worth`] prices a round that arrives and
+/// [`expected_shot`] prices a shot that might, and if each did its own
+/// multiplication a mod could move `point_worth` and have the loader and the
+/// planner disagree about what it bought. Same argument as `blast_worth`
+/// sharing its cases with `overpressure`.
+fn worth_of(registry: &DataRegistry, damage: f32, pressure: f32) -> f32 {
+    damage + pressure * registry.morale.point_worth
+}
+
+/// The damage half of [`round_worth`], in substance points — what a round
+/// that arrives is expected to take out of the target: the penetration
+/// chain's value plus what the burst does from outside if the plate holds.
 ///
 /// The blast half used to be a flat `0.3 * blast`, and being flat is exactly
 /// what was wrong with it: [`overpressure`] reads the plate the burst
@@ -476,7 +547,7 @@ fn mustered<'r>(
 /// could reach out there were already broken, because the number said 1.8
 /// every time. It now asks [`blast_worth`], which walks the same three
 /// cases `overpressure` walks.
-fn round_worth(
+fn round_damage(
     registry: &DataRegistry,
     state: &BattleState,
     target: UnitId,
@@ -491,6 +562,29 @@ fn round_worth(
     // trade a certainty for a technicality.
     profile.pen_chance * profile.pen_share * profile.damage as f32
         + (1.0 - profile.pen_chance) * blast_worth(registry, state, target, profile.plate, blast)
+}
+
+/// The pressure half of [`round_worth`], in ladder points — what a round that
+/// arrives is expected to do to the target crew's nerve.
+///
+/// The analytic twin of what `BattleState::apply_pressure` charges after the
+/// fact, and it is a twin rather than a second model because both spend
+/// [`crate::data::MoraleRules::pressure_for`]: this weighs the two outcomes
+/// by the same `pen_chance` [`round_damage`] weighs them by, which is
+/// [`penetration_chance`] and therefore the dice themselves. A shot that
+/// cannot possibly get through is priced entirely on the bounce, which is the
+/// whole point — a burst against a glacis is a certainty, not a gamble, and
+/// the arithmetic should say so.
+///
+/// There is no `pen_share` here, deliberately. How much of its budget a
+/// penetration spends inside is a question about the ledger; the crew heard
+/// the same thing either way.
+fn round_pressure(registry: &DataRegistry, profile: &ShotProfile, round: &Round<'_>) -> f32 {
+    let rules = &registry.morale;
+    let felt = round.pressure();
+    profile.pen_chance * rules.pressure_for(crate::data::ShotFelt::Penetrated, felt) as f32
+        + (1.0 - profile.pen_chance)
+            * rules.pressure_for(crate::data::ShotFelt::Bounced, felt) as f32
 }
 
 /// What a burst of `blast` against `plate` is expected to be worth, in the
@@ -642,7 +736,15 @@ pub fn best_round_against<'r>(
         else {
             continue;
         };
-        let worth = round_worth(registry, state, target, &profile, Some(ammo));
+        // The loader's price, and it is the *worth* rather than the damage
+        // for a reason the designer asked for by name: a belt she cannot get
+        // through is still worth chambering if the noise it makes is worth
+        // something, and at `point_worth: 0` this is bit-for-bit the choice
+        // she made before. Cadence is deliberately absent — every round on
+        // this list goes through the same gun at the same rate, so it would
+        // cancel, and she is choosing what to load for the next shot rather
+        // than pricing a round of fire.
+        let worth = round_worth(registry, state, target, &profile, &round);
         if best.as_ref().is_none_or(|(w, _)| worth > *w) {
             best = Some((worth, round));
         }
@@ -1173,12 +1275,50 @@ pub fn shot_profile(
     })
 }
 
+/// What one gun expects to do to one crew, in every currency at once.
+///
+/// Three numbers rather than one because they answer three different
+/// questions and folding them loses all three. `expected` is what the ledger
+/// loses, `pressure` is what the crew's nerve loses, and `worth` is the two
+/// added up at the exchange rate the mod declares
+/// ([`crate::data::MoraleRules::point_worth`]) — the number anything
+/// *choosing* should read. The player is owed the split, because "that
+/// machine gun cannot hurt you and will still ruin your afternoon" is a
+/// sentence a single figure cannot say.
+///
+/// [`Self::shots`] is cadence and is kept beside the per-shot figures rather
+/// than multiplied into them, so a caller pricing *one shot now* and a caller
+/// pricing *ground for a round* read the same struct and each takes what it
+/// meant.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ShotValue {
+    /// Expected damage from one shot, in substance points.
+    pub expected: f32,
+    /// Expected pressure from one shot, in ladder points.
+    pub pressure: f32,
+    /// `expected + pressure * point_worth`, per shot. The currency.
+    pub worth: f32,
+    /// How many times this gun fires in a round
+    /// ([`WeaponDef::shots_per_round`]).
+    pub shots: f32,
+}
+
+impl ShotValue {
+    /// The worth of a round of fire from this gun rather than of one shot —
+    /// what ground is priced in now that cadence is in the currency.
+    pub fn worth_per_round(&self) -> f32 {
+        self.worth * self.shots
+    }
+}
+
 /// Expected outcome of a shot — hit chance times what the loader's best
 /// round is worth against that plate ([`round_worth`]: the penetration
-/// chain plus a modest price on blast) — the currency of AI scoring. Zero
-/// for a dry gun. A gun whose best round can neither penetrate nor blast
-/// expects nothing and holds its fire; one that can only rattle tracks
-/// with high explosive expects a little, and harasses.
+/// chain, a price on blast, and what arriving does to the crew's nerve).
+/// Zero throughout for a dry gun. A gun whose best round can neither
+/// penetrate, blast nor frighten expects nothing and holds its fire; one
+/// that can only rattle tracks with high explosive expects a little, and
+/// harasses.
+///
 /// `from` is where the attacker would fire from and `at` is where the
 /// target would be standing; either may be hypothetical, and every caller
 /// that is asking about the world as it stands passes the two real hexes.
@@ -1192,6 +1332,49 @@ pub fn shot_profile(
 // Eight, for the reason given on [`hit_chance`]: two ends, each a crew and
 // a hex.
 #[allow(clippy::too_many_arguments)]
+pub fn expected_shot(
+    registry: &DataRegistry,
+    state: &BattleState,
+    attacker: UnitId,
+    from: Hex,
+    weapon: &WeaponDef,
+    target: UnitId,
+    at: Hex,
+    blind: bool,
+) -> ShotValue {
+    let shots = weapon.shots_per_round(&registry.scale);
+    let nothing = ShotValue {
+        shots,
+        ..ShotValue::default()
+    };
+    if state.unit(target).is_none() {
+        return nothing;
+    }
+    let Some(round) = best_round_against(registry, state, attacker, weapon, target) else {
+        return nothing;
+    };
+    let Some(profile) = shot_profile(registry, state, weapon, &round, from, target, at) else {
+        return nothing;
+    };
+    // One hit chance and one profile behind all three figures, which is what
+    // makes the pressure half free rather than a second walk of the same
+    // arithmetic.
+    let p = hit_chance(registry, state, attacker, from, weapon, target, at, blind) as f32 / 100.0;
+    let expected = p * round_damage(registry, state, target, &profile, round.ammo);
+    let pressure = p * round_pressure(registry, &profile, &round);
+    ShotValue {
+        expected,
+        pressure,
+        worth: worth_of(registry, expected, pressure),
+        shots,
+    }
+}
+
+/// The damage half of [`expected_shot`], for callers that mean damage and
+/// only damage — the campaign's reporting, the balance instrument's tables,
+/// and the tests that pin what a shell does to a hull.
+// Eight, for the reason given on [`expected_shot`].
+#[allow(clippy::too_many_arguments)]
 pub fn expected_damage(
     registry: &DataRegistry,
     state: &BattleState,
@@ -1202,17 +1385,30 @@ pub fn expected_damage(
     at: Hex,
     blind: bool,
 ) -> f32 {
-    if state.unit(target).is_none() {
-        return 0.0;
-    }
-    let Some(round) = best_round_against(registry, state, attacker, weapon, target) else {
-        return 0.0;
-    };
-    let Some(profile) = shot_profile(registry, state, weapon, &round, from, target, at) else {
-        return 0.0;
-    };
-    let p = hit_chance(registry, state, attacker, from, weapon, target, at, blind) as f32 / 100.0;
-    p * round_worth(registry, state, target, &profile, round.ammo)
+    expected_shot(registry, state, attacker, from, weapon, target, at, blind).expected
+}
+
+/// The pressure half of [`expected_shot`], in ladder points: what one shot is
+/// expected to do to the target crew's nerve, penetration or not.
+///
+/// The twin of [`expected_damage`], and the reason suppression is a thing a
+/// planner can want. A machine gun looking at a heavy tank's glacis expects
+/// exactly zero damage and a real amount of this, which is the sentence the
+/// designer's note in DIRECTION.md asked for: *even if your IFV is immune to
+/// 50 cal from the front, getting hit by it is not a fun time.*
+// Eight, for the reason given on [`expected_shot`].
+#[allow(clippy::too_many_arguments)]
+pub fn expected_pressure(
+    registry: &DataRegistry,
+    state: &BattleState,
+    attacker: UnitId,
+    from: Hex,
+    weapon: &WeaponDef,
+    target: UnitId,
+    at: Hex,
+    blind: bool,
+) -> f32 {
+    expected_shot(registry, state, attacker, from, weapon, target, at, blind).pressure
 }
 
 /// The best gun `attacker` standing at `from` could bring to bear on
@@ -1220,11 +1416,21 @@ pub fn expected_damage(
 /// of every "could she hurt her from there" question in the game.
 ///
 /// Three gates, and they are the ones a shot really has to pass: the range
-/// band, line of sight unless the piece shoots indirect, and an expectation
-/// above zero. That last one is the line that keeps the danger arithmetic
-/// honest now the damage floor is gone — a machine gun looking at a heavy
-/// tank's glacis expects nothing, so it is not a weapon against her at all,
-/// and nobody should break cover for it.
+/// band, line of sight unless the piece shoots indirect, and a **worth**
+/// above zero. That last one used to read expected damage, and reading worth
+/// instead is what puts the machine gun on every tank back in the game: a
+/// burst against a heavy tank's glacis expects no damage at all and a real
+/// amount of pressure, so it is a weapon against her once fear is worth
+/// something and is not one when it is not. At `point_worth: 0` the gate is
+/// exactly the gate it was.
+///
+/// **Ranked by worth per round, not per shot.** Every caller of this is
+/// asking about ground rather than about a trigger pull — where to drive,
+/// what the enemy could put on that hex, whether anybody is shooting at her
+/// — and over a round a gun that fires six times is six times the answer. A
+/// caller pricing one shot now reads [`ShotValue::worth`] off the result and
+/// ignores [`ShotValue::shots`]; the one that exists ([`best_opportunity_shot`])
+/// walks its own loop for reasons of its own.
 ///
 /// It exists as one function because it is asked from three directions that
 /// must not drift: what a crew can do from a tile she is thinking about
@@ -1239,11 +1445,11 @@ pub fn best_weapon_from(
     from: Hex,
     target: UnitId,
     at: Hex,
-) -> Option<(usize, f32)> {
+) -> Option<(usize, ShotValue)> {
     let u = state.unit(attacker)?;
     let vehicle = registry.vehicle(&u.vehicle)?;
     let dist = from.distance_to(at);
-    let mut best: Option<(usize, f32)> = None;
+    let mut best: Option<(usize, ShotValue)> = None;
     for (i, weapon_id) in vehicle.weapons.iter().enumerate() {
         let Some(weapon) = registry.weapon(weapon_id) else {
             continue;
@@ -1254,12 +1460,12 @@ pub fn best_weapon_from(
         if !weapon.indirect && !state.sight.clear(from, at) {
             continue;
         }
-        let dmg = expected_damage(registry, state, attacker, from, weapon, target, at, false);
-        if dmg <= 0.0 {
+        let value = expected_shot(registry, state, attacker, from, weapon, target, at, false);
+        if value.worth <= 0.0 {
             continue;
         }
-        if best.is_none_or(|(_, d)| dmg > d) {
-            best = Some((i, dmg));
+        if best.is_none_or(|(_, b)| value.worth_per_round() > b.worth_per_round()) {
+            best = Some((i, value));
         }
     }
     best
@@ -1661,6 +1867,7 @@ fn resolve_impact(
             target,
             facing: profile.facing,
             rattled: !round.small_arms,
+            ammo: round.ammo.map(|a| a.id.clone()),
         });
         // The designer's overpressure ruling: a bursting charge that fails
         // the gate still delivers its blast to what lives OUTSIDE the
@@ -1691,6 +1898,7 @@ fn resolve_impact(
         target,
         damage: spent,
         facing: profile.facing,
+        ammo: round.ammo.map(|a| a.id.clone()),
     });
     behind_armor_effects(registry, state, round, spent, target, events);
 }
@@ -2473,9 +2681,23 @@ pub fn best_opportunity_shot(
             // gun whose round cannot beat the plate — or whose racks are
             // empty — expects zero, and a crew that used to plink now
             // holds fire and keeps her position quiet instead.
-            let value = expected_damage(
+            //
+            // *Worth* and not damage, and this is the trigger the designer's
+            // suppression note was actually about: a burst that cannot get
+            // through is still worth firing for what it does to the crew
+            // behind the plate, once the mod says fear is worth something.
+            // At `point_worth: 0` this is bit-for-bit the old discipline.
+            //
+            // Per shot rather than per round, deliberately. This is one
+            // trigger pull in one tick — the gun's rate of fire is already
+            // modelled by how often `weapon_ready` lets her back here, so
+            // multiplying by cadence would charge the same fact twice and
+            // would make a machine gun outbid an 88 for a shot that is only
+            // ever taken once.
+            let value = expected_shot(
                 registry, state, unit, att.pos, weapon, enemy.id, enemy.pos, false,
-            );
+            )
+            .worth;
             if value <= 0.0 {
                 continue;
             }

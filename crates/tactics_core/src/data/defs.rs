@@ -372,6 +372,28 @@ impl WeaponDef {
     pub fn reload(&self, scale: &Scale) -> u32 {
         self.reload_ticks.unwrap_or(scale.ticks_per_round).max(1)
     }
+
+    /// How many times this weapon fires while a round plays out.
+    ///
+    /// Cadence, and the reason it is a number rather than a comparison: every
+    /// price in this engine used to be per *shot*, so a machine gun at a shot
+    /// every 10 s and an 88 at one every 20 s read identically to a crew
+    /// deciding where to stand. They are not identical — the machine gun
+    /// fires six times a round and the 88 three — and anything pricing
+    /// *ground for a round* has to multiply by this or it is pricing a
+    /// different question than it thinks it is.
+    ///
+    /// Fractional on purpose: a piece that takes longer than a round to load
+    /// gets less than one shot, which is the honest reading of a howitzer
+    /// firing every 30 s on a 60 s round, and rounding it to zero would make
+    /// heavy artillery free to stand in front of.
+    ///
+    /// Reads [`Self::reload`] rather than the `reload_ticks` field, for the
+    /// reason the accessor exists: "a full round" is a fact about the scale
+    /// in force and serde's default cannot see the mod being loaded.
+    pub fn shots_per_round(&self, scale: &Scale) -> f32 {
+        scale.ticks_per_round as f32 / self.reload(scale) as f32
+    }
 }
 
 /// A radio set: the hardware a vehicle carries onto the net.

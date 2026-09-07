@@ -268,9 +268,9 @@ pub(crate) fn threats(registry: &DataRegistry, state: &BattleState, unit: UnitId
         .collect()
 }
 
-/// The best (weapon index, expected damage, would-kill) attack `unit` could
-/// make against `target` if `unit` were standing at `from` and `target` at
-/// `at`.
+/// The best (weapon index, worth of a round of fire, would-kill) attack
+/// `unit` could make against `target` if `unit` were standing at `from` and
+/// `target` at `at`.
 ///
 /// Both ends are hypothetical, because both ends of a shot are ground: the
 /// evaluator varies `from` when it is deciding where a crew should drive,
@@ -281,6 +281,13 @@ pub(crate) fn threats(registry: &DataRegistry, state: &BattleState, unit: UnitId
 /// what this adds is the *judgment* on top — whether the shot would
 /// plausibly finish her, which is a comparison against what is left aboard
 /// and therefore an AI question rather than a rule of the battlefield.
+///
+/// The number is [`crate::battle::ShotValue::worth_per_round`]: what a round
+/// of fire from that gun is worth, damage and pressure together. Every caller
+/// of this is scoring *ground* — where to drive, what she could do from there
+/// — and ground is held for rounds, so a gun's rate of fire belongs in the
+/// figure. The one place that prices a single trigger pull is
+/// `combat::best_opportunity_shot`, which does not come through here.
 pub fn best_weapon_against(
     registry: &DataRegistry,
     state: &BattleState,
@@ -289,11 +296,20 @@ pub fn best_weapon_against(
     target: &Unit,
     at: hexx::Hex,
 ) -> Option<(usize, f32, bool)> {
-    let (weapon, dmg) =
+    let (weapon, value) =
         crate::battle::best_weapon_from(registry, state, unit, from, target.id, at)?;
     // "Could this plausibly finish her": the expected outcome against
     // what is actually left aboard. Same shape as the old hit-point
     // comparison, with substance as the pool.
-    let kill = dmg >= state.substance(registry, target).0 as f32 * 0.9;
-    Some((weapon, dmg, kill))
+    //
+    // **Per shot, and pure damage**, while the value beside it is worth over
+    // a whole round. That asymmetry is deliberate and is the conservative
+    // reading of both halves. The +4 bonus the evaluator pays on this flag
+    // is for a *decisive* shot — the one that ends her — and multiplying it
+    // by cadence would have an autocannon at twelve shots a round believe it
+    // finishes everything it can see, which is the machine-gun-grinds-a-tank
+    // defect wearing a new hat. Pressure is excluded for the same reason:
+    // frightening a crew is not killing her, however much of it you do.
+    let kill = value.expected >= state.substance(registry, target).0 as f32 * 0.9;
+    Some((weapon, value.worth_per_round(), kill))
 }

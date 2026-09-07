@@ -46,6 +46,7 @@
 //! - what an order promises
 //! - wounds with teeth
 //! - what the ground can put on her
+//! - suppression and cadence join the currency
 //!
 //! Shared setup — `registry()`, `registry_wireless()`, `seen()` — lives in
 //! `tests/common/mod.rs`, because two of those are mandatory for any staged
@@ -58,7 +59,7 @@ use tactics_core::battle::{
     BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Latitude, Mission,
     Order, SideState, SightGrid, UnitId, los_clear, reachable,
 };
-use tactics_core::data::{DataRegistry, MovementClass};
+use tactics_core::data::{DataRegistry, MovementClass, RoundPressure, ShotFelt};
 use tactics_core::map::{HexMap, UnitPlacement};
 use tactics_core::overworld::{
     Army, ArmyId, ArmyMission, OverworldError, OverworldEvent, OverworldOrder, OverworldState,
@@ -762,8 +763,18 @@ fn a_road_under_a_gun_is_worth_going_round() {
         &reg,
         &rows,
         serde_json::json!([
-            { "id": "open_road", "name": "Down the Open Road", "at": [[8, 2]], "value": 8 },
-            { "id": "behind_the_wood", "name": "Behind the Wood", "at": [[8, 0]], "value": 8 },
+            // Twenty rather than eight, which is Wave 1's tax on this stage
+            // and not a claim about what ground is worth. Both objectives are
+            // worth the same, so their value cancels between them — what it
+            // has to beat is the *other* candidate on the list, the tile her
+            // own sweep picked, and that tile is priced in a currency that
+            // grew by a round of fire. At eight she took her own firing
+            // position and never chose between the two roads at all, which
+            // would have made this a test about nothing. Measured: eighteen
+            // upwards restores the choice at the shipped `route_caution` of
+            // 1.2, and twenty holds it at every caution from 1.2 to 16.
+            { "id": "open_road", "name": "Down the Open Road", "at": [[8, 2]], "value": 20 },
+            { "id": "behind_the_wood", "name": "Behind the Wood", "at": [[8, 0]], "value": 20 },
         ]),
         vec![
             unit_at([0, 2], 0, "medium_tank", "Chooser"),
@@ -826,17 +837,24 @@ fn ground_the_enemy_reaches_first_is_worth_less_marching_for() {
     // that objective worth *more* to an aggressive doctrine, because there is
     // something to shoot from it, so the contested ground starts ahead.
     //
-    // How far ahead is a Phase 2 number. The threat term used to fall off as
-    // `1/distance` from the enemy, so the hill with a tank a hex away looked
-    // five times as dangerous as ground five hexes off and the head start was
-    // mostly cancelled before `contest_aversion` was consulted at all. The
-    // resolver disagrees: a 75mm loses two points of accuracy a hex, so on
-    // open grass the far objective is barely safer than the near one (3.7
-    // against 5.2 substance points), and the aversion now has the whole head
-    // start to overcome by itself. It flips the choice from 4 upwards where
-    // it used to flip it from 3 — the claim the test makes is the same one,
-    // and what changed is the size of the thing being overcome. Asserted at
-    // 5 rather than 4 so the stage is not sitting on its own threshold.
+    // How far ahead is a number this test has had to restate twice, and the
+    // claim it makes has not changed either time: what moved is the size of
+    // the head start the aversion has to overcome.
+    //
+    // Phase 2: the threat term used to fall off as `1/distance` from the
+    // enemy, so the hill with a tank a hex away looked five times as
+    // dangerous as ground five hexes off and the head start was mostly
+    // cancelled before `contest_aversion` was consulted at all. The resolver
+    // disagrees — a 75mm loses two points of accuracy a hex, so on open grass
+    // the far objective is barely safer than the near one — and the term
+    // began flipping the choice from 4 upwards instead of 3.
+    //
+    // Wave 1: the same head start is a *round* of the medium's fire rather
+    // than one shot, four times the size, so the aversion has four times as
+    // much to overcome. It flips from 12 upwards, and 10 is not enough.
+    // Asserted at 15 rather than 12 so the stage is not sitting on its own
+    // threshold — the same margin Phase 2 left when it asserted 5 against a
+    // threshold of 4.
     let reg = seen(registry_wireless());
     let rows = ["ggggggggg"; 9];
     let state = goal_battle(
@@ -883,7 +901,7 @@ fn ground_the_enemy_reaches_first_is_worth_less_marching_for() {
         "a commander who does not ask marches at the ground with a tank on it"
     );
     assert_eq!(
-        racing(5.0),
+        racing(15.0),
         Some(tactics_core::battle::Goal::Take(open)),
         "one who does takes the ground that will still be empty when she gets there"
     );
@@ -1016,14 +1034,27 @@ fn the_shipped_doctrines_straddle_the_price_of_deviating() {
     // the doctrines that ship rather than sitting outside all of them, which
     // is what `balance.blind_penalty` turned out to be doing.
     //
-    // This test is why `deviation_cost` moved from 2.0 to 3.0 in Phase 2,
-    // and it is the whole argument for having written it: the field is
-    // quoted in the evaluator's currency, and when the threat term stopped
-    // being a six-hex gate and became the resolver's own arithmetic, the
-    // currency got several points larger everywhere a found gun can reach.
-    // At 2.0 all three doctrines deviated, which is a number that no longer
-    // separates anything. Measured on this stage: 2.0 none obey, 3.0 to 6.0
-    // massed armour alone obeys, 8.0 elastic defence obeys too.
+    // This test is why `deviation_cost` has moved twice — 2.0 to 3.0 in
+    // Phase 2, 3.0 to 9.0 in Wave 1 — and it is the whole argument for having
+    // written it: the field is quoted in the evaluator's currency, so it has
+    // to move whenever the currency does, and nothing else in the tree would
+    // have said so out loud.
+    //
+    // Phase 2: the threat term stopped being a six-hex gate and became the
+    // resolver's own arithmetic, several points larger everywhere a found gun
+    // can reach. At 2.0 all three doctrines deviated. Measured then: 2.0 none
+    // obey, 3.0 to 6.0 massed armour alone obeys, 8.0 elastic defence too.
+    //
+    // Wave 1: both the attack and the threat term became a *round* of fire
+    // rather than a single shot, and the guns in the base mod fire two to
+    // twelve times a round, so the fighting half of the score grew by roughly
+    // its cadence and 3.0 stopped separating anything again. Measured on this
+    // stage twice, because the mechanism and the content it enables move the
+    // currency by different amounts: with suppression declared nowhere the
+    // straddle holds from **8.5 to 19**, and with the base mod's shipped
+    // suppression and `point_worth` from **12 to 29**. Shipped at 12.0, the
+    // bottom of the intersection — one value has to serve both, or the field
+    // would mean something different in a mod that declines the new rule.
     let reg = seen(registry_wireless());
     let (state, told) = pressed_stage(&reg, 41);
     let ordered = Some(tactics_core::battle::Goal::Take(told));
@@ -1061,7 +1092,7 @@ fn what_it_costs_a_subordinate_to_have_her_own_idea_is_a_mod_decision() {
     let mut reg = seen(registry_wireless());
     let (state, told) = pressed_stage(&reg, 41);
     let ordered = Some(tactics_core::battle::Goal::Take(told));
-    assert_eq!(reg.planner.deviation_cost, 3.0);
+    assert_eq!(reg.planner.deviation_cost, 12.0);
 
     reg.planner.deviation_cost = 0.0;
     assert_ne!(
@@ -6330,9 +6361,23 @@ fn a_map_with_formations_but_no_missions_fights_exactly_as_the_flat_pool_did() {
     // What it *costs* is `morale.leader_lost`, and at zero, which is what a
     // mod that never mentions the field gets, it costs nothing: the rest of
     // the stream has to match byte for byte.
+    //
+    // `recovery_near_leader` has to be zeroed for exactly the same reason and
+    // was not, which cadence found. It is `leader_lost`'s mirror: a crew who
+    // can see her formation's leader sheds extra pressure, and a *stripped*
+    // battle has no formations for anybody to be near — so the two runs
+    // genuinely differ in what a crew is carrying, whatever the currency
+    // says. It stayed green for as long as nobody's pressure happened to
+    // cross a rung inside the eight-round window, which is the definition of
+    // a knife edge. Found the first time the AI drove anywhere different: at
+    // event 214, unit 0 brews up, everybody who saw it takes `ally_destroyed`,
+    // and unit 2 crosses to Wavering in the flat run and not in the other,
+    // two points of rallying short. Zeroing both fields is what "a mod that
+    // never mentions the chain of command" actually means.
     let reg = {
         let mut reg = registry_wireless();
         reg.morale.leader_lost = 0;
+        reg.morale.recovery_near_leader = 0;
         reg
     };
     let run = |strip: bool| -> Vec<String> {
@@ -9202,13 +9247,29 @@ fn an_idle_crew_out_of_danger_stays_put() {
 fn marching_under_fire(reg: &DataRegistry, latitude: Latitude, seed: u64) -> (BattleState, UnitId) {
     // Woods flank the road as far as x = 12; the gun sits at 13 on bare
     // ground, with nothing better within a bound of it.
+    //
+    // She starts at 4 rather than 5, and the one hex is the whole margin this
+    // stage has. It has to bruise and not kill, and once suppression joined
+    // the currency it killed at 5 — three 88 rounds a round at a crew whose
+    // nerve is now in the ledger beside her plate. Standing further back is
+    // the only lever and it runs out at once: at 2 the tank destroyer cannot
+    // see her at all and the fire order this stage rests on is refused with
+    // `TargetNotSpotted`. The band is {3, 4}, bounded by lethality above and
+    // by sight below.
+    //
+    // 4 rather than 3 because two of the five callers were not going through
+    // `seen(..)`, so the gun's sight of her was a die roll that nearly always
+    // came in at eight hexes and stopped coming in at ten. They do now — the
+    // rule CLAUDE.md already states for any stage that needs two crews in
+    // plain sight — which is what buys the hex. Anybody who needs more should
+    // move the gun back rather than the crew.
     let flank = format!("{}{}", "f".repeat(12), "g".repeat(18));
     let road = "g".repeat(30);
     let mut state = two_side_battle(
         reg,
         &[&flank, &road, &flank],
         vec![
-            unit_at([5, 1], 0, "medium_tank", "Ordered"),
+            unit_at([4, 1], 0, "medium_tank", "Ordered"),
             unit_at([13, 1], 1, "tank_destroyer", "Gun Tank"),
         ],
         seed,
@@ -9374,7 +9435,13 @@ fn a_recall_forgets_that_she_was_pressed_on() {
     // Latitude belongs to an order, not to a crew: take the order back and
     // the insistence goes with it, or the next thing she is told inherits an
     // urgency nobody attached to it.
-    let reg = registry_wireless();
+    // `seen`, because this stage rests on the gun having found her —
+    // `marching_under_fire` gives it a fire order and a fire order at an
+    // unspotted target is refused. It got away without it while the crew
+    // stood eight hexes off and the roll nearly always came in; she stands
+    // further back now, and a test about latitude must not also be a test
+    // of whether anybody happened to find anybody.
+    let reg = seen(registry_wireless());
     let (mut state, crew) = marching_under_fire(&reg, Latitude::Binding, 62);
     state
         .apply(&reg, &Order::ClearIntent { unit: crew })
@@ -9393,7 +9460,13 @@ fn an_order_about_her_gun_says_nothing_about_her_march() {
     // The two halves of a radioed order are independent, and latitude rides
     // with the *route*. Telling a crew who is pressing on what to shoot at
     // must not quietly relax the march she is already under.
-    let reg = registry_wireless();
+    // `seen`, because this stage rests on the gun having found her —
+    // `marching_under_fire` gives it a fire order and a fire order at an
+    // unspotted target is refused. It got away without it while the crew
+    // stood eight hexes off and the roll nearly always came in; she stands
+    // further back now, and a test about latitude must not also be a test
+    // of whether anybody happened to find anybody.
+    let reg = seen(registry_wireless());
     let (mut state, crew) = marching_under_fire(&reg, Latitude::Binding, 63);
     state
         .apply(
@@ -9677,7 +9750,7 @@ fn an_aggressive_doctrine_travels_in_overwatch() {
 fn contact_stage(reg: &DataRegistry, seed: u64) -> (BattleState, FormationId) {
     let open = "g".repeat(40);
     let mut wood: Vec<char> = open.chars().collect();
-    wood[10] = 'f';
+    wood[COVER.0 as usize] = 'f';
     let wood: String = wood.into_iter().collect();
     let mut rows: Vec<String> = std::iter::repeat_n(open, 15).collect();
     rows[7] = wood;
@@ -9699,10 +9772,10 @@ fn contact_stage(reg: &DataRegistry, seed: u64) -> (BattleState, FormationId) {
             ai: None,
         },
     ];
-    let mut scout = unit_at([10, 7], 0, "recon_car", "Scout");
+    let mut scout = unit_at([COVER.0, COVER.1], 0, "recon_car", "Scout");
     scout.formation = Some("section".into());
     scout.leads = true;
-    let placements = vec![scout, unit_at([10, 0], 1, "tank_destroyer", "Gun")];
+    let placements = vec![scout, unit_at([GUN.0, GUN.1], 1, "tank_destroyer", "Gun")];
     let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
     let state = BattleState::from_placements(
         reg,
@@ -9718,25 +9791,41 @@ fn contact_stage(reg: &DataRegistry, seed: u64) -> (BattleState, FormationId) {
     (state, section)
 }
 
-/// Where she stands, where she was told to be, and the ground between: the
-/// two tiles every test below compares. `FORWARD` is ten hexes along the
-/// lane — far enough that the mission has something to say about it, and
-/// still inside the gun's envelope, which is what makes the comparison a
-/// comparison at all.
+/// Where she stands, where she was told to be, where the gun is, and the
+/// ground between: the tiles every test below compares.
 ///
-/// It was seven until Phase 2 taught the threat term to read the candidate
-/// tile. Seven was chosen when the wood and the open ground beyond it priced
-/// identically for danger — the old term was gated at six hexes from the
-/// enemy, so it was *zero* at both of these tiles — and the ground therefore
-/// cost the advance only its cover bonus. Now the wood is genuinely worth
-/// 1.5 substance points of avoided fire, and the mission's slope has to be
-/// long enough to be worth that: at seven hexes the assault no longer
-/// pressed on, at ten it does with room to spare. What must not be done is
-/// to push it past sixteen, where the tank destroyer cannot reach at all and
-/// both orders drive forward for a reason that has nothing to do with either
-/// of them; `the_stage_keeps_the_forward_tile_under_the_gun` pins that.
-const COVER: (i32, i32) = (10, 7);
-const FORWARD: (i32, i32) = (20, 7);
+/// `FORWARD` is twenty-two hexes along the lane — far enough that the mission
+/// has something to say about it, and still inside the gun's envelope, which
+/// is what makes the comparison a comparison at all.
+///
+/// **This stage has been lengthened twice for the same reason, and the reason
+/// is worth stating once.** The two orders differ in exactly one thing, the
+/// contact damping, so the test asks whether the mission's slope from `COVER`
+/// to `FORWARD` is worth more than the wood at `COVER` is. Every time the
+/// threat term grows, the wood grows with it and the march has to get longer
+/// to keep up.
+///
+/// It was seven hexes until Phase 2 taught the threat term to read the
+/// candidate tile — seven was chosen when the old six-hex gate made danger
+/// *zero* at both tiles, so the wood cost the advance only its cover bonus —
+/// and ten afterwards, when the wood became worth about 1.5 substance points.
+/// Cadence made a round of the tank destroyer's fire three shots instead of
+/// one, so the wood is now worth about 3.4 points of avoided fire a round and
+/// ten hexes of slope no longer pays for it: the assault fell 0.54 short.
+///
+/// Twenty-two hexes is the repair, and it needed the gun moved as well as the
+/// tile. From the old firing position at (10, 0) the envelope along this lane
+/// ran out at x = 22, so the only forward tiles long enough sat exactly at
+/// the 88's maximum range — a stage balanced on a cliff, since one hex
+/// further is *no fire at all* and both orders press on for a reason that has
+/// nothing to do with either of them. Moved to (10, 6) the gun covers the
+/// whole march with a hex to spare: `COVER` is 8 hexes from it and `FORWARD`
+/// 15, against a reach of 16. Margins on this stage: the advance halts by
+/// 2.97 and the assault presses on by 1.98, against 3.24 and −0.54 before.
+/// `the_stage_keeps_the_forward_tile_under_the_gun` pins the envelope.
+const COVER: (i32, i32) = (2, 7);
+const FORWARD: (i32, i32) = (24, 7);
+const GUN: (i32, i32) = (10, 6);
 
 /// Score both tiles for a scout under `mission`, in the order (cover,
 /// forward). The balanced doctrine on purpose: it is what the player's own
@@ -9939,6 +10028,57 @@ fn a_movement_to_contact_pauses_under_fire_and_resumes_after() {
         forward > cover,
         "and with nothing shooting at her the march resumes on its own: \
          cover {cover} vs forward {forward}"
+    );
+}
+
+/// The forward tile is under the gun, and so is the wood she is sitting in.
+///
+/// The guard Phase 2's own comment promised and nobody wrote, which is why
+/// this stage could drift onto the edge of the 88's envelope unnoticed. Every
+/// test on this stage compares two tiles *under fire*; push `FORWARD` one hex
+/// past the gun's reach and the comparison silently becomes "fire against no
+/// fire", both orders drive forward, and the assault test passes for a reason
+/// that has nothing to do with assaults.
+///
+/// Asserted through the danger arithmetic rather than through a distance, so
+/// it stays true if sight, cover or range ever stop agreeing with the tape
+/// measure.
+#[test]
+fn the_stage_keeps_the_forward_tile_under_the_gun() {
+    let reg = registry_wireless();
+    let (state, _) = contact_stage(&reg, 71);
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "she has to have found the gun, or nothing is priced at all"
+    );
+    for (name, at) in [("the wood", COVER), ("the forward tile", FORWARD)] {
+        let here = tactics_core::offset_to_hex(at.0, at.1);
+        let under = tactics_core::battle::incoming(&reg, &state, UnitId(0), here);
+        assert!(
+            under.worth > 0.0,
+            "{name} at {at:?} has to be inside the gun's envelope, or the two \
+             tiles are not comparable: {under:?}"
+        );
+    }
+    // ...and the wood is the safer of the two, which is what gives the
+    // advance something to halt for.
+    let safer = tactics_core::battle::incoming(
+        &reg,
+        &state,
+        UnitId(0),
+        tactics_core::offset_to_hex(COVER.0, COVER.1),
+    );
+    let exposed = tactics_core::battle::incoming(
+        &reg,
+        &state,
+        UnitId(0),
+        tactics_core::offset_to_hex(FORWARD.0, FORWARD.1),
+    );
+    assert!(
+        safer.worth < exposed.worth,
+        "the wood must be worth sitting in: {} against {}",
+        safer.worth,
+        exposed.worth
     );
 }
 
@@ -10999,11 +11139,32 @@ fn plink_stage(reg: &DataRegistry, seed: u64) -> BattleState {
 fn an_ordered_shot_that_cannot_penetrate_bounces_and_does_nothing() {
     // The floor is dead. A machine gun ORDERED onto a heavy tank still
     // obeys — the rounds go downrange — but what comes of them is a bounce
-    // event and nothing else: no chip, no hit points, and no pressure,
-    // because bullets pattering on plate frighten nobody buttoned up
-    // behind it. Grinding a heavy tank down with an MG was the balance
-    // instrument's oldest "worth a look" line, and this is its tombstone.
-    let reg = registry_wireless();
+    // event and nothing else: no chip and no hit points. Grinding a heavy
+    // tank down with an MG was the balance instrument's oldest "worth a
+    // look" line, and this is its tombstone.
+    //
+    // **What it no longer says is that nothing at all happens.** Wave 1 put
+    // the crew's nerve in the ledger, so a belt that declares `suppression`
+    // takes nothing off her plate and does rattle the people behind it. That
+    // is the designer's ruling, not a leak: *firing at an impenetrable plate
+    // may not hurt but has tactical value.* The rule this test still defends
+    // is the one that matters — the damage ledger has no floor — and it
+    // defends it in both directions now, one battle each. Both belts are
+    // staged rather than inherited from the base mod, so the test says what
+    // the *rule* does and a content edit cannot quietly retire half of it.
+    let quiet = {
+        let mut reg = registry_wireless();
+        reg.ammo
+            .get_mut("ball_mg")
+            .expect("the base mod ships a belt")
+            .suppression = 0;
+        reg
+    };
+    let reg = {
+        let mut reg = registry_wireless();
+        reg.ammo.get_mut("ball_mg").expect("shipped").suppression = 2;
+        reg
+    };
     let mut state = plink_stage(&reg, 301);
     let (plinker, wall) = (UnitId(0), UnitId(1));
     let wall_before = state.substance(&reg, state.unit(wall).unwrap());
@@ -11042,15 +11203,43 @@ fn an_ordered_shot_that_cannot_penetrate_bounces_and_does_nothing() {
         "the bursts that struck were announced as bounces"
     );
     assert_eq!(hit, 0, "and not one of them counted as a hit");
-    let wall = state.unit(wall).unwrap();
+    let rattled = state.unit(wall).unwrap().pressure;
     assert_eq!(
-        state.substance(&reg, wall),
+        state.substance(&reg, state.unit(wall).unwrap()),
         wall_before,
         "armor that holds costs nothing"
     );
+    assert!(
+        rattled > 0,
+        "and a belt that declares suppression says so out loud: bullets on \
+         plate take nothing off her and are still not a quiet afternoon"
+    );
+
+    // The same battle under a mod that declares no suppression, which is the
+    // additivity half and the old assertion word for word. A belt that says
+    // nothing frays nobody, because `bounced` is not charged for small arms
+    // and there is nothing else to charge.
+    let mut silent = plink_stage(&quiet, 301);
+    silent
+        .apply(
+            &quiet,
+            &Order::SetFire {
+                unit: plinker,
+                fire: FireIntent::Target {
+                    target: wall,
+                    weapon: 0,
+                },
+            },
+        )
+        .unwrap();
+    commit_all(&quiet, &mut silent);
+    while silent.resolving_tick().is_some() && !silent.is_over() {
+        silent.step_tick(&quiet);
+    }
     assert_eq!(
-        wall.pressure, 0,
-        "and plinking does not fray anyone's nerves"
+        silent.unit(wall).unwrap().pressure,
+        0,
+        "plinking with a belt that declares nothing does not fray anyone's nerves"
     );
 }
 
@@ -11060,7 +11249,26 @@ fn a_gun_that_cannot_hurt_what_it_sees_holds_its_fire() {
     // the shot at zero and the crew keeps her gun quiet and her position
     // secret. Before the gate this was impossible — the floor made every
     // shot worth something, so every gun in range always spoke.
-    let reg = registry_wireless();
+    //
+    // "Cannot hurt" is a statement about the currency the mod declares, and
+    // Wave 1 gave the currency a second half. Under the base mod's belt this
+    // crew opens up, and should: `suppression: 2` is the designer saying a
+    // burst on a glacis is worth firing, and
+    // `the_loader_will_fire_a_belt_at_plate_she_cannot_beat_when_fear_is_worth_something`
+    // is that half of the ruling as its own test. The discipline this one
+    // defends is the other half and is unchanged: a shot worth *nothing* is
+    // not taken. So the stage is a mod that declines both — a silent belt, and
+    // fear priced at nothing — which is the game before suppression existed,
+    // and the assertion is the one it always made.
+    let reg = {
+        let mut reg = registry_wireless();
+        reg.ammo
+            .get_mut("ball_mg")
+            .expect("the base mod ships a belt")
+            .suppression = 0;
+        reg.morale.point_worth = 0.0;
+        reg
+    };
     let mut state = plink_stage(&reg, 302);
     let plinker = UnitId(0);
     commit_all(&reg, &mut state);
@@ -11069,7 +11277,8 @@ fn a_gun_that_cannot_hurt_what_it_sees_holds_its_fire() {
             if let BattleEvent::ShotFired { attacker, .. } = event {
                 assert_ne!(
                     attacker, plinker,
-                    "nothing aboard can hurt a heavy tank, so she holds fire"
+                    "nothing aboard can hurt a heavy tank in a currency that \
+                     prices only damage, so she holds fire"
                 );
             }
         }
@@ -11086,11 +11295,32 @@ fn a_kinetic_round_that_beats_a_plate_up_close_fades_at_the_end_of_its_reach() {
     // between them.
     let mut reg = registry_wireless();
     reg.balance.pen_scatter = 0;
+    // Two things the stage has to hold still, both of them new, and both of
+    // them the rest of this wave working rather than failing.
+    //
+    // The coaxial is quiet. It cannot beat this plate either, but it now has
+    // a reason to fire at it — `suppression: 2` — and it fires on every tick
+    // the main gun is reloading, so every burst draws from the same rng
+    // stream and the solid shot's four rolls stop being the four rolls this
+    // seed was chosen for. `a_burst_that_cannot_get_through_still_counts_for_what_it_does_to_her_nerve`
+    // is where the coaxial's new job is pinned; here it is noise.
+    //
+    // And the rack holds only the round under test. The loader prices what
+    // she chambers in the same currency as everybody else, so at the far end
+    // of the reach — where the solid shot is exactly what this test says it
+    // is, a bounce — she reaches for high explosive instead, because HE at
+    // least rattles them. That is `best_round_against` making the right call
+    // and the whole reason `round_worth` carries the pressure term; a test
+    // about a kinetic round's falloff simply must not leave her the choice.
+    if let Some(belt) = reg.ammo.get_mut("ball_mg") {
+        belt.suppression = 0;
+    }
     if let Some(ammo) = reg.ammo.get_mut("ap_75") {
         ammo.penetration = [7, 4]; // medium front plate is 5: beaten near, safe far
     }
     if let Some(w) = reg.weapons.get_mut("gun_75") {
         w.range = [1, 4];
+        w.ammo = vec!["ap_75".into()];
     }
     let shoot = |reg: &DataRegistry, dist: i32, seed: u64| -> (u32, u32) {
         let row = "g".repeat(8);
@@ -11119,13 +11349,25 @@ fn a_kinetic_round_that_beats_a_plate_up_close_fades_at_the_end_of_its_reach() {
         let (mut hits, mut bounces) = (0, 0);
         while state.resolving_tick().is_some() && !state.is_over() {
             for event in state.step_tick(reg) {
+                // The solid shot and nothing else. This used to count every
+                // arrival at the Plate, which was the same thing while the
+                // gunner's coaxial had no reason to fire; since suppression
+                // joined the currency her machine gun opens up too and
+                // bounces off the same front plate, so an unfiltered count
+                // is a count of two guns. Filtering on the round is exactly
+                // what `ShotHit`/`ShotBounced` gained an `ammo` field for.
+                let ap = |a: &Option<String>| a.as_deref() == Some("ap_75");
                 match event {
                     BattleEvent::ShotHit {
-                        target: UnitId(1), ..
-                    } => hits += 1,
+                        target: UnitId(1),
+                        ref ammo,
+                        ..
+                    } if ap(ammo) => hits += 1,
                     BattleEvent::ShotBounced {
-                        target: UnitId(1), ..
-                    } => bounces += 1,
+                        target: UnitId(1),
+                        ref ammo,
+                        ..
+                    } if ap(ammo) => bounces += 1,
                     _ => {}
                 }
             }
@@ -11759,7 +12001,35 @@ fn a_remnant_platoon_is_a_story_not_a_gun() {
     // rifles are worth nothing, she holds fire even with an enemy in her
     // lap, and her condition says what the withdraw machinery needs to
     // hear.
-    let reg = registry_wireless();
+    //
+    // "Worth nothing" is a statement about the currency, and Wave 1 gave it
+    // a second half, so the stage now says which currency it means: fear
+    // priced at nothing, which is the game before suppression. Two things
+    // were found by running it the other way and both are recorded here
+    // because they are the interesting part.
+    //
+    // The first is a fix. `mustered` scaled a remnant's *damage* by the
+    // riflemen still standing and not her round's `suppression`, so two
+    // cadets could pin a tank as hard as a full platoon; it scales both now,
+    // which is the same sentence this test is named for said in the other
+    // currency.
+    //
+    // The second is not, and is the lead's to rule on. The morale ladder
+    // charges `hit + penetrated` for any round that gets through, and a
+    // rifle bullet gets through a scout section's zero armour every time —
+    // so even a platoon whose damage has been mustered to nothing expects
+    // three points of pressure a shot, and at any non-zero `point_worth` she
+    // opens up. That is the *resolver* being mirrored honestly rather than a
+    // pricing error (`apply_pressure` really does charge it), but it means
+    // "a shot that accomplishes nothing" is not a thing that exists once
+    // fear is priced. Scaling the outcome price by the muster fraction would
+    // fix it and is a change to what a hit costs, which is not this chunk's
+    // to make.
+    let reg = {
+        let mut reg = registry_wireless();
+        reg.morale.point_worth = 0.0;
+        reg
+    };
     let row = "g".repeat(5);
     let mut state = two_side_battle(
         &reg,
@@ -12099,7 +12369,17 @@ fn a_platoon_boards_rides_hidden_and_steps_off_where_the_ride_ends() {
     );
 
     // The ride: the taxi drives, the platoon's position mirrors hers.
-    let dest = state.unit(taxi).unwrap().pos + tactics_core::Hex::new(3, 0);
+    //
+    // Two hexes rather than three, and the hex is the difference between a
+    // stage and a firefight. Three put the taxi at exactly six from the
+    // overwatch, which is the machine gun's maximum reach, so the platoon
+    // stepped off into a belt and bailed out before the last assertion could
+    // read her position — a correct outcome and a useless stage. She now
+    // dismounts one hex outside it. Worth knowing that this only became
+    // possible once a burst that cannot beat plate was worth firing: the
+    // recon car used to hold its fire at the taxi's armour and only ever
+    // spoke when infantry appeared.
+    let dest = state.unit(taxi).unwrap().pos + tactics_core::Hex::new(2, 0);
     state
         .apply(
             &reg,
@@ -13924,9 +14204,24 @@ fn a_gun_with_nothing_left_to_break_expects_nothing() {
         0.0,
         "with both of them gone the shell has nothing left to reach"
     );
+    // ...and with only damage in the ledger she is not a target at all. That
+    // is what this test was written to pin and it is pinned here under the
+    // mod that prices only damage, because the shipped one no longer does:
+    // `he_105` declares `suppression: 2`, so shelling a crippled tank is
+    // still worth doing for what it does to the crew inside, which is the
+    // designer's ruling and is a different sentence from "the shell can
+    // still break something". The defect this test was written against — a
+    // 105 putting thirty-six shells into a hull with nothing left to reach,
+    // because the pricing said 1.8 every time — is the `expected_damage`
+    // assertion above, and it is untouched.
+    let damage_only = {
+        let mut reg = reg.clone();
+        reg.morale.point_worth = 0.0;
+        reg
+    };
     assert!(
         tactics_core::ai::best_weapon_against(
-            &reg,
+            &damage_only,
             &state,
             battery,
             from,
@@ -14823,7 +15118,9 @@ fn a_crew_would_rather_stand_where_the_gun_cannot_see_her() {
         "and the same ground, or it is a test about cover"
     );
 
-    let incoming = |at| tactics_core::battle::incoming(&reg, &state, scout, at);
+    // `.worth` is what the evaluator's threat term spends, so it is what a
+    // test about that term should read.
+    let incoming = |at| tactics_core::battle::incoming(&reg, &state, scout, at).worth;
     assert_eq!(
         incoming(masked),
         0.0,
@@ -14925,7 +15222,7 @@ fn with_nobody_found_a_doctrines_taste_for_cover_decides_the_ground() {
     );
     for at in [wood, field] {
         assert_eq!(
-            tactics_core::battle::incoming(&reg, &state, scout, at),
+            tactics_core::battle::incoming(&reg, &state, scout, at).worth,
             0.0,
             "and nothing may be said about a gun nobody has found"
         );
@@ -15005,7 +15302,7 @@ fn the_ground_prior_stands_down_where_the_arithmetic_speaks() {
         let eval = Evaluator::new(taste_only());
         let gap = eval.score_tile(reg, &state, scout, wood).score
             - eval.score_tile(reg, &state, scout, field).score;
-        let incoming = |at| tactics_core::battle::incoming(reg, &state, scout, at);
+        let incoming = |at| tactics_core::battle::incoming(reg, &state, scout, at).worth;
         (gap, incoming(wood), incoming(field))
     };
     let without_the_prior = |reg: &DataRegistry| {
@@ -15120,4 +15417,539 @@ fn a_crew_who_breaks_off_says_so_and_one_who_was_meant_does_not() {
          that a stage that stopped deviating could not pass this quietly: \
          binding -> {binding_to:?}, delegated -> {delegated_to:?}"
     );
+}
+
+// --- suppression and cadence join the currency ------------------------------
+//
+// Two facts the resolver already knew and the pricing never read. **Pressure**:
+// fire that cannot beat a plate expects zero damage, so a machine gun looking
+// at a heavy tank was invisible to every chooser including the shooter's — the
+// designer's `threatened` note in DIRECTION.md, and the reason nobody in this
+// game had ever fired a belt at armour. **Cadence**: every term was per shot,
+// so an MG at six shots a round and an 88 at three read alike.
+//
+// The additivity contract these tests are here to keep: `ammo.suppression`
+// defaults to 0 and `morale.point_worth` to 0.0, and at those values every
+// number in the game is the number it was.
+
+/// A heavy tank at four hexes with a machine gun looking at her glacis, and
+/// nothing else on the field.
+///
+/// The machine gun is the whole point: `ball_mg` penetrates 1 against front
+/// armour 8, so the damage half of every price is *exactly* zero and anything
+/// the arithmetic says about this pairing is the pressure half saying it.
+///
+/// The heavy tank's racks are emptied, which is the stage rather than a
+/// dodge. An 88 at four hexes ends a recon car in one shot, and a test that
+/// wants to watch a belt play against plate for forty rounds cannot also be a
+/// test of how long the car survives. A gun with an ammunition list and
+/// nothing on it is silent by the engine's own documented rule, so this needs
+/// no special case anywhere.
+fn a_belt_at_a_glacis(reg: &DataRegistry, seed: u64) -> BattleState {
+    let mut state = two_side_battle(
+        reg,
+        &["gggggggggg", "gggggggggg", "gggggggggg"],
+        vec![
+            unit_at([0, 1], 0, "heavy_tank", "Plate"),
+            unit_at([4, 1], 1, "recon_car", "Belt"),
+        ],
+        seed,
+    );
+    if let Some(plate) = state.unit_mut(UnitId(0)) {
+        for aboard in plate.ammo.values_mut() {
+            *aboard = 0;
+        }
+    }
+    state
+}
+
+/// The one gun the recon car has, for the tests that need to name it.
+fn her_machine_gun(reg: &DataRegistry) -> &tactics_core::data::WeaponDef {
+    reg.weapon("mg").expect("the base mod ships a machine gun")
+}
+
+/// The pressure facts of a round, read off an event the way `apply_pressure`
+/// reads them. Shared by the tests below so that a test cannot accidentally
+/// check the ladder against its own restatement of the lookup.
+fn felt(reg: &DataRegistry, ammo: &Option<String>, small_arms: bool) -> RoundPressure {
+    RoundPressure {
+        small_arms,
+        suppression: ammo
+            .as_ref()
+            .and_then(|id| reg.ammo(id))
+            .map(|a| a.suppression)
+            .unwrap_or(0),
+    }
+}
+
+/// A burst that cannot get through still counts for what it does to her
+/// nerve.
+///
+/// The designer's sentence, made arithmetic: *even if your IFV is immune to
+/// 50 cal from the front, getting hit by it is not a fun time.* Before this
+/// the machine gun expected zero against a glacis and was therefore not a
+/// weapon against her at all — `best_weapon_from`'s third gate threw it out,
+/// so she did not appear on the danger list, the crew never fired, and no
+/// planner ever weighed the ground the gun covered.
+///
+/// Both directions are asserted, because the interesting claim is the
+/// additive one: at `point_worth: 0` the burst is worth nothing to anybody
+/// weighing it, which is the game exactly as it was, and the crew still feels
+/// it.
+#[test]
+fn a_burst_that_cannot_get_through_still_counts_for_what_it_does_to_her_nerve() {
+    let mut reg = seen(registry());
+    // A belt that says something about what it is like to be under it. The
+    // number is the stage's, not the base mod's: this test is about the
+    // mechanism, and the shipped value is chosen by sweep elsewhere.
+    reg.ammo
+        .get_mut("ball_mg")
+        .expect("the base mod ships a belt")
+        .suppression = 2;
+    let state = a_belt_at_a_glacis(&reg, 31);
+    let (plate, belt) = (UnitId(0), UnitId(1));
+    let (plate_pos, belt_pos) = (
+        state.unit(plate).expect("staged").pos,
+        state.unit(belt).expect("staged").pos,
+    );
+
+    // The stage's own premise: no damage whatsoever gets through, so
+    // everything below is the pressure half and cannot be the damage half
+    // wearing a disguise.
+    let damage = tactics_core::battle::expected_damage(
+        &reg,
+        &state,
+        belt,
+        belt_pos,
+        her_machine_gun(&reg),
+        plate,
+        plate_pos,
+        false,
+    );
+    assert_eq!(
+        damage, 0.0,
+        "a belt against front-8 armour must expect nothing, or this test is \
+         measuring the wrong half"
+    );
+    let pressure = tactics_core::battle::expected_pressure(
+        &reg,
+        &state,
+        belt,
+        belt_pos,
+        her_machine_gun(&reg),
+        plate,
+        plate_pos,
+        false,
+    );
+    assert!(
+        pressure > 0.0,
+        "and it must expect some pressure, or there is nothing here to price: \
+         {pressure}"
+    );
+
+    // Fear priced at nothing is the game before this existed, down to the
+    // gate: no bearing at all, because a gun worth zero is not a weapon
+    // against her.
+    reg.morale.point_worth = 0.0;
+    assert!(
+        tactics_core::battle::fire_on(&reg, &state, plate, plate_pos).is_empty(),
+        "with fear worth nothing the burst is not a threat, which is exactly \
+         what every planner believed before this chunk"
+    );
+
+    // Fear priced at something, and she is on the list with a worth that is
+    // all pressure.
+    reg.morale.point_worth = 1.0;
+    let bearings = tactics_core::battle::fire_on(&reg, &state, plate, plate_pos);
+    assert_eq!(
+        bearings.len(),
+        1,
+        "with fear worth something the burst is a threat: {bearings:?}"
+    );
+    let burst = bearings[0];
+    assert_eq!(burst.expected, 0.0, "and still no damage at all");
+    assert!(burst.worth > 0.0, "and a worth made entirely of pressure");
+    assert_eq!(
+        burst.worth,
+        burst.expected + burst.pressure * reg.morale.point_worth,
+        "worth is the two currencies at the mod's exchange rate and nothing else"
+    );
+}
+
+/// Fear is priced by the same arithmetic that charges it.
+///
+/// `MoraleRules::pressure_for` is the one price list, and this is the check
+/// that the analytic twin and the resolver read it the same way — the damage
+/// side's "the preview is the resolver" property, restated for pressure. The
+/// method is the one the hit-chance tests use: fire a great many shots at a
+/// staged pairing, average what the ladder actually charged, and require it to
+/// land on what `expected_pressure` promised.
+///
+/// The margin is a fifth either way, because the sample is a few hundred shots
+/// of a Bernoulli mixture; what it is pinning is that the two are the *same*
+/// arithmetic, and a second copy of the price list would be out by whole
+/// ladder points rather than by a rounding. Measured on this stage the ratio
+/// lands within a couple of percent of one.
+#[test]
+fn fear_is_priced_by_the_same_arithmetic_that_charges_it() {
+    let mut reg = seen(registry());
+    reg.ammo
+        .get_mut("ball_mg")
+        .expect("the base mod ships a belt")
+        .suppression = 3;
+    // A belt against a glacis accomplishes nothing by design, and the
+    // stalemate clock counts accomplishment — so the battle this test needs
+    // is precisely the one the clock exists to stop. Held off for long
+    // enough to take a sample; the rule is untouched.
+    reg.balance.stalemate_rounds = 1_000;
+    let state = a_belt_at_a_glacis(&reg, 77);
+    let (plate, belt) = (UnitId(0), UnitId(1));
+    let (plate_pos, belt_pos) = (
+        state.unit(plate).expect("staged").pos,
+        state.unit(belt).expect("staged").pos,
+    );
+    let promised = tactics_core::battle::expected_pressure(
+        &reg,
+        &state,
+        belt,
+        belt_pos,
+        her_machine_gun(&reg),
+        plate,
+        plate_pos,
+        false,
+    );
+    assert!(promised > 0.0, "the stage has to expect something");
+    let aboard = state
+        .unit(belt)
+        .and_then(|u| u.ammo.get("ball_mg").copied())
+        .expect("she came with a belt");
+
+    // Fire the belt over and over and read what the ladder charged. Pressure
+    // is shed between rounds, so the count is taken off the events rather
+    // than off her `pressure` field — the question is what was *charged*.
+    let mut state = state.clone();
+    let order = Order::SetFire {
+        unit: belt,
+        fire: FireIntent::Target {
+            target: plate,
+            weapon: 0,
+        },
+    };
+    let mut charged = 0u32;
+    for _ in 0..40 {
+        state.apply(&reg, &order).expect("she is ordered to shoot");
+        for event in play_round(&reg, &mut state) {
+            match &event {
+                BattleEvent::ShotHit { target, ammo, .. } if *target == plate => {
+                    charged += reg
+                        .morale
+                        .pressure_for(ShotFelt::Penetrated, felt(&reg, ammo, false));
+                }
+                BattleEvent::ShotBounced {
+                    target,
+                    ammo,
+                    rattled,
+                    ..
+                } if *target == plate => {
+                    charged += reg
+                        .morale
+                        .pressure_for(ShotFelt::Bounced, felt(&reg, ammo, !rattled));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // `expected_pressure` is per shot *fired*, hit chance included, so the
+    // comparison is charged-per-shot-fired. Counting only the arrivals would
+    // compare a conditional mean against an unconditional one and be wrong by
+    // exactly the hit chance.
+    let fired = aboard
+        - state
+            .unit(belt)
+            .and_then(|u| u.ammo.get("ball_mg").copied())
+            .expect("she is still on the field");
+    assert!(
+        fired >= 100,
+        "the sample has to be big enough to average, got {fired} shots"
+    );
+    let mean = charged as f32 / fired as f32;
+    let ratio = mean / promised;
+    assert!(
+        (0.8..=1.2).contains(&ratio),
+        "the ladder charged {mean:.3} a shot over {fired} shots and the \
+         arithmetic promised {promised:.3} — a factor of {ratio:.3}, which is \
+         two price lists rather than one"
+    );
+}
+
+/// A gun that fires six times a round is priced six times.
+///
+/// Cadence, and the shape of the claim matters: `Bearing` reports per *shot*
+/// so the panel can name a gun and its rate, and `incoming` reports per
+/// *round* because that is the unit ground is held in. The two have to agree
+/// exactly, or the player's overlay and the AI's threat term are reading
+/// different games off the same call.
+#[test]
+fn a_gun_that_fires_six_times_a_round_is_priced_six_times() {
+    let reg = seen(registry());
+    let state = firing_positions(&reg, 11);
+    let mark = UnitId(2);
+    let mark_pos = state.unit(mark).expect("staged").pos;
+
+    let bearings = tactics_core::battle::fire_on(&reg, &state, mark, mark_pos);
+    assert!(
+        bearings.len() >= 2,
+        "the stage needs several guns bearing on her: {bearings:?}"
+    );
+    // Cadence is a fact about the weapon, and this is the join: the number on
+    // the bearing has to be the one the scale contract computes.
+    for bearing in &bearings {
+        let enemy = state.unit(bearing.enemy).expect("on the field");
+        let weapon = reg
+            .vehicle(&enemy.vehicle)
+            .and_then(|v| v.weapons.get(bearing.weapon))
+            .and_then(|w| reg.weapon(w))
+            .expect("the bearing names a gun she has");
+        assert_eq!(
+            bearing.shots,
+            weapon.shots_per_round(&reg.scale),
+            "{}'s cadence must be the weapon's own",
+            enemy.name
+        );
+        assert!(
+            bearing.shots > 0.0,
+            "and every gun on the field fires at least sometimes"
+        );
+    }
+
+    let total = tactics_core::battle::incoming(&reg, &state, mark, mark_pos);
+    assert_eq!(
+        total.substance,
+        bearings.iter().map(|b| b.expected * b.shots).sum::<f32>(),
+        "a round of incoming is each gun's shot times how often it fires"
+    );
+    assert_eq!(
+        total.pressure,
+        bearings.iter().map(|b| b.pressure * b.shots).sum::<f32>(),
+        "and so is the fear"
+    );
+    assert_eq!(
+        total.worth,
+        bearings.iter().map(|b| b.worth * b.shots).sum::<f32>(),
+        "and so is the worth the evaluator spends"
+    );
+
+    // And it is genuinely bigger than the per-shot sum it replaced, or the
+    // whole change is decoration. Every gun in the base mod fires more than
+    // once in a sixty-second round.
+    let one_each: f32 = bearings.iter().map(|b| b.expected).sum();
+    assert!(
+        total.substance > one_each,
+        "a round of fire has to be worse than one shot each: {} against {one_each}",
+        total.substance
+    );
+}
+
+/// A mod that says nothing about suppression plays the game it always played.
+///
+/// The additivity rule, stated over both new numbers at once: with
+/// `ammo.suppression` at zero everywhere and `morale.point_worth` at zero,
+/// every bearing's `worth` is its `expected` to the last bit, so nothing that
+/// chooses can tell the two currencies apart. This is the property that lets
+/// a mod written before this chunk keep its balance.
+#[test]
+fn a_mod_that_says_nothing_about_suppression_plays_the_game_before() {
+    let mut reg = seen(registry());
+    for ammo in reg.ammo.values_mut() {
+        ammo.suppression = 0;
+    }
+    reg.morale.point_worth = 0.0;
+    let state = firing_positions(&reg, 11);
+
+    let mut bearings_seen = 0;
+    for me in state.units.iter() {
+        for at in [me.pos, tactics_core::offset_to_hex(5, 1)] {
+            for bearing in tactics_core::battle::fire_on(&reg, &state, me.id, at) {
+                assert_eq!(
+                    bearing.worth, bearing.expected,
+                    "worth must be exactly expected damage, so nothing that \
+                     chooses can tell this game from the one before it"
+                );
+                bearings_seen += 1;
+            }
+        }
+    }
+    assert!(
+        bearings_seen >= 4,
+        "the stage has to produce bearings to say anything, got {bearings_seen}"
+    );
+
+    // Note the one thing that is *not* zero even here: the ladder's own
+    // `bounced` and `penetrated` prices are still charged, and they reach
+    // `expected_pressure` because it is the same price list. That is not a
+    // leak — it is the analytic twin telling the truth about a rule that
+    // already existed — and it is invisible to every chooser while
+    // `point_worth` is zero, which is what the assertions above pin. Small
+    // arms on plate are the one case the ladder itself prices at nothing, so
+    // a belt with no suppression frightens nobody at all.
+    let plate_state = a_belt_at_a_glacis(&reg, 31);
+    let (plate, belt) = (UnitId(0), UnitId(1));
+    assert_eq!(
+        tactics_core::battle::expected_pressure(
+            &reg,
+            &plate_state,
+            belt,
+            plate_state.unit(belt).expect("staged").pos,
+            her_machine_gun(&reg),
+            plate,
+            plate_state.unit(plate).expect("staged").pos,
+            false,
+        ),
+        0.0,
+        "a belt that declares no suppression frightens nobody, which is the \
+         plinking rule exactly as it stood"
+    );
+}
+
+/// The loader will fire a belt at plate she cannot beat when fear is worth
+/// something.
+///
+/// The end-to-end version of the first test in this section, and the one that
+/// says the change reached the game rather than only the arithmetic:
+/// `best_opportunity_shot` refuses a worthless shot, and until worth carried
+/// pressure a burst against a glacis was worthless by definition. Nobody in
+/// this engine had ever fired a machine gun at a tank.
+#[test]
+fn the_loader_will_fire_a_belt_at_plate_she_cannot_beat_when_fear_is_worth_something() {
+    let mut reg = seen(registry());
+    reg.ammo
+        .get_mut("ball_mg")
+        .expect("the base mod ships a belt")
+        .suppression = 2;
+
+    let belt_fires = |reg: &DataRegistry| {
+        let mut state = a_belt_at_a_glacis(reg, 5);
+        // Nobody is ordered to do anything, so every shot below is the crew's
+        // own opportunity fire — which is the decision under test.
+        let mut fired = 0;
+        for _ in 0..3 {
+            for event in play_round(reg, &mut state) {
+                if matches!(
+                    event,
+                    BattleEvent::ShotFired {
+                        attacker: UnitId(1),
+                        ..
+                    }
+                ) {
+                    fired += 1;
+                }
+            }
+        }
+        fired
+    };
+
+    reg.morale.point_worth = 0.0;
+    assert_eq!(
+        belt_fires(&reg),
+        0,
+        "with fear worth nothing she holds her fire, keeps her position quiet, \
+         and that is the discipline this engine has always had"
+    );
+
+    reg.morale.point_worth = 1.0;
+    let with_fear = belt_fires(&reg);
+    assert!(
+        with_fear > 0,
+        "and with fear worth something she opens up: {with_fear} bursts"
+    );
+}
+
+/// Both new numbers are read, and both are addressable by the name the json
+/// uses.
+///
+/// The "read at all" check the `planner` block's tests make, applied to the
+/// two fields this chunk adds. The failure it guards against is not a wrong
+/// number but a declared one nothing consults — which is what
+/// `Scale::elevation_meters` was for months and what two fields of the old
+/// `CrewStats` were for years.
+///
+/// Mutation-checked: `AmmoDef::suppression` forced to 0 in `Round::loaded`
+/// fails the first pair, and `point_worth` forced to 0.0 in `round_worth`
+/// fails the second.
+#[test]
+fn suppression_and_what_fear_is_worth_are_data_and_are_read() {
+    let base = seen(registry());
+    let state = a_belt_at_a_glacis(&base, 31);
+    let (plate, belt) = (UnitId(0), UnitId(1));
+    let (plate_pos, belt_pos) = (
+        state.unit(plate).expect("staged").pos,
+        state.unit(belt).expect("staged").pos,
+    );
+    let pressure_of = |reg: &DataRegistry| {
+        tactics_core::battle::expected_pressure(
+            reg,
+            &state,
+            belt,
+            belt_pos,
+            her_machine_gun(reg),
+            plate,
+            plate_pos,
+            false,
+        )
+    };
+    let worth_of = |reg: &DataRegistry| {
+        tactics_core::battle::fire_on(reg, &state, plate, plate_pos)
+            .first()
+            .map(|b| b.worth)
+            .unwrap_or(0.0)
+    };
+
+    // `ammo.<id>.suppression`: a belt that says nothing frightens nobody, and
+    // one that says something frightens them by exactly what it says. The
+    // base mod's belt *does* say something now, so the silent half is staged
+    // rather than inherited.
+    let mut quiet = base.clone();
+    quiet.morale.point_worth = 1.0;
+    quiet.ammo.get_mut("ball_mg").expect("shipped").suppression = 0;
+    let mut loud = quiet.clone();
+    loud.ammo.get_mut("ball_mg").expect("shipped").suppression = 4;
+    assert_eq!(pressure_of(&quiet), 0.0, "a silent belt is read as silent");
+    assert!(
+        pressure_of(&loud) > 0.0,
+        "and a loud one is read at all: {}",
+        pressure_of(&loud)
+    );
+
+    // `morale.point_worth`: the exchange rate, and it is what turns the
+    // pressure above into something a chooser can see.
+    let mut free = loud.clone();
+    free.morale.point_worth = 0.0;
+    assert_eq!(
+        worth_of(&free),
+        0.0,
+        "fear priced at nothing is worth nothing to anybody weighing a shot"
+    );
+    assert!(
+        worth_of(&loud) > worth_of(&free),
+        "and fear priced at something is worth something: {} against {}",
+        worth_of(&loud),
+        worth_of(&free)
+    );
+
+    // ...and both reach the registry through the same serde round trip
+    // `--set` and `--sweep` use, addressed by the name the json writes. A
+    // number that can only be changed from Rust is not content.
+    let mut swept = base.clone();
+    for (path, value) in [
+        ("ammo.ball_mg.suppression", "3"),
+        ("morale.point_worth", "0.75"),
+    ] {
+        let ov = tactics_core::harness::overrides::Override::parse(&format!("{path}={value}"))
+            .expect("a well-formed override");
+        tactics_core::harness::overrides::apply_override(&mut swept, &ov)
+            .unwrap_or_else(|e| panic!("{path} should be addressable: {e}"));
+    }
+    assert_eq!(swept.ammo["ball_mg"].suppression, 3);
+    assert_eq!(swept.morale.point_worth, 0.75);
 }

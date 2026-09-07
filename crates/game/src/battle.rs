@@ -2914,9 +2914,15 @@ fn update_highlights(
             let tiles: Vec<Hex> = battle.move_range.keys().copied().collect();
             let battle = &mut *battle;
             for hex in tiles {
+                // Per round and in worth, which is what the evaluator's
+                // threat term spends on the same ground. The player and the
+                // AI price a tile with one number or the player is playing a
+                // different game from her opponent — and since cadence and
+                // pressure joined that number, a tint summing single shots of
+                // damage would be showing her a game nobody is playing.
                 let total: f32 = tactics_core::battle::fire_on(&mods.0, &battle.state, unit, hex)
                     .iter()
-                    .map(|bearing| bearing.expected)
+                    .map(|bearing| bearing.worth_per_round())
                     .sum();
                 battle.danger.insert(hex, total);
             }

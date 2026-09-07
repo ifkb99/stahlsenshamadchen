@@ -9,7 +9,7 @@ use super::{
     BattleResult, BattleState, EndReason, FormationId, Goal, Latitude, Mission, Phase, Unit,
     UnitId, combat, fog, movement,
 };
-use crate::data::{ArmorFacing, DataRegistry};
+use crate::data::{ArmorFacing, DataRegistry, ShotFelt};
 use crate::map::{LossTrigger, ObjectiveKind};
 use hexx::Hex;
 use serde::{Deserialize, Serialize};
@@ -228,6 +228,19 @@ pub enum Event {
         target: UnitId,
         damage: i32,
         facing: ArmorFacing,
+        /// The round that arrived, by [`crate::data::AmmoDef`] id. `None` on
+        /// the legacy path, where a weapon with no ammunition list fires
+        /// something the mod never named.
+        ///
+        /// Here because pressure is priced off the round: what a shot costs
+        /// a crew's nerve is the ladder's price for the outcome plus the
+        /// round's own [`crate::data::AmmoDef::suppression`], and
+        /// `apply_pressure` reads the events rather than being called from
+        /// inside the shooting code. Naming the round is also the honest
+        /// record — a log that can say *which* shell came through is worth
+        /// more than one that says a shell did.
+        #[serde(default)]
+        ammo: Option<String>,
     },
     /// The round struck and the armor held. Nothing structural happened —
     /// there is no damage floor any more — but the event is said out loud
@@ -242,6 +255,13 @@ pub enum Event {
         target: UnitId,
         facing: ArmorFacing,
         rattled: bool,
+        /// The round that struck, by [`crate::data::AmmoDef`] id — see
+        /// [`Self::ShotHit`]'s field of the same name. A belt that declares
+        /// suppression frightens a crew through this even though `rattled`
+        /// is false, which is the designer overruling the plinking rule per
+        /// round rather than the engine deciding it per class.
+        #[serde(default)]
+        ammo: Option<String>,
     },
     /// This gun has just spent the last round it can fire. Announced once,
     /// at the moment of the spend, so the silence that follows reads as a
@@ -1914,27 +1934,48 @@ impl BattleState {
             }
         };
 
+        // What the round that arrived costs a crew's nerve, over and above
+        // the outcome. Looked up here, off the event, because the event is
+        // the record of what was fired and this pass is the one place that
+        // turns a tick's news into pressure.
+        let felt = |ammo: &Option<String>, small_arms: bool| crate::data::RoundPressure {
+            small_arms,
+            suppression: ammo
+                .as_ref()
+                .and_then(|id| registry.ammo(id))
+                .map(|a| a.suppression)
+                .unwrap_or(0),
+        };
+
         // Collected first: the borrow of `events` has to end before units are
         // touched, and iterating in event order keeps this deterministic.
-        let hits: Vec<UnitId> = events
+        let hits: Vec<(UnitId, crate::data::RoundPressure)> = events
             .iter()
             .filter_map(|e| match e {
-                Event::ShotHit { target, .. } => Some(*target),
+                // `small_arms: false` is not read on this branch — a
+                // penetration is priced by `hit + penetrated` whatever came
+                // through — but it is stated rather than defaulted so that a
+                // future price list which does read it gets the truth.
+                Event::ShotHit { target, ammo, .. } => Some((*target, felt(ammo, false))),
                 _ => None,
             })
             .collect();
         // A shell that strikes and fails to get through still rings the
         // hull like a bell; small-arms fire does not (`rattled` is false),
-        // or suppression would quietly rebuild the damage floor's defect in
-        // morale instead of hit points.
-        let clangs: Vec<UnitId> = events
+        // or the ladder's `bounced` price would quietly rebuild the damage
+        // floor's defect in morale instead of hit points. Every bounce is
+        // collected now rather than only the rattling ones, because a round
+        // that declares suppression is charged for it either way and
+        // `pressure_for` is the one place that knows which is which.
+        let clangs: Vec<(UnitId, crate::data::RoundPressure)> = events
             .iter()
             .filter_map(|e| match e {
                 Event::ShotBounced {
                     target,
-                    rattled: true,
+                    rattled,
+                    ammo,
                     ..
-                } => Some(*target),
+                } => Some((*target, felt(ammo, !rattled))),
                 _ => None,
             })
             .collect();
@@ -1964,15 +2005,20 @@ impl BattleState {
             })
             .collect();
 
-        for id in hits {
+        // The price list itself lives on `MoraleRules`, and it lives there
+        // rather than here because the analytic twin `combat::round_pressure`
+        // spends the same three lines to tell a planner what a shot is
+        // expected to be worth. Two copies would be a gunner aiming at a
+        // number no resolver honours.
+        for (id, round) in hits {
             // Every hit in the stream is a penetration now — the bounces
             // file separately below — so the shell that came through costs
             // both the old price of being hit and the new price of knowing
             // the armor did not hold.
-            add(self, id, rules.hit + rules.penetrated);
+            add(self, id, rules.pressure_for(ShotFelt::Penetrated, round));
         }
-        for id in clangs {
-            add(self, id, rules.bounced);
+        for (id, round) in clangs {
+            add(self, id, rules.pressure_for(ShotFelt::Bounced, round));
         }
         for members in bereaved {
             // The whole formation, wherever it is standing: unlike watching a
