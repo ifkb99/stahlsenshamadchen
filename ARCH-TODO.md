@@ -1152,3 +1152,352 @@ Two things follow, neither of them this chunk's to do:
 `a_reflection_leaves_a_sight_line_alone`, which now walks **every** arena — a
 second battlefield with a second set of ridges is a second sample of the
 geometry rule, and it passes on the ridge arena unchanged.
+## Wave 1 — currency: what landed
+
+Phase 2's leftovers, both of them, in one arc: **cadence** (every term was per
+shot, so a machine gun firing six times a round and an 88 firing three read
+alike) and **pressure** (fire that cannot beat a plate expected zero and was
+invisible to every chooser, including the shooter's own — the designer's
+`threatened` note in DIRECTION.md). Two commits: `20fbd86` the mechanism at
+neutral content values, `9ef6673` the base mod's numbers.
+
+### The design
+
+**Suppression is a property of the round.** `AmmoDef::suppression` is what a
+shot that *strikes* costs the crew it struck, penetration or not, on top of the
+outcome prices `morale` already charges. On the round rather than on the ladder
+because the loader chooses rounds: a belt and a solid shot from the same
+coaxial mount are different experiences for the crew being shot at, and a gun
+that can chamber both ought to be able to say so. `#[serde(default)]` to zero,
+which is the game before.
+
+**One price list.** `MoraleRules::pressure_for(ShotFelt, RoundPressure)` — a
+penetration costs `hit + penetrated`, a bounce costs `bounced` unless the round
+was small arms, and the round's suppression is charged on top in every case.
+Two things spend it and they are the pair that must not drift:
+`BattleState::apply_pressure` charging a tick's events, and
+`combat::round_pressure` telling a planner what a shot is expected to be worth.
+`ShotHit` and `ShotBounced` gained `ammo: Option<String>` so the event-reading
+pass can price what arrived — events are the record, and a log that can name
+the shell is worth more than one that says a shell.
+
+**Worth is the currency.** `round_worth = round_damage + round_pressure *
+morale.point_worth`, with the exchange rate applied in exactly one place
+(`worth_of`, private, and mutation-checked — an earlier draft applied it twice
+and a mutation to one site passed the suite). `expected_shot` returns
+`ShotValue { expected, pressure, worth, shots }` off **one** hit chance and one
+`shot_profile`, so the pressure half costs nothing measurable;
+`expected_damage` and the new `expected_pressure` are its halves.
+`best_weapon_from`'s third gate reads `worth` rather than damage, which is the
+line that puts the machine gun on every tank back in the game;
+`best_opportunity_shot` and `AMBUSH_PATIENCE` weigh worth too.
+
+**Cadence.** `WeaponDef::shots_per_round(&Scale)` = `ticks_per_round /
+reload(scale)`, read through the accessor and fractional so a piece that takes
+longer than a round to load gets less than one shot. `Bearing` keeps its
+figures **per shot** and gains `shots`, so the panel can name a gun and its
+rate; `incoming` returns `Incoming { substance, pressure, worth }` **per
+round**, which is the unit ground is held in.
+
+Per caller, as the plan asked:
+
+| caller | unit | why |
+| --- | --- | --- |
+| `best_weapon_from` | per round (ranks by `worth_per_round`) | every caller of it is pricing ground |
+| `ai::best_weapon_against` | per round | the evaluator's attack term, which is subtracted from a per-round threat |
+| its `kill` flag | per shot, damage only | the +4 bonus is for a *decisive* shot; times cadence an autocannon finishes everything it sees |
+| `danger::incoming` | per round | "how bad is that hex" is a question about holding it |
+| `danger::fire_on` | per shot + `shots` | the panel names a gun and its rate; the reader multiplies |
+| `best_opportunity_shot` | per shot | one trigger pull now, and rate of fire is already modelled by how often `weapon_ready` lets her back |
+| `best_round_against` | per shot | she is choosing what to load, and cadence cancels within one gun |
+| `ai::threats` / `threatened` | boolean | untouched in shape; picks up the worth gate for free, so a crew under machine-gun fire now counts as under fire |
+
+**The overlay** tints by worth per round and the panel prints each gun's
+cadence beside its name, a total that is a round of fire ("expected this
+round") and a pressure total when there is any. The AI and the player price the
+same ground or they are playing different games.
+
+### The check that made the rest readable
+
+With `shots_per_round` pinned to 1.0 the determinism stream is **byte-identical
+to the baseline** once the new `ammo:` field is stripped from it. So the whole
+suppression/worth refactor is provably behaviour-neutral, and every line of the
+mechanism commit's diff is attributable to cadence. Worth doing again the next
+time two changes land together: it cost one build and turned an unreadable
+1,193-line diff into a legible one.
+
+### Content, and how it was chosen
+
+| round | suppression | |
+| --- | --- | --- |
+| `ball_mg` | 2 | swept 0,1,2,3 |
+| `he_105` | 2 | swept 0,2,4,6 |
+| `ac_20_he` | 1 | interpolated by blast (1 against the 105's 6) |
+| `he_75`, `he_88` | 2 | interpolated by blast (3 and 4) |
+| `rifle_ball` | 0 | see below |
+
+`morale.point_worth: 0.5`.
+`planner.deviation_cost` 3.0 → **12.0**.
+`ai/eval.rs`'s withdrawing `attack_scale` 0.25 → **0.0625**.
+
+**The win column could not choose these.** `ammo.ball_mg.suppression=0,1,2,3`
+at 36 battles with fear priced reads 24–12 / 24–12 / 24–12 / 21–15 against a
+±6 band, and `morale.point_worth=0,0.5,1,2` reads 25–11 / 24–12 / 24–12 /
+23–13. What moves is everything else: at `ball_mg: 2` cadets out per battle go
+12.4 → 9.9, bounces as a share of shots 31% → 26%, artillery's share of the
+shooting 75% → 66%. `he_105` at 4 and 6 shifts the win column by 4 and 6 and
+adds a round to the battle, so 2.
+
+**So a second instrument decided `point_worth`: how far each candidate moves
+the currency relative to every other weight in the game, counted as engine
+tests that stop holding.** 0.25 and 0.5 break 11; 1.0 breaks 14, the three
+extra being `deviation_cost`'s family. The reasoning behind the number agrees:
+at 1.0 a full ladder of fear (12 points) is worth almost a whole medium tank,
+which is more than being frightened is; at 0.5 it is worth about a third of
+one. This is a legitimate instrument and probably an underused one — it
+measures exactly the thing CLAUDE.md warns about, that changing a currency
+reaches every weight quoted in it — but it is a *count of broken calibrations*,
+not a measure of whether the game is better, and it should not be mistaken for
+one.
+
+**`rifle_ball` ships at nothing and that is the one judgment here rather than a
+measurement.** At 2 it tripled the infantry shot counts in the delegation table
+(11 → 75 for massed flat) while the sweep could not tell 0 from 1 from 2 on the
+win column, and a rifle section is not what the designer's note was about. Next
+thing to sweep, against an instrument that can see it.
+
+**`deviation_cost` was measured twice on `pressed_stage`, and that is the
+interesting part.** The straddle it exists to keep — massed armour (0.3) obeys,
+elastic defence (0.7) and recon pull (0.9) do not — holds from **8.5 to 19**
+with suppression declared nowhere and from **12 to 29** with the base mod's
+shipped values. One number has to serve both or the field means something
+different in a mod that declines the new rule, so 12.0, the bottom of the
+intersection, in a band still eight points wide. It is the third value this
+field has had (2.0 → 3.0 → 12.0) and all three moves are the same event.
+
+**`attack_scale`** is 0.25 divided by four, and the four is cadence. Its own
+comment records the measurement it was set from (a shot worth ~4.6 against a
+lane pulling ~0.5 a hex); a flat quarter of a *round* of fire put the same 4.6
+back in front of a withdrawing crew and reinstated the defect the line exists
+to remove — `an_ordered_withdrawal_needs_no_wounds` caught Anka Weiss planning
+away from her lane, ten hexes off it to fifteen. The sentence is preserved
+rather than the digit: a quarter of what one shot is worth to a crew who was
+not ordered out. Anything at or below 0.15 keeps the withdrawal a withdrawal on
+that stage; 0.20 does not.
+
+### One modelling gap found and fixed
+
+`mustered` scaled a remnant platoon's *damage* by the riflemen still standing
+and not her round's suppression, so two cadets could pin a tank as hard as a
+full platoon. It scales both now: volume of fire is volume of fire, and the
+troops module already means firepower as well as interior weight.
+
+### Test stages repaired, with their margins
+
+Thirteen in all, none weakened. Grouped by what actually moved.
+(`what_it_costs_a_subordinate_to_have_her_own_idea_is_a_mod_decision` is the
+thirteenth and is only the shipped-value assertion, restated to 12.0.)
+
+**Cadence: a weight that had to be restated.**
+
+- `the_shipped_doctrines_straddle_the_price_of_deviating` — `deviation_cost`
+  above.
+- `an_ordered_withdrawal_needs_no_wounds` — `attack_scale` above.
+- `an_assault_presses_through_what_an_advance_pauses_for` — the forward tile
+  moves from ten hexes along the lane to twenty-two and the gun from (10, 0) to
+  (10, 6). At ten the mission's slope no longer pays for the wood (the assault
+  fell 0.54 short), and from the old firing position the only long-enough tiles
+  sat *exactly* at the 88's maximum range — a stage balanced on a cliff, since
+  one hex further is no fire at all and both orders press on for a reason that
+  has nothing to do with either. Now `COVER` is 8 hexes from the gun and
+  `FORWARD` 15 against a reach of 16: the advance halts by 2.97 and the assault
+  presses by 1.98, against 3.24 and −0.54 before.
+  **`the_stage_keeps_the_forward_tile_under_the_gun` is new** and pins the
+  envelope through the danger arithmetic — Phase 2's comment promised that test
+  by name and nobody had written it.
+- `a_road_under_a_gun_is_worth_going_round` — its two (equal) objectives go
+  from value 8 to 20. At 8 the crew took the firing position her own sweep
+  offered and never chose between the two roads at all. Eighteen upwards
+  restores the choice at the shipped `route_caution: 1.2`; twenty holds it from
+  caution 1.2 to 16.
+- `ground_the_enemy_reaches_first_is_worth_less_marching_for` —
+  `contest_aversion` asserted at 15 instead of 5. The head start is a round of
+  the medium's fire now, four times the size; the term flips from 12 upwards,
+  and 15 keeps the stage off its own threshold, the margin Phase 2 left when it
+  asserted 5 against a threshold of 4.
+
+**A latent flaw cadence exposed.**
+
+- `a_map_with_formations_but_no_missions_fights_exactly_as_the_flat_pool_did`
+  zeroed `leader_lost` and not its mirror `recovery_near_leader`, so a crew who
+  could see her formation leader shed two points the stripped run's crew could
+  not. It was green only while nobody's pressure happened to cross a rung
+  inside the eight-round window. Found at event 214: unit 0 brews up, everybody
+  who saw it takes `ally_destroyed`, and unit 2 reaches Wavering in the flat
+  run and not the other. Both fields zeroed now — that is what "a mod that
+  never mentions the chain of command" means.
+
+**Suppression: four stages that had to name their currency.**
+
+`an_ordered_shot_that_cannot_penetrate_bounces_and_does_nothing` (now fights
+the same battle twice, once with a belt that declares suppression and once with
+one that does not, keeping its old assertion word for word on the second),
+`a_gun_that_cannot_hurt_what_it_sees_holds_its_fire`,
+`a_gun_with_nothing_left_to_break_expects_nothing`,
+`a_remnant_platoon_is_a_story_not_a_gun`. The rule each defends — a shot worth
+nothing is not taken, the damage ledger has no floor — is unchanged; what
+changed is that "worth nothing" is a statement about a currency and the stage
+now says which one.
+
+**Three stages that stopped bruising and started killing.**
+
+- `marching_under_fire` stands its crew at 4 rather than 5. Three 88 rounds a
+  round at a crew whose nerve is now in the ledger beside her plate kills her
+  in the staging round. The band is exactly {3, 4} — bounded by lethality above
+  and by the gun's *sight* below, since at 2 the fire order the stage rests on
+  is refused with `TargetNotSpotted` — and getting 4 cost two of the five
+  callers a `seen(..)` they should always have had, CLAUDE.md's own rule for a
+  stage that needs two crews in plain sight.
+- `a_platoon_boards_rides_hidden_and_steps_off_where_the_ride_ends` drives two
+  hexes rather than three. Three put the taxi at exactly six from the
+  overwatch, the machine gun's maximum reach, and the platoon stepped off into
+  a belt and abandoned before the last assertion could read her position. Only
+  possible at all because a burst that cannot beat plate is now worth firing:
+  the recon car used to hold its fire at the taxi's armour.
+- `a_kinetic_round_that_beats_a_plate_up_close_fades_at_the_end_of_its_reach`
+  silences the coaxial and gives the gun only AP. Both are the rest of the wave
+  working: the coax now fires on every tick the main gun reloads and draws from
+  the same rng stream, and at the far end of the reach the loader reaches for
+  HE instead — correctly, since AP will not get through and HE at least
+  rattles. It filters its counts on the new `ammo` field, which is a strictly
+  better test than it was.
+
+### Tests added
+
+A new section of `tests/engine.rs`, *suppression and cadence join the
+currency*, six tests, all mutation-checked:
+
+| test | mutation that must fail it |
+| --- | --- |
+| `a_burst_that_cannot_get_through_still_counts_for_what_it_does_to_her_nerve` | `best_weapon_from` gates on `expected` instead of `worth`; `Round::loaded` drops suppression; `worth_of` drops `point_worth` |
+| `fear_is_priced_by_the_same_arithmetic_that_charges_it` | `Round::loaded` drops suppression (the ladder and the twin then disagree by whole points) |
+| `a_gun_that_fires_six_times_a_round_is_priced_six_times` | `incoming` sums per shot |
+| `a_mod_that_says_nothing_about_suppression_plays_the_game_before` | `worth_of` drops `point_worth` |
+| `the_loader_will_fire_a_belt_at_plate_she_cannot_beat_when_fear_is_worth_something` | `best_opportunity_shot` reads `.expected` |
+| `suppression_and_what_fear_is_worth_are_data_and_are_read` | either of the above |
+
+The second one is the one worth keeping: it fires several hundred bursts, sums
+what `apply_pressure` actually charged, and requires the mean per shot *fired*
+to land within a fifth of `expected_pressure`. Measured, it lands within a
+couple of percent. Two price lists would be out by whole ladder points.
+
+### Determinism, read before regenerating
+
+**Mechanism** (1,193 of ~1,750 lines): ShotFired 120 → 113, ShotHit 26 → 36,
+ShotMissed 59 → 46, ShotBounced 26 → 24, MoraleChanged 11 → 23, SetGoal 155 →
+158, one `Defied` where there was none. Kills per seed 7/6/6/5 → 5/6/6/6.
+Crews fire fewer shots and land more of them, which is what pricing a round of
+fire ought to do to where they choose to stand.
+
+**Content** (1,156 of ~1,500 lines): ShotFired 113 → 97, ShotHit 36 → 26,
+ShotBounced 24 → 13, ShotMissed 46 → 47, MoraleChanged 23 → 19. Kills per seed
+5/6/6/6 → 4/6/6/6, and `BattleEnded` 2 → 4: all four seeds now finish inside
+the snapshot's twelve rounds where two used to run past it. Fewer shots landing
+is the ladder's `accuracy` rung doing its job on crews who are now driven up
+it.
+
+Both broad and behavioural, which is what a rules change looks like; neither is
+the small order-only diff that means an iteration-order bug.
+
+### Measurements
+
+`--sim --games 36 --sweep seed=0,1000,2000`, three columns per row.
+
+| | baseline (`277838c`) | + mechanism | + content |
+| --- | --- | --- | --- |
+| outcome (Valkyries) | 22 / 18 / 19 | 24 / 21 / 18 | 22 / 17 / 26 |
+| draws, stalemates | 0, 0 | 0, 0 | 0, 0 |
+| length, rounds | 13.5 / 13.6 / 13.2 | 13.1 / 13.7 / 13.1 | 13.0 / 13.2 / 13.1 |
+| hit% | 51 / 55 / 56 | 58 / 53 / 51 | 65 / 70 / 65 |
+| bounce% | 33 / 33 / 33 | 33 / 34 / 33 | 24 / 24 / 25 |
+| cadets out | 10.8 / 12.6 / 12.0 | 11.8 / 11.7 / 11.1 | 10.4 / 10.5 / 10.7 |
+| medium tank | 67/64 | 58/66 | 63/74 |
+| tank destroyer | 75/27 | 81/28 | 85/34 |
+| artillery | 76/43 | 81/39 | 84/37 |
+| 5 over 3, both ends | 37–32 | 38–32 | 34–37 (spread 7) |
+| 5 over 1, both ends | 37–31 | 38–31 | 40–31 (spread 5) |
+
+The skill rows say nothing: both move inside their own three-seed spreads and
+in opposite directions. That is the fourth arc in a row where they have not
+discriminated, and it is the arena's limit rather than this chunk's result —
+see "the arena is the instrument limit again" above.
+
+**Perf**, median of three quiet runs:
+
+| | baseline | + mechanism | + content |
+| --- | --- | --- | --- |
+| round resolution | 1.49 ms | 1.97 ms | 1.84 ms |
+| utility order (diff. 3) | 0.09 ms | 0.08 ms | 0.08 ms |
+| `reachable()` | 18.9 µs | 14.8 µs | 15.4 µs |
+| `roads()` | 143.1 µs | 109.9 µs | 111.3 µs |
+| `unit_vision` cold | 93.5 µs | 90.0 µs | 93.4 µs |
+
+**`score_tile` paid nothing for the second expectation**, which is the number
+the plan asked to watch: `expected_shot` computes damage, pressure and worth
+off one hit chance and one `shot_profile`, so the pressure half is a handful of
+flops on a walk that was happening anyway. Round resolution is up a fifth over
+the baseline and is the row CLAUDE.md already warns moves with how well the AI
+plays rather than with how much work the loop does — crews now stand and trade
+fire where they used to manoeuvre, and the shot census agrees.
+
+**`playthrough 7`**: six machine-gun bursts, none of which could beat what they
+were fired at — *"Irma Krieger (medium_tank) fires mg (opportunity)"*, bouncing
+off a light tank's front. Before this wave the count was **zero on every seed
+tried**, because a burst that could not penetrate was worth exactly nothing to
+the crew holding the trigger. Seed 5 fires seven. Engagements on
+`river_crossing` run to about eleven hexes and a coaxial reaches six, so it
+speaks when somebody closes.
+
+### What this wave leaves behind — the next things of their kind
+
+- [ ] **Every landing shot is now worth something, and "a shot that
+      accomplishes nothing" has stopped existing.** The morale ladder charges
+      `hit + penetrated` for any round that gets through, so once fear is
+      priced at all, a remnant platoon whose damage `mustered` has scaled to
+      nothing still expects three points of pressure a shot against soft
+      targets and opens up. `expected_pressure` is mirroring the resolver
+      honestly — `apply_pressure` really does charge it — so this is a
+      question about the *ladder*, not about the pricing: should the outcome
+      price be scaled by what the round actually spent? It is the reason four
+      test stages had to name their currency, and it is the single biggest
+      behavioural surprise in the wave.
+- [ ] **The fighting terms grew and the ground terms did not.** Attack and
+      threat are a round of fire now, two to twelve times what they were;
+      objective values (2–5 on the shipped maps), `mission_weight` (2.0),
+      `impatience` (0.35), the mass band (−0.45 to −0.12) and the terrain
+      priors were all quoted against a per-shot currency and are unchanged.
+      `deviation_cost` and `attack_scale` were the two that crossed a
+      threshold and had to move; the rest are simply worth proportionally less
+      than they were, everywhere. The lead's planned re-quoting of orders ("a
+      delegated order is worth a quarter of what she has left per round") is
+      the right shape for the whole family, not just for orders.
+- [ ] **`Bearing` still names one weapon per enemy**, so a tank whose coaxial
+      now genuinely wants to fire is under-reported in the panel by the gun
+      that is not its best. Phase 2 already listed this; suppression makes it
+      bite, because the second weapon is exactly the one the new rule is about.
+- [ ] **The overlay's bands are worse than they were**, for the reason Phase 2
+      predicted: they are linear in a quantity that is not, and worth per round
+      is three to six times the per-shot figure they were sized against.
+      Yellow is now unreachable rather than merely rare. The lead's gradient
+      replaces them.
+- [ ] **`rifle_ball` is unswept content.** See above.
+- [ ] **`ai::threats` / `threatened` is a boolean over a currency that now has
+      two halves.** It answers "is anybody shooting at me" and picks up the
+      worth gate for free, which is why a crew under machine-gun fire now
+      counts as under fire — probably right, and nobody has measured it. The
+      planned rewrite onto `fire_on` should decide whether the battle drill
+      wants a *threshold* rather than a predicate now that being shot at
+      harmlessly is a thing the engine can express.
+- [ ] **A `Shot` struct**, still. `expected_shot`, `expected_damage` and
+      `expected_pressure` all carry `#[allow(clippy::too_many_arguments)]` at
+      eight; there are three of them now rather than one.
