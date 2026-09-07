@@ -225,21 +225,84 @@ fn the_planner_numbers_can_be_swept_and_ship_at_the_values_they_replaced() {
     );
 
     // And a float field by the same path, written the way somebody actually
-    // types it on a command line. `--set planner.mission_weight=4` parses as
-    // a json integer, and a field that refused to take one would send a
+    // types it on a command line. `--set planner.score_worth=4` parses as a
+    // json integer, and a field that refused to take one would send a
     // designer hunting for the mistake in their own sweep rather than in
     // ours.
     let was = apply_override(
         &mut reg,
-        &Override::parse("planner.mission_weight=4").expect("a well-formed override"),
+        &Override::parse("planner.score_worth=4").expect("a well-formed override"),
     )
     .expect("the field exists");
     assert_eq!(
-        was, "2",
+        was, "3",
         "a whole-numbered float reports its old value without the trailing zero, \
          which is what a sweep's legend prints"
     );
-    assert_eq!(reg.planner.mission_weight, 4.0);
+    assert_eq!(reg.planner.score_worth, 4.0);
+
+    // And the field Wave 2 retired is addressable by nothing, which is the
+    // point of it never being serialised: a designer who sweeps the name they
+    // remember gets an error listing the names that exist — including the one
+    // that replaced it — instead of a table whose rows all measured the same
+    // game.
+    let err = apply_override(
+        &mut reg,
+        &Override::parse("planner.mission_weight=4").expect("a well-formed override"),
+    )
+    .expect_err("a retired field must not be silently sweepable");
+    assert!(
+        err.contains("order_worth"),
+        "the error should point at what replaced it, got: {err}"
+    );
+}
+
+/// A mod still setting a field this engine has retired is told so.
+///
+/// The one kind of mod error the data machinery cannot otherwise report:
+/// serde ignores what it does not recognise, so a modder who had tuned
+/// `mission_weight` loads cleanly, plays a different game from the one they
+/// wrote, and has nothing to grep for. It is a warning rather than an error
+/// because carrying a stale key from an older engine is a legitimate thing
+/// for a mod to do; what is not acceptable is silence.
+#[test]
+fn a_mod_setting_a_field_that_no_longer_exists_is_told_which_one_replaced_it() {
+    use tactics_core::data::PlannerRules;
+
+    let planner: PlannerRules = serde_json::from_value(serde_json::json!({
+        "mission_weight": 2.0,
+    }))
+    .expect("a retired field must not stop the block from loading");
+    assert_eq!(planner.retired_mission_weight, Some(2.0));
+    assert_eq!(
+        planner.order_worth,
+        PlannerRules::default().order_worth,
+        "and the mod gets the shipped price of an order rather than its own stale one"
+    );
+
+    let mut reg = registry();
+    reg.planner = planner;
+    let report = reg.validate();
+    assert!(
+        report.errors.is_empty(),
+        "a stale key is a warning, not a refusal: {:?}",
+        report.errors
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.contains("mission_weight") && w.contains("order_worth")),
+        "the warning has to name both the dead field and its replacement: {:?}",
+        report.warnings
+    );
+
+    // And it is genuinely dead weight rather than a field with a new name:
+    // what a mod wrote there reaches nothing that serialises, so a sweep of
+    // the block round-trips without it.
+    let round_tripped: PlannerRules =
+        serde_json::from_value(serde_json::to_value(reg.planner).unwrap()).unwrap();
+    assert_eq!(round_tripped.retired_mission_weight, None);
 }
 
 /// A path that names nothing is an error, and the error says what was there.

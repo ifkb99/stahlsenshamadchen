@@ -33,7 +33,8 @@
 //! [`deviation_cost`](PlannerRules::deviation_cost),
 //! [`devolved`](PlannerRules::devolved) — say what a commander is willing to
 //! *drive* for and who she trusts to pick their own ground. The evaluator's
-//! — [`mission_weight`](PlannerRules::mission_weight),
+//! — [`score_worth`](PlannerRules::score_worth),
+//! [`order_worth`](PlannerRules::order_worth),
 //! [`pull_under_fire`](PlannerRules::pull_under_fire),
 //! [`distance_decay`](PlannerRules::distance_decay),
 //! [`plateau`](PlannerRules::plateau),
@@ -92,9 +93,39 @@ fn exit_urgency() -> f32 {
     3.0
 }
 
-/// Serde's default for [`PlannerRules::mission_weight`].
-fn mission_weight() -> f32 {
-    2.0
+/// Serde's default for [`PlannerRules::score_worth`].
+///
+/// **1.0 is the game before this field existed** — an objective's `value`
+/// reached the evaluator unscaled — and 3.0 is what ships, for the reason on
+/// the field itself. The two are the same rule at different rates; the
+/// default follows the shipped value because a mod that declares no `planner`
+/// block must play the game the base mod plays, which is the contract
+/// `the_planner_numbers_can_be_swept_and_ship_at_the_values_they_replaced`
+/// keeps and the reason `deviation_cost`'s default has moved three times.
+fn score_worth() -> f32 {
+    3.0
+}
+
+/// Serde's default for [`PlannerRules::order_worth`].
+///
+/// The value that most nearly reproduces what `mission_weight` did. That
+/// field was a flat 2.0 multiplied by an arrival reward of 1.5, so being on
+/// the ordered ground was worth 3.0 to every crew on the field regardless of
+/// what she was. This is a share of her instead, against an arrival reward
+/// rebased to 1.0 so the number means what it says, and the shipped maps put
+/// eleven substance points on a typical chassis (11.33 on `battle_plains`,
+/// 10.67 on `battle_forest`, 7.50 on the partly-crewed `river_crossing`): a
+/// quarter of eleven is 2.75 against the 3.0 it replaces, and the two are
+/// exactly equal at twelve.
+///
+/// What the rebase does move is the *ratio* between arriving and getting
+/// nearer. Arriving used to be worth ten hexes of the shared
+/// [`PlannerRules::distance_decay`] slope and is now worth about seven. That
+/// is the price of the number being a share rather than a multiple of a
+/// multiple, and it is the thing to sweep if an order starts landing near its
+/// ground rather than on it.
+fn order_worth() -> f32 {
+    0.25
 }
 
 /// Serde's default for [`PlannerRules::pull_under_fire`].
@@ -262,29 +293,127 @@ pub struct PlannerRules {
     /// a fresh one pulls toward the bridge.
     #[serde(default = "exit_urgency")]
     pub exit_urgency: f32,
-    /// What the ground a commander names is worth, in the same units a map
-    /// objective's `value` is in.
+    /// What one point of a map objective's `value` is worth, in substance
+    /// points a round — the exchange rate between the scoreboard and the
+    /// fighting.
+    ///
+    /// Every other term in [`Evaluator::score_tile`](crate::ai::Evaluator)
+    /// is denominated in what the resolver says a round of fire is worth: the
+    /// attack term, the threat term, the danger overlay a player reads. The
+    /// objective term was not. It was `value * decay` on a scale of its own,
+    /// chosen when a shot was priced per trigger pull and threat was zero
+    /// over most of the map, and after cadence and pressure joined the
+    /// currency it was worth two to twelve times less than the terms it has
+    /// to argue with. Measured on `ridge_arena`, where a bare level-2 crest
+    /// worth 3 sits under every found gun, the difficulty-5 commander lost to
+    /// the difficulty-1 one: she alone could see what the crest cost and
+    /// nothing told her what holding it was for.
+    ///
+    /// So this is the sentence the evaluator was missing — *a point of score
+    /// is worth this much of a tank, per round* — and it is a mod's to say,
+    /// because how much a battle is about its ground rather than about its
+    /// tanks is a design decision and not a rule of the battlefield.
+    ///
+    /// It scales an exit's pull through [`Self::exit_urgency`] as well, which
+    /// is quoted in objective-value units and would otherwise silently stop
+    /// meaning that.
+    ///
+    /// **3.0 ships and 1.0 is the game before, and the honest report of the
+    /// sweep is that the win column could not tell them apart.** On
+    /// `--arena ridge_arena` at eight seeds and 576 battles a row, `5 over 1`
+    /// reads 52.3 / 53.3 / 53.5 / 52.1 / 53.0 / 54.0 per cent at 1, 2, 3, 4,
+    /// 6 and 12, which is one spread of noise from end to end. That is not a
+    /// null of the `pull_under_fire` kind — the term is evaluated constantly —
+    /// it is a **symmetric** number: both commanders get the same rate, so it
+    /// changes what a battle is about rather than which side is better at it,
+    /// and a table whose whole content is one side against another cannot see
+    /// it. The one value the table *can* see is zero, and it is catastrophic:
+    /// 9.2 per cent and 225 draws of 288, because nothing then leaves cover.
+    ///
+    /// What it moves is the battle. Over the determinism baseline's four
+    /// seeds of `river_crossing`, 1.0 to 3.0 takes `ObjectiveTaken` from five
+    /// to eight and drops the rounds fought from 22 to 17, with two more
+    /// vehicles destroyed: ground changes hands and the fights over it are
+    /// settled sooner. 3.0 is also the rate at which the ridge's crest, worth
+    /// three points, prices at 13.5 substance points against the 8 to 29 a
+    /// round that a found gun puts on a crew standing there — inside a factor
+    /// of two of the fire it has to argue with, which is the comparison this
+    /// field exists to make possible. Below that it is arithmetic nobody
+    /// consults; far above it a crew drives onto scoring ground through
+    /// anything.
+    #[serde(default = "score_worth")]
+    pub score_worth: f32,
+    /// The share of what a crew has left, per round, that being on the ground
+    /// her commander named is worth to her.
     ///
     /// The size of an order's pull, and therefore the answer to the question
     /// the whole design memo opens with: an order competes with the terrain,
-    /// so how much is it worth against a good hedge? It is 2.0 because that
-    /// is what a typical piece of ground is worth on the shipped maps, so
-    /// "go where you were told" pulls about as hard as "take the ford" —
-    /// and stating it in those units is the only reason the number means
-    /// anything. Two doctrine terms scale it before it is added:
-    /// `1.5 - delegation` (how literally this commander expects to be
-    /// obeyed) and `objective_value` (how much this doctrine cares about
-    /// ground at all).
+    /// so how much is it worth against a good hedge? Quoted **as a share of
+    /// her** rather than as a number, which is the whole of what Wave 2 did
+    /// to it. The number it replaces, `mission_weight`, was a flat 2.0 on the
+    /// objective scale, so a fresh heavy tank and a shot-up scout car valued
+    /// the same order identically while the danger at the ordered ground was
+    /// priced in substance points that meant very different things to the two
+    /// of them. An order is now worth a quarter of a heavy and a quarter of a
+    /// scout car, which is what "go and take that hill" actually asks of
+    /// each.
     ///
-    /// Raising it makes a formation drive at its map reference through
-    /// worse and worse terrain; lowering it makes an order a suggestion.
-    /// Note it does *not* govern how strongly the letter of the order is
-    /// enforced against her own judgment — that is
+    /// **A quarter is the designer's number and the sweep is what keeps it
+    /// from being magic.** `--sweep planner.order_worth=…` on the delegation
+    /// table is the instrument, because that table is where a subordinate who
+    /// will not go where she was sent shows up. Measured at 288 battles a
+    /// cell with `--set planner.devolved=1.1`, so that both commanded
+    /// doctrines actually assign ground — in the shipped game elastic defence
+    /// devolves and issues none, which is why the same sweep without it moves
+    /// three wins in 36 and says nothing:
+    ///
+    /// | `order_worth` | massed armour's tax | bounding overwatch's tax |
+    /// | --- | --- | --- |
+    /// | 0.0 | +2 | +53 |
+    /// | 0.1 | −6 | +43 |
+    /// | **0.25** | **−10** | **+35** |
+    /// | 0.5 | −15 | +29 |
+    /// | 1.0 | −11 | +30 |
+    /// | 2.0 | −18 | +30 |
+    ///
+    /// A doctrine's tax is what it loses by fighting through missions instead
+    /// of for itself, against the same flat opponent, and zero is the target.
+    /// Both flat controls are **bit-identical at every value**, which is the
+    /// additivity claim measured rather than asserted: this number reaches
+    /// commanded sides and nothing else. Massed armour crosses zero somewhere
+    /// under a tenth and overshoots; bounding overwatch takes most of the
+    /// improvement available to it by a quarter and flattens. A quarter is
+    /// where the first is still near zero and the second has stopped
+    /// improving, which is a defensible reading of a table with a noise floor
+    /// of about a standard deviation of 8 wins in 288 — not a knife edge, and
+    /// not a number the instrument chose on its own.
+    ///
+    /// Two doctrine terms still scale it before it is added: `1.5 -
+    /// delegation` (how literally this commander expects to be obeyed,
+    /// floored at 1.0 under [`Latitude::Binding`](crate::battle::Latitude))
+    /// and `objective_value` (how much this doctrine cares about ground at
+    /// all). Note it does *not* govern how strongly the letter of the order
+    /// is enforced against her own judgment — that is
     /// [`Self::deviation_cost`], one layer up in the goal chooser, and the
     /// two are worth keeping apart: this is what the ground is worth, that
     /// is what disobedience costs.
-    #[serde(default = "mission_weight")]
-    pub mission_weight: f32,
+    #[serde(default = "order_worth")]
+    pub order_worth: f32,
+    /// `mission_weight`, retired in Wave 2 and kept here only so that a mod
+    /// still declaring it can be told.
+    ///
+    /// A removed field is the one kind of mod error this project's data
+    /// machinery cannot otherwise report: serde ignores what it does not
+    /// recognise, so a modder who had tuned `mission_weight` would load
+    /// cleanly, play a different game from the one they wrote, and have
+    /// nothing to grep for. Deserialised under its old name, never
+    /// serialised (so `--set planner.mission_weight=…` fails with the list of
+    /// fields that do exist, which names its replacement), and **warned about
+    /// rather than refused** by `validate-mods`: a stale key from an older
+    /// engine is a thing a mod may legitimately carry, and refusing to load
+    /// over one would be a harsher rule than this file applies to any value.
+    #[serde(default, rename = "mission_weight", skip_serializing)]
+    pub retired_mission_weight: Option<f32>,
     /// The share of a movement to contact's pull that survives being shot
     /// at.
     ///
@@ -317,12 +446,16 @@ pub struct PlannerRules {
     /// from it, which is what lets a unit twenty hexes off still know which
     /// way to drive.
     ///
-    /// **One number for both objectives and missions, on purpose.**
-    /// [`Self::mission_weight`] is denominated in objective-value units —
-    /// "an order pulls about as hard as the ford" — and that sentence is
-    /// only true while the two gradients have the same shape. Splitting this
-    /// into a separate slope per kind would silently change the units
-    /// `mission_weight` is quoted in, and the two would drift.
+    /// **One number for both objectives and missions, on purpose.** It used
+    /// to be one number because [`Self::order_worth`]'s predecessor was
+    /// quoted in objective-value units — "an order pulls about as hard as the
+    /// ford" — and that sentence was only true while the two gradients had
+    /// the same shape. The two are quoted in different things now (a point of
+    /// score against a share of herself), so the reason is a better one: the
+    /// slope is not a statement about what ground is worth at all, it is a
+    /// statement about **how far off a crew can still tell which way to
+    /// drive**, and that is a fact about her and the map rather than about
+    /// the prize. Two slopes would be two answers to it.
     ///
     /// Shallower reaches further and flattens the choice between distant
     /// ground; steeper makes a crew take the nearest worthwhile thing and
@@ -395,7 +528,9 @@ impl Default for PlannerRules {
             deviation_cost: deviation_cost(),
             devolved: devolved(),
             exit_urgency: exit_urgency(),
-            mission_weight: mission_weight(),
+            score_worth: score_worth(),
+            order_worth: order_worth(),
+            retired_mission_weight: None,
             pull_under_fire: pull_under_fire(),
             distance_decay: distance_decay(),
             plateau: plateau(),

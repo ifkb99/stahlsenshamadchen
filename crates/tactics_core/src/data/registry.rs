@@ -805,11 +805,33 @@ impl DataRegistry {
                 p.plateau
             ));
         }
-        if p.mission_weight < 0.0 {
+        if p.order_worth < 0.0 {
             report.warn(format!(
-                "planner mission_weight is {}; a formation under orders is repelled by the \
+                "planner order_worth is {}; a formation under orders is repelled by the \
                  ground its commander named",
-                p.mission_weight
+                p.order_worth
+            ));
+        }
+        if p.score_worth < 0.0 {
+            report.warn(format!(
+                "planner score_worth is {}; every objective on every map is then worth \
+                 marching away from, and a side wins by conceding the ground",
+                p.score_worth
+            ));
+        }
+        // A field that has been removed is the one mod error nothing else in
+        // this machinery can report: serde ignores what it does not
+        // recognise, so a modder who had tuned `mission_weight` would load
+        // cleanly and play a different game from the one they wrote. A
+        // warning rather than an error, for the same reason `devolved` out of
+        // range is one — carrying a stale key from an older engine is a thing
+        // a mod may legitimately do, and this is the tool that tells them.
+        if let Some(was) = p.retired_mission_weight {
+            report.warn(format!(
+                "planner mission_weight is {was} and is no longer read. An order is priced \
+                 as a share of what the crew has left now: set planner.order_worth (0.25 \
+                 ships, and 0.25 x a typical eleven-point chassis is the 3.0 that \
+                 mission_weight 2.0 used to pay)"
             ));
         }
         // Warned rather than errored because 1.0 is a coherent thing for a

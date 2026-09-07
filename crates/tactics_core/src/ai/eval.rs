@@ -160,12 +160,21 @@ impl Evaluator {
         // sum above is what the *rules* say can be put on her, which is the
         // resolver's to answer, and this is what she makes of it, which is
         // hers and her doctrine's. One is arithmetic and one is a preference.
+        // What she has left, in substance points. Two terms spend it and they
+        // spend it in opposite directions, which is worth saying out loud
+        // because it is the same fact read twice: danger is priced as a
+        // *fraction* of her below, so a worn crew feels the same shell more;
+        // an order is priced as a *share* of her, so a worn crew has less to
+        // spend on obeying one. Both are true — there is simply less of her —
+        // and together they mean a half-destroyed crew weighs her orders
+        // against the guns covering them about four times more cautiously
+        // than a fresh one does.
+        let left = state.substance(registry, me).0.max(1) as f32;
         let exposure = {
             /// Most a crew may multiply danger by for being small, worn down,
             /// or loaded. Four is "refuses what a fresh crew accepts", which
             /// is as far as the distinction still says anything.
             const MAX_EXPOSURE: f32 = 4.0;
-            let left = state.substance(registry, me).0.max(1) as f32;
             let riding: u32 = state
                 .units
                 .iter()
@@ -173,6 +182,7 @@ impl Evaluator {
                 .map(|u| state.substance(registry, u).0)
                 .sum();
             let fragility = state.typical_substance(registry) / left;
+
             let stake = 1.0 + riding as f32 / left;
             (fragility * stake).min(MAX_EXPOSURE)
         };
@@ -363,6 +373,7 @@ impl Evaluator {
                     registry,
                     state,
                     tile,
+                    left,
                     mission,
                     formation,
                     formation.latitude_for(unit),
@@ -393,8 +404,11 @@ impl Evaluator {
         // that stage, anything at or below 0.15 keeps the withdrawal a
         // withdrawal and 0.20 does not, so this is not a knife edge either.
         //
-        // The lane's own pull is `planner.mission_weight`, and re-quoting
-        // *that* in the new currency is a chunk of its own (ARCH-TODO).
+        // The lane's own pull is `planner.exit_urgency` through
+        // `score_worth`, which is the objective scale rather than the share
+        // of herself the other missions are quoted in — see `mission_value`'s
+        // `Withdraw` arm for why an ordered retreat is the one order that may
+        // not shrink as she does.
         let withdrawing = matches!(standing, Some((crate::battle::Mission::Withdraw { .. }, _)));
         let attack_scale = if withdrawing { 0.0625 } else { 1.0 };
 
@@ -510,15 +524,28 @@ impl Evaluator {
             // pulling hard enough to cross a map. So an exit's urgency comes
             // from the crew's condition alone, scaled to be worth about as
             // much to a finished crew as a good objective is to a fresh one.
+            //
+            // Both arms are multiplied by
+            // [`PlannerRules::score_worth`](crate::data::PlannerRules::score_worth),
+            // which is the exchange rate between a point on the scoreboard
+            // and a substance point of tank. Before it existed this term was
+            // the one number in the sum quoted in units of its own, and after
+            // cadence and pressure joined the currency it was worth two to
+            // twelve times less than the attack and threat terms it argues
+            // with — which is why the difficulty-5 commander on the ridge
+            // arena declined a crest she could see the price of. `exit_urgency`
+            // rides on it too, because it is quoted in objective-value units
+            // and would otherwise stop meaning that the moment the rate moved.
+            let rate = registry.planner.score_worth;
             let weight = match objective.kind {
                 ObjectiveKind::Hold => {
                     // Ground already held is worth half: still worth sitting
                     // on, not worth marching across the map for.
                     let appetite = if held == Some(side) { 0.5 } else { 1.0 };
-                    objective.value as f32 * self.doctrine.objective_value * appetite
+                    objective.value as f32 * rate * self.doctrine.objective_value * appetite
                 }
                 ObjectiveKind::Exit => {
-                    registry.planner.exit_urgency * self.doctrine.objective_value * flight
+                    registry.planner.exit_urgency * rate * self.doctrine.objective_value * flight
                 }
             };
             if weight <= 0.0 {
@@ -545,18 +572,18 @@ impl Evaluator {
     /// slope leading there, because a greedy one-round planner can only
     /// follow a gradient it can see from the tiles it can reach.
     ///
-    /// The numbers are stated against the map-objective scale so they mean
-    /// something, and they are data:
-    /// [`PlannerRules::mission_weight`](crate::data::PlannerRules::mission_weight)
-    /// ships at 2.0 because that is what a typical piece of ground is worth
-    /// in the shipped maps, so "go where you were told" pulls about as hard
-    /// as "take the ford". The slope is
+    /// The numbers are stated in the currency every other term is stated in,
+    /// and they are data:
+    /// [`PlannerRules::order_worth`](crate::data::PlannerRules::order_worth)
+    /// ships at 0.25, so being where you were sent is worth a quarter of what
+    /// you still have, per round, against the fire the resolver says is
+    /// waiting there. The slope is
     /// [`distance_decay`](crate::data::PlannerRules::distance_decay), shared
-    /// with [`Self::objective_value`] precisely so that comparison holds —
-    /// two slopes would make the two rewards incommensurable and quietly
-    /// change the units `mission_weight` is quoted in. The balance harness's
+    /// with [`Self::objective_value`] because it answers a question about the
+    /// crew and the map — how far off can she still tell which way to drive —
+    /// rather than about what the prize is worth. The balance harness's
     /// delegation-tax table is the instrument that judges them, and
-    /// `--sweep planner.mission_weight=...` is how to ask.
+    /// `--sweep planner.order_worth=...` is how to ask.
     ///
     /// `delegation` is the strictness knob, and this is where it is finally
     /// read: a commander who devolves little expects the letter of the order
@@ -578,11 +605,13 @@ impl Evaluator {
     /// altogether was the other candidate and is wrong: it would make a
     /// binding order pull *less* than a delegated one for a tight doctrine,
     /// which is not a thing "I mean it" can be allowed to do.
+    #[allow(clippy::too_many_arguments)]
     fn mission_value(
         &self,
         registry: &DataRegistry,
         state: &BattleState,
         tile: Hex,
+        left: f32,
         mission: &crate::battle::Mission,
         formation: &crate::battle::Formation,
         latitude: crate::battle::Latitude,
@@ -590,9 +619,24 @@ impl Evaluator {
         use crate::battle::Mission;
         // Both read once rather than per arm: every arm below is the same
         // shape — a reward for being on the ground, a slope leading to it —
-        // and that is what makes `mission_weight` quotable in objective-value
-        // units.
-        let weight = registry.planner.mission_weight;
+        // and reading them here is what keeps the arms from drifting into
+        // four different opinions about what an order is.
+        //
+        // **The weight is a share of the crew rather than a number.** `left`
+        // is what she still has aboard in substance points, so `order_worth`
+        // is read literally: at the shipped quarter, standing on the ground
+        // she was given is worth a quarter of her, per round, against a
+        // threat term measured in the same points at the same tile. That
+        // comparison is the whole reason the field exists — an order and the
+        // danger of carrying it out were previously quoted in different
+        // things, and the danger half had just grown by its cadence.
+        //
+        // The arrival rewards below are 1.0 and 0.5 where they were 1.5 and
+        // 0.75, rebased once so that `order_worth` means the share it says it
+        // means rather than two thirds of it. What that costs is stated on
+        // the field: arriving used to be worth ten hexes of the slope and is
+        // now worth about seven.
+        let weight = registry.planner.order_worth * left;
         let decay = registry.planner.distance_decay;
         let doctrine = &self.doctrine;
         let floor = match latitude {
@@ -613,7 +657,7 @@ impl Evaluator {
             // get.
             Mission::Advance { to } | Mission::Assault { to } => {
                 let dist = to.distance_to(tile);
-                let reward = if dist <= 1 { 1.5 } else { 0.0 };
+                let reward = if dist <= 1 { 1.0 } else { 0.0 };
                 weight * strictness * doctrine.objective_value * (reward - decay * dist as f32)
             }
             // Stand where told. `None` anchors on the leader rather than a
@@ -631,7 +675,7 @@ impl Evaluator {
                 match anchor {
                     Some(anchor) => {
                         let dist = anchor.distance_to(tile) as f32;
-                        weight * strictness * doctrine.objective_value * (0.75 - decay * dist)
+                        weight * strictness * doctrine.objective_value * (0.5 - decay * dist)
                     }
                     // Nobody left to anchor on: the mission has no ground to
                     // say anything about.
@@ -645,7 +689,7 @@ impl Evaluator {
             // it as if it were a bridge to hold.
             Mission::Recon { toward } => {
                 let dist = toward.distance_to(tile);
-                let reward = if dist <= 2 { 0.75 } else { 0.0 };
+                let reward = if dist <= 2 { 0.5 } else { 0.0 };
                 weight * strictness * doctrine.scouting * (reward - decay * dist as f32)
             }
             // Leave by the named lane. Deliberately ungated by damage: the
@@ -667,7 +711,17 @@ impl Evaluator {
                             .min()
                             .unwrap_or(0);
                         let reward = if objective.contains(tile) { 1.5 } else { 0.0 };
+                        // The one arm that is *not* a share of her: an
+                        // ordered withdrawal is priced on the objective scale
+                        // through `exit_urgency`, exactly as the unordered
+                        // pull in `objective_value` is, and it rides on
+                        // `score_worth` for the same reason. Being ordered out
+                        // is not worth less to a crew who is nearly finished —
+                        // it is worth more, and the flight gate the unordered
+                        // version carries is what says so. Quoting it as a
+                        // share of what is left would have inverted that.
                         registry.planner.exit_urgency
+                            * registry.planner.score_worth
                             * doctrine.objective_value
                             * (reward - decay * dist as f32)
                     }
@@ -716,7 +770,7 @@ impl Evaluator {
                         weight
                             * strictness
                             * doctrine.objective_value
-                            * (0.75 - decay * (dist - STANDOFF).abs())
+                            * (0.5 - decay * (dist - STANDOFF).abs())
                     }
                     None => 0.0,
                 }

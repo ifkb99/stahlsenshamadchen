@@ -1056,6 +1056,17 @@ fn the_shipped_doctrines_straddle_the_price_of_deviating() {
     // suppression and `point_worth` from **12 to 29**. Shipped at 12.0, the
     // bottom of the intersection — one value has to serve both, or the field
     // would mean something different in a mod that declines the new rule.
+    //
+    // Wave 2 moved the band without moving the field, which is the first time
+    // that has happened and is worth recording. An order is a share of the
+    // crew now (`planner.order_worth` times what she has left) rather than a
+    // flat 2.0, so on this stage — a medium tank with thirteen substance
+    // points — the ordered ground is worth 3.25 where it was 3.0 and its
+    // slope is half again as steep. Re-measured: massed armour obeys from
+    // **10** and elastic defence starts obeying at **24**, so the straddle is
+    // 10 to 23 where it was 12 to 29. 12.0 still sits inside it with room at
+    // both ends and did not have to move; if a later wave moves the currency
+    // again, this is the paragraph to re-measure before touching the number.
     let reg = seen(registry_wireless());
     let (state, told) = pressed_stage(&reg, 41);
     let ordered = Some(tactics_core::battle::Goal::Take(told));
@@ -1366,6 +1377,17 @@ fn how_badly_a_finished_crew_wants_the_lane_is_a_mod_decision() {
 /// rather than about a rounding difference. No enemy in sight on purpose: an
 /// advance under fire is a different question, and it is the next test.
 fn ordered_against_the_ground(reg: &DataRegistry, seed: u64) -> BattleState {
+    ordered_against_the_ground_in(reg, "medium_tank", seed)
+}
+
+/// The same stage, crewed by whichever chassis the caller wants.
+///
+/// Parameterised because an order is a share of the crew who was given it
+/// now, so the interesting comparison is the *same* order given to two
+/// different vehicles — and the honest way to make it is two runs of one
+/// stage rather than two crews on one, which would put each of them in the
+/// other's mass term and confound the thing being measured.
+fn ordered_against_the_ground_in(reg: &DataRegistry, vehicle: &str, seed: u64) -> BattleState {
     let rows: Vec<&str> = vec![
         "gggggggggggggggggggg",
         "ggfggggggggggggggggg",
@@ -1389,7 +1411,7 @@ fn ordered_against_the_ground(reg: &DataRegistry, seed: u64) -> BattleState {
             ai: None,
         },
     ];
-    let mut hers = unit_at([1, 1], 0, "medium_tank", "Subordinate");
+    let mut hers = unit_at([1, 1], 0, vehicle, "Subordinate");
     hers.formation = Some("platoon".into());
     hers.leads = true;
     let placements = vec![hers, unit_at([19, 0], 1, "medium_tank", "Somebody")];
@@ -1419,7 +1441,238 @@ fn ordered_against_the_ground(reg: &DataRegistry, seed: u64) -> BattleState {
     state
 }
 
-/// What the ground a commander names is worth is the mod's to choose.
+/// The same shape as [`objective_under_a_gun`], with an *order* on the
+/// dangerous hex instead of an objective.
+///
+/// What it is for is the sentence `order_worth` is quoted in: an order is
+/// worth a share of what she has left, per round, *against the danger at the
+/// ordered ground*. So the stage has to put a real price on the ordered hex
+/// and nothing else on it — no objectives, no cover, no shot of her own, one
+/// crew a side — and then the only question left is how large the share is
+/// and whether her commander said she meant it.
+fn ordered_into_a_gun(reg: &DataRegistry, seed: u64) -> BattleState {
+    let rows: Vec<&str> = vec!["gggggggggggggggggg"; 3];
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "ordered_under_fire",
+        "palette": { "g": "grass" },
+        "rows": rows,
+        "formations": [{ "id": "platoon", "name": "Platoon", "side": 0 }],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let mut hers = unit_at([1, 1], 0, "recon_car", "Subordinate");
+    hers.formation = Some("platoon".into());
+    hers.leads = true;
+    let placements = vec![hers, unit_at([16, 1], 1, "tank_destroyer", "Gun")];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    let mut state = BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    )
+    .expect("the staged placements are content the base mod ships");
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "the order has to be into a gun she can see, or the danger is not in the sum"
+    );
+    state
+        .apply(
+            reg,
+            &Order::SetMission {
+                formation: formation_named(&state, "platoon"),
+                mission: Mission::Advance {
+                    to: tactics_core::offset_to_hex(9, 1),
+                },
+                latitude: tactics_core::battle::Latitude::Delegated,
+            },
+        )
+        .expect("a legal mission");
+    state
+}
+
+/// A delegated crew takes the ordered ground until its danger outweighs her
+/// share of herself; a binding one takes it from further down the scale.
+///
+/// The two halves of Wave 2's order term meeting: what an order is worth is a
+/// share of the crew (`order_worth`), and what latitude buys is the floor
+/// under the doctrine's discount and nothing else. So a loose doctrine
+/// reading a delegated order needs the share to be larger before the ordered
+/// hex beats the safe one, and the same doctrine told "I mean it" crosses
+/// earlier — by exactly the ratio of the two strictnesses and no more, which
+/// is the rule `a_binding_mission_is_not_discounted_by_a_loose_doctrine`
+/// pins from the other side.
+///
+/// Written as two thresholds rather than as one comparison at the shipped
+/// value on purpose: a single comparison would pass on a stage where the
+/// order beats the gun at every price, and the thing worth defending is that
+/// there *is* a price at which she declines.
+///
+/// Measured, so the margins are on the record: a recon car with nine
+/// substance points left, seven hexes from a tank destroyer's 88, is looking
+/// at 29.2 points of expected fire a round. She crosses at `order_worth` 1.20
+/// delegated and 0.95 binding — four fifths of it, to the twentieth the scan
+/// steps in. At the shipped quarter she declines this order, which is the
+/// right answer: a quarter of nine points is a little over two, against
+/// twenty-nine.
+#[test]
+fn a_delegated_crew_takes_ordered_ground_until_it_costs_more_than_her_share_of_herself() {
+    let mut reg = seen(registry_wireless());
+    let ordered = tactics_core::offset_to_hex(9, 1);
+    let safe = tactics_core::offset_to_hex(1, 1);
+    // Elastic defence devolves, so `1.5 - delegation` is 0.8 delegated and is
+    // floored at 1.0 when the order is binding: this is the one doctrine on
+    // which latitude has anything to say.
+    let doctrine = reg
+        .doctrine("elastic_defense")
+        .cloned()
+        .expect("base doctrine");
+    let eval = Evaluator::new(doctrine);
+
+    let takes_it = |reg: &DataRegistry, state: &BattleState| {
+        eval.score_tile(reg, state, UnitId(0), ordered).score
+            > eval.score_tile(reg, state, UnitId(0), safe).score
+    };
+    // The smallest share at which she goes, to a twentieth. `None` would mean
+    // no price buys the march, which is a broken stage rather than a result.
+    let threshold = |reg: &mut DataRegistry, latitude: Latitude| {
+        let mut state = ordered_into_a_gun(reg, 31);
+        state
+            .apply(
+                reg,
+                &Order::SetMission {
+                    formation: formation_named(&state, "platoon"),
+                    mission: Mission::Advance { to: ordered },
+                    latitude,
+                },
+            )
+            .expect("a legal mission");
+        (0..=40)
+            .map(|n| n as f32 * 0.05)
+            .find(|share| {
+                reg.planner.order_worth = *share;
+                takes_it(reg, &state)
+            })
+            .expect("some share of herself buys the march")
+    };
+
+    let delegated = threshold(&mut reg, Latitude::Delegated);
+    let binding = threshold(&mut reg, Latitude::Binding);
+    assert!(
+        delegated > 0.0,
+        "an order worth nothing does not send her into a gun: she crossed at {delegated}"
+    );
+    assert!(
+        binding < delegated,
+        "insisting buys the march at a smaller share of her: binding at {binding}, \
+         delegated at {delegated}"
+    );
+    // And by the letter of the order and no further: the two thresholds are
+    // in the ratio of the two strictnesses, 0.8 against the floored 1.0, so
+    // the binding one crosses at four fifths of the delegated one. Checked to
+    // within the twentieth the scan steps in.
+    assert!(
+        (binding - delegated * 0.8).abs() <= 0.05 + 1e-6,
+        "the gap is the delegation floor and nothing else: {binding} against \
+         {} expected",
+        delegated * 0.8
+    );
+
+    // And the danger is really what she is weighing against, rather than the
+    // distance: at the share she crossed at, the ordered ground is worth
+    // about what the gun expects to take out of her there.
+    let state = ordered_into_a_gun(&reg, 31);
+    let left = state.substance(&reg, state.unit(UnitId(0)).unwrap()).0 as f32;
+    let danger = tactics_core::battle::incoming(&reg, &state, UnitId(0), ordered).worth;
+    assert!(
+        danger > left,
+        "the ordered hex has to cost her more than she is worth, or a quarter of \
+         herself would buy the march and the thresholds above would both be zero: \
+         {danger} against {left} left aboard"
+    );
+}
+
+/// A piece of scoring ground inside a gun's envelope, and safe ground behind
+/// her, with nothing else to argue about.
+///
+/// The choice the ridge arena found the evaluator getting wrong, staged small
+/// enough to reason about: an objective worth three points seven hexes from
+/// an 88, against the hex she is standing on fifteen hexes from it. Whether
+/// she takes it is exactly the question "what is a point of score worth in
+/// substance points a round", which is [`PlannerRules::score_worth`].
+///
+/// A recon car on purpose, and the reason is that the stage has to be about
+/// the objective rather than about the shot. Her only weapon reaches six
+/// hexes and the tank destroyer is seven away from the near tile and fifteen
+/// from the far one, so the attack term is zero at both ends and cannot
+/// stand in for the objective's pull; her twenty-hex vision means her own
+/// side finds the gun from either tile, so the threat term is honest at both;
+/// and she is the only crew on her side, so the mass term is zero rather than
+/// a fourth thing to hold constant.
+fn objective_under_a_gun(reg: &DataRegistry, seed: u64) -> BattleState {
+    let rows: Vec<&str> = vec![
+        "gggggggggggggggggg",
+        "gggggggggggggggggg",
+        "gggggggggggggggggg",
+    ];
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "prize",
+        "palette": { "g": "grass" },
+        "rows": rows,
+        "objectives": [
+            { "id": "ford", "name": "The Ford", "at": [[9, 1]], "value": 3 },
+        ],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let placements = vec![
+        unit_at([1, 1], 0, "recon_car", "Scout"),
+        unit_at([16, 1], 1, "tank_destroyer", "Gun"),
+    ];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+    let state = BattleState::from_placements(
+        reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    )
+    .expect("the staged placements are content the base mod ships");
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "the stage rests on her side having found the gun: the choice is between known \
+         danger and known ground, not between a guess and a guess"
+    );
+    state
+}
+
+/// What the ground a commander names is worth is the mod's to choose, and it
+/// is worth a share of the crew she named it to.
 ///
 /// This is the complaint the whole design memo opens with, made checkable:
 /// an order is a term in a sum, so there is some weight at which the hedge
@@ -1444,7 +1697,7 @@ fn what_the_ground_a_commander_names_is_worth_is_a_mod_decision() {
     // Worth nothing, and the order may as well not have been given: she reads
     // the map exactly as an unordered crew does and the cover beside her
     // wins.
-    reg.planner.mission_weight = 0.0;
+    reg.planner.order_worth = 0.0;
     assert!(
         gap(&reg) < 0.0,
         "an order worth nothing loses to a hedge, which is the complaint in one line"
@@ -1452,7 +1705,7 @@ fn what_the_ground_a_commander_names_is_worth_is_a_mod_decision() {
 
     // At what the base mod ships, the sixteen hexes she was told to cross are
     // worth crossing.
-    reg.planner.mission_weight = 2.0;
+    reg.planner.order_worth = 0.25;
     let shipped = gap(&reg);
     assert!(
         shipped > 0.0,
@@ -1461,10 +1714,116 @@ fn what_the_ground_a_commander_names_is_worth_is_a_mod_decision() {
 
     // And it is a weight rather than a switch: heavier orders pull harder,
     // which is what makes sweeping it mean something.
-    reg.planner.mission_weight = 6.0;
+    reg.planner.order_worth = 0.75;
     assert!(
         gap(&reg) > shipped,
         "and a heavier order pulls harder still"
+    );
+}
+
+/// The same order is worth more to a heavy tank than to a scout car.
+///
+/// The whole content of quoting an order as a *share* of the crew rather than
+/// as a number. Under the flat `mission_weight` these two read "go to that
+/// hex" identically, while the danger of going there was priced in substance
+/// points that meant three times as much to one of them as to the other — so
+/// the small vehicle was the one who obeyed, which is backwards.
+///
+/// Two chassis on one stage under one mission, scored on the same two tiles,
+/// so nothing but the size of the crew differs. Mutation-checked by pinning
+/// the weight back to a constant: `order_worth * left` -> `order_worth * 11.0`
+/// makes the two gaps equal and fails the strict comparison.
+#[test]
+fn an_order_is_worth_a_share_of_herself_so_it_asks_more_of_a_heavier_crew() {
+    let reg = seen(registry_wireless());
+    let hedge = tactics_core::offset_to_hex(2, 1);
+    let hill = tactics_core::offset_to_hex(18, 1);
+    let eval = Evaluator::new(reg.doctrine("massed_armor").cloned().unwrap());
+    let pull = |vehicle| {
+        let state = ordered_against_the_ground_in(&reg, vehicle, 19);
+        let left = state.substance(&reg, state.unit(UnitId(0)).unwrap()).0;
+        let gap = eval.score_tile(&reg, &state, UnitId(0), hill).score
+            - eval.score_tile(&reg, &state, UnitId(0), hedge).score;
+        (left, gap)
+    };
+    let (bigger, heavy) = pull("heavy_tank");
+    let (smaller, scout) = pull("recon_car");
+    assert!(
+        bigger > smaller,
+        "the stage needs two chassis of different size, got {bigger} and {smaller}"
+    );
+    assert!(
+        heavy > scout,
+        "the same order pulls the heavier crew harder: {heavy} against {scout}"
+    );
+    // And it pulls her harder *in proportion to what she is*, which is the
+    // claim rather than merely "differently". Everything on the stage is
+    // shared except the chassis, and the only term that does not scale with
+    // her is the hedge's cover prior, so the two pulls should track the two
+    // complements to within a few percent.
+    let by_pull = heavy / scout;
+    let by_size = bigger as f32 / smaller as f32;
+    assert!(
+        (by_pull - by_size).abs() < 0.1 * by_size,
+        "the pull should scale with the crew: {by_pull} against a size ratio of {by_size}"
+    );
+}
+
+/// What a point on the scoreboard is worth is the mod's to choose.
+///
+/// The other half of Wave 2, and the thing `ridge_arena` measured the absence
+/// of: an objective's `value` used to arrive at the evaluator on a scale of
+/// its own, so a crest worth 3 argued with a threat term the resolver had
+/// grown to eight or twelve substance points a round and lost. There is some
+/// rate at which taking ground under a gun is worth it and some rate at which
+/// it is not, and which the game ships at is a design decision.
+///
+/// Staged as exactly that choice: an objective inside a found gun's envelope,
+/// against safe ground outside it.
+#[test]
+fn a_point_of_score_is_priced_in_the_currency() {
+    let mut reg = seen(registry_wireless());
+    let state = objective_under_a_gun(&reg, 23);
+    let prize = tactics_core::offset_to_hex(6, 1);
+    let safe = tactics_core::offset_to_hex(1, 1);
+    assert!(
+        tactics_core::battle::incoming(&reg, &state, UnitId(0), prize).worth
+            > tactics_core::battle::incoming(&reg, &state, UnitId(0), safe).worth,
+        "the stage needs the objective to be the dangerous half of the choice"
+    );
+    let eval = Evaluator::new(reg.doctrine("massed_armor").cloned().unwrap());
+    let gap = |reg: &DataRegistry| {
+        eval.score_tile(reg, &state, UnitId(0), prize).score
+            - eval.score_tile(reg, &state, UnitId(0), safe).score
+    };
+
+    // A point of score worth nothing: she is a crew with no reason to be
+    // here, and the gun decides.
+    reg.planner.score_worth = 0.0;
+    assert!(
+        gap(&reg) < 0.0,
+        "with the scoreboard worth nothing she declines the ground, which is exactly \
+         what the ridge arena measured"
+    );
+
+    // And a rate at which the ground is worth what it costs. Found by
+    // doubling from the shipped 1.0 rather than asserted: what matters is
+    // that some rate flips the choice, because that is what makes the field a
+    // design decision instead of a decoration.
+    reg.planner.score_worth = 8.0;
+    assert!(
+        gap(&reg) > 0.0,
+        "and at a rate that says the battle is about its ground, she takes it under fire"
+    );
+
+    // Monotone in between, so a sweep of it means something.
+    reg.planner.score_worth = 1.0;
+    let shipped = gap(&reg);
+    reg.planner.score_worth = 4.0;
+    assert!(
+        gap(&reg) > shipped,
+        "a dearer point of score pulls harder: {} against {shipped}",
+        gap(&reg)
     );
 }
 
