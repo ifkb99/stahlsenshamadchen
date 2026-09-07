@@ -412,8 +412,8 @@ impl Roster {
     ///    the better of them is used.
     /// 2. **Somebody covering.** With ten cadets and four seats a tank, an
     ///    empty seat is the normal case, so the best remaining crew member
-    ///    takes it at [`Balance::substitution_penalty`]. A commander can lay
-    ///    a gun; she is simply not the gunner.
+    ///    takes it at [`crate::data::Balance::substitution_penalty`]. A
+    ///    commander can lay a gun; she is simply not the gunner.
     /// 3. **Nobody fit.** An untrained average, because the vehicle has not
     ///    stopped existing just because its crew is down.
     ///

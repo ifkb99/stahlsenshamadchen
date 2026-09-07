@@ -355,13 +355,13 @@ pub struct WeaponDef {
     /// reach for them — index 0 is what she loads when nobody has said
     /// otherwise.
     ///
-    /// **The fields above are still what combat reads.** `damage`,
-    /// `penetration` and `damage_type` resolve every shot in this engine
-    /// today, exactly as they did before ammunition was content; this list is
-    /// inert until the penetration pipeline lands, and *that* chunk is the one
-    /// that retires them. Until then a weapon naming no ammunition is a
-    /// perfectly ordinary weapon rather than one that cannot fire, which is
-    /// what makes this an additive change to every mod already written.
+    /// **This is what combat reads, where it is not empty.** The penetration
+    /// pipeline resolves a shot from the round the loader chose; the fields
+    /// above are the fallback, and a weapon naming no ammunition is still a
+    /// perfectly ordinary weapon that fires from its own
+    /// `damage`/`penetration`/`damage_type` rather than one that cannot fire.
+    /// That fallback is what made ammunition an additive change to every mod
+    /// already written, and it is why it is still here.
     #[serde(default)]
     pub ammo: Vec<String>,
 }

@@ -157,7 +157,7 @@ pub struct Balance {
     /// her round to count stops for it, and pays for the stop in the time
     /// she spends visible on the same piece of ground.
     ///
-    /// Uncapped, and the clamp to [`crate::battle::MIN_HIT`] is what stops
+    /// Uncapped, and the clamp to [`Self::min_hit`] is what stops
     /// it running away: a vehicle at a full gallop can technically still
     /// fire, and technically still will not hit anything.
     pub firing_on_the_move_per_hex: i32,

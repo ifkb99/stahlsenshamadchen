@@ -10,14 +10,12 @@
 //! of rounds it can chamber, and the vehicle becomes a rack with a finite
 //! number of each aboard.
 //!
-//! **Nothing in combat reads any of this yet.** This module is the data layer
-//! of the ballistics rewrite and is deliberately inert: [`AmmoDef`]s load,
-//! validate and print, vehicles carry counts through saves, and
-//! [`crate::battle::combat`] still resolves every shot from the weapon's own
-//! `damage`/`penetration`/`damage_type` exactly as it did before. The
-//! penetration pipeline that spends these is the next piece of work, and the
-//! proof that this piece changed no behaviour is that
-//! `tests/snapshots/event_stream.txt` did not move by a single byte.
+//! **Combat resolves every shot through this.** The module shipped inert —
+//! definitions that loaded, validated and printed while the weapon's own
+//! `damage`/`penetration`/`damage_type` still decided everything — and the
+//! penetration pipeline has since landed on top of it: the loader chooses a
+//! round through `round_worth`, `Round::loaded` builds the shot from the
+//! chosen [`AmmoDef`], and the rack empties as it is spent.
 
 use serde::{Deserialize, Serialize};
 

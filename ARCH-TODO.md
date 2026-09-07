@@ -156,7 +156,7 @@ kind:
 
 None of these move the baseline. All of them make the next change cheaper.
 
-- [ ] **3a. `save::rehydrate` becomes a compile-time obligation.**
+- [x] **3a. `save::rehydrate` becomes a compile-time obligation.**
       `save.rs:213` is four manual duties where forgetting gives a silently
       wrong answer (an empty `SightGrid` answers every sight question wrongly)
       or a panic. This tree already converted `Mission::slot`,
@@ -169,11 +169,11 @@ None of these move the baseline. All of them make the next change cheaper.
       `abandoned`, `brewed`, `wrecked`, plus a prose warning never to classify
       by `!alive`. That is an enum in a costume, and the next fate — captured,
       immobilised and left behind — would be a sixth bool and a sixth warning.
-- [ ] **3d. `from_placements` validates.** `from_map` does;
+- [x] **3d. `from_placements` validates.** `from_map` does;
       `from_placements` — the campaign's path — does not, and `spawn_unit`
       panics on content a mod removed (`battle/mod.rs:733`). As the campaign
       becomes the main mode this stops being theoretical.
-- [ ] **3e. Doc rot.** `BattleState::command` still says "Inert as of this
+- [x] **3e. Doc rot.** `BattleState::command` still says "Inert as of this
       chunk — populated, saved, and read by nothing that makes a decision".
       `eval.rs` reads it to find the standing mission.
 
@@ -784,3 +784,113 @@ Temporary probes, to be deleted with this file:
   position stops being the mirror of its twin.
 - `crates/tactics_core/examples/_los_probe.rs` — the sight-symmetry census
   above.
+
+## Wave 1 — seams: what landed
+
+Phase 3 items **3a**, **3d** and **3e**. No rule changed and nothing moved:
+`tests/snapshots/event_stream.txt` passes unregenerated, which is the evidence.
+All eleven tours pass headless.
+
+### 3a — the caches are a type, not a duty
+
+`BattleState` is now `Battle<Built>`, a type alias over a struct with one extra
+type parameter and one extra `#[serde(skip)]` field:
+
+```rust
+pub struct Built(());          // no Default, private field
+pub struct Unbuilt;            // Default
+
+pub struct Battle<C = Built> { /* …every field it always had… */
+    #[serde(skip)] built: C,
+}
+pub type BattleState = Battle<Built>;
+pub type SavedBattle = Battle<Unbuilt>;
+```
+
+Serde fills a skipped field with `Default::default()`, so `Battle<Unbuilt>`
+deserializes and `Battle<Built>` **cannot** — the compiler says
+`the trait bound `Built: Default` is not satisfied`. The one door between them
+is `SavedBattle::rehydrate(&registry)`, which destructures the struct field by
+field, so a cache added tomorrow stops the build until somebody has said
+whether it travels in the file or is rebuilt on load. `save::SaveGame` takes
+the same parameter (`SavedGame = SaveGame<SavedBattle>` is what serde reads,
+`SaveGame` is what `from_json` hands back), so there is no route from a file to
+a playable battle that does not pass a registry. The free function
+`save::rehydrate` is gone.
+
+**Why this shape.** The two alternatives the brief offered both cost more. A
+`Caches` struct owning the skipped fields means `state.sight` and `state.moves`
+become `state.caches.sight` at every call site in the engine — including
+`combat.rs`, `movement.rs`, `eval.rs` and `goal.rs`, none of which this chunk
+was allowed to touch — and it still cannot own the two skipped fields inside
+`FogMap`. A hand-written saved-form mirror means a second copy of
+`BattleState`'s sixteen fields, which is the drift this item exists to remove,
+reintroduced one level up. The marker parameter costs one defaulted generic:
+every signature in the workspace still reads `BattleState`, and the exhaustive
+destructure in `rehydrate` is where the "cannot be forgotten" lives.
+
+`tests/save.rs::a_battle_off_a_save_file_cannot_be_asked_anything_until_its_caches_are_back`
+pins it, and its doc comment carries the line that no longer compiles.
+
+### 3d — what `from_placements` now refuses
+
+It returns `Result<Self, BattleSetupError>` — the same error `from_map`
+returns — and refuses, collecting every problem rather than the first:
+
+- a placement whose hex is not on this map;
+- a placement naming a vehicle the registry does not have (this is the one that
+  used to be `spawn_unit`'s `expect("placement validated against registry")`);
+- a placement naming a side this battle does not have;
+- a crew list naming a `CadetId` the roster handed in does not know — a seat
+  that would be silently empty, and substance counts people aboard.
+
+`spawn_unit` is fallible too, so neither setup path can panic on content.
+
+In the game crate the campaign asks *before* it commits: `launch_battle` stages
+the battle through `battle::field_battle_problem` and, on a problem, writes one
+line to the overworld log and leaves the armies where they were —
+`commit_to_battle` now runs only after the check passes. `choose_battle_map`
+returns `Option<String>` instead of `expect`ing that some mod ships a battle
+map. `setup_battle` handles the residual case by logging and returning to the
+campaign rather than entering a battle it cannot build.
+
+Tests: `content.rs` —
+`a_placement_naming_a_vehicle_no_mod_ships_is_refused_rather_than_fatal`,
+`a_placement_crewed_by_a_cadet_the_roster_never_heard_of_is_refused`,
+`every_army_the_campaign_ships_can_be_put_on_a_battlefield`; `overworld.rs` —
+`every_clash_the_campaign_map_can_produce_can_be_staged`,
+`a_campaign_with_no_battlefield_to_fight_on_says_so_instead_of_panicking`.
+
+### 3e — the doc rot that was fixed
+
+- `BattleState::command` no longer claims to be "inert … read by nothing that
+  makes a decision": `ai/eval.rs` reads it for the standing mission,
+  `ai/command.rs` for doctrine and delegation, and rallying for a formation's
+  leader.
+- `data/ammo.rs` and `WeaponDef::ammo` no longer claim ammunition is inert and
+  that combat resolves every shot from the weapon's own numbers. It does not;
+  the fallback for a weapon that names no ammunition is what is left of that,
+  and it now says so.
+- Three intra-doc links to constants that became mod data years ago:
+  `STALEMATE_ROUNDS`, `crate::battle::MIN_HIT` and `Balance::substitution_penalty`
+  in `battle/mod.rs`, `data/balance.rs` and `roster.rs`. `cargo doc -p
+  tactics_core --no-deps` now reports no unresolved links at all.
+
+Grepping `threat`, "six hexes", "falloff" and `terrain_value` turned up nothing
+else stale; the Phase 2 commit updated `data/planner.rs` and `ai/eval.rs` as it
+went.
+
+**Left for somebody who may touch `battle/movement.rs`:** `MoveGrid::tiles`'
+doc still says "`[crate::save::rehydrate]` *must* refill it". That function no
+longer exists. Rustdoc does not flag it because the field is private, so it
+will sit there until the next person in that file fixes it. The rule it states
+is still true; only the name is wrong, and the correct reference is
+`[crate::battle::SavedBattle::rehydrate]`.
+
+**Left for the docs the chunk may not edit:** `CLAUDE.md` says `save::rehydrate`
+twice — under *The road, not the crow flight* ("rebuilt by `save::rehydrate`")
+and under *Saving* ("**`save::rehydrate` must rebuild all three**"). `DONE.md`
+says it twice more (the movement-grid entry and *The caches a save must
+rebuild*). All four describe a function that has been replaced by
+`SavedBattle::rehydrate`, and the *Saving* entry is the one worth rewriting:
+the obligation it states in bold is now the thing the compiler checks.
