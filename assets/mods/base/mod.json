@@ -533,6 +533,7 @@
     "leader_lost": 4,
     "recovery": 2,
     "recovery_per_skill": 4,
-    "recovery_near_leader": 2
+    "recovery_near_leader": 2,
+    "point_worth": 0.5
   }
 }

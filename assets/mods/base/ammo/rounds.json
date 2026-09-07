@@ -9,6 +9,7 @@
         ],
         "post_pen": 1.0,
         "blast": 0,
+        "suppression": 2,
         "velocity": 850,
         "description": "Belted rifle ammunition. It will not open a tank and was never meant to; what it opens is everything standing beside one.",
         "volatility": 0.3
@@ -64,6 +65,7 @@
         ],
         "post_pen": 1.2,
         "blast": 1,
+        "suppression": 1,
         "velocity": 950,
         "description": "A shell small enough that the burst is barely a burst, fired fast enough that it does not need to be. The belt the gunner reaches for when the target is a hedgerow with people behind it.",
         "volatility": 1.2
@@ -117,6 +119,7 @@
         ],
         "post_pen": 1.5,
         "blast": 3,
+        "suppression": 2,
         "velocity": 550,
         "description": "The round that takes ground. It will not get through a tank's front plate, and against everything a tank actually meets — guns, trucks, a hedgerow with people in it — it is the only thing aboard worth loading.",
         "volatility": 1.5
@@ -131,6 +134,7 @@
         ],
         "post_pen": 1.8,
         "blast": 4,
+        "suppression": 2,
         "velocity": 700,
         "description": "A heavier burst from a gun that would rather be shooting armour. Carried because a tank destroyer with nothing but solid shot is helpless against the crew that towed the gun into place.",
         "volatility": 1.5
@@ -145,6 +149,7 @@
         ],
         "post_pen": 2.2,
         "blast": 6,
+        "suppression": 2,
         "velocity": 470,
         "description": "Lobbed rather than aimed, and it does not need to hit. The howitzer fires nothing else, which is the whole argument for keeping her behind the ridge and someone else in front of it.",
         "volatility": 1.5
