@@ -825,6 +825,18 @@ fn ground_the_enemy_reaches_first_is_worth_less_marching_for() {
     // here more than in the tests above: an enemy beside an objective makes
     // that objective worth *more* to an aggressive doctrine, because there is
     // something to shoot from it, so the contested ground starts ahead.
+    //
+    // How far ahead is a Phase 2 number. The threat term used to fall off as
+    // `1/distance` from the enemy, so the hill with a tank a hex away looked
+    // five times as dangerous as ground five hexes off and the head start was
+    // mostly cancelled before `contest_aversion` was consulted at all. The
+    // resolver disagrees: a 75mm loses two points of accuracy a hex, so on
+    // open grass the far objective is barely safer than the near one (3.7
+    // against 5.2 substance points), and the aversion now has the whole head
+    // start to overcome by itself. It flips the choice from 4 upwards where
+    // it used to flip it from 3 — the claim the test makes is the same one,
+    // and what changed is the size of the thing being overcome. Asserted at
+    // 5 rather than 4 so the stage is not sitting on its own threshold.
     let reg = seen(registry_wireless());
     let rows = ["ggggggggg"; 9];
     let state = goal_battle(
@@ -871,7 +883,7 @@ fn ground_the_enemy_reaches_first_is_worth_less_marching_for() {
         "a commander who does not ask marches at the ground with a tank on it"
     );
     assert_eq!(
-        racing(3.0),
+        racing(5.0),
         Some(tactics_core::battle::Goal::Take(open)),
         "one who does takes the ground that will still be empty when she gets there"
     );
@@ -1002,6 +1014,15 @@ fn the_shipped_doctrines_straddle_the_price_of_deviating() {
     // (0.9) stop to fight from ground of their own — so the field separates
     // the doctrines that ship rather than sitting outside all of them, which
     // is what `balance.blind_penalty` turned out to be doing.
+    //
+    // This test is why `deviation_cost` moved from 2.0 to 3.0 in Phase 2,
+    // and it is the whole argument for having written it: the field is
+    // quoted in the evaluator's currency, and when the threat term stopped
+    // being a six-hex gate and became the resolver's own arithmetic, the
+    // currency got several points larger everywhere a found gun can reach.
+    // At 2.0 all three doctrines deviated, which is a number that no longer
+    // separates anything. Measured on this stage: 2.0 none obey, 3.0 to 6.0
+    // massed armour alone obeys, 8.0 elastic defence obeys too.
     let reg = seen(registry_wireless());
     let (state, told) = pressed_stage(&reg, 41);
     let ordered = Some(tactics_core::battle::Goal::Take(told));
@@ -1039,7 +1060,7 @@ fn what_it_costs_a_subordinate_to_have_her_own_idea_is_a_mod_decision() {
     let mut reg = seen(registry_wireless());
     let (state, told) = pressed_stage(&reg, 41);
     let ordered = Some(tactics_core::battle::Goal::Take(told));
-    assert_eq!(reg.planner.deviation_cost, 2.0);
+    assert_eq!(reg.planner.deviation_cost, 3.0);
 
     reg.planner.deviation_cost = 0.0;
     assert_ne!(
@@ -9678,11 +9699,24 @@ fn contact_stage(reg: &DataRegistry, seed: u64) -> (BattleState, FormationId) {
 }
 
 /// Where she stands, where she was told to be, and the ground between: the
-/// two tiles every test below compares. `FORWARD` is seven hexes along the
-/// lane — one bound, and far enough that the mission has something to say
-/// about it.
+/// two tiles every test below compares. `FORWARD` is ten hexes along the
+/// lane — far enough that the mission has something to say about it, and
+/// still inside the gun's envelope, which is what makes the comparison a
+/// comparison at all.
+///
+/// It was seven until Phase 2 taught the threat term to read the candidate
+/// tile. Seven was chosen when the wood and the open ground beyond it priced
+/// identically for danger — the old term was gated at six hexes from the
+/// enemy, so it was *zero* at both of these tiles — and the ground therefore
+/// cost the advance only its cover bonus. Now the wood is genuinely worth
+/// 1.5 substance points of avoided fire, and the mission's slope has to be
+/// long enough to be worth that: at seven hexes the assault no longer
+/// pressed on, at ten it does with room to spare. What must not be done is
+/// to push it past sixteen, where the tank destroyer cannot reach at all and
+/// both orders drive forward for a reason that has nothing to do with either
+/// of them; `the_stage_keeps_the_forward_tile_under_the_gun` pins that.
 const COVER: (i32, i32) = (10, 7);
-const FORWARD: (i32, i32) = (17, 7);
+const FORWARD: (i32, i32) = (20, 7);
 
 /// Score both tiles for a scout under `mission`, in the order (cover,
 /// forward). The balanced doctrine on purpose: it is what the player's own
@@ -14682,5 +14716,382 @@ fn a_bearing_is_never_taken_from_an_enemy_nobody_has_found() {
     assert!(
         tactics_core::battle::fire_on(&reg, &state, mark, mark_pos).is_empty(),
         "but her side has not found him, so nothing may be said about his gun"
+    );
+}
+
+/// A gun in the middle of a five-row field, a belt of wood masking the
+/// northern half of it, and a scout who can see the gun and cannot touch it.
+///
+/// Everything about the shape is there to leave one term standing. The two
+/// tiles the tests below compare — `(10, 0)` behind the wood and `(10, 4)` in
+/// the open — are **the same distance from the gun**, so the closing term
+/// (`-(nearest enemy) * aggression`) cannot separate them; they are the same
+/// terrain, so the ground prior cannot; the scout is alone on her side, so
+/// there is no spacing term; and the map names no objectives, so there is no
+/// gradient to anywhere.
+///
+/// A recon car against a tank destroyer, and both halves of that matter. Her
+/// only weapon is a machine gun with six hexes of reach, so from either tile
+/// she has no shot at all and the offense term is zero on both — a crew who
+/// *could* shoot from the open tile would be paid for standing there, which
+/// is a real thing for the evaluator to weigh and would make this test about
+/// two terms rather than one. She sees twenty hexes, which is what lets her
+/// side hold a contact on a gun eleven hexes off; the gun's eighty-eight
+/// reaches sixteen, so it covers both tiles and the wood is the only reason
+/// one of them is safe.
+fn masked_and_open(reg: &DataRegistry, seed: u64) -> BattleState {
+    let wood = format!("{}ff{}", "g".repeat(4), "g".repeat(10));
+    let open = "g".repeat(16);
+    two_side_battle(
+        reg,
+        &[&wood, &wood, &open, &open, &open],
+        vec![
+            unit_at([2, 2], 0, "recon_car", "Scout"),
+            unit_at([0, 2], 1, "tank_destroyer", "Gun"),
+        ],
+        seed,
+    )
+}
+
+/// The ground under a spotted gun is worth less to stand on than ground the
+/// same distance away that the gun cannot see.
+///
+/// This is Phase 2b as one assertion. Before it the threat term priced
+/// `best_weapon_against(gun, gun.pos, her, her.pos)` — the shot at the hex
+/// she was *already* on — and let the candidate tile in only through a
+/// `1/distance` falloff behind a six-hex gate, so two tiles equidistant from
+/// the gun were worth *exactly* the same whatever stood between them. Line of
+/// sight, cover, elevation, facing and obliquity are all on the near side of
+/// that arithmetic and none of them reached the decision about where to
+/// drive.
+///
+/// Mutation-checked by pricing the threat at `me.pos` instead of `tile`,
+/// which is the term as it stood: the two tiles then score identically and
+/// the strict comparison below fails.
+#[test]
+fn a_crew_would_rather_stand_where_the_gun_cannot_see_her() {
+    let reg = seen(registry());
+    let state = masked_and_open(&reg, 19);
+    let scout = UnitId(0);
+    let masked = tactics_core::offset_to_hex(10, 0);
+    let exposed = tactics_core::offset_to_hex(10, 4);
+    let gun = state.unit(UnitId(1)).expect("on the field").pos;
+
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "the stage is a gun her side has found; an unfound one may not be \
+         flinched away from at all"
+    );
+    assert_eq!(
+        (gun.distance_to(masked), gun.distance_to(exposed)),
+        (11, 11),
+        "the two tiles have to be the same distance from the gun, or this is \
+         a test about range"
+    );
+    assert_eq!(
+        (
+            state.map.get(masked).map(|t| t.terrain.as_str()),
+            state.map.get(exposed).map(|t| t.terrain.as_str())
+        ),
+        (Some("grass"), Some("grass")),
+        "and the same ground, or it is a test about cover"
+    );
+
+    let incoming = |at| tactics_core::battle::incoming(&reg, &state, scout, at);
+    assert_eq!(
+        incoming(masked),
+        0.0,
+        "behind the wood the gun has no shot to take"
+    );
+    assert!(
+        incoming(exposed) > 0.0,
+        "and in the open it has one: {}",
+        incoming(exposed)
+    );
+
+    let eval = Evaluator::new(tactics_core::data::DoctrineDef::default());
+    let score = |at| eval.score_tile(&reg, &state, scout, at).score;
+    assert!(
+        score(masked) > score(exposed),
+        "the masked tile has to be worth more to stand on: {} against {}",
+        score(masked),
+        score(exposed)
+    );
+}
+
+/// A gun, a wood and a bare field the same distance from it, on either side
+/// of its own row.
+///
+/// The stage for the ground prior. `(9, 0)` is timber and `(9, 2)` is grass,
+/// both nine hexes from the gun at `(0, 1)` and both in its plain sight, so
+/// the only thing that separates them is what cover is worth — which is
+/// exactly the question 2c had to answer twice, once with the gun found and
+/// once without.
+fn wood_and_field(reg: &DataRegistry, seed: u64) -> BattleState {
+    let north = format!("{}f{}", "g".repeat(9), "g".repeat(2));
+    let plain = "g".repeat(12);
+    two_side_battle(
+        reg,
+        &[&north, &plain, &plain],
+        vec![
+            unit_at([2, 1], 0, "recon_car", "Scout"),
+            unit_at([0, 1], 1, "tank_destroyer", "Gun"),
+        ],
+        seed,
+    )
+}
+
+/// A doctrine with no appetite for ground beyond the two fields under test.
+///
+/// `scouting` and `aggression` are zeroed so that `score_tile`'s two roaming
+/// terms — walk toward the middle of an empty map, close on whoever is
+/// visible — cannot separate two tiles that are not the same distance from
+/// the centre or from the enemy. What is left of the sum on these stages is
+/// the ground prior minus the threat, which is the pair of terms 2b and 2c
+/// are about. Everything else is zero by construction: the scout has no
+/// weapon that reaches, no friend to space herself against, no objective to
+/// walk to and no orders.
+fn taste_only() -> tactics_core::data::DoctrineDef {
+    tactics_core::data::DoctrineDef {
+        scouting: 0.0,
+        aggression: 0.0,
+        ..Default::default()
+    }
+}
+
+/// With nobody found, the arithmetic has nothing to say and a doctrine's
+/// taste for cover decides the ground.
+///
+/// The other half of 2c, and the reason the terrain term did not simply go
+/// away when the threat term learned to read cover for itself. `incoming` is
+/// a statement about the enemies this side has *found*; on an approach march
+/// — first contact falls in round 3.5 of a 13-round battle — it is exactly
+/// zero, and a crew with an empty list needs some reason to prefer a wood to
+/// a field. That reason is `cover_value`, which is read here and nowhere else
+/// in the engine, scaled by `planner.cover_prior`.
+///
+/// Mutation-checked from both ends, because the term has two halves to lose:
+/// a doctrine with no opinion about cover and a mod that prices the prior at
+/// nothing must both leave the two tiles exactly level.
+#[test]
+fn with_nobody_found_a_doctrines_taste_for_cover_decides_the_ground() {
+    let mut reg = registry();
+    // No near band and no base chance: a look never becomes an acquisition,
+    // so this is the rule's absence rather than a gentle version of it.
+    reg.balance.detection_base = 0;
+    reg.balance.detection_certain_percent = 0;
+    let state = wood_and_field(&reg, 19);
+    let scout = UnitId(0);
+    let wood = tactics_core::offset_to_hex(9, 0);
+    let field = tactics_core::offset_to_hex(9, 2);
+
+    assert!(
+        state.fog.side(0).spotted.is_empty(),
+        "the stage is a side that has found nobody"
+    );
+    assert_eq!(
+        (
+            state.map.get(wood).map(|t| t.terrain.as_str()),
+            state.map.get(field).map(|t| t.terrain.as_str())
+        ),
+        (Some("forest"), Some("grass")),
+        "one tile has to be the timber and the other the open ground"
+    );
+    for at in [wood, field] {
+        assert_eq!(
+            tactics_core::battle::incoming(&reg, &state, scout, at),
+            0.0,
+            "and nothing may be said about a gun nobody has found"
+        );
+    }
+
+    let gap = |reg: &DataRegistry, doctrine: tactics_core::data::DoctrineDef| {
+        let eval = Evaluator::new(doctrine);
+        eval.score_tile(reg, &state, scout, wood).score
+            - eval.score_tile(reg, &state, scout, field).score
+    };
+    let balanced = gap(&reg, taste_only());
+    assert!(
+        balanced > 0.0,
+        "with no arithmetic to go on she takes the timber, by {balanced}"
+    );
+
+    let mut keen = taste_only();
+    keen.cover_value *= 3.0;
+    let keener = gap(&reg, keen);
+    assert!(
+        keener > balanced,
+        "a doctrine that likes cover three times as much wants it more: \
+         {keener} against {balanced}"
+    );
+
+    let mut indifferent = taste_only();
+    indifferent.cover_value = 0.0;
+    assert_eq!(
+        gap(&reg, indifferent),
+        0.0,
+        "a doctrine with no opinion about cover has none, and this term is \
+         the only thing in the engine that reads the field"
+    );
+
+    let mut plain = reg.clone();
+    plain.planner.cover_prior = 0.0;
+    assert_eq!(
+        gap(&plain, taste_only()),
+        0.0,
+        "and so does a mod that prices the prior at nothing"
+    );
+}
+
+/// The prior stands down where the resolver has already answered.
+///
+/// The rule 2c settled on, and what keeps cover from being paid for twice:
+/// cover is *already* in the threat term, per gun and per bearing, through
+/// `balance.cover_against_accuracy`. So the flat bonus is paid on ground no
+/// found gun can reach and withheld on ground one can. Same two tiles as the
+/// test above, same doctrine; the only difference is whether the gun has been
+/// spotted.
+///
+/// Pinned as an equality rather than as an inequality, which is what makes it
+/// a check on the gate itself: with the gun found, `planner.cover_prior` at
+/// its shipped value and at zero must give **the same number**, because the
+/// term is not being consulted at all. Remove the gate and the two differ by
+/// the bonus, which is the mutation.
+///
+/// Note what this is not. It is not "cover stops mattering under fire" — the
+/// threat term says the timber is safer and says so in substance points, and
+/// says it far louder than the bonus ever did: 3.5 points of avoided fire
+/// against the 0.9 the flat term was paying. That gap is the whole argument
+/// for Phase 2 in two numbers, and it is why the bonus can stand down without
+/// a crew forgetting what a wood is for.
+#[test]
+fn the_ground_prior_stands_down_where_the_arithmetic_speaks() {
+    let mut hidden = registry();
+    hidden.balance.detection_base = 0;
+    hidden.balance.detection_certain_percent = 0;
+    let found = seen(registry());
+    let scout = UnitId(0);
+    let wood = tactics_core::offset_to_hex(9, 0);
+    let field = tactics_core::offset_to_hex(9, 2);
+
+    let read = |reg: &DataRegistry| {
+        let state = wood_and_field(reg, 19);
+        let eval = Evaluator::new(taste_only());
+        let gap = eval.score_tile(reg, &state, scout, wood).score
+            - eval.score_tile(reg, &state, scout, field).score;
+        let incoming = |at| tactics_core::battle::incoming(reg, &state, scout, at);
+        (gap, incoming(wood), incoming(field))
+    };
+    let without_the_prior = |reg: &DataRegistry| {
+        let mut plain = reg.clone();
+        plain.planner.cover_prior = 0.0;
+        read(&plain).0
+    };
+
+    let (unseen_gap, no_wood, no_field) = read(&hidden);
+    assert_eq!(
+        (no_wood, no_field),
+        (0.0, 0.0),
+        "with the gun unfound there is no arithmetic about either tile"
+    );
+    assert!(
+        unseen_gap > without_the_prior(&hidden),
+        "so the prior speaks: {unseen_gap} against {} with it priced at \
+         nothing",
+        without_the_prior(&hidden)
+    );
+
+    let (found_gap, hit_wood, hit_field) = read(&found);
+    assert!(
+        hit_wood > 0.0 && hit_field > 0.0,
+        "with the gun found it covers both tiles: {hit_wood} and {hit_field}"
+    );
+    assert!(
+        hit_wood < hit_field,
+        "and the resolver already knows the timber is the safer of the two: \
+         {hit_wood} against {hit_field}"
+    );
+    assert_eq!(
+        found_gap,
+        without_the_prior(&found),
+        "so under the gun the bonus is not consulted at all, and pricing it \
+         at nothing changes nothing"
+    );
+    assert!(
+        found_gap > unseen_gap,
+        "which costs a crew nothing, because what the arithmetic pays for the \
+         same timber is larger than what the opinion did: {found_gap} against \
+         {unseen_gap}"
+    );
+}
+
+/// Breaking off is announced, and insisting stops it happening.
+///
+/// The autonomy line DIRECTION.md draws, as a test rather than as a
+/// paragraph: *friction the player can predict and price is drama; friction
+/// she cannot see is a bug report.* Phase 2 made the threat term larger and
+/// sharper — a crew now prices the ground she is being sent across in the
+/// resolver's own arithmetic, so an ordinary order gets set aside more
+/// readily than it used to — and the two things that keep that legible rather
+/// than infuriating are already built: the deviation raises `Decision::drill`
+/// so the log can say *"Anka Weiss breaks off her march and takes cover"*,
+/// and `Latitude::Binding` is the player's answer to it.
+///
+/// The same stage, seed and gun as
+/// `a_binding_march_presses_on_where_an_ordinary_one_takes_cover`, which
+/// pins the *behaviour*; this pins that the behaviour is visible and
+/// overridable. Both halves matter and neither implies the other: an
+/// unannounced break-off reads as the game malfunctioning, and an announced
+/// one the player cannot countermand reads as the game arguing with her.
+#[test]
+fn a_crew_who_breaks_off_says_so_and_one_who_was_meant_does_not() {
+    const SEED: u64 = 4;
+    let reg = seen(registry_wireless());
+
+    // The march she was given, fought for a round so that there is a march
+    // under way for the drill to preempt: `radio()` plans her herself on the
+    // round the order lands, so nothing can deviate until the second one.
+    let deviations = |latitude: Latitude| {
+        let (mut state, crew) = marching_under_fire(&reg, latitude, SEED);
+        executor_only_side(&reg, SEED).plan_round(&reg, &mut state);
+        let _ = state.apply(&reg, &Order::Commit { side: 1 });
+        state.resolve_round(&reg);
+        assert!(
+            state.unit(crew).is_some_and(|u| u.alive),
+            "the stage is meant to bruise, not to kill"
+        );
+        let mut hers = Vec::new();
+        executor_only_side(&reg, SEED).plan_round_with(&reg, &mut state, |decision| {
+            let about = match &decision.order {
+                Order::SetMove { unit, .. } => Some(*unit),
+                _ => None,
+            };
+            if about == Some(crew) {
+                hers.push(decision.drill);
+            }
+        });
+        (hers, state.unit(crew).unwrap().planned_destination())
+    };
+
+    let (delegated, delegated_to) = deviations(Latitude::Delegated);
+    assert!(
+        delegated.iter().any(|drill| *drill),
+        "the crew who was given her judgment used it, and the order that did \
+         it has to carry the flag that lets the log say so: {delegated:?}, \
+         heading for {delegated_to:?}"
+    );
+
+    let (binding, binding_to) = deviations(Latitude::Binding);
+    assert!(
+        binding.iter().all(|drill| !*drill),
+        "and the crew who was told her commander meant it never reaches the \
+         drill at all, so there is nothing to announce: {binding:?}, heading \
+         for {binding_to:?}"
+    );
+    assert!(
+        MARCH_TO.distance_to(binding_to) < MARCH_TO.distance_to(delegated_to),
+        "which is the same comparison the behaviour test makes, restated so \
+         that a stage that stopped deviating could not pass this quietly: \
+         binding -> {binding_to:?}, delegated -> {delegated_to:?}"
     );
 }

@@ -68,20 +68,36 @@ impl Evaluator {
         }
         let attack_value = best_attack.map(|(_, _, v)| v).unwrap_or(0.0);
 
-        // Threat: how hard the visible enemies could hit us there. A damaged
-        // unit under a doctrine that expects to withdraw weighs this more.
-        let mut threat = 0.0;
-        for enemy in &enemies {
-            if let Some((_, dmg, _)) =
-                best_weapon_against(registry, state, enemy.id, enemy.pos, me, me.pos)
-            {
-                // Cheap positional check: could they reach/see this tile?
-                let dist = enemy.pos.distance_to(tile);
-                if dist <= 6 {
-                    threat += dmg * (1.0 / dist.max(1) as f32);
-                }
-            }
-        }
+        // Threat: what the visible enemies could put on her if she stood
+        // *there*, in the resolver's own arithmetic and nobody else's.
+        //
+        // [`fire_on`](crate::battle::fire_on)'s summed twin, and the whole
+        // of Phase 2's argument in one line. What stood here priced
+        // `best_weapon_against(enemy, enemy.pos, me, me.pos)` — the shot at
+        // the hex she was *already* standing on — and let the candidate tile
+        // in only as a `1/distance` falloff behind a six-hex gate. So
+        // driving out from behind a ridge into a gun's arc was priced
+        // identically to staying behind it, and cover, elevation, facing,
+        // profile, obliquity and range never reached the decision about
+        // where to stand at all. Every one of them reaches it now, because
+        // this is the same function the shot itself goes through.
+        //
+        // The gate and the falloff are gone rather than retuned, and that is
+        // not tidiness. Both were standing in for the positional terms the
+        // arithmetic could not see: a falloff is a guess at "further off is
+        // safer" that the range band now states exactly, and a six-hex cut
+        // is a guess at "out of reach" that sight and range now answer for
+        // each gun on the field. Keeping either would charge the same fact
+        // twice and, worse, would cap the term below what a sixteen-hex gun
+        // can actually do. Note what that gate cost while it stood: threat
+        // was *zero* for most of an approach march, so no amount of
+        // repricing it changed a decision, which is why removing it on its
+        // own once cost the skill table more than it won.
+        //
+        // Fog-honest by construction — only enemies this side has found are
+        // on the list — so a crew cannot flinch away from a tank nobody has
+        // seen and thereby tell the player it is there.
+        let threat = crate::battle::incoming(registry, state, unit, tile);
         // ...and what that costs *her*, which is a different question and was
         // not being asked. The sum above is in substance points, an absolute
         // quantity, so five points of expected damage read exactly the same to
@@ -121,16 +137,11 @@ impl Evaluator {
         // refusing every tile a fresh crew would take. Past that the term
         // stops discriminating and only makes the arithmetic loud.
         //
-        // Know what this can and cannot reach. Threat is a short-ranged term
-        // by construction — six hexes, with a 1/distance falloff — while the
-        // guns on this field shoot sixteen, so for most of an approach march
-        // it is *zero* and no amount of repricing zero changes a decision.
-        // Measured: a tenfold exposure changed the pool run's taxi losses by
-        // two, and removing the six-hex gate entirely (letting threat reach
-        // as far as a weapon does) cost the skill-gap table more than it won
-        // anywhere. Whether a vehicle is somewhere she should not be is
-        // therefore mostly not a question this term can answer; it is a
-        // question about who sent her, which is the commander's.
+        // This is the half of the old pricing that survived Phase 2 unchanged,
+        // and the reason it did is the line the whole chunk is drawn on: the
+        // sum above is what the *rules* say can be put on her, which is the
+        // resolver's to answer, and this is what she makes of it, which is
+        // hers and her doctrine's. One is arithmetic and one is a preference.
         let exposure = {
             /// Most a crew may multiply danger by for being small, worn down,
             /// or loaded. Four is "refuses what a fresh crew accepts", which
@@ -155,12 +166,63 @@ impl Evaluator {
         let caution =
             (1.5 - doctrine.aggression) * (1.0 + doctrine.withdraw_threshold * (1.0 - condition));
 
-        // Terrain: cover and high ground, worth as much as doctrine says.
+        // Terrain: what cover and high ground are worth *before* anybody has
+        // been found, and a doctrine's taste beyond the arithmetic.
+        //
+        // This used to be an independent model of what cover and elevation
+        // do — `cover * 0.03`, `elevation * 0.4` — sitting beside a threat
+        // term that could not read either. Since the term above became the
+        // resolver's own answer, `balance.cover_against_accuracy` and
+        // `balance.downhill_bonus` price both of them exactly, per gun and
+        // per bearing, so a flat bonus on top is a second opinion about the
+        // same fact and the two can only drift.
+        //
+        // What it is *not* is redundant, and the reason is the fog gate one
+        // term up. Threat is a statement about the enemies this side has
+        // found; before the first contact — round 3.5 on the shipped maps,
+        // and never for the guns still unspotted at the bell — it is exactly
+        // zero, and a crew with nothing on her list would have no reason at
+        // all to prefer a wood to a field. That is the prior this term is:
+        // *somebody will be shooting from somewhere*, so take the ground that
+        // will be worth having when they do. It is also where a doctrine's
+        // taste lives, which is why `cover_value` and `elevation_value` are
+        // read here and nowhere else: two commanders looking at identical
+        // arithmetic may still disagree about how much they like a ridge, and
+        // that disagreement is content rather than a rule.
+        //
+        // So the rule is: **the prior speaks only where the arithmetic is
+        // silent.** A tile no gun this side has found can reach is priced by
+        // taste; a tile inside a found gun's envelope is priced by the shot
+        // that gun would take, cover and elevation included, and the flat
+        // bonus stands down rather than being added twice. That is a
+        // statement per *tile* rather than per battle, so on a map with one
+        // spotted gun the ground under its arc is arithmetic and the rest of
+        // the map is still preference — which is what an approach march is
+        // made of, first contact falling in round 3.5 of 13.
+        //
+        // Measured, because the alternative reading (keep the term and shrink
+        // its coefficients) was the obvious one and is worse. On the mirrored
+        // arena at 4 seeds x 36 battles a side, the skill gap reads 48.8% /
+        // 51.6% (5 over 1 / 5 over 3) with the flat term as it stood, 53.0% /
+        // 50.7% with both coefficients halved, and 55.0% / 56.3% with them at
+        // zero — monotone, and the strongest signal this table has produced.
+        // Zero is not available, though: it is the only thing that reads
+        // `cover_value` and `elevation_value`, and a doctrine weight nothing
+        // consults is exactly the dead field this project keeps finding. The
+        // gate buys the same thing without spending them, and it ships at the
+        // coefficients the constants gave rather than at retuned ones.
+        //
+        // The engine-side coefficients are data anyway, for the reason every
+        // other evaluator weight is — see `planner.cover_prior`.
         let mut terrain_value = 0.0;
-        if let Some(t) = state.map.get(tile) {
-            terrain_value += t.elevation as f32 * 0.4 * doctrine.elevation_value;
+        if threat <= 0.0
+            && let Some(t) = state.map.get(tile)
+        {
+            terrain_value +=
+                t.elevation as f32 * registry.planner.elevation_prior * doctrine.elevation_value;
             if let Some(def) = registry.terrain(&t.terrain) {
-                terrain_value += def.cover as f32 * 0.03 * doctrine.cover_value;
+                terrain_value +=
+                    def.cover as f32 * registry.planner.cover_prior * doctrine.cover_value;
             }
         }
 

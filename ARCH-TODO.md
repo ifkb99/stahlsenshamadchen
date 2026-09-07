@@ -106,16 +106,16 @@ Branch `feat/one-system`, off `feat/planner-block`.
       **byte-identical**, perf unmoved (round 1.61 → 1.61 ms, `reachable`
       15.0 → 14.6 µs, `roads` 109.1 → 105.5 µs, `unit_vision` 89.4 → 88.6 µs,
       utility order 0.08 ms). See below.
-- [ ] **2b. The threat term reads the candidate tile.** `score_tile`'s danger
+- [x] **2b. The threat term reads the candidate tile.** `score_tile`'s danger
       becomes the real expected damage of the visible enemies shooting at her
       *there*. Watch the cost: `score_tile` is the hottest function the AI has
       (0.09 ms/order) and this makes the threat loop as expensive as the
       attack loop. `perf` before and after.
-- [ ] **2c. `terrain_value` shrinks to what is genuinely a preference.** Cover
+- [x] **2c. `terrain_value` shrinks to what is genuinely a preference.** Cover
       and elevation stop being a second opinion about what cover and elevation
       *do*, because 2b already priced that. What may remain is a doctrine's
       taste for high ground beyond its arithmetic worth.
-- [ ] **2d. Measure, and regenerate the baseline deliberately.** This one is
+- [x] **2d. Measure, and regenerate the baseline deliberately.** This one is
       *meant* to move the determinism snapshot; the diff is the evidence for
       the change rather than a cost of it. Read it before regenerating.
 
@@ -481,6 +481,264 @@ for it; the campaign map says `None` out loud. The predicate is
   `danger.rs` is another agent's file this week and a one-line sum is not
   worth a merge conflict. If the evaluator ends up wanting the same sum, that
   is where it should live.
+
+## Phase 2b–2d — what landed
+
+**The threat term is one line now.** `score_tile`'s danger is
+`battle::danger::incoming(registry, state, unit, tile)` — the sum, over every
+enemy this side has *found*, of what the resolver says she would take standing
+on that tile. The six-hex gate and the `1/distance` falloff are gone rather
+than retuned, because both were standing in for positional terms the
+arithmetic could not see: a falloff guesses at "further off is safer" where
+the range band states it exactly, and a gate guesses at "out of reach" where
+sight and range answer it per gun. Range, line of sight, cover, elevation,
+profile, facing and obliquity all reach the decision about where to stand now,
+and every defensive rule added after this is picked up for free.
+
+`caution * exposure` is untouched, and that split is the line the chunk is
+drawn on: the sum is what the *rules* say can be put on her, which is the
+resolver's to answer; `caution * exposure` is what she makes of it, which is
+hers and her doctrine's.
+
+**`incoming` sits beside `fire_on` rather than being spelled
+`fire_on(..).iter().sum()`**, and both walk one private `guns_bearing_on`, so
+there is still exactly one answer to *who can shoot her there and with what*.
+The reason for the second shape is cost: `score_tile` asks this per candidate
+tile per crew per round, so a `Vec` allocated and thrown away each time — and a
+second `hit_chance` per enemy for a `hit_percent` the evaluator never reads —
+is paid on every tile of every sweep. `fire_on`'s signature is untouched, as
+the danger-overlay work asked.
+
+### 2c: what remains of `terrain_value`, and why
+
+**The term stays, gated: the prior speaks only where the arithmetic is
+silent.** A tile no found gun can reach is priced by taste; a tile inside a
+found gun's envelope is priced by the shot that gun would take — cover and
+elevation included — and the flat bonus stands down rather than being added on
+top. The two engine-side coefficients became `planner.cover_prior` (0.03) and
+`planner.elevation_prior` (0.4), defaulting to exactly the constants they
+replaced, so they are sweepable; **they ship unchanged**.
+
+The alternative — keep the term and shrink the coefficients — was measured
+first because it is the obvious move, and the measurement is the interesting
+part. Skill gap on the mirrored arena, `--only skill --absolute`, 36 battles a
+cell:
+
+| terrain prior | 5 over 1 | 5 over 3 |
+| --- | --- | --- |
+| **4 seeds (288 battles a row)** | | |
+| ungated, shipped 0.03 / 0.4 | 48.8% | 51.6% |
+| ungated, halved | 53.0% | 50.7% |
+| ungated, zero | **55.0%** | **56.3%** |
+| gated, shipped | 50.4% | 52.0% |
+| gated, cover 0 only | 48.9% | 50.5% |
+| gated, elevation 0 only | 51.2% | 51.6% |
+| **8 seeds (576 battles a row)** | | |
+| gated, shipped | **52.5%** (+1.2 sd) | **51.4%** (+0.7 sd) |
+| priors zero | 54.0% (+1.9 sd) | 52.0% (+1.0 sd) |
+
+Read the two halves of that table together, because the four-seed half is a
+trap and this project has fallen into it before. At four seeds zeroing the
+prior looks like a 5-point win over gating it; at eight the gap is 1.5 and 0.6
+points, which is nothing. The tell was already visible at four: zeroing cover
+alone and zeroing elevation alone each did nothing, and only the pair did
+anything — an interaction with no mechanism behind it is usually a draw of the
+dice. Zeroing also costs the arena its side symmetry (`the ends` 46.7%,
+−1.6 sd, against 51.7% gated), which is a second reason not to want it.
+
+And zero is not available anyway: the prior is the **only** thing in the engine
+that reads `DoctrineDef::cover_value` and `elevation_value`, so pricing it at
+nothing retires two doctrine fields — exactly the dead-field failure this tree
+keeps finding. The gate removes the double count where the double count
+actually is, keeps both fields load-bearing, and needs no retuning, which also
+keeps 2c separable from 2b's measurement.
+
+Worth knowing for later: under the gun the resolver pays **3.5 substance
+points** for the same timber the flat bonus was paying **0.9** for
+(`the_ground_prior_stands_down_where_the_arithmetic_speaks` prints both). The
+bonus can stand down without a crew forgetting what a wood is for, because the
+thing replacing it is nearly four times larger and knows which gun is looking.
+
+### The one content number that had to move: `planner.deviation_cost` 2.0 → 3.0
+
+**Flagged for the designer rather than done quietly.** `deviation_cost` is
+quoted in the evaluator's currency, and its stated job — the property
+`the_shipped_doctrines_straddle_the_price_of_deviating` exists to pin — is to
+sit between the shipped doctrines' `initiative` values. Phase 2 changed that
+currency: threat used to be zero over most of the map and is now three to eight
+substance points everywhere a found gun can reach. At 2.0 **all three** shipped
+doctrines deviated on that stage, including massed armour, whose whole
+character is driving at the hex it was given. Measured on `pressed_stage`:
+
+| `deviation_cost` | massed 0.3 | elastic 0.7 | recon 0.9 |
+| --- | --- | --- | --- |
+| 2.0 (was shipped) | own idea | own idea | own idea |
+| **3.0 (now shipped)** | **obeys** | own idea | own idea |
+| 4.0 / 5.0 / 6.0 | obeys | own idea | own idea |
+| 8.0 | obeys | obeys | own idea |
+
+3.0 is the smallest value that restores the straddle and 3.0–6.0 all do, so it
+is not a knife edge. It changed nothing measurable in the arena (the skill
+table is byte-identical with and without it — the arena issues no missions).
+DONE.md's "At `deviation_cost: 2.0` the …" paragraph and `planner.rs`'s
+worked example both needed the new number; the second is updated, the first is
+the lead's to fold.
+
+This is also the (d) measurement the plan asked for: **subordinate initiative
+finally has something to say.** The tile her own sweep offers is now priced
+against the gun covering it, so at 2.0 it beat a distant map reference for
+every doctrine in the mod. That is the mechanism working, not failing; the
+price of acting on it simply had to be restated in the new currency.
+
+### The autonomy line
+
+The three protected tests pass unweakened —
+`a_binding_march_presses_on_where_an_ordinary_one_takes_cover`,
+`a_cut_off_unit_keeps_the_orders_she_had`,
+`a_binding_mission_is_not_discounted_by_a_loose_doctrine`, the `mission_value`
+tests and all of *the planner numbers are data*. One new test pins the half
+that was prose: a delegated crew who breaks off raises `Decision::drill` so the
+log can say so, and a binding one never reaches the drill at all.
+
+Three existing tests failed and all three were knife-edge stages rather than
+broken rules. Recorded because the margins are the interesting part:
+
+- `an_assault_presses_through_what_an_advance_pauses_for`. `FORWARD` moved
+  from seven hexes along the lane to ten. At seven the old threat term was
+  *zero at both tiles* (both are more than six hexes from the gun), so the
+  wood cost the advance only its cover bonus and the assault won by 0.48;
+  now the wood is worth 1.5 substance points of avoided fire and the mission's
+  slope has to be long enough to be worth that. At ten the assault presses on
+  by 0.62 and the advance still halts by 1.63. Sixteen would break it the
+  other way — the tank destroyer cannot reach that far and both orders drive
+  forward for a reason that has nothing to do with either of them — so a new
+  stage assertion pins the forward tile under the gun.
+- `ground_the_enemy_reaches_first_is_worth_less_marching_for`.
+  `contest_aversion` asserted at 5.0 instead of 3.0. The old `1/distance`
+  falloff made the hill with a tank a hex away look five times as dangerous as
+  ground five hexes off; the resolver disagrees, because a 75 mm loses two
+  points of accuracy a hex and the far objective is only 3.7 against 5.2
+  substance points. The term flips the choice from 4 upwards where it used to
+  flip from 3; asserted at 5 so the stage is not sitting on its own threshold.
+- `the_shipped_doctrines_straddle_the_price_of_deviating`. The
+  `deviation_cost` change above.
+
+### 2d: the determinism diff, read before regenerating
+
+Broad and behavioural, which is what a rules change looks like: 517 changed
+lines of 1503, +16 `Commit`, +18 `SetFire`, +19 `SetGoal`, +3 `SetMove`, and
+six of the eight units picking different ground at some point. **Kills per
+seed are unchanged** (7 / 6 / 6 / 5); what moved is where crews stood on the
+way. Seed 2 no longer reaches `BattleEnded` inside the snapshot's twelve
+rounds, joining seed 4, so three of four seeds now run past the window — the
+battles got a little longer, which the fought-out digest agrees with
+(13.2 → 13.5 rounds).
+
+The clearest single example, seed 1, unit 4: she used to take
+`Take(9, 18, -27)` and drive out to (11, 16), where side 0 spotted her and an
+eight-hex duel opened across the open ground. She now takes
+`Take(6, 19, -25)`, one row south, is first seen two rounds later at (10, 15),
+and the answering medium engages from (12, 18) instead. Nobody was ordered to
+do any of that; the tile she preferred simply stopped being priced as if the
+enemy were shooting at the hex she had already left.
+
+Regenerated with `UPDATE_SNAPSHOTS=1`.
+
+### The measurements, before and after
+
+Everything below is 36 battles at seed 0 unless it says otherwise, re-measured
+on the same machine in the same session (the machine is contended enough that
+the Phase 2 baseline's `perf` row had to be re-taken; the numbers here are the
+median of three quiet runs).
+
+| | baseline (738e417) | after 2b+2c |
+| --- | --- | --- |
+| outcome | Valkyries 24, Kuhlmann 12 | Valkyries 22, Kuhlmann 14 |
+| draws / stalemates | 0 / 0 | 0 / 0 |
+| length | 13.2 rounds (3–23) | 13.5 rounds (3–25) |
+| first contact | round 3.5, 26 acquisitions at 11.0 hexes | round 3.4, 26 at 10.9 hexes |
+| gunnery | 1894 shots, 618 pen (33%), 242 bounced, 953 missed | 1850 shots, 615 pen (33%), 218 bounced, 941 missed |
+| on the move | 50% | 52% |
+| crew cost | 2.7 wounded, 11.4 out | 3.2 wounded, 10.8 out |
+| tank destroyer kills / losses | 72 / 30 | 75 / 27 |
+| medium tank kills / losses | 55 / 66 | 67 / 64 |
+| infantry surviving | 64 of 96 | 69 of 96 |
+
+**Skill, 8 seeds × 36 battles = 576 a row.** This is the prediction Phase 2
+wrote down, and it is the row to read.
+
+| | 5 over 1 | 5 over 3 | the ends (A/B) |
+| --- | --- | --- | --- |
+| baseline | 283–289 **49.5%** (−0.3 sd) | 275–290 **48.7%** (−0.6 sd) | 283–283 50.0% |
+| after | 292–264 **52.5%** (+1.2 sd) | 287–271 **51.4%** (+0.7 sd) | 286–267 51.7% |
+
+**The prediction held, directionally and weakly.** Both rows rose, by 3.0 and
+2.7 points, and both moved the same way — which is worth more than either
+alone, since they share seeds and forces. Neither is individually decisive:
++1.2 sd and +0.7 sd are the kind of numbers this file has warned about
+quoting. What can be said is that the sign is right and that nothing else in
+the arc moved them: the same rows at four seeds read 51.2% / 47.5% before and
+50.4% / 52.0% after, which is why the eight-seed pass exists.
+
+Note also that the *four-seed baseline in this file was a high draw* on
+5 over 1 (51.2% against 49.5% over eight), which is the fourth time a
+single-draw number in this project has flattered itself.
+
+**Delegation tax**, 36 battles a pairing:
+
+| pairing | baseline | after |
+| --- | --- | --- |
+| massed flat | 12–24 | 14–22 |
+| massed under command | 9–27 | 12–24 |
+| elastic under command | 14–22 | 15–21 |
+| bounding flat | 15–21 | 15–21 |
+| bounding under command | 13–23 | 11–25 |
+
+Massed's tax 3 → 2, bounding's 2 → 4, everything inside the ±6 band a level
+pairing wanders in at 36 battles. **Not a measured regression, and nothing was
+retuned to make it look like one.** The `mission_weight` question TODO.md
+already carries is untouched.
+
+**Performance.** `score_tile` is the hottest function the AI has and the
+threat loop is now as expensive as the attack loop, which is what the plan
+predicted. Median of three quiet runs:
+
+| | baseline | after |
+| --- | --- | --- |
+| round resolution | 1.62 ms | 1.37–1.54 ms |
+| utility order | 0.08 ms | 0.09 ms |
+| `reachable()` | 14.5 µs | 18.0 µs |
+| `roads()` | 106.4 µs | 136.1 µs |
+| `unit_vision` (cold) | 90.5 µs | 88.5 µs |
+
+Utility order paid 12%, which is the honest cost of the chunk and cheap for
+what it buys. Round resolution went *down*, which CLAUDE.md already predicts —
+it moves with how well the AI plays, and crews that stop driving into guns
+spend fewer ticks manoeuvring. `reachable` and `roads` are not called by
+anything this chunk touched; they move because the units they are measured on
+are standing somewhere else by then, and `unit_vision` — which measures the
+same work on the same map either way — is level, which is the check that the
+machine is comparable.
+
+### What the plan got wrong
+
+- **"2c: cover and elevation stop being a second opinion"** reads as *delete
+  the term*, and deleting it retires `cover_value` and `elevation_value`. The
+  question is not how much of the term should survive but *where*, and the
+  answer is a gate rather than a coefficient.
+- **The plan expected 2b to be the whole of it.** Half the movement in the
+  skill table came from the terrain gate, not from the threat term, and at
+  the shipped prior 2b *alone* left 5 over 1 slightly worse at four seeds.
+  Reading either half without the other would have produced a wrong
+  conclusion in either direction.
+- **Nothing in the plan anticipated that a shipped number would have to
+  move.** Changing the currency a weight is denominated in is a thing that
+  reaches every weight quoted in it; `deviation_cost` was the only one that
+  crossed a threshold, but it will not be the last time the question comes up.
+- **The plan's "watch the cost" was aimed at the wrong number.** `perf`'s
+  `reachable` and `roads` rows moved more than `utility order` did, and
+  neither is on this chunk's path — a reminder that those rows measure work
+  *in a particular game state* and the game state is what changed.
 
 ## Scratch
 

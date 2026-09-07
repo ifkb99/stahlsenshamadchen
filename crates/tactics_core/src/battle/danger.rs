@@ -1,6 +1,6 @@
 //! What the enemy could do to a crew standing on a given piece of ground.
 //!
-//! This is one function and one struct, and the point of both is that there
+//! This is one walk and one struct, and the point of both is that there
 //! is exactly one of them. "How dangerous is that hex" is asked from at
 //! least three directions — the evaluator deciding where to drive, the
 //! player's overlay asking why a tile is red, and anything that wants to
@@ -16,7 +16,7 @@
 //! the answer. Those are judgment and belong to whoever is asking. This
 //! module answers a question about the rules.
 
-use super::{BattleState, UnitId, combat};
+use super::{BattleState, Unit, UnitId, combat};
 use crate::data::DataRegistry;
 use hexx::Hex;
 
@@ -64,17 +64,9 @@ pub fn fire_on(
     unit: UnitId,
     at: Hex,
 ) -> Vec<Bearing> {
-    let Some(me) = state.unit(unit) else {
-        return Vec::new();
-    };
     let mut bearings = Vec::new();
-    for enemy in crate::ai::visible_enemies(state, me.side) {
-        let Some((weapon, expected)) =
-            combat::best_weapon_from(registry, state, enemy.id, enemy.pos, unit, at)
-        else {
-            continue;
-        };
-        // The gun is known to exist by the line above; asking the chassis
+    guns_bearing_on(registry, state, unit, at, |enemy, weapon, expected| {
+        // The gun is known to exist by the walk above; asking the chassis
         // for it again only to name it would be a second lookup for a
         // number we would then have to keep in step.
         let hit_percent = registry
@@ -89,6 +81,54 @@ pub fn fire_on(
             hit_percent,
             expected,
         });
-    }
+    });
     bearings
+}
+
+/// The same question, summed: total expected damage the spotted enemies
+/// could put on `unit` if she stood at `at`, in substance points.
+///
+/// This is what the evaluator's threat term spends, and it exists beside
+/// [`fire_on`] rather than as `fire_on(..).iter().sum()` for one reason,
+/// which is cost. `Evaluator::score_tile` is the hottest function the AI
+/// has and it asks this once per candidate tile per crew per round, so a
+/// `Vec` allocated and thrown away each time — and, worse, a second
+/// [`combat::hit_chance`] per enemy for a `hit_percent` the evaluator never
+/// reads — is paid for on every tile of every sweep. Both callers walk the
+/// same [`guns_bearing_on`], so there is still exactly one answer to *who
+/// can shoot her there and with what*; they differ only in what they do
+/// with it.
+pub fn incoming(registry: &DataRegistry, state: &BattleState, unit: UnitId, at: Hex) -> f32 {
+    let mut total = 0.0;
+    guns_bearing_on(registry, state, unit, at, |_, _, expected| {
+        total += expected
+    });
+    total
+}
+
+/// Every spotted enemy who could put fire on `unit` at `at`, handed to
+/// `each` as (enemy, weapon index, expected damage) in enemy id order.
+///
+/// The shared half of this module: [`fire_on`] and [`incoming`] are two
+/// readings of one walk, and the walk is here so they cannot disagree about
+/// membership, gun choice or order. Deliberately not public — what a caller
+/// wants to know is "what could be put on her", and the two shapes above are
+/// the two useful answers to it.
+fn guns_bearing_on(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    at: Hex,
+    mut each: impl FnMut(&Unit, usize, f32),
+) {
+    let Some(me) = state.unit(unit) else {
+        return;
+    };
+    for enemy in crate::ai::visible_enemies(state, me.side) {
+        if let Some((weapon, expected)) =
+            combat::best_weapon_from(registry, state, enemy.id, enemy.pos, unit, at)
+        {
+            each(enemy, weapon, expected);
+        }
+    }
 }

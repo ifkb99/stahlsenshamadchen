@@ -36,8 +36,10 @@
 //! — [`mission_weight`](PlannerRules::mission_weight),
 //! [`pull_under_fire`](PlannerRules::pull_under_fire),
 //! [`distance_decay`](PlannerRules::distance_decay),
-//! [`plateau`](PlannerRules::plateau) — say what a piece of ground is worth
-//! once she is looking at it, and in particular what an *order* is worth
+//! [`plateau`](PlannerRules::plateau),
+//! [`cover_prior`](PlannerRules::cover_prior) and
+//! [`elevation_prior`](PlannerRules::elevation_prior) — say what a piece of
+//! ground is worth once she is looking at it, and in particular what an *order* is worth
 //! against the terrain, which is the question the design memo opens with.
 //! They are four terms in one sum, which is why they arrived as one chunk:
 //! sweeping any of them alone says less than sweeping the shape.
@@ -77,7 +79,7 @@ fn boarding_rounds() -> f32 {
 
 /// Serde's default for [`PlannerRules::deviation_cost`].
 fn deviation_cost() -> f32 {
-    2.0
+    3.0
 }
 
 /// Serde's default for [`PlannerRules::devolved`].
@@ -108,6 +110,16 @@ fn distance_decay() -> f32 {
 /// Serde's default for [`PlannerRules::plateau`].
 fn plateau() -> f32 {
     0.3
+}
+
+/// Serde's default for [`PlannerRules::cover_prior`].
+fn cover_prior() -> f32 {
+    0.03
+}
+
+/// Serde's default for [`PlannerRules::elevation_prior`].
+fn elevation_prior() -> f32 {
+    0.4
 }
 
 /// The numbers that govern how the AI thinks: what it is willing to drive
@@ -174,7 +186,7 @@ pub struct PlannerRules {
     /// [`DoctrineDef::initiative`](super::DoctrineDef::initiative), and each
     /// of them is charged `deviation_cost * (1 - initiative)` for not being
     /// what she was told to do — so massed armour at 0.3 needs her own idea
-    /// to be worth 1.4 more than her orders and recon pull at 0.9 needs 0.2.
+    /// to be worth 2.1 more than her orders and recon pull at 0.9 needs 0.3.
     /// At `initiative: 1` there is no charge and she weighs her orders as one
     /// option among several; at `initiative: 0` there are no other options to
     /// weigh and the charge is never levied, which is the game before
@@ -182,9 +194,24 @@ pub struct PlannerRules {
     ///
     /// Set against the scale the evaluator already speaks, like
     /// [`Self::impatience`]: a mission's ground is worth 2.0 and a typical
-    /// objective 2–3, so 2.0 makes a low-initiative crew hold her course
+    /// objective 2–3, so 3.0 makes a low-initiative crew hold her course
     /// against anything short of a clearly better piece of ground and lets a
     /// high-initiative one take the good firing position she is driving past.
+    ///
+    /// **It shipped at 2.0 until Phase 2**, and the move to 3.0 is what
+    /// keeping its stated meaning cost. The number's job is to sit between
+    /// the shipped doctrines' `initiative` values —
+    /// `the_shipped_doctrines_straddle_the_price_of_deviating` is that
+    /// property as a test — and it is quoted in the evaluator's currency.
+    /// Phase 2 changed that currency: the threat term used to be zero over
+    /// most of the map (a six-hex gate with a distance falloff) and is now
+    /// the resolver's own expected damage everywhere a found gun can reach,
+    /// which is three to eight points of it. A weight denominated in a
+    /// currency has to move when the currency does, and at 2.0 massed armour
+    /// — the doctrine whose whole character is driving at the hex it was
+    /// given — stopped to fight from ground of its own. 3.0 is the smallest
+    /// value that restores the straddle and 3.0 through 6.0 all do, so it is
+    /// not a knife edge; at 8.0 elastic defence stops deviating too.
     ///
     /// `Hold` is deliberately exempt: standing still was already on an
     /// ordered crew's list before initiative existed, and charging her for it
@@ -307,6 +334,40 @@ pub struct PlannerRules {
     /// grass, which is what 0.3 was measured to be.
     #[serde(default = "plateau")]
     pub plateau: f32,
+    /// What a point of a terrain's `cover` is worth to a crew choosing
+    /// ground, before the doctrine's own `cover_value` scales it.
+    ///
+    /// A *prior*, and the word is doing work. What cover actually does to a
+    /// shot is `balance.cover_against_accuracy`, and since Phase 2 the
+    /// evaluator's threat term reads it through the resolver itself — per
+    /// gun, per bearing, with range and sight and obliquity alongside it. So
+    /// this number is not "what cover is worth"; it is what cover is worth
+    /// *against the enemies nobody has found yet*. Threat is fog-gated and
+    /// therefore exactly zero until the first contact, and a crew with an
+    /// empty list would otherwise have no reason to prefer a wood to a
+    /// field.
+    ///
+    /// It is also where a doctrine's taste lives —
+    /// [`DoctrineDef::cover_value`](super::DoctrineDef::cover_value) is read
+    /// here and nowhere else — so setting it to zero does not merely remove a
+    /// bonus, it silences that field and makes two doctrines with opposite
+    /// opinions about ground identical before contact. Measured over the
+    /// mirrored arena and the three shipped maps when the threat term started
+    /// reading the candidate tile; the numbers are in ARCH-TODO.md.
+    #[serde(default = "cover_prior")]
+    pub cover_prior: f32,
+    /// The same, for a level of elevation:
+    /// [`Self::cover_prior`]'s twin, scaled by
+    /// [`DoctrineDef::elevation_value`](super::DoctrineDef::elevation_value).
+    ///
+    /// Larger per unit because a level is ten metres and terrain cover runs
+    /// to thirty-odd points, so the two arrive on the evaluator's scale at
+    /// roughly the same size. What high ground does to a shot is
+    /// `balance.downhill_bonus` and, through the sight grid, what it lets her
+    /// see at all; this is the appetite for it that survives those being
+    /// priced properly.
+    #[serde(default = "elevation_prior")]
+    pub elevation_prior: f32,
 }
 
 impl Default for PlannerRules {
@@ -322,6 +383,8 @@ impl Default for PlannerRules {
             pull_under_fire: pull_under_fire(),
             distance_decay: distance_decay(),
             plateau: plateau(),
+            cover_prior: cover_prior(),
+            elevation_prior: elevation_prior(),
         }
     }
 }

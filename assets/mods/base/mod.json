@@ -73,13 +73,15 @@
     "impatience": 0.35,
     "horizon_rounds": 4,
     "boarding_rounds": 4.0,
-    "deviation_cost": 2.0,
+    "deviation_cost": 3.0,
     "devolved": 0.6,
     "exit_urgency": 3.0,
     "mission_weight": 2.0,
     "pull_under_fire": 0.25,
     "distance_decay": 0.15,
-    "plateau": 0.3
+    "plateau": 0.3,
+    "cover_prior": 0.03,
+    "elevation_prior": 0.4
   },
   "cores": [
     {
