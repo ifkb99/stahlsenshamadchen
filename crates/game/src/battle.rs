@@ -408,25 +408,39 @@ struct UnitWidgets<'w, 's> {
 #[derive(Component)]
 struct MoveHighlight;
 
-/// The move range's own blue, and the three warmer tints the danger overlay
-/// paints over the tiles something can reach.
-///
-/// Indexed by [`panel::danger_band`], and sized off [`panel::DANGER_LEGEND`]
-/// so the colours and the words the panel prints beside them cannot come
-/// apart in length — the words live in `panel.rs` because that file holds no
-/// Bevy types, and this is the join.
-///
-/// Band 0 is the ordinary move-range blue rather than a fourth warm colour,
-/// which is what makes the overlay readable at a glance: the eye is looking
-/// for the tiles that are *not* blue. The danger tints run at a higher alpha
-/// than the blue because they are the answer to a question the player asked,
-/// and a warning that has to be hunted for is not one.
-const DANGER_COLORS: [Color; panel::DANGER_LEGEND.len()] = [
-    Color::srgba(0.35, 0.55, 1.0, 0.4),
-    Color::srgba(0.95, 0.85, 0.25, 0.45),
-    Color::srgba(1.0, 0.55, 0.15, 0.5),
-    Color::srgba(1.0, 0.2, 0.2, 0.58),
-];
+/// The move range's own blue: what the overlay paints on a tile nothing
+/// spotted can reach. Blue rather than the bottom of the warm ramp, which is
+/// what makes the overlay readable at a glance — the eye is looking for the
+/// tiles that are *not* blue.
+const DANGER_NONE: Color = Color::srgba(0.35, 0.55, 1.0, 0.4);
+
+/// The two ends of the danger ramp, yellow to red, in the same order as the
+/// sentences in [`panel::DANGER_LEGEND`]; [`danger_color`] is the join. The
+/// warm tints run at a higher alpha than the blue because they are the
+/// answer to a question the player asked, and a warning that has to be
+/// hunted for is not one.
+const DANGER_LOW: Color = Color::srgba(0.95, 0.85, 0.25, 0.45);
+const DANGER_HIGH: Color = Color::srgba(1.0, 0.2, 0.2, 0.6);
+
+/// The colour for a tile at a given point on the ramp
+/// ([`panel::danger_tint`]): blue at exactly nothing, and otherwise the
+/// straight mix of the two ends. A gradient rather than bands, on the
+/// designer's call: distance is most of what decides expected fire, and the
+/// bands threw that smoothness away — see `panel::danger_tint` for the scale.
+fn danger_color(tint: f32) -> Color {
+    if tint <= 0.0 {
+        return DANGER_NONE;
+    }
+    let (low, high) = (DANGER_LOW.to_srgba(), DANGER_HIGH.to_srgba());
+    let t = tint.clamp(0.0, 1.0);
+    let mix = |a: f32, b: f32| a + (b - a) * t;
+    Color::srgba(
+        mix(low.red, high.red),
+        mix(low.green, high.green),
+        mix(low.blue, high.blue),
+        mix(low.alpha, high.alpha),
+    )
+}
 
 /// Overlay showing what your own units have been ordered to do this round.
 #[derive(Component)]
@@ -2943,14 +2957,14 @@ fn update_highlights(
         .unwrap_or(1.0);
     for hex in battle.move_range.keys() {
         let overlay = HexOverlay::face(*hex);
-        let band = match battle.danger.get(hex) {
-            Some(expected) => panel::danger_band(expected / left),
-            None => 0,
+        let color = match battle.danger.get(hex) {
+            Some(worth) => danger_color(panel::danger_tint(worth / left)),
+            None => DANGER_NONE,
         };
         commands.spawn((
             Sprite {
                 image: art.face.clone(),
-                color: DANGER_COLORS[band],
+                color,
                 ..default()
             },
             Transform::from_translation(overlay.translation(&map, view.rotation(), view.center())),
@@ -3205,12 +3219,12 @@ fn update_panel(
         .map(|(unit, hex)| {
             let mut section = format_danger(registry, state, unit, hex);
             // The legend goes with the overlay and not with the section: the
-            // bands only exist while something is painted in them, and a key
+            // ramp only exists while something is painted on it, and a key
             // to colours nobody can see is furniture.
             if battle.show_danger {
-                section.push_str("\n\nOverlay bands (D):");
-                for band in panel::DANGER_LEGEND {
-                    section.push_str(&format!("\n  {band}"));
+                section.push_str("\n\nOverlay (D), a round of fire:");
+                for line in panel::DANGER_LEGEND {
+                    section.push_str(&format!("\n  {line}"));
                 }
             }
             section.push_str("\n\n");

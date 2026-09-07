@@ -436,40 +436,41 @@ pub(super) fn format_attack(
 /// The bands the danger overlay paints in, worst last, and the words the
 /// panel puts beside them.
 ///
-/// The thresholds are shares of what the crew has *left to lose*, not of her
-/// paper complement: a half-wrecked tank is in far more trouble from the same
-/// gun than a fresh one, and a legend quoted against the datasheet would tell
-/// her otherwise. Index 0 is "nothing spotted bears on it", which is a
-/// different statement from "a little" and gets the ordinary move-range blue
-/// rather than a colour of its own.
+/// Three sentences for a gradient with two ends: nothing bears on it (the
+/// ordinary move-range blue, a different statement from "a little"), and the
+/// two ends of the warm ramp between which every other tile sits. The ramp is
+/// a share of what the crew has *left to lose*, not of her paper complement:
+/// a half-wrecked tank is in far more trouble from the same gun than a fresh
+/// one, and a legend quoted against the datasheet would tell her otherwise.
 ///
-/// The words live here and the colours live in `battle.rs`, joined by index,
-/// because this file holds no Bevy types — the array the renderer keeps is
-/// sized off this one so the two cannot come apart in length.
-pub(super) const DANGER_LEGEND: [&str; 4] = [
-    "blue nothing bears on it",
-    "yellow under a tenth of her",
-    "orange under a third",
-    "red a third or more",
+/// The words live here and the colours live in `battle.rs`, because this
+/// file holds no Bevy types; `danger_tint` is the join.
+pub(super) const DANGER_LEGEND: [&str; 3] = [
+    "blue    nothing spotted bears on it",
+    "yellow  a round there costs her a little",
+    "red     a round there costs her everything",
 ];
 
-/// Which band a tile falls in, given the expected fire on it as a share of
-/// what the crew standing there has left.
+/// Where on the overlay's ramp a tile sits, given the fire expected on it in
+/// a round as a share of what the crew standing there has left: 0 is nothing
+/// bearing, 1 is a round she is not expected to survive.
+///
+/// A gradient rather than bands, on the designer's call: distance is most of
+/// what decides expected fire, and cutting a smooth quantity into three
+/// colours threw that away — one 88 shot is a third of a medium tank, so
+/// every tile the gun could see was the top band from the first contact and
+/// the middle colour never appeared. The ramp is linear in the share because
+/// the share already *is* the sentence the player wants ("a round here costs
+/// me this much of her"), and its top is a whole round of her rather than
+/// some fraction, so that full red means one thing everywhere: stand here and
+/// she is gone.
 ///
 /// Pure and separately testable on purpose: it is the one piece of judgment
 /// in the overlay — every other number in it comes from the resolver — and a
-/// band boundary that moved without anybody noticing would recolour the whole
-/// map while every test still passed.
-pub(super) fn danger_band(share: f32) -> usize {
-    if share <= 0.0 {
-        0
-    } else if share < 0.10 {
-        1
-    } else if share < 0.33 {
-        2
-    } else {
-        3
-    }
+/// scale that moved without anybody noticing would recolour the whole map
+/// while every test still passed.
+pub(super) fn danger_tint(share: f32) -> f32 {
+    share.clamp(0.0, 1.0)
 }
 
 /// What can be put on the selected crew if she stands on a given hex: every
@@ -524,9 +525,11 @@ pub(super) fn format_danger(
     }
     let mut total = 0.0;
     let mut fear = 0.0;
+    let mut worth = 0.0;
     for bearing in &bearings {
         total += bearing.damage_per_round();
         fear += bearing.pressure_per_round();
+        worth += bearing.worth_per_round();
         // Two lines per gun rather than one: the panel is 300 px wide and a
         // line that wraps to three is a line nobody reads. The name and the
         // arithmetic are what a player scans down, so they lead, and the
@@ -547,21 +550,27 @@ pub(super) fn format_danger(
         }
     }
     lines.push(format!("  {total:.1} expected this round"));
-    // ...and what she would be under whether or not it gets through. Printed
-    // only when there is some, because a line reading "0.0 pressure" on every
-    // hex of a mod that declares no suppression is furniture.
-    if fear > 0.0 {
-        lines.push(format!("  {fear:.1} pressure, hit or bounce"));
-    }
     // ...and what that is worth against her, which is the number that
     // actually decides anything. Two points is a scratch to a heavy tank and
-    // the end of a scout car, and a bare figure cannot say which.
+    // the end of a scout car, and a bare figure cannot say which. The share
+    // is of *worth* — damage and what the fire does to her nerve, at the
+    // exchange rate the mod declares — because that is the figure the
+    // overlay tints by and the figure the evaluator spends on the same
+    // ground; a percentage of damage alone beside a tint of worth would be
+    // two answers in one panel. The pressure half is spelled out only when
+    // there is some, because "0.0 pressure" on every hex of a mod that
+    // declares no suppression is furniture.
     let (have, full) = state.substance(registry, me);
     let left = if have > 0 { have } else { full }.max(1);
-    lines.push(format!(
-        "  {}% of what she has left",
-        ((total / left as f32) * 100.0).round() as i32
-    ));
+    let share = ((worth / left as f32) * 100.0).round() as i32;
+    if fear > 0.0 {
+        lines.push(format!("  {fear:.1} pressure, hit or bounce"));
+        lines.push(format!(
+            "  {worth:.1} all told, {share}% of what she has left"
+        ));
+    } else {
+        lines.push(format!("  {share}% of what she has left"));
+    }
     lines.join("\n")
 }
 
@@ -931,23 +940,37 @@ mod tests {
         );
     }
 
-    /// The overlay's bands and the words beside them are one table read two
-    /// ways, and the boundaries are the only judgment in the whole feature.
+    /// The overlay's ramp is the share of her a round would cost, and the
+    /// scale is the only judgment in the whole feature.
     #[test]
-    fn every_danger_band_has_a_colour_and_a_sentence() {
-        assert_eq!(danger_band(0.0), 0, "nothing bearing is its own band");
-        assert_eq!(danger_band(0.05), 1);
-        assert_eq!(danger_band(0.2), 2);
-        assert_eq!(danger_band(0.9), 3);
-        // Monotone, and every band reachable: a boundary typed backwards
-        // would recolour the whole map with every other test still green.
-        let mut last = 0;
-        for step in 0..100 {
-            let band = danger_band(step as f32 / 100.0);
-            assert!(band >= last, "the bands must not go backwards");
-            last = band;
+    fn the_tint_is_the_share_of_her_a_round_there_would_cost() {
+        assert_eq!(danger_tint(0.0), 0.0, "nothing bearing is the bottom");
+        assert_eq!(
+            danger_tint(1.0),
+            1.0,
+            "a round she does not survive is the top"
+        );
+        assert_eq!(danger_tint(3.0), 1.0, "and nothing is redder than that");
+        assert_eq!(
+            danger_tint(-0.5),
+            0.0,
+            "a negative share is a bug upstream, not a colour"
+        );
+        // Linear, so that twice the fire is twice as far up the ramp: the
+        // share is already the sentence the player wants and a curve would
+        // put a second opinion between her and it.
+        assert!((danger_tint(0.25) - 0.25).abs() < 1e-6);
+        assert!((danger_tint(0.5) - 0.5).abs() < 1e-6);
+        // Monotone: a scale typed backwards would recolour the whole map
+        // with every other test still green.
+        let mut last = 0.0;
+        for step in 0..=100 {
+            let tint = danger_tint(step as f32 / 100.0);
+            assert!(tint >= last, "the ramp must not go backwards");
+            last = tint;
         }
-        assert_eq!(last, DANGER_LEGEND.len() - 1);
+        // The legend describes a ramp with two ends and a blue outside it.
+        assert_eq!(DANGER_LEGEND.len(), 3);
     }
 
     /// Every key the order menu offers explains itself.
