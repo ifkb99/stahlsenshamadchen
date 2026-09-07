@@ -1412,34 +1412,9 @@ impl BattleState {
         events
     }
 
-    /// The mid-round half of the battle drill: nobody under fire waits for
-    /// the next planning phase to survive.
-    ///
-    /// The planning-table drill (the delegation layer's `executor_only`)
-    /// covers a crew who is already threatened when the round is planned.
-    /// This covers the one who is ambushed at tick four: an idle crew — no
-    /// route left to drive, no target she was told to watch — who has had
-    /// time to take in a threat breaks for the best cover she can reach.
-    /// Return fire needs no twin here because opportunity fire already is
-    /// one; this is its movement half, and it prices time with the same
-    /// clock. `spotted_since` says when her side first laid eyes on each
-    /// enemy, her `reactions` delay says how long she needs to catch up, so
-    /// a tank she has watched crawl toward her for three rounds is answered
-    /// the instant it comes into range while a gun that appears out of a
-    /// treeline costs her the same stunned ticks it costs her gunner.
-    ///
-    /// What it will never touch: a crew with a route in hand keeps driving
-    /// it (delaying plans already given is the sin the reaction-latency
-    /// post-mortem forbids), a crew with a fire order is on deliberate
-    /// overwatch and trusts her gun, and a crew whose morale rung no longer
-    /// obeys is exactly as frozen as the rung says she is. A crew already on
-    /// the best cover she can reach stands her ground — the comparison is
-    /// strict, so equal cover never causes a pointless shuffle and each dash
-    /// is to strictly better ground, which is what makes the drill settle
-    /// instead of oscillate.
     /// The ground a frightened crew reverses onto: as far from everything
     /// she can see that can hurt her as this round's movement allows, and
-    /// under cover where the ground offers a choice.
+    /// among the hexes that tie on that, the quietest.
     ///
     /// Distance from *threats*, not toward a lane. A retreat lane is a
     /// destination, and a crew who has stopped listening is not navigating —
@@ -1447,14 +1422,36 @@ impl BattleState {
     /// also what survives the map growing: there will not always be an edge
     /// to run off, and "away" needs no map furniture at all.
     ///
-    /// Ties break toward cover, then the cheapest drive, then coordinates,
-    /// so two identical crews in identical fear still bolt somewhere a
-    /// replay agrees about.
+    /// Ties break toward the ground the guns can do least on, then the
+    /// cheapest drive, then coordinates, so two identical crews in identical
+    /// fear still bolt somewhere a replay agrees about.
+    ///
+    /// **Distance is the first key and the second one is the currency.** The
+    /// tiebreak used to be terrain `cover` — a number in a model of its own,
+    /// which can prefer a wood the gun sees into perfectly well over bare
+    /// ground it cannot see at all. It is
+    /// [`incoming`](crate::battle::incoming) now, so among the hexes that put
+    /// the same distance between her and the thing shooting at her she takes
+    /// the one where a round of that fire is worth least, cover and elevation
+    /// and facing and range included. That keeps the rout and the drill
+    /// underneath pricing ground the same way the evaluator and the player's
+    /// overlay do, which is the point of there being one currency.
+    ///
+    /// What it does **not** do is become a search for safety: distance stays
+    /// the first key, because this is the designer's rout and a crew who has
+    /// stopped listening is not choosing a firing position — she is getting
+    /// away. The orderly version of the same reflex is [`Self::run_crew_drill`],
+    /// which minimises fire and does not care about distance at all, and the
+    /// difference between the two is exactly what "drill versus rout" means.
+    /// Pricing only the tiles that tie on the first key also keeps the walk
+    /// cheap: on a full move range that is a handful of hexes rather than
+    /// ninety.
     fn flight_destination(&self, registry: &DataRegistry, unit: UnitId) -> Option<Hex> {
         let me = self.unit(unit)?;
-        let threats: Vec<Hex> = crate::ai::threats(registry, self, unit)
-            .into_iter()
-            .filter_map(|id| self.unit(id).map(|u| u.pos))
+        let threatening = crate::ai::threats(registry, self, unit);
+        let threats: Vec<Hex> = threatening
+            .iter()
+            .filter_map(|id| self.unit(*id).map(|u| u.pos))
             .collect();
         if threats.is_empty() {
             return None;
@@ -1466,19 +1463,19 @@ impl BattleState {
                 .min()
                 .unwrap_or(0)
         };
-        let cover_at = |hex: Hex| {
-            self.terrain_at(hex)
-                .and_then(|t| registry.terrain(t))
-                .map_or(0, |t| t.cover)
-        };
         let here = clearance(me.pos);
-        movement::reachable(registry, self, unit)
+        let away: Vec<(Hex, u32)> = movement::reachable(registry, self, unit)
             .into_iter()
             .filter(|&(hex, _)| hex != me.pos && clearance(hex) > here)
+            .collect();
+        let furthest = away.iter().map(|&(hex, _)| clearance(hex)).max()?;
+        away.into_iter()
+            .filter(|&(hex, _)| clearance(hex) == furthest)
             .max_by_key(|&(hex, cost)| {
                 (
-                    clearance(hex),
-                    cover_at(hex),
+                    std::cmp::Reverse(worth_key(
+                        crate::battle::incoming_from(registry, self, unit, hex, &threatening).worth,
+                    )),
                     std::cmp::Reverse(cost),
                     std::cmp::Reverse(hex.x),
                     std::cmp::Reverse(hex.y),
@@ -1499,6 +1496,39 @@ impl BattleState {
             .unwrap_or_else(|| "will not advance".into())
     }
 
+    /// The mid-round half of the battle drill: nobody under fire waits for
+    /// the next planning phase to survive.
+    ///
+    /// The planning-table drill (the delegation layer's `executor_only`)
+    /// covers a crew who is already threatened when the round is planned.
+    /// This covers the one who is ambushed at tick four: an idle crew — no
+    /// route left to drive, no target she was told to watch — who has had
+    /// time to take in a threat breaks for the ground those guns can do
+    /// least on. Return fire needs no twin here because opportunity fire
+    /// already is one; this is its movement half, and it prices time with
+    /// the same clock. `spotted_since` says when her side first laid eyes on
+    /// each enemy, her `reactions` delay says how long she needs to catch
+    /// up, so a tank she has watched crawl toward her for three rounds is
+    /// answered the instant it comes into range while a gun that appears out
+    /// of a treeline costs her the same stunned ticks it costs her gunner.
+    ///
+    /// **This is the orderly reaction and [`Self::flight_destination`] is
+    /// the rout**, which is the designer's own split: a crew who has noticed
+    /// a threat minimises the fire on her, and a crew whose nerve has gone
+    /// simply gets away from it. So this one does not care about distance at
+    /// all — a hex closer to the gun that the gun cannot see is a better
+    /// answer than a hex further off in the open — and the other takes
+    /// distance first.
+    ///
+    /// What it will never touch: a crew with a route in hand keeps driving
+    /// it (delaying plans already given is the sin the reaction-latency
+    /// post-mortem forbids), a crew with a fire order is on deliberate
+    /// overwatch and trusts her gun, and a crew whose morale rung no longer
+    /// obeys does what her temperament says instead. A crew already on the
+    /// quietest ground she can reach stands her ground — the comparison is
+    /// strict, so equal danger never causes a pointless shuffle and each
+    /// dash is to strictly better ground, which is what makes the drill
+    /// settle instead of oscillate.
     fn run_crew_drill(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
         let now = self.round as u64 * registry.scale.ticks_per_round as u64
             + self.resolving_tick().unwrap_or(0) as u64;
@@ -1549,31 +1579,55 @@ impl BattleState {
                 super::stats::reaction_delay(registry, &self.roster, unit, self.terrain_at(pos))
                     as u64;
             let fog = self.fog.side(unit.side);
-            // A threat she has caught up with, on the same per-enemy clock
-            // opportunity fire pays.
-            let noticed = crate::ai::threats(registry, self, id)
+            // The threats she has caught up with, on the same per-enemy clock
+            // opportunity fire pays. Kept as a list rather than collapsed to
+            // a boolean because the ground she picks below is priced against
+            // these guns and no others.
+            let noticed: Vec<UnitId> = crate::ai::threats(registry, self, id)
                 .into_iter()
-                .any(|enemy| {
+                .filter(|enemy| {
                     fog.spotted_since
-                        .get(&enemy)
+                        .get(enemy)
                         .is_none_or(|since| now >= since + delay)
-                });
-            if !noticed {
+                })
+                .collect();
+            if noticed.is_empty() {
                 continue;
             }
-            let cover_at = |hex: Hex| {
-                self.terrain_at(hex)
-                    .and_then(|t| registry.terrain(t))
-                    .map_or(0, |t| t.cover)
+            // Where the guns she has noticed can do least to her — the
+            // currency, not the terrain table.
+            //
+            // This used to take the reachable tile with the highest terrain
+            // `cover`, which is a second model of what cover is for sitting
+            // beside a resolver that answers the same question exactly. The
+            // two disagree in the case the drill exists for: a wood the gun
+            // is looking straight into scores 30 and is a death trap, and the
+            // reverse slope twenty metres behind it scores 0 and cannot be
+            // shot at at all. She prices both through
+            // [`incoming_from`](crate::battle::incoming_from) now, so range,
+            // sight, elevation, facing, obliquity and the actual gun bearing
+            // on her all reach the decision — the same arithmetic the
+            // evaluator spends and the player's danger overlay draws.
+            //
+            // Restricted to the threats she has *noticed*, on the same
+            // per-enemy clock the trigger above uses: reacting to a gun she
+            // has not caught up with would be the reaction-latency defect
+            // rebuilt inside the reflex that latency is about.
+            //
+            // Strictly better ground only, as before, and for the same
+            // reason: equal danger never causes a pointless shuffle, and each
+            // dash is to ground the guns can do less on, which is what makes
+            // the drill settle instead of oscillate.
+            let danger_at = |hex: Hex| {
+                worth_key(crate::battle::incoming_from(registry, self, id, hex, &noticed).worth)
             };
-            let here = cover_at(pos);
-            // Best cover wins; among equals the cheapest drive, then
-            // coordinates, so replays agree on where she bolted to.
+            let here = danger_at(pos);
             let dest = movement::reachable(registry, self, id)
                 .into_iter()
-                .filter(|&(hex, _)| hex != pos && cover_at(hex) > here)
-                .min_by_key(|&(hex, cost)| (std::cmp::Reverse(cover_at(hex)), cost, hex.x, hex.y))
-                .map(|(hex, _)| hex);
+                .map(|(hex, cost)| (hex, cost, danger_at(hex)))
+                .filter(|&(hex, _, danger)| hex != pos && danger < here)
+                .min_by_key(|&(hex, cost, danger)| (danger, cost, hex.x, hex.y))
+                .map(|(hex, _, _)| hex);
             let Some(dest) = dest else { continue };
             let Some((path, _)) = movement::path_to(registry, self, id, dest) else {
                 continue;
@@ -2413,4 +2467,19 @@ impl BattleState {
         self.over = Some(BattleResult { winner, reason });
         events.push(Event::BattleEnded { winner, reason });
     }
+}
+
+/// A round of expected fire, as an integer key a tiebreak can be sorted on.
+///
+/// `f32` has no total order, and every "where should she stand" decision in
+/// this engine has to be settled the same way on every machine — the
+/// determinism snapshot is a byte comparison. Quantising to about a
+/// thousandth of a substance point is also the right *behaviour*: two hexes
+/// whose expected fire differs in the fourth decimal are ground the resolver
+/// cannot really tell apart, and treating them as equal lets the later keys
+/// (the cheapest drive, then the coordinate) settle it instead of a rounding
+/// artefact. Saturating on the cast handles a non-finite worth by pinning it
+/// at the ends rather than panicking.
+fn worth_key(worth: f32) -> i64 {
+    (worth * 1024.0) as i64
 }

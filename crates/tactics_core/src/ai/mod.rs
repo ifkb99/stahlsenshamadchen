@@ -232,39 +232,53 @@ pub fn next_unplanned_unit(state: &BattleState, side: u8) -> Option<UnitId> {
 }
 
 /// Whether anything the side can see could put fire on this unit where she
-/// stands. Fog-honest (spotted enemies only, through the same
-/// [`best_weapon_against`] every planner prices shots with) and
-/// deterministic, because "was she in danger" must answer the same on every
-/// machine.
+/// stands. Fog-honest (spotted enemies only) and deterministic, because "was
+/// she in danger" must answer the same on every machine.
 ///
-/// Three very different things ask it, and they must ask it the same way or
-/// the game contradicts itself: the battle drill at the planning table, which
-/// is what an unordered crew does when nobody has told her anything; the
+/// Six very different things ask it, and they must ask it the same way or the
+/// game contradicts itself: the battle drill at the planning table, which is
+/// what an unordered crew does when nobody has told her anything; the
 /// evaluator, where being under fire is what suspends a movement to contact;
-/// and the engine's mid-round drill, where the same danger noticed at tick
-/// four is what sends an idle crew scrambling for the trees. All three are
-/// the same sentence — *is somebody shooting at me* — so all three read the
-/// same predicate rather than formulas that can drift apart. The engine's
-/// consumer needs to know *who* so it can ask the crew's clock whether she
-/// has caught up with each of them yet, hence [`threats`] underneath.
-pub(crate) fn threatened(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> bool {
-    !threats(registry, state, unit).is_empty()
+/// the taxi rules, where nobody mounts up or waits at a tailgate under fire;
+/// the dismount reflex; and the engine's mid-round drill and its rout, where
+/// the same danger noticed at tick four is what sends an idle crew scrambling.
+/// All of them are the same sentence — *is somebody shooting at me* — so all
+/// of them read the same predicate rather than formulas that can drift apart.
+///
+/// **It is [`crate::battle::incoming`] and nothing else**, which is the whole
+/// of Wave 2's first part: this used to be a second walk over the visible
+/// enemies asking [`best_weapon_against`] the same question
+/// [`crate::battle::danger`] asks, with its own gate. Two walks are two
+/// answers waiting to happen — a gun added to one and not the other, or a
+/// gate reworded in one place — and the currency has exactly one answer to
+/// *who can shoot her there*. The two are arithmetically identical today
+/// (`best_weapon_from` admits a gun precisely when its `worth` is positive,
+/// and the sum of positive terms is positive), so this is a refactor with a
+/// test on it rather than a behaviour change; what it buys is that it stays
+/// identical.
+pub fn threatened(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> bool {
+    let Some(me) = state.unit(unit) else {
+        return false;
+    };
+    crate::battle::incoming(registry, state, unit, me.pos).worth > 0.0
 }
 
 /// The spotted enemies that could put fire on this unit where she stands, in
-/// id order. The list form of [`threatened`], for the one caller — the
-/// mid-round drill — that must weigh each threat against when she first laid
-/// eyes on it.
-pub(crate) fn threats(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> Vec<UnitId> {
+/// id order. The list form of [`threatened`], for the two callers — the
+/// mid-round drill and the rout — that must weigh each threat against when
+/// she first laid eyes on it, or run away from where it is standing.
+///
+/// [`crate::battle::fire_on`]'s membership, and deliberately nothing more:
+/// the bearings carry a weapon, a hit chance and a cadence that neither
+/// caller wants, but taking the ids off the one walk is what keeps "who can
+/// shoot her" from having two answers.
+pub fn threats(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> Vec<UnitId> {
     let Some(me) = state.unit(unit) else {
         return Vec::new();
     };
-    visible_enemies(state, me.side)
-        .iter()
-        .filter(|enemy| {
-            best_weapon_against(registry, state, enemy.id, enemy.pos, me, me.pos).is_some()
-        })
-        .map(|enemy| enemy.id)
+    crate::battle::fire_on(registry, state, unit, me.pos)
+        .into_iter()
+        .map(|bearing| bearing.enemy)
         .collect()
 }
 

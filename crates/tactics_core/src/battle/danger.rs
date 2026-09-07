@@ -119,7 +119,7 @@ pub fn fire_on(
     at: Hex,
 ) -> Vec<Bearing> {
     let mut bearings = Vec::new();
-    guns_bearing_on(registry, state, unit, at, |enemy, weapon, value| {
+    guns_bearing_on(registry, state, unit, at, None, |enemy, weapon, value| {
         // The gun is known to exist by the walk above; asking the chassis
         // for it again only to name it would be a second lookup for a
         // number we would then have to keep in step.
@@ -162,8 +162,42 @@ pub fn fire_on(
 /// can shoot her there and with what*; they differ only in what they do
 /// with it.
 pub fn incoming(registry: &DataRegistry, state: &BattleState, unit: UnitId, at: Hex) -> Incoming {
+    sum_bearings(registry, state, unit, at, None)
+}
+
+/// [`incoming`], restricted to a named list of enemies.
+///
+/// The same arithmetic and the same walk, asked about *some* of the guns
+/// rather than all of them. It exists for the mid-round battle drill, which
+/// has to price ground against the threats this crew has actually caught up
+/// with: her `reactions` delay is a per-enemy clock, so a gun that appeared
+/// out of a treeline this tick is one she does not know about yet, and
+/// letting it into the arithmetic would let her flinch from something she has
+/// not seen — the same fog dishonesty [`fire_on`] refuses at the level of the
+/// side's picture, one clock further in.
+///
+/// `only` is a list of enemy ids; anybody not on it is skipped. It is walked
+/// in `state.units` order like everything else here, so the result does not
+/// depend on how the caller sorted its list.
+pub fn incoming_from(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    at: Hex,
+    only: &[UnitId],
+) -> Incoming {
+    sum_bearings(registry, state, unit, at, Some(only))
+}
+
+fn sum_bearings(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    at: Hex,
+    only: Option<&[UnitId]>,
+) -> Incoming {
     let mut total = Incoming::default();
-    guns_bearing_on(registry, state, unit, at, |_, _, value| {
+    guns_bearing_on(registry, state, unit, at, only, |_, _, value| {
         total.substance += value.expected * value.shots;
         total.pressure += value.pressure * value.shots;
         total.worth += value.worth_per_round();
@@ -175,22 +209,26 @@ pub fn incoming(registry: &DataRegistry, state: &BattleState, unit: UnitId, at: 
 /// `each` as (enemy, weapon index, what one shot is worth) in enemy id
 /// order.
 ///
-/// The shared half of this module: [`fire_on`] and [`incoming`] are two
-/// readings of one walk, and the walk is here so they cannot disagree about
-/// membership, gun choice or order. Deliberately not public — what a caller
-/// wants to know is "what could be put on her", and the two shapes above are
-/// the two useful answers to it.
+/// The shared half of this module: [`fire_on`], [`incoming`] and
+/// [`incoming_from`] are three readings of one walk, and the walk is here so
+/// they cannot disagree about membership, gun choice or order. Deliberately
+/// not public — what a caller wants to know is "what could be put on her",
+/// and the shapes above are the useful answers to it.
 fn guns_bearing_on(
     registry: &DataRegistry,
     state: &BattleState,
     unit: UnitId,
     at: Hex,
+    only: Option<&[UnitId]>,
     mut each: impl FnMut(&Unit, usize, combat::ShotValue),
 ) {
     let Some(me) = state.unit(unit) else {
         return;
     };
     for enemy in crate::ai::visible_enemies(state, me.side) {
+        if only.is_some_and(|ids| !ids.contains(&enemy.id)) {
+            continue;
+        }
         if let Some((weapon, value)) =
             combat::best_weapon_from(registry, state, enemy.id, enemy.pos, unit, at)
         {

@@ -412,12 +412,35 @@ fn driving_is_counted_once_however_she_came_to_drive() {
     // Watched tick by tick, because the round's end zeroes it again for the
     // next planning phase and the whole point is what the resolver sees
     // *during* the fighting.
+    //
+    // **Counted against the hexes she actually crossed rather than against
+    // the two she was ordered across**, which is a stricter reading of the
+    // same rule and the one Wave 2 forced. The ordered march ends inside the
+    // enemy's arc, and since the mid-round drill started pricing ground in
+    // the currency instead of in terrain `cover` it has something to say
+    // about a flat field: a gun loses accuracy with range, so backing off one
+    // more hex is strictly quieter and she takes it. That third hex is the
+    // drill working, and the rule under test is precisely that it is counted
+    // by the same increment the ordered leg is — asserting "2" would have
+    // been asserting that no other system may ever move her.
     let mut seen = 0;
+    let mut crossed: u32 = 0;
+    let mut was = start;
     for _ in 0..reg.scale.ticks_per_round {
         state.step_tick(&reg);
+        let now = state.units[0].pos;
+        crossed += was.distance_to(now) as u32;
+        was = now;
         seen = seen.max(state.units[0].moved);
     }
-    assert_eq!(seen, 2, "two hexes driven is two hexes counted, once each");
+    assert!(
+        crossed >= 2,
+        "she drove the two hexes she was given, at least"
+    );
+    assert_eq!(
+        seen, crossed,
+        "every hex she crossed is counted once, whoever decided she should cross it"
+    );
     assert_eq!(
         state.units[0].moved, 0,
         "and the count is zeroed for the next round's planning, so nobody \

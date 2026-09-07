@@ -47,6 +47,7 @@
 //! - wounds with teeth
 //! - what the ground can put on her
 //! - suppression and cadence join the currency
+//! - one walk, one gate: the readers of the currency
 //!
 //! Shared setup — `registry()`, `registry_wireless()`, `seen()` — lives in
 //! `tests/common/mod.rs`, because two of those are mandatory for any staged
@@ -5705,11 +5706,17 @@ fn breaking(reg: &DataRegistry) -> u32 {
 /// single duel, so on most seeds the gun behind her gets through on the
 /// opening round and her crew bails, which proves nothing either way. It
 /// moved from 61/62 to 84 when the resolver-depth arc changed what a shot at
-/// a moving vehicle is worth and shifted every roll after the first. If it
-/// has to move again, scan for a seed on which she survives to be watched —
-/// never weaken what is asserted about her, which is the part that is not
-/// staging.
-const FLIGHT_SEED: u64 = 84;
+/// a moving vehicle is worth and shifted every roll after the first, and from
+/// 84 to 3 when Wave 2 gave the rout its second key: among the hexes that tie
+/// on distance from the gun she now takes the quietest rather than the
+/// woodiest, so she reverses to a different hex of the same ring, presents a
+/// different aspect, and on seed 84 the gun killed her in round two before
+/// there was anything left to watch. Scanned rather than guessed: 63 of the
+/// first 400 seeds have her open the range in the first round and in two of
+/// three, and 3 is the lowest. If it has to move again, scan for a seed on
+/// which she survives to be watched — never weaken what is asserted about
+/// her, which is the part that is not staging.
+const FLIGHT_SEED: u64 = 3;
 
 #[test]
 fn a_frightened_crew_reverses_out_of_contact() {
@@ -10917,10 +10924,22 @@ fn open_ground_stage(reg: &DataRegistry, watcher_at: [i32; 2], seed: u64) -> Bat
 
 /// Play out the ambush and record when side 0 first saw the walker and when
 /// (and where) the watcher broke for cover, then finish the round.
+///
+/// The fourth element is the battle **as it stood when that tick began**, and
+/// it is there because the drill's destination can only be judged against the
+/// board the drill was looking at. Both crews move inside a tick, so pricing
+/// a hex against the end of the round asks a question about a walker who has
+/// driven on since — which reads as "the gun expects nothing anywhere",
+/// because by then it usually does.
 fn spring_the_ambush(
     reg: &DataRegistry,
     state: &mut BattleState,
-) -> (Option<u32>, Option<u32>, Option<tactics_core::Hex>) {
+) -> (
+    Option<u32>,
+    Option<u32>,
+    Option<tactics_core::Hex>,
+    Option<BattleState>,
+) {
     let (watcher, walker) = (UnitId(0), UnitId(1));
     assert!(
         !state.fog.side(0).spotted.contains(&walker),
@@ -10938,9 +10957,10 @@ fn spring_the_ambush(
         .unwrap();
     commit_all(reg, state);
 
-    let (mut seen_at, mut broke_at, mut broke_to) = (None, None, None);
+    let (mut seen_at, mut broke_at, mut broke_to, mut broke_on) = (None, None, None, None);
     while state.resolving_tick().is_some() && !state.is_over() {
         let tick = state.resolving_tick().unwrap();
+        let before = state.clone();
         for event in state.step_tick(reg) {
             match event {
                 BattleEvent::UnitSpotted {
@@ -10951,12 +10971,13 @@ fn spring_the_ambush(
                 BattleEvent::TookCover { unit, at } if unit == watcher => {
                     broke_at.get_or_insert(tick);
                     broke_to.get_or_insert(at);
+                    broke_on.get_or_insert(before.clone());
                 }
                 _ => {}
             }
         }
     }
-    (seen_at, broke_at, broke_to)
+    (seen_at, broke_at, broke_to, broke_on)
 }
 
 #[test]
@@ -10965,14 +10986,28 @@ fn a_crew_caught_in_the_open_breaks_for_cover_before_the_round_ends() {
     // round is planned; this is the one who is ambushed at tick four. She
     // owes her reaction time — the same per-enemy clock her gunner pays for
     // opportunity fire — and then she owes nobody a planning phase: the
-    // tracks move mid-round, toward the best cover in reach, and the event
-    // stream says so out loud.
+    // tracks move mid-round, toward the quietest ground in reach, and the
+    // event stream says so out loud.
+    //
+    // **What is asserted about the destination changed in Wave 2 and the
+    // rule did not.** It used to be `Some("forest")`, because the drill took
+    // the reachable tile with the most terrain `cover` and the stand of trees
+    // west of her is the only cover on the stage. The drill spends the
+    // currency now, so the claim is the one the currency can make: the ground
+    // she picked is ground on which the gun that frightened her expects to do
+    // strictly less. On this stage that is the dead ground behind the
+    // curtain, one hex away, rather than the trees three hexes further west —
+    // and preferring the near hex is the *point* of the change, since both
+    // are equally invisible to the walker and one of them can be reached
+    // before she is shot at again. The test that pins the wood-versus-dead-
+    // ground choice on its own is
+    // `the_drill_goes_where_the_gun_cannot_see_her_not_to_the_nearest_wood`.
     let mut reg = registry_wireless();
     soften(&mut reg);
     let mut state = open_ground_stage(&reg, [3, 1], 201);
     let parked = state.unit(UnitId(0)).unwrap().pos;
 
-    let (seen_at, broke_at, broke_to) = spring_the_ambush(&reg, &mut state);
+    let (seen_at, broke_at, broke_to, broke_on) = spring_the_ambush(&reg, &mut state);
     let seen = seen_at.expect("she steps into view during the round");
     let broke = broke_at.expect("and the watcher does not wait for the round to end");
     let delay = 2; // reactions untrained on an average crew: base_ticks
@@ -10981,10 +11016,16 @@ fn a_crew_caught_in_the_open_breaks_for_cover_before_the_round_ends() {
         seen + delay,
         "noticed at tick {seen}, moving {delay} ticks later — not instantly"
     );
-    assert_eq!(
-        state.terrain_at(broke_to.expect("a destination came with the event")),
-        Some("forest"),
-        "she makes for the cover, not merely anywhere"
+    let dest = broke_to.expect("a destination came with the event");
+    let board = broke_on.expect("and the board she decided on came with it");
+    let walker = UnitId(1);
+    let there = tactics_core::battle::incoming_from(&reg, &board, UnitId(0), dest, &[walker]).worth;
+    let here =
+        tactics_core::battle::incoming_from(&reg, &board, UnitId(0), parked, &[walker]).worth;
+    assert!(
+        there < here,
+        "she makes for ground the gun can do less on, not merely anywhere: \
+         {there} at {dest:?} against {here} at {parked:?}"
     );
     assert_ne!(
         state.unit(UnitId(0)).unwrap().pos,
@@ -11019,7 +11060,7 @@ fn a_crew_with_a_route_in_hand_drives_it_rather_than_flinching() {
         )
         .unwrap();
 
-    let (seen_at, broke_at, _) = spring_the_ambush(&reg, &mut state);
+    let (seen_at, broke_at, _, _) = spring_the_ambush(&reg, &mut state);
     assert!(seen_at.is_some(), "the ambush still happens");
     assert_eq!(
         broke_at, None,
@@ -11062,7 +11103,7 @@ fn an_overwatching_crew_trusts_her_gun_over_her_tracks() {
         )
         .unwrap();
 
-    let (seen_at, broke_at, _) = spring_the_ambush(&reg, &mut state);
+    let (seen_at, broke_at, _, _) = spring_the_ambush(&reg, &mut state);
     assert!(seen_at.is_some(), "the ambush still happens");
     assert_eq!(broke_at, None, "overwatch stands");
     assert_eq!(state.unit(watcher).unwrap().pos, parked);
@@ -11071,30 +11112,62 @@ fn an_overwatching_crew_trusts_her_gun_over_her_tracks() {
 #[test]
 fn a_crew_with_no_better_ground_in_reach_stands_where_she_is() {
     // The comparison is strict: the drill moves a crew to strictly better
-    // cover or not at all. On a bare field two tanks stare at each other all
-    // round — threatened, idle, clocks long expired — and neither shuffles a
-    // single hex, which is also what keeps a crew who has already reached
-    // the trees from dancing between two equally good tiles forever.
+    // ground or not at all, which is what keeps a crew who has already
+    // reached the quietest hex in reach from dancing between two equally
+    // good tiles forever.
+    //
+    // **The stage had to change in Wave 2 and the rule did not.** It used to
+    // be a bare five-hex duel asserting that *nobody moves at all*, on the
+    // reasoning that a billiard table offers no cover to prefer. That was
+    // true of the terrain table and is not true of the currency: a gun loses
+    // accuracy with range, so on a billiard table the far corner really is
+    // quieter than the near one and a crew who has noticed the gun really
+    // ought to back off. Asserting nobody moves would now be asserting that
+    // the drill cannot read the arithmetic, which is the defect this wave
+    // removes rather than a rule worth keeping.
+    //
+    // So what is checked is the strictness itself, over the same duel: every
+    // dash the drill lays goes to ground where the guns she has noticed
+    // expect *strictly* less than where she stood, and she never shuffles
+    // for nothing. That is the property the doc comment on `run_crew_drill`
+    // claims and the one that makes the drill settle instead of oscillate;
+    // the old stage was one consequence of it.
     let reg = registry_wireless();
     let mut state = duel(&reg, 204);
-    let posts: Vec<_> = state.units.iter().map(|u| u.pos).collect();
     commit_all(&reg, &mut state);
-    let mut broke = Vec::new();
+    let mut dashes = 0;
     while state.resolving_tick().is_some() && !state.is_over() {
+        // The board the drill was looking at. Both crews move inside a tick,
+        // so a destination priced against the end of it is priced against
+        // somebody else's battle.
+        let before = state.clone();
         for event in state.step_tick(&reg) {
-            if let BattleEvent::TookCover { unit, .. } = event {
-                broke.push(unit);
+            if let BattleEvent::TookCover { unit, at } = event {
+                let from = before
+                    .unit(unit)
+                    .expect("she was on the field when the tick began")
+                    .pos;
+                // Two crews in plain sight of each other, so "the guns she
+                // has noticed" and "every gun the side has found" are the
+                // same list and `incoming` may stand in for the drill's own
+                // per-enemy clock.
+                let there = tactics_core::battle::incoming(&reg, &before, unit, at).worth;
+                let here = tactics_core::battle::incoming(&reg, &before, unit, from).worth;
+                assert!(
+                    there < here,
+                    "the drill only dashes to strictly quieter ground: \
+                     {there} at {at:?} against {here} at {from:?}"
+                );
+                dashes += 1;
             }
         }
     }
-    assert_eq!(
-        broke,
-        Vec::<UnitId>::new(),
-        "nobody bolts across a billiard table"
+    // And the duel is a stage rather than a coincidence: if nothing ever
+    // fired the drill this test would be asserting about an empty loop.
+    assert!(
+        dashes > 0,
+        "the duel has to actually run the drill for its strictness to be checked"
     );
-    for (unit, post) in state.units.iter().zip(posts) {
-        assert_eq!(unit.pos, post, "{} stood her ground", unit.name);
-    }
 }
 
 #[test]
@@ -11110,7 +11183,7 @@ fn a_mod_that_prices_no_reactions_gets_the_drill_at_the_next_tick() {
     reg.reaction.max_ticks = 0;
     let mut state = open_ground_stage(&reg, [3, 1], 205);
 
-    let (seen_at, broke_at, _) = spring_the_ambush(&reg, &mut state);
+    let (seen_at, broke_at, _, _) = spring_the_ambush(&reg, &mut state);
     let seen = seen_at.expect("she steps into view during the round");
     assert_eq!(
         broke_at,
@@ -15952,4 +16025,272 @@ fn suppression_and_what_fear_is_worth_are_data_and_are_read() {
     }
     assert_eq!(swept.ammo["ball_mg"].suppression, 3);
     assert_eq!(swept.morale.point_worth, 0.75);
+}
+
+// --- one walk, one gate: the readers of the currency ------------------------
+//
+// Wave 2's first half. `ai::threats` and `ai::threatened` used to be a second
+// walk over the visible enemies with a gate of their own, and the two places
+// that decide *where a crew stands when she is frightened* — the mid-round
+// battle drill and the rout underneath it — read terrain `cover`, a model of
+// what cover is for sitting beside a resolver that answers the same question
+// exactly. Both are the currency now.
+//
+// The three tests below pin, in order: that there is one answer to who can
+// shoot her; that the orderly reflex goes where the gun cannot see her rather
+// than to the nearest trees; and that the orderly reflex and the rout are
+// still two different things, which is the designer's own split.
+
+/// A gun, a crew idle in front of it, a wood the gun is looking straight
+/// into, and bare ground behind the wood that it cannot see at all.
+///
+/// The curtain spans every row and is one column thick, and both halves of
+/// that matter. Spanning every row is what makes everything east of it dead
+/// ground rather than merely awkward to see. Being one column thick is what
+/// makes that dead ground *bare*: a two-column belt would put a hex that is
+/// both wooded and unseen inside her reach, and she would take it — correctly,
+/// but the test would then be unable to say which of the two facts she was
+/// acting on.
+///
+/// The wood is *nearer* to her than the dead ground and carries the only
+/// terrain `cover` on the map, so the rule this stage separates is exactly
+/// the one that changed: under the old drill she went to the trees because
+/// they scored 30, and the gun could see her sitting in them.
+fn wood_and_dead_ground(reg: &DataRegistry, seed: u64) -> BattleState {
+    let row = "ggggfggggg";
+    two_side_battle(
+        reg,
+        &[row, row, row],
+        vec![
+            unit_at([3, 1], 0, "medium_tank", "Watcher"),
+            unit_at([0, 1], 1, "medium_tank", "Gun"),
+        ],
+        seed,
+    )
+}
+
+/// Play the round out and report where (and on what board) the drill sent
+/// her.
+fn drill_destination(
+    reg: &DataRegistry,
+    state: &mut BattleState,
+    watcher: UnitId,
+) -> Option<(tactics_core::Hex, BattleState)> {
+    commit_all(reg, state);
+    let mut found = None;
+    while state.resolving_tick().is_some() && !state.is_over() {
+        let before = state.clone();
+        for event in state.step_tick(reg) {
+            if let BattleEvent::TookCover { unit, at } = event
+                && unit == watcher
+                && found.is_none()
+            {
+                found = Some((at, before.clone()));
+            }
+        }
+    }
+    found
+}
+
+/// There is one answer to who can shoot her.
+///
+/// `ai::threats` is `fire_on`'s membership and `ai::threatened` is
+/// `incoming(..).worth > 0`, rather than a second walk with a gate of its
+/// own. The two were arithmetically identical when they were joined — a gun
+/// is admitted by `best_weapon_from` precisely when one shot from it is worth
+/// something, and a sum of positive terms is positive — so this test is what
+/// keeps them identical: a gate reworded in one place and not the other would
+/// leave a crew whom the drill thinks is safe and the overlay paints red.
+///
+/// Asked of every crew on the stage, including the ones with nothing bearing
+/// on them, because "nobody is shooting at me" is the answer that matters for
+/// the parking lot.
+///
+/// Mutation-checked by putting a threshold back into `threats`: the seven
+/// bearings this stage produces run from 1.27 to 8.99 substance points a
+/// round, so any gate above 1.27 drops the tank destroyer's rifle section and
+/// fails the equality. The margin is worth recording because it is the whole
+/// content of the test — the two functions agree by construction today, and
+/// what is being defended is that nobody may reintroduce a second opinion.
+#[test]
+fn there_is_one_answer_to_who_can_shoot_her() {
+    let reg = seen(registry());
+    let state = firing_positions(&reg, 11);
+    let mut with_somebody = 0;
+    for me in state.units.iter() {
+        let listed = tactics_core::ai::threats(&reg, &state, me.id);
+        let bearing: Vec<UnitId> = tactics_core::battle::fire_on(&reg, &state, me.id, me.pos)
+            .into_iter()
+            .map(|b| b.enemy)
+            .collect();
+        assert_eq!(
+            listed, bearing,
+            "{} is threatened by exactly the enemies who have a bearing on her",
+            me.name
+        );
+        let worth = tactics_core::battle::incoming(&reg, &state, me.id, me.pos).worth;
+        assert_eq!(
+            tactics_core::ai::threatened(&reg, &state, me.id),
+            worth > 0.0,
+            "{} counts as under fire exactly when a round of that fire is worth something \
+             ({worth})",
+            me.name
+        );
+        if !listed.is_empty() {
+            with_somebody += 1;
+        }
+    }
+    assert!(
+        with_somebody >= 2,
+        "the stage has to put somebody under fire or this test asserts about nothing"
+    );
+}
+
+/// The drill goes where the gun cannot see her, not to the nearest wood.
+///
+/// The wood on this stage is one hex away and carries 30 points of cover; the
+/// dead ground behind it is further, bare, and cannot be shot at. The old
+/// drill took the reachable tile with the most terrain `cover` and therefore
+/// took the wood — cover and dead ground are the same word to a terrain
+/// table, and they are opposite answers to the question the drill is asking.
+///
+/// Both halves are asserted, because either alone is weak: the wood really
+/// was reachable and really does score more cover (so the old rule had
+/// something to choose), and the ground she took really is ground the gun
+/// expects nothing on.
+#[test]
+fn the_drill_goes_where_the_gun_cannot_see_her_not_to_the_nearest_wood() {
+    let mut reg = seen(registry_wireless());
+    soften(&mut reg);
+    let (watcher, gun) = (UnitId(0), UnitId(1));
+    let mut state = wood_and_dead_ground(&reg, 301);
+    let parked = state.unit(watcher).unwrap().pos;
+    // Deliberate overwatch keeps the gun where it was put: a crew with a fire
+    // order is exempt from the drill, so the stage does not turn into two
+    // crews reacting to each other.
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: gun,
+                fire: FireIntent::Area {
+                    at: parked,
+                    weapon: 0,
+                },
+            },
+        )
+        .expect("area fire on a hex needs no spot");
+
+    // The wood the old rule would have taken: reachable, adjacent, and the
+    // only cover on the map.
+    let wood = tactics_core::offset_to_hex(4, 1);
+    assert_eq!(
+        state.terrain_at(wood),
+        Some("forest"),
+        "the stage needs its wood where the test thinks it is"
+    );
+    let reach = reachable(&reg, &state, watcher);
+    assert!(
+        reach.contains_key(&wood),
+        "and the wood has to be somewhere she could actually have gone"
+    );
+    let cover_of = |hex| {
+        state
+            .terrain_at(hex)
+            .and_then(|t| reg.terrain(t))
+            .map_or(0, |t| t.cover)
+    };
+    assert!(
+        cover_of(wood) > cover_of(parked),
+        "the old rule had something to choose: {} against {}",
+        cover_of(wood),
+        cover_of(parked)
+    );
+
+    let (dest, board) =
+        drill_destination(&reg, &mut state, watcher).expect("she is under fire and idle");
+    assert!(
+        tactics_core::battle::incoming_from(&reg, &board, watcher, dest, &[gun]).worth <= 0.0,
+        "she goes where the gun expects nothing, and {dest:?} is not that hex"
+    );
+    assert!(
+        tactics_core::battle::incoming_from(&reg, &board, watcher, wood, &[gun]).worth > 0.0,
+        "the wood is inside the gun's envelope, or this stage is not the one the test needs"
+    );
+    assert_ne!(
+        state.terrain_at(dest),
+        Some("forest"),
+        "and she is not in the trees the gun is looking at"
+    );
+}
+
+/// A frightened crew runs from the gun; an orderly one ducks out of its
+/// sight.
+///
+/// The designer's split, on one stage. Both reflexes now price ground in the
+/// same currency, which is exactly why the difference between them has to be
+/// stated: the drill minimises the fire on her and does not care how far off
+/// the gun is, and the rout takes distance first and only then asks which of
+/// the hexes that tie is quietest. So on ground that offers both, the drill
+/// stops at the first hex the gun cannot see and the rout keeps going to the
+/// far end of the field.
+#[test]
+fn a_frightened_crew_runs_from_the_gun_and_an_orderly_one_ducks_out_of_its_sight() {
+    let mut reg = seen(registry_wireless());
+    soften(&mut reg);
+    let (watcher, gun) = (UnitId(0), UnitId(1));
+
+    // The orderly half: she is steady, so the drill decides.
+    let mut steady = wood_and_dead_ground(&reg, 302);
+    let parked = steady.unit(watcher).unwrap().pos;
+    let enemy = steady.unit(gun).unwrap().pos;
+    steady
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: gun,
+                fire: FireIntent::Area {
+                    at: parked,
+                    weapon: 0,
+                },
+            },
+        )
+        .expect("area fire on a hex needs no spot");
+    let (ducked, board) =
+        drill_destination(&reg, &mut steady, watcher).expect("she is under fire and idle");
+
+    // The rout: the same stage, the same crew, off the end of the ladder and
+    // with a temperament that runs.
+    let mut broken = wood_and_dead_ground(&reg, 302);
+    always(&mut reg, "flight");
+    broken.units[watcher.index()].pressure = breaking(&reg);
+    broken
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: gun,
+                fire: FireIntent::Area {
+                    at: parked,
+                    weapon: 0,
+                },
+            },
+        )
+        .expect("area fire on a hex needs no spot");
+    play_round(&reg, &mut broken);
+    let ran = broken.unit(watcher).expect("she survives the round").pos;
+
+    assert!(
+        ran.distance_to(enemy) > parked.distance_to(enemy),
+        "the rout puts ground between her and the gun: {parked:?} -> {ran:?}"
+    );
+    assert!(
+        tactics_core::battle::incoming_from(&reg, &board, watcher, ducked, &[gun]).worth <= 0.0,
+        "and the drill puts her out of its sight: {ducked:?}"
+    );
+    assert!(
+        ran.distance_to(enemy) > ducked.distance_to(enemy),
+        "and they are two reflexes rather than one with a different name: the rout opens \
+         the range further than the drill does ({ran:?} against {ducked:?}), because \
+         distance is the rout's first key and the drill has no distance term at all"
+    );
 }
