@@ -894,3 +894,248 @@ says it twice more (the movement-grid entry and *The caches a save must
 rebuild*). All four describe a function that has been replaced by
 `SavedBattle::rehydrate`, and the *Saving* entry is the one worth rewriting:
 the obligation it states in bold is now the thing the compiler checks.
+## Wave 1 — ground: what landed
+
+Phase 2's last open item was *"the arena is the instrument limit again"*: +3
+points on the skill rows at 576 battles a row, the right sign and not decisive,
+on a radius-10 hexagon with two objectives and little for a commander who now
+prices cover under a specific gun to be better at. This chunk built the ground
+and measured on it. **Nothing under `src/battle`, `src/ai` or `src/data` was
+touched, and the determinism snapshot passed unregenerated.**
+
+The headline is a null with a sign on it, and it is about the AI rather than
+about the map: **on ground where a wrong choice is punished harder, the
+difficulty-5 commander does slightly *worse* than the difficulty-1 one.** The
+diagnosis and the evidence are below.
+
+### `ridge_arena` — the second battlefield
+
+Radius 12, 469 tiles, in `harness/arena.rs` beside the old one, which is now
+`SKILL_ARENA` and is byte-for-byte the map it was.
+
+**Written in coordinates the symmetry group is diagonal in.** The old arena
+declares a shape and takes its four images through `symmetric`, which works and
+is impossible to predict: the flip of the wood at relative `(-4, 4)` lands at
+`(0, -4)`, which is not where anybody drawing on paper would put it. For a hex
+at arena-relative `(x, y)`, put `s = 2x + y` (along-axis, doubled) and `t = y`
+(lateral). Then `mirror` is `(s, t) -> (-s, -t)` and `flip` is `(s, t) ->
+(s, -t)`, so the group is exactly *"negate either coordinate"* and **a set is
+doubly symmetric if and only if it is described by `|s|` and `|t|` alone**.
+`Arena::band(along, lateral)` is that description, and every feature of the
+ridge arena is one. A band cannot come out asymmetric, which is a stronger
+guarantee than the runtime assertion —
+`a_band_is_the_same_band_from_either_end_and_either_flank` pins it, and also
+pins that the two coordinates are what the module doc says they are.
+
+**The shape.** A road down the axis over a level-2 knoll in the middle; open
+valley floor either side; a level-2 ridge along each flank at `|t| = 7..8`,
+stopping at `|s| <= 10` so there is a gap beside each forming-up line; woods on
+the valley floor inside the ridges and more woods beyond them; mud in the two
+gaps. Objectives: **The Crest**, thirteen hexes of level-2 grass in the middle,
+worth 3; **The Spurs**, the ten level-2 hexes at the lengthwise middle of the
+two flank ridges, worth 2, one objective across both flanks.
+
+**What it discriminates on, measured with `los_clear` over the built map:**
+
+| ground | tiles it can see, of 469 |
+| --- | --- |
+| the crest's summit hex | 68 |
+| the crest's rim hexes | 148 |
+| inner edge of a spur | 112 |
+| outer edge of a spur | 88 |
+| a reverse-slope wood | 9 |
+
+The first two rows are the sharpest thing on the map and they are a choice
+*within one objective*: the ray from a 22.5 m eye to a 2 m hull is already
+under 20 m one step out, so a plateau blocks its own middle. `candidates`
+offers all thirteen crest hexes and `score_tile` has to pick. The military
+crest and the topographic crest are different hexes and the arithmetic can now
+tell.
+
+The woods split the same way. The crest rim sees into the near woods at four
+and six hexes; the reverse-slope woods are blocked from the crest, from the
+valley and from both edges of the ridge above them. A flat cover prior prices
+those two identically; `danger::incoming` does not.
+
+Two more properties fell out rather than being designed, and both are worth
+knowing:
+
+- **Everything commanding is bare and everything covered is blind.** The base
+  mod has no cover without `vision_block`, and a wooded or built-up neighbour
+  at your own level stands 20 m above the ray. So a crew in cover sees a hex or
+  two; a crew that can see is in the open. This is true of `SKILL_ARENA`'s
+  hilltop village too and nobody had noticed: a unit in the middle of it is
+  nearly blind.
+- **The knoll cuts the map in half lengthwise.** A gun on the east rim cannot
+  see the west near woods, so each side's approach march is covered from the
+  *far* rim rather than the near one, and the prize for winning the race to the
+  crest is being able to shoot at the loser's approach.
+
+A first draft had the level-1 shoulder at `|t| <= 3` and put the near woods in
+dead ground from the crest — the exact opposite of what they are for. From a
+22.5 m eye to a 2 m hull the ray is under 10 m for the last two fifths of its
+length, so a level-1 lip that far out hides the ground just beyond it. Each
+shoulder is now the *minimum* that satisfies `max_climb: 1`.
+
+### `--arena`, and the tables that take it
+
+`--arena <id>` (`skill_arena` default, `ridge_arena`) selects the battlefield
+for `skill`, `brains` and `mustered`, and adds an arena row to `ground`.
+`Arena` is a struct and the flag resolves to a `&'static Arena`, so the map,
+the deployment and the symmetry checks are one choice — there is no way to
+fight one arena's ground with another's order of battle. Everything still goes
+through `fought_grids`.
+
+**The default is unchanged and every quoted number reproduces**, checked rather
+than asserted: the eight-seed skill table on `skill_arena` came back
+`286-267 / 287-271 / 292-264` — the same three pairs of integers this file
+records for after-Phase-2, not merely the same percentages.
+
+`ground` gaining an arena row is the point rather than a side effect: that
+table's question — *does an end of this battlefield pay?* — is exactly what the
+skill table's `the ends` row has been standing in for. An arena's two orders of
+battle are one force and its own reflection, so there is nothing to exchange;
+the row is marked `†`, its `OB` columns print as `—` (a `NaN` cell, which
+`GridColumn::cell` now renders as a dash rather than as the word NaN), and
+`west`/`east` is the whole of it.
+
+### `examples/mirror.rs` — the probe, promoted
+
+`_mirror_probe.rs` became `examples/mirror.rs` with `--arena`, `--seeds`,
+`--difficulty` and `--rounds`. What it gained is a **verdict**, and the verdict
+is the interesting part, because most of what it prints is not a defect:
+
+- **equal-key tiebreak** — the goal one crew took and the reflection of her
+  twin's are the same distance from her. `candidates` sorts an objective's
+  hexes by distance from the crew with the coordinate last, which the
+  invariants permit. Expected; not a defect.
+- **different key** — the two are at *different* distances, so a real ordering
+  key disagreed. That is a rule reading the compass.
+- **downstream** — pair order is decision order (planning walks unit ids, and
+  the i-th vehicle of each side stands on the i-th deployment pair), so once
+  one pair has broken the mirror everything decided after it that round
+  inherits an unmirrored board: claimed hexes, occupied paths, spotted enemies.
+  The report names the **root** — lowest pair in the first broken round — and
+  lists the rest as downstream. The verdict counts roots only.
+
+That last rule is what makes the report readable. Without it the ridge arena
+reports four "a rule read the compass" findings that are all the same tie seen
+four crews later.
+
+**Both arenas come back clean.**
+
+| | first break | root | verdict |
+| --- | --- | --- | --- |
+| `skill_arena` | round 3, pair 1 (medium tank), every seed | A at rel (1,-1) takes rel (0,-1), 1 away; B's reflects to rel (1,0), also 1 away | equal-key tiebreak |
+| `ridge_arena` | round 1, pair 0 (medium tank), every seed | A at rel (-9,1) takes rel (-2,0), 7 away; B's reflects to rel (-2,1), also 7 away | equal-key tiebreak |
+
+So the divergence this file's Phase 1a section left open — *"that residue is
+real, is difficulty-5-only, and is the next thing of its kind if anybody wants
+it"* — is **the documented coordinate-last tiebreak and nothing else**. Every
+root on both arenas is two hexes of one objective the crew is equally far from.
+The skill arena's round-3 pair-5 finding and the ridge arena's three extra
+round-1 findings are all downstream of that one tie. Nothing in the tree is
+reading the compass to break a tie it could have broken on distance.
+
+Worth saying plainly because it closes a hunt: **this is not worth fixing by
+adding a key.** Any invariant key that separates two hexes at equal distance
+would have to be a fact about the ground, and the two hexes here are congruent
+ground by construction. The residual is a coin, and it is the same coin on both
+arenas.
+
+### The measurements
+
+All `--release`, `--games 36`, `--only skill --absolute`, seed-swept. 576
+battles a row at eight seeds; the `sd` is the standard error of the eight
+per-seed win rates.
+
+**Skill, eight seeds.**
+
+| | 5 over 1 | 5 over 3 | the ends (A/B) |
+| --- | --- | --- | --- |
+| `skill_arena` | 292–264 **52.5%** (+1.3 sd) | 287–271 **51.4%** (+0.6 sd) | 286–267 51.7% (+0.9 sd) |
+| `ridge_arena` | 273–302 **47.5%** (−1.1 sd) | 273–303 **47.4%** (−1.2 sd) | 281–294 48.9% (−0.6 sd) |
+
+**Difficulty discriminates *worse* on the new ground, and it changes sign.**
+Five points on `5 over 1` and four on `5 over 3`, both rows moving together,
+which is worth more than either alone since they share seeds and forces.
+Neither is individually past 1.3 sd; the pair is the result. The four-seed
+draw agreed (47.7% / 48.3%), so this is not a single-draw flatter.
+
+**Ground, four seeds, 288 battles a row, difficulty 3 both sides.**
+
+| arena | west | east | draws | side edge |
+| --- | --- | --- | --- | --- |
+| `skill_arena` † | 149 | 123 | 16 | **54.8%** to the western end |
+| `ridge_arena` † | 146 | 142 | 0 | **50.7%** |
+
+So the new ground is the better *instrument* on the axis the instrument is
+supposed to be good at: no side edge worth the name and no draws at all, where
+the old arena still leans about five points to side A at difficulty 3 and draws
+one battle in eighteen. The skill table's own control agrees — `the ends` on
+the ridge arena reads 144–144 at four seeds with a spread of 2, the tightest
+control this project has recorded.
+
+**Timing.** `perf` is unmoved, as it must be — nothing on its path changed:
+round 1.43 ms (spread 1.15–2.07), `reachable` 17.8 µs, `roads` 135.8 µs,
+`unit_vision` 89.1 µs, utility order 0.09 ms. The harness itself costs 40% more
+on the bigger map: `--only skill --games 36` is 0.21 s on `skill_arena` and
+0.30 s on `ridge_arena`. The sight-symmetry test now walks both arenas — 469²
+ordered pairs on top of 331² — and still runs in 0.17 s.
+
+### What the ground revealed about the AI
+
+The negative sign is not noise about the map; it is a statement about
+`score_tile`, and the objective weighting is the knob that proves it. Two
+diagnostic configurations of the same arena, 36 battles a pairing:
+
+| The Crest / The Spurs | 5 v 5 draws | 5 over 1 | 5 over 3 |
+| --- | --- | --- | --- |
+| **3 / 2 (shipped)** | 0 of 36 | 47.5% (8 seeds) | 47.4% (8 seeds) |
+| 3 / 3 | 0 of 36 | 46.5% (2 seeds) | 46.5% (2 seeds) |
+| 2 / 4 | **36 of 36** | **66.7% / 58.8%** (2 seeds) | 54.2% |
+| 3 / 2, crest built up (town) | 17–23 of 36 | 60.0% / 54.7% | 49.6% |
+
+Read the third row against the first. At 3 / 2 the crest is nearer than the
+spurs for every crew the skill table deploys, so both sides must contest it —
+and the difficulty-5 commander, who can now see exactly what a bare level-2
+plateau costs, is the one who *declines* it. At 2 / 4 the safe flank outscores
+the lethal middle, and then the difficulty-5 commander is enormously better
+than the difficulty-1 one (66.7% at `5 over 1`, against 52.5% on the old
+arena) — **and draws every single equal-skill battle**, because both sides take
+their own flank, the split objective is contested, and neither ever attacks.
+
+The fourth row says the same thing from the other side: give the scoring ground
+cover and the skill signal comes back positive (57.4% mean at `5 over 1`), at
+the price of half the battles ending in a draw and a nine-point side-A edge,
+because a blind defensible objective goes to whoever arrives first.
+
+The conclusion, and it is Phase 2's own success read as a cost: **the threat
+term has become strong enough to beat the objective term.** A crew that prices
+`danger::incoming` correctly and then refuses the mission is not misjudging the
+ground — she is judging it right and valuing it wrong. There is nothing in the
+evaluator that says *taking the objective is what the battle is for*, only a
+`value * decay` pull that a single found 88 outweighs. `caution * exposure` is
+supposed to be the crew's own opinion of the danger; on this ground it is the
+whole decision.
+
+Two things follow, neither of them this chunk's to do:
+
+- **The shipped configuration is the one with the honest control** (3 / 2: zero
+  draws, `the ends` 144–144). An arena that discriminates beautifully while
+  drawing every equal battle is an instrument whose control is degenerate, and
+  this file already has a paragraph about why that cannot be read.
+- **The next planner question is not another term, it is the balance between
+  two that exist.** Cadence and pressure (above) both add to the threat side.
+  Whatever adds to it next should be measured on `--arena ridge_arena`, where a
+  crew that will not go where the points are shows up in the win column instead
+  of hiding.
+
+### Scratch, revised
+
+`_mirror_probe.rs` is now `examples/mirror.rs` and is no longer scratch.
+`_arena_dump.rs` and `_los_probe.rs` remain untracked one-offs; the census
+`_los_probe` produced is pinned by
+`a_reflection_leaves_a_sight_line_alone`, which now walks **every** arena — a
+second battlefield with a second set of ridges is a second sample of the
+geometry rule, and it passes on the ridge arena unchanged.
