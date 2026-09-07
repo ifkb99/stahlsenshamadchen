@@ -76,9 +76,7 @@ use tactics_core::battle::{
 };
 use tactics_core::data::{ArmorFacing, DataRegistry, ModuleEffect, TerrainDef, WeaponDef};
 use tactics_core::force;
-use tactics_core::harness::arena::{
-    ARENA_RADIUS, arena_centre, arena_deployment, arena_map, arena_mirror,
-};
+use tactics_core::harness::arena::{ARENAS, Arena, DEFAULT_ARENA, arena_named};
 use tactics_core::harness::overrides::{Override, configure};
 use tactics_core::harness::parallel::{JOBS, run_all, thread_budget};
 use tactics_core::harness::tally::Tally;
@@ -127,6 +125,16 @@ fn main() {
     if let Some(n) = flag(&args, "--jobs").and_then(|v| v.parse::<usize>().ok()) {
         JOBS.store(n.max(1), std::sync::atomic::Ordering::Relaxed);
     }
+    let arena = match flag(&args, "--arena") {
+        None => DEFAULT_ARENA,
+        Some(name) => arena_named(name).unwrap_or_else(|| {
+            eprintln!(
+                "error: --arena {name}: no such arena. There is: {}",
+                ARENAS.iter().map(|a| a.id).collect::<Vec<_>>().join(", ")
+            );
+            std::process::exit(1);
+        }),
+    };
     let cfg = Run {
         games,
         seed,
@@ -136,6 +144,7 @@ fn main() {
         csv: args.iter().any(|a| a == "--csv"),
         absolute: args.iter().any(|a| a == "--absolute"),
         only: Only::parse(flag(&args, "--only")),
+        arena,
     };
 
     if cfg!(debug_assertions) {
@@ -187,7 +196,7 @@ fn main() {
         }
     }
     if brains {
-        brains_table(&registry, brain_games, brain_difficulty);
+        brains_table(&registry, cfg.arena, brain_games, brain_difficulty);
     } else {
         println!("\n(pass --sim to fight {games} battles and see what these numbers do)");
     }
@@ -238,6 +247,13 @@ what to run
                          skill, ground
 
 which game
+  --arena NAME           battlefield the skill, brains and mustered tables fight
+                         on, and the arena row the ground table adds. One of:
+                         skill_arena (default — the sample every quoted number
+                         was measured on), ridge_arena (bigger, and built so a
+                         wrong choice of ground is punished: a bare crest whose
+                         thirteen hexes see between 68 and 148 tiles, woods a
+                         gun on the ridge sees into and woods it does not)
   --mods DIR             mod tree to load (default assets/mods)
   --set PATH=VALUE       change one number before anything runs. Repeatable.
                          Blocks: balance, scale, casualties, morale, reaction,
@@ -278,7 +294,9 @@ examples
   --only delegation --sim --games 36 --set planner.devolved=1.1 \
 \n      --sweep planner.mission_weight=0,2,8     # what is an order worth?
   --sim --sweep seed=0,1000,2000 --games 36         # what is the noise floor?
-  --sim --only skill --absolute --sweep seed=0,1000,2000,3000   # ...for one table";
+  --sim --only skill --absolute --sweep seed=0,1000,2000,3000   # ...for one table
+  --sim --games 36 --arena ridge_arena --only skill,ground --absolute \\
+\n      --sweep seed=0,1000,2000,3000    # does ground make skill tell?";
 
 /// Every occurrence of a repeatable `--flag value`.
 fn flag_all<'a>(args: &'a [String], name: &str) -> Vec<&'a str> {
@@ -2060,6 +2078,7 @@ struct Muster {
 
 fn muster_battle(
     reg: &DataRegistry,
+    arena: &Arena,
     seed: u64,
     flip: bool,
     a: &(&str, Vec<String>),
@@ -2068,7 +2087,7 @@ fn muster_battle(
     let mut m = Muster::default();
     let (west, east) = if flip { (&b.1, &a.1) } else { (&a.1, &b.1) };
     let (west_doctrine, east_doctrine) = if flip { (b.0, a.0) } else { (a.0, b.0) };
-    let Some(mut state) = muster_arena(reg, seed, west, east) else {
+    let Some(mut state) = muster_arena(reg, arena, seed, west, east) else {
         return m;
     };
     let mut ai = AiDriver::new();
@@ -2098,7 +2117,13 @@ fn muster_battle(
     m
 }
 
-fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32, seed: u64) -> Grid {
+fn mustered_forces(
+    reg: &DataRegistry,
+    arena: &Arena,
+    games: usize,
+    budget: i32,
+    seed: u64,
+) -> Grid {
     let doctrines = [
         "massed_armor",
         "elastic_defense",
@@ -2146,7 +2171,7 @@ fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32, seed: u64) -> 
             // held a measured edge on this ground since the plateau rule
             // went in.
             let fought = fight_all(reg, games, |reg, game| {
-                muster_battle(reg, MUSTER_SEED + seed + game, game % 2 == 1, a, b)
+                muster_battle(reg, arena, MUSTER_SEED + seed + game, game % 2 == 1, a, b)
             });
             let mut t = Muster::default();
             for one in &fought {
@@ -2200,11 +2225,12 @@ fn mustered_forces(reg: &DataRegistry, games: usize, budget: i32, seed: u64) -> 
 /// log, and must not move because this section wanted a ninth slot.
 fn muster_arena(
     reg: &DataRegistry,
+    arena: &Arena,
     seed: u64,
     west: &[String],
     east: &[String],
 ) -> Option<BattleState> {
-    let map = arena_map()?;
+    let map = arena.map()?;
     let mut placements = Vec::new();
     // Deliberately dense, and deliberately the same shape for both armies:
     // these forces differ in size — that is the interesting part — and a
@@ -2212,7 +2238,7 @@ fn muster_arena(
     // room as a hidden bonus. Every hex is one of `arena_deployment`'s mirror
     // pairs walked outward, so the n-th vehicle of one army stands exactly
     // where the n-th of the other's reflection would.
-    let pairs = muster_deployment(west.len().max(east.len()));
+    let pairs = muster_deployment(arena, west.len().max(east.len()));
     for (side, army) in [(0u8, west), (1u8, east)] {
         for (i, vehicle) in army.iter().enumerate() {
             let Some((w, e)) = pairs.get(i) else { continue };
@@ -2260,19 +2286,27 @@ fn muster_arena(
 /// `arena_deployment`, then the ring of hexes one step further from the middle,
 /// and so on. Sorted at every step so the order is a property of the geometry
 /// and not of a hash.
-fn muster_deployment(wanted: usize) -> Vec<(Hex, Hex)> {
-    let centre = arena_centre();
-    let mut out = arena_deployment();
-    let mut ring = 8i32;
-    while out.len() < wanted && ring <= ARENA_RADIUS as i32 {
+fn muster_deployment(arena: &Arena, wanted: usize) -> Vec<(Hex, Hex)> {
+    let centre = arena.centre_hex();
+    let mut out = arena.deployment();
+    // One step outside the arena's own forming-up ring, whatever that ring is.
+    // Derived rather than written down, so that an arena which forms up further
+    // out does not silently start this walk inside its own line.
+    let mut ring = out
+        .iter()
+        .map(|(w, _)| w.distance_to(centre))
+        .max()
+        .unwrap_or(0)
+        + 1;
+    while out.len() < wanted && ring <= arena.radius as i32 {
         let mut wests: Vec<Hex> = (-(ring)..=ring)
             .map(|k| centre + Hex::new(-ring, k))
-            .filter(|h| h.distance_to(centre) <= ARENA_RADIUS as i32)
+            .filter(|h| h.distance_to(centre) <= arena.radius as i32)
             .collect();
         wests.sort_by_key(|h| (h.y, h.x));
         for w in wests {
             if out.iter().all(|(a, _)| *a != w) {
-                out.push((w, arena_mirror(w)));
+                out.push((w, arena.mirror(w)));
             }
         }
         ring += 1;
@@ -2298,8 +2332,8 @@ fn muster_deployment(wanted: usize) -> Vec<(Hex, Hex)> {
 // and mirrored, and `tests/arena.rs` asserts all of it. A map whose halves
 // have to be *compared* to know they match is a map that will drift.
 
-fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
-    let map = arena_map()?;
+fn symmetric_arena(reg: &DataRegistry, arena: &Arena, seed: u64) -> Option<BattleState> {
+    let map = arena.map()?;
 
     // One pair per chassis, and the pairs line up with `arena_deployment`'s
     // flip pairs — so the force is symmetric across the axis of advance as
@@ -2317,7 +2351,7 @@ fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
     // forces are one force and its reflection. `arena_deployment` is the only
     // thing that knows where that is, which is what stops the two halves from
     // being written down twice and drifting.
-    for ((west, east), vehicle) in arena_deployment().into_iter().zip(roster_of) {
+    for ((west, east), vehicle) in arena.deployment().into_iter().zip(roster_of) {
         for (side, hex) in [(0u8, west), (1u8, east)] {
             placements.push(UnitPlacement {
                 aboard_at: None,
@@ -2390,8 +2424,14 @@ fn fight_all<T: Send>(
 }
 
 /// Play one battle between two configured planners on the mirrored arena.
-fn arena_duel(reg: &DataRegistry, seed: u64, a: &AiConfig, b: &AiConfig) -> Option<Outcome> {
-    let mut state = symmetric_arena(reg, 9000 + seed)?;
+fn arena_duel(
+    reg: &DataRegistry,
+    arena: &Arena,
+    seed: u64,
+    a: &AiConfig,
+    b: &AiConfig,
+) -> Option<Outcome> {
+    let mut state = symmetric_arena(reg, arena, 9000 + seed)?;
     let mut ai = AiDriver::new();
     for (side, cfg) in [(0u8, a), (1u8, b)] {
         ai.insert(side, make_battle_planner(cfg, seed * 2 + side as u64, reg));
@@ -2424,9 +2464,10 @@ fn arena_duel(reg: &DataRegistry, seed: u64, a: &AiConfig, b: &AiConfig) -> Opti
 /// The two same-brain rows are the control and are the first thing to read:
 /// on a mirrored arena they should sit near parity, and how far they miss it
 /// is the noise floor every other row has to beat before it means anything.
-fn brains_table(reg: &DataRegistry, games: usize, difficulty: u8) {
+fn brains_table(reg: &DataRegistry, arena: &Arena, games: usize, difficulty: u8) {
     heading(&format!(
-        "brains: {games} battles per pairing on the mirrored arena, difficulty {difficulty} both sides"
+        "brains: {games} battles per pairing on {}, difficulty {difficulty} both sides",
+        arena.name
     ));
     println!(
         "  {:<22} {:>5} {:>5} {:>6} {:>12} {:>12} {:>9}",
@@ -2445,7 +2486,7 @@ fn brains_table(reg: &DataRegistry, games: usize, difficulty: u8) {
         };
         let (a_cfg, b_cfg) = (cfg(a), cfg(b));
         let fought = fight_all(reg, games, |reg, seed| {
-            arena_duel(reg, seed, &a_cfg, &b_cfg)
+            arena_duel(reg, arena, seed, &a_cfg, &b_cfg)
         });
 
         let (mut a_wins, mut b_wins, mut draws) = (0, 0, 0);
@@ -2492,7 +2533,7 @@ fn cells(raw: &[f64; 5]) -> Vec<f64> {
     out
 }
 
-fn skill_gap(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
+fn skill_gap(reg: &DataRegistry, arena: &Arena, games: usize, seed: u64) -> Grid {
     let mut rows = Vec::new();
     let mut raw: BTreeMap<(u8, u8), [f64; 5]> = BTreeMap::new();
     for (a, b) in [(5, 5), (1, 1), (5, 3), (3, 5), (5, 1), (1, 5)] {
@@ -2503,7 +2544,7 @@ fn skill_gap(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
         };
         let (a_cfg, b_cfg) = (cfg(a), cfg(b));
         let fought = fight_all(reg, games, |reg, game| {
-            arena_duel(reg, ARENA_SEED + seed + game, &a_cfg, &b_cfg)
+            arena_duel(reg, arena, ARENA_SEED + seed + game, &a_cfg, &b_cfg)
         });
 
         let (mut a_wins, mut b_wins, mut draws) = (0, 0, 0);
@@ -2575,9 +2616,10 @@ fn skill_gap(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
 
     Grid {
         title: format!(
-            "skill gap: {games} battles per pairing on a mirrored arena — same forces, same doctrine, only execution differs"
+            "skill gap: {games} battles per pairing on {} — same forces, same doctrine, only execution differs",
+            arena.name
         ),
-        preamble: Vec::new(),
+        preamble: vec![format!("  {} ({})", arena.blurb, arena.id)],
         row_head: "pairing",
         columns: vec![
             col("A won", 0),
@@ -2976,6 +3018,9 @@ fn spread_line(base: &Grid, grids: &[Grid], name: &str, w: usize, vw: usize) {
 
 /// A difference, printed so that "no change" is visibly not a small number.
 fn signed(v: f64, dp: usize) -> String {
+    if v.is_nan() {
+        return "—".to_string();
+    }
     if v.abs() < 0.5 / 10f64.powi(dp as i32) {
         return "·".to_string();
     }
@@ -3199,6 +3244,13 @@ struct Ground {
     /// exchange could not be made and the row is measuring both effects at
     /// once. Reported rather than hidden.
     unswappable: bool,
+    /// Set on an arena, whose two orders of battle are one force and its own
+    /// reflection. There is nothing to exchange, so the `OB` columns carry no
+    /// information at all and are printed empty rather than as a tie that
+    /// looks like a measurement. `west`/`east` is the whole of such a row —
+    /// which is exactly what an arena is asked: does either end of this
+    /// battlefield pay?
+    mirrored: bool,
 }
 
 /// One of a shipped map's battles, optionally with the two armies exchanged.
@@ -3306,6 +3358,34 @@ fn ground_battle(reg: &DataRegistry, id: &str, seed: u64, swap: bool) -> Ground 
     g
 }
 
+/// One arena battle. Both ends carry the same order of battle by construction,
+/// so there is nothing to exchange: every battle is fought the map's own way
+/// round and the seeds simply run on, which keeps the row's sample honest
+/// rather than counting each battle twice under two labels.
+fn arena_ground_battle(reg: &DataRegistry, arena: &Arena, seed: u64) -> Ground {
+    let mut g = Ground {
+        mirrored: true,
+        ..Ground::default()
+    };
+    let cfg = AiConfig {
+        planner: "utility".into(),
+        // The same difficulty on both sides, and the one the shipped scenarios
+        // use, so this row asks about the ground and nothing else.
+        difficulty: 3,
+        doctrine: None,
+    };
+    let Some(outcome) = arena_duel(reg, arena, seed, &cfg, &cfg) else {
+        return g;
+    };
+    g.rounds = outcome.rounds as u32;
+    match outcome.winner {
+        Some(0) => g.west += 1,
+        Some(_) => g.east += 1,
+        None => g.draws += 1,
+    }
+    g
+}
+
 /// What each battlefield is worth to the side that deploys on it.
 ///
 /// A map favouring one end is not a bug — ground *is* strategy, and a scenario
@@ -3320,9 +3400,9 @@ fn ground_battle(reg: &DataRegistry, id: &str, seed: u64, swap: bool) -> Ground 
 /// force — the other effect cancels in each. On `battle_plains` and
 /// `battle_forest` the two orders of battle are already identical, so their
 /// `OB` columns are a control that should read level whatever the ground does.
-fn ground_bias(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
+fn ground_bias(reg: &DataRegistry, arena: &Arena, games: usize, seed: u64) -> Grid {
     let maps = battle_maps(reg);
-    let rows = maps
+    let mut rows: Vec<(String, Vec<f64>)> = maps
         .iter()
         .map(|id| {
             let jobs: Vec<(u64, bool)> = (0..games as u64)
@@ -3356,6 +3436,48 @@ fn ground_bias(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
         })
         .collect();
 
+    // ...and the arena the skill table is fought on, because it is a
+    // battlefield this project measures on and the question this table asks —
+    // does an end of it pay? — is exactly the question the skill table's `the
+    // ends` row has been standing in for. Two games per seed so that its
+    // sample matches the shipped maps' rows above.
+    {
+        let jobs: Vec<u64> = (0..2 * games as u64).collect();
+        let fought = run_all(&jobs, |g| {
+            arena_ground_battle(reg, arena, GROUND_SEED + seed + g)
+        });
+        let mut t = Ground::default();
+        for one in &fought {
+            t.west += one.west;
+            t.east += one.east;
+            t.draws += one.draws;
+            t.rounds += one.rounds;
+            t.mirrored |= one.mirrored;
+            t.ob0 += one.ob0;
+            t.ob1 += one.ob1;
+        }
+        let fights = (t.west + t.east + t.draws).max(1) as f64;
+        // A mirrored battlefield has no order-of-battle question to answer, so
+        // those two columns are `NaN` — printed as a dash — rather than a tie
+        // that would read as a measurement of something never measured.
+        let (ob0, ob1) = if t.mirrored {
+            (f64::NAN, f64::NAN)
+        } else {
+            (t.ob0 as f64, t.ob1 as f64)
+        };
+        rows.push((
+            format!("{}{}", arena.id, if t.mirrored { " \u{2020}" } else { "" }),
+            vec![
+                t.west as f64,
+                t.east as f64,
+                t.draws as f64,
+                ob0,
+                ob1,
+                t.rounds as f64 / fights,
+            ],
+        ));
+    }
+
     Grid {
         title: format!(
             "ground: {} battles per map, each fought both ways round with the two armies exchanged",
@@ -3379,7 +3501,10 @@ fn ground_bias(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
              left is the force. A map is allowed to favour an end — ground is strategy —\n  \
              and this says which of them do and by how much.\n\n  \
              a row marked `*` fields different numbers of vehicles per side, so the armies\n  \
-             could not be exchanged and its columns still carry both effects together.\n  \
+             could not be exchanged and its columns still carry both effects together. a row\n  \
+             marked `\u{2020}` is an arena, whose two orders of battle are one force and its own\n  \
+             reflection: there is nothing to exchange, so its `OB` columns are empty and\n  \
+             `west`/`east` is the whole of it.\n  \
              crews are anonymous here (a crew named for a medium tank cannot follow it\n  \
              into a light one), so the casualties are not comparable with the fought-out\n  \
              pass; the winner is.{}",
@@ -3399,13 +3524,13 @@ fn fought_grids(reg: &DataRegistry, cfg: &Run, seed: u64, budget: i32) -> Vec<Gr
         out.push(delegation_tax(reg, cfg.games, seed));
     }
     if cfg.only.wants("mustered") {
-        out.push(mustered_forces(reg, cfg.games, budget, seed));
+        out.push(mustered_forces(reg, cfg.arena, cfg.games, budget, seed));
     }
     if cfg.only.wants("skill") {
-        out.push(skill_gap(reg, cfg.games, seed));
+        out.push(skill_gap(reg, cfg.arena, cfg.games, seed));
     }
     if cfg.only.wants("ground") {
-        out.push(ground_bias(reg, cfg.games, seed));
+        out.push(ground_bias(reg, cfg.arena, cfg.games, seed));
     }
     out
 }
@@ -3564,7 +3689,14 @@ impl GridColumn {
         self.head.len().max(6)
     }
 
+    /// One cell. A `NaN` is "this row has no answer in this column" and prints
+    /// as a dash rather than as the word NaN — the arena's `OB` columns are
+    /// the case, and a tie printed there would read as a measurement of
+    /// something that was never measured.
     fn cell(&self, v: f64) -> String {
+        if v.is_nan() {
+            return "—".to_string();
+        }
         format!("{:.*}", self.dp, v)
     }
 }
@@ -3760,4 +3892,9 @@ struct Run {
     /// are what a *range* wants, and a seed sweep is asking for a range.
     absolute: bool,
     only: Only,
+    /// Which battlefield the arena tables fight on. A `&'static` rather than a
+    /// name so that the map, the deployment and the symmetry checks are one
+    /// choice: there is no way to fight one arena's ground with another's
+    /// order of battle.
+    arena: &'static Arena,
 }
