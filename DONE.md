@@ -1350,6 +1350,87 @@ penetrated` for any penetration regardless of what the round spent, so once
 fear is priced no landing shot is worth nothing and a remnant platoon with no
 riflemen still opens up — a question about the ladder for the designer.
 
+**The objective and the order are priced in the currency, and the drill reads
+it** (2026-09-07, Wave 2 of the one-currency work). The brief was the ridge
+finding: the difficulty-5 commander lost to difficulty 1 (45.3% at 576 a row)
+because she priced the crest's danger honestly and nothing priced what
+holding it was for. The diagnosis was half right, instructively. The first
+commit touched no weight and added no field — it made `ai::threats` be
+`fire_on`'s membership, `threatened` be `incoming(..).worth > 0`, and the two
+places that decide where a frightened crew stands read the resolver instead
+of the terrain `cover` field — and took `5 over 1` from 45.3% to 52.3% on its
+own. A crew who broke for cover used to go to the reachable tile with the
+highest `cover`, which on ground built out of woods a crest looks into is
+frequently the worst hex on the map; Raven 2 in `playthrough 7 battle_forest`
+used to break one hex to the nearest trees and now drives four to where the
+gun cannot see her at all. The drill and the rout are two different things
+now and the code says which is which, the designer's own split: the drill
+minimises fire with no distance term (a hex nearer the gun that the gun
+cannot see beats a hex further off in the open), only ever to strictly
+quieter ground so it settles instead of oscillating; the rout takes distance
+first and spends `incoming` only on the ties, which is also what keeps it
+cheap. `incoming_from` prices ground against the guns she has caught up with
+on her per-enemy reaction clock, because reacting to a gun she has not
+noticed would rebuild the reaction-latency defect inside the reflex. The
+per-tick pricing cost nothing measurable: the drill visits only idle crews,
+and crews who go where the gun cannot see them spend fewer ticks under fire.
+
+The second commit is the currency. `planner.score_worth` is substance a
+round per point of objective value, and at the shipped 3.0 the crest, worth
+3, prices at 13.5 against the 8 to 29 a round a found gun puts on it — inside
+a factor of two of the fire it argues with, which is what the field exists to
+make possible. `planner.order_worth` is the share of what she still has
+aboard, per round, that being on the ground her commander named is worth to
+her, and it replaced `mission_weight`; the arrival rewards in `mission_value`
+were rebased once (1.5 → 1.0, 0.75 → 0.5) so that a quarter means a quarter
+rather than two thirds of one. A retired field is warned about, not refused:
+`mission_weight` deserialises into a field nothing reads, so `--set` on it
+fails listing what exists and `validate-mods` names the replacement. At
+`score_worth: 1.0` the determinism snapshot passed unregenerated, which
+proved the mechanism behaviour-neutral for the price of one build, the same
+trick as Wave 1. Together the two commits are `5 over 1` 45.3% → **53.5%**
+and `5 over 3` 48.3% → **52.3%** on the ridge with a control row of 52.8% and
+no draws — the first decisive movement the skill table has recorded in five
+arcs — while the old arena gives back two points on one row and gains six on
+its own control (41.0% → 46.7%). `deviation_cost` did not have to move, for
+the first time in three currency changes; its band went 12–29 → 10–23 with
+12.0 inside.
+
+The `score_worth` sweep is a null and the reason is the result: 1 to 12 is
+one spread of noise on the skill table, and 0 is catastrophic (9.2%, 225
+draws of 288, nothing leaves cover). It is a *symmetric* number — both
+commanders get the same rate — so it changes what a battle is about
+(`ObjectiveTaken` 5 → 8 and rounds 22 → 17 on the baseline) rather than who
+is better at it, and a table whose whole content is one side against the
+other cannot see it. That is a third species of null beside "no effect" and
+"never evaluated", and the harness wants a table whose question is what the
+battle was about. `order_worth` was swept where it can be seen, the
+delegation tax at 288 battles a cell with `devolved=1.1` so both commanded
+doctrines assign ground: massed armour's tax +2 / −6 / −10 / −15 / −11 / −18
+and bounding overwatch's +53 / +43 / +35 / +29 / +30 / +30 at 0 / 0.1 / 0.25
+/ 0.5 / 1 / 2, both flat controls bit-identical at every value. A quarter is
+where the first is still near zero and the second has stopped improving, and
+it is the designer's number.
+
+The family survey is the other finding. Every weight in `score_tile` that is
+data was swept after the currency grew and came back null (`impatience`,
+`plateau`, `route_caution` bit-identical at four times its value,
+`contest_aversion`); `exit_urgency` was restated by construction, riding on
+`score_worth`; the priors are gated so they only ever argue with the
+objective pull, which the `score_worth` sweep varies twelve-fold to no
+effect. Every weight that is bare Rust — the mass band, the +4.0 kill bonus,
+the 0.3 advance slope, the 0.15 centre fallback — could not be asked at all,
+and between them they are now the largest un-restated block in the sum.
+Five stages were repaired, none weakened, including one that had asserted
+nobody moves on a bare field: true of the terrain table, false of the
+currency, since a gun loses accuracy with range and the far corner of a
+billiard table really is quieter. Left behind, for the designer: the
+order/threat ratio is quadratic in what she has left (danger a fraction of
+her, an order a share of her); the mid-round drill has no counterweight and
+does not read `Latitude`, so an idle crew who has just arrived on her ordered
+hex under fire backs off it; and `threatened` is still a predicate over a
+currency with a magnitude.
+
 ## Performance
 
 **`fog::recompute` no longer rebuilds every side's vision after every shot** —

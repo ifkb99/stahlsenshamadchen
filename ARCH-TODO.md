@@ -153,7 +153,7 @@ kind:
       hexagon with two objectives can. **Built: `ridge_arena`, `--arena`,
       `examples/mirror` (Wave 1 — ground, below).** What it found is the
       next item.
-- [ ] **The objective is not in the currency.** On `ridge_arena` the
+- [x] **The objective is not in the currency.** On `ridge_arena` the
       difficulty-5 commander loses to difficulty 1 (47.5% at 576 battles a
       row) because she prices the crest's danger honestly and nothing prices
       what holding it is *for*: the objective term is `value * decay` on a

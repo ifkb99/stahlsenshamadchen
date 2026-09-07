@@ -366,14 +366,49 @@ converted at the mod's exchange rate.
   of a round put 4.6 points back in front of a withdrawing crew and she left
   her lane. Thirteen test stages were re-staged for cadence with their
   margins written in their comments; none was weakened.
-- **What the currency does not yet carry**: the objective and the order
-  (`objective_value` is `value * decay` on a scale of its own,
-  `mission_weight` is quoted in it, and on the ridge arena the best
-  commander declines the crest — Known issues). And a question about the
-  ladder: it charges `hit + penetrated` for any penetration regardless of
-  what the round spent, so once fear is priced *no landing shot is worth
-  nothing*, and a remnant platoon with no riflemen still opens up. That is
-  the designer's to answer (ARCH-TODO.md, Wave 1 — currency).
+- **The objective and the order are quoted in it too** (Wave 2, 2026-09-07).
+  `planner.score_worth` (3.0) is what one point of an objective's `value` is
+  worth in substance a round, so the ridge's crest, worth 3, prices at 13.5
+  against the 8 to 29 a round a found gun puts on a crew standing there —
+  inside a factor of two of the fire it argues with. 1.0 is the game before
+  and 0 is catastrophic (nothing leaves cover: 9.2% and 225 draws of 288).
+  `planner.order_worth` (0.25) is the share of what she still has aboard,
+  per round, that being on the ground her commander named is worth to her;
+  it replaced `mission_weight`, and a mod still declaring the old field gets
+  a `validate-mods` warning naming the new one. `exit_urgency` rides on
+  `score_worth`; `Withdraw` alone stays on the objective scale, because
+  being ordered out is not worth *less* to a crew who is nearly finished.
+  **The order/threat ratio is therefore quadratic in what she has left**
+  (danger a fraction of her, an order a share of her) — a consequence of two
+  defensible rules that nobody has yet decided is the intended one.
+- **`score_worth` is a symmetric number and the skill table cannot see
+  it.** Swept 1 to 12 on the ridge it is one spread of noise, because both
+  commanders get the same rate: it changes what a battle is *about*
+  (`ObjectiveTaken` 5 → 8 on the baseline, rounds 22 → 17), not who is
+  better at it. A third species of null beside "no effect" and "never
+  evaluated" — symmetric, invisible to every table this harness has. The
+  harness wants a table whose question is what the battle was about.
+- **There is one walk and one gate.** `ai::threats` is `fire_on`'s
+  membership and `ai::threatened` is `incoming(..).worth > 0`;
+  `there_is_one_answer_to_who_can_shoot_her` fails on any threshold above
+  the stage's cheapest bearing. **The mid-round drill minimises fire and the
+  rout maximises distance** — the designer's split between an orderly
+  reaction and a frightened one. The drill (`run_crew_drill`, `orders.rs`)
+  takes the reachable tile with the least `incoming_from` worth against the
+  guns she has caught up with on her reaction clock, no distance term at
+  all, and only strictly quieter ground, so it settles instead of
+  oscillating; the rout (`flight_destination`) takes distance first and
+  spends `incoming` on the ties. Neither reads terrain `cover` any more;
+  they were the last "where to stand" rules outside the currency, and
+  moving them was worth seven points on the ridge before any weight moved.
+- **What the currency does not carry**: the mass band, the +4.0 kill bonus,
+  the 0.3 advance slope and the 0.15 centre-seeking fallback are bare Rust
+  in `score_tile`, unsweepable and therefore unmeasured — now the largest
+  un-restated block in the sum. And a question about the ladder: it charges
+  `hit + penetrated` for any penetration regardless of what the round spent,
+  so once fear is priced *no landing shot is worth nothing*, and a remnant
+  platoon with no riflemen still opens up. That is the designer's to answer
+  (ARCH-TODO.md, Wave 1 — currency).
 
 ### Goals: the seam the AI is meant to be replaced at
 
@@ -393,9 +428,12 @@ converted at the mod's exchange rate.
   this round's own sweep picked — charged `planner.deviation_cost * (1 -
   initiative)`. It governs **how she carries out an order, never whether she
   believes it**. The wider version (her own objectives) was built and fails
-  three tests, because a mission's ground is worth 2.0 on the evaluator's
-  scale and a shipped objective 2 to 5, so an order becomes cheaper than
-  terrain — DIRECTION.md's opening complaint rebuilt inside the fix. At
+  three tests, because (at the time) a mission's ground was worth 2.0 on the
+  evaluator's scale and a shipped objective 2 to 5, so an order became
+  cheaper than terrain — DIRECTION.md's opening complaint rebuilt inside the
+  fix. Both are in the currency now (`order_worth`, `score_worth`) and the
+  argument is unchanged: an order competing with her own objectives is a
+  suggestion. At
   `initiative: 0` the list is the two entries it always was, a membership
   guard rather than a coefficient, so the rng stream is untouched.
 - **`candidates` orders an objective's hexes by distance from the crew,
@@ -459,8 +497,10 @@ all off one Dijkstra (`battle::roads`, `HORIZON` = `planner.horizon_rounds`).
 
 The evaluator's and chooser's numbers are the `planner` block of `mod.json`
 (`data::PlannerRules`): `impatience`, `horizon_rounds`, `boarding_rounds`,
-`deviation_cost`, `devolved`, `mission_weight`, `pull_under_fire`,
+`deviation_cost`, `devolved`, `order_worth`, `score_worth`, `pull_under_fire`,
 `distance_decay`, `plateau`, `exit_urgency`, `cover_prior`, `elevation_prior`.
+`mission_weight` is retired (2026-09-07): it deserialises into a field nothing
+reads so that `validate-mods` can warn a mod that still declares it.
 
 - **The line between `planner` and `balance` is load-bearing.** `balance`
   says what is *true on this battlefield* and reaches a human's shot exactly
@@ -477,9 +517,13 @@ The evaluator's and chooser's numbers are the `planner` block of `mod.json`
   (`route_caution`, `contest_aversion`); one the same for every commander
   belongs here. `devolved` is here because it is a threshold read *against*
   `DoctrineDef::delegation` — one decision about the whole roster.
-- **`distance_decay` is one slope for objectives *and* missions.**
-  `mission_weight` is quoted in objective-value units, which is only true
-  while the two gradients share a shape;
+- **`distance_decay` is one slope for objectives *and* missions.** It used
+  to be shared because `mission_weight` was quoted in objective units and
+  "an order pulls about as hard as the ford" was only true while the
+  gradients matched. The two are quoted in different things now, and the
+  reason is better: the slope is not a statement about what ground is worth
+  at all, it is *how far off a crew can still tell which way to drive*, a
+  fact about her and the map.
   `an_order_and_an_objective_are_led_to_by_the_same_slope` pins it. It moves
   the flat control too, so it is a global knob rather than an
   order-versus-terrain one. The centre-seeking `0.15` in `score_tile`'s
@@ -491,8 +535,13 @@ The evaluator's and chooser's numbers are the `planner` block of `mod.json`
   `Advance`, else `Hold`), so which doctrines ever meet it is content. A
   sweep returning *exactly* zero is asking you to find out why: "no effect"
   and "never evaluated" look identical in the table. The measured results —
-  the horizon null, `mission_weight`'s 37→2 tax, `pull_under_fire`'s
-  bit-identical row — are in DONE.md.
+  the horizon null, `mission_weight`'s 37→2 tax and `order_worth`'s sweep
+  that replaced it, `pull_under_fire`'s bit-identical row — are in DONE.md.
+- **Every planner weight that is data was swept after the currency grew and
+  came back null** (`impatience`, `plateau`, `route_caution`,
+  `contest_aversion`, `score_worth` itself); every one that is bare Rust
+  could not be asked. The sweep is the prize; a number that cannot be swept
+  is a number nobody can argue with.
 
 ### Defiance: what a crew does instead
 
@@ -519,7 +568,11 @@ a crew on a rung whose `obeys` is false does.
   crew who can see her formation's leader through `fog::sees` — not
   `fog.side(..).visible`, which is vacuous for own units, and not contact,
   which would make a zeroed `command` block differ in deeds from no block.
-- **Flight goes away from contact, never toward an exit.**
+- **Flight goes away from contact, never toward an exit**, and it is the
+  rout, not the drill: distance from every threat first, and the resolver's
+  `incoming` only to settle the hexes that tie. The orderly reaction lives
+  in `run_crew_drill` and minimises fire with no distance term; see One
+  currency.
 - **`Event::Defied` replaced `OrderRefused`** and carries what she did and
   where she went.
 
@@ -603,6 +656,10 @@ on a mission key.
 - **On a crew it is read in exactly one place**, the drill gate in
   `ai/command.rs`. A second `yields_to_drill()` means the model drifted:
   latitude buys priority over her *own judgment*, never over her nerve.
+  **The mid-round drill in `orders.rs` does not read it** and has no
+  counterweight: an idle crew who has just arrived on her ordered hex under
+  fire will back off it. Whether that is her nerve (leave it) or her
+  judgment (gate it) is an open design question (ARCH-TODO.md, Wave 2).
 - **It belongs to the destination, not the cadet**: set where `tasking` is
   set, cleared everywhere `tasking` clears, carried in `WaitingOrders`. A
   radioed order with `to: None` leaves it alone
@@ -851,22 +908,21 @@ instrument's numbers.
 - **Overworld elevation is priced at the battle scale.** `Scale` has one
   `elevation_meters`, so `frontier`'s mountains at elevation 2 read as 20 m.
   Harmless today; a strategic map wants its own vertical scale.
-- **The objective is not in the currency, and on real ground the best
-  commander declines it.** At 8 seeds × 36, 5 over 1 is 52.5% on
-  `skill_arena` and **47.5% on `ridge_arena`**; 5 over 3 is 51.4% and 47.4%.
-  Both rows move together, so it is not a draw. The diagnosis is Phase 2's
-  success read as a cost: the threat term is now priced honestly and the
-  objective term is a `value * decay` pull that one found 88 outweighs, so
-  the difficulty-5 commander, who alone can see what a bare level-2 plateau
-  costs, is the one who refuses to take it. Reweighting the ridge's
-  objectives so the safe flank scores (2 / 4) sends 5 over 1 to 66.7% *and*
-  draws every equal-skill battle, because nobody attacks. Nothing in
-  `score_tile` says taking the objective is what the battle is for.
-  Cadence and pressure both add to the threat side; whatever re-quotes the
-  objective and the order in substance points is measured on
-  `--arena ridge_arena`, where a crew who will not go where the points are
-  shows up in the win column. Read the skill table at `--games 36` or not at
-  all, seed-swept.
+- **Difficulty discriminates on the ridge and not on the old arena.** At 8
+  seeds × 36 (576 a row) on `ridge_arena`, 5 over 1 is **53.5%** and 5 over
+  3 **52.3%** with the control row honest and no draws; before Wave 2 they
+  were 45.3% and 48.3%, the best commander declining the crest. Two thirds
+  of the gain came from the drill and the rout reading the resolver instead
+  of the terrain table, before any weight moved. On `skill_arena` the same
+  rows are 50.8% and 49.7%: a radius-10 hexagon with two objectives has
+  nothing for a commander to be better at, and it stays the default only
+  because every quoted number was measured on it. Read the skill table on
+  the ridge, at `--games 36` or not at all, seed-swept.
+- **`score_tile` still holds four bare constants** — the mass band
+  (−0.45 / −0.15 / −0.12 × `concentration`), the +4.0 kill bonus, the 0.3
+  advance slope, the 0.15 centre-seeking fallback — in a currency that has
+  grown by an order of magnitude since they were written. Nobody has noticed
+  because nobody can ask; they want to be `planner` fields.
 
 ### Robustness
 
