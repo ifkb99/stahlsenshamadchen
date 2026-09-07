@@ -1810,11 +1810,11 @@ fn pump_events(
                 // With the destination in the sentence when the order is a
                 // march: the player learns both that it got through and what
                 // will now happen across the coming rounds.
-                match battle.state.units.get(unit.index()).and_then(|u| u.tasking) {
-                    Some(to) => log.push(format!(
+                match battle.state.units.get(unit.index()).and_then(|u| u.march()) {
+                    Some(march) => log.push(format!(
                         "{} has her orders and is on her way to {}.",
                         name(*unit),
-                        hex_label(to)
+                        hex_label(march.to)
                     )),
                     None => log.push(format!("{} has her orders.", name(*unit))),
                 }
@@ -2499,10 +2499,10 @@ fn commit_round(
             continue;
         };
         let name = u.name.clone();
-        log.push(match u.tasking {
-            Some(to) => format!(
+        log.push(match u.march() {
+            Some(march) => format!(
                 "{name} breaks off her march to {} and takes cover.",
-                hex_label(to)
+                hex_label(march.to)
             ),
             None => format!("{name} is under fire and takes cover on her own."),
         });

@@ -327,7 +327,7 @@ impl Evaluator {
         // excused from the standing mission entirely: her ground is where
         // she was put, and every other term (cover, threat, the drill's
         // judgment) still applies.
-        let standing = if me.detached {
+        let standing = if me.detached() {
             None
         } else {
             state

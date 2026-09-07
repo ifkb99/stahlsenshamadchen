@@ -167,10 +167,10 @@ pub(super) fn format_formation(
         // ...and under how much insistence, because the whole value of being
         // able to say "I mean it" is that the player can see afterwards which
         // of her crews she said it to.
-        if let Some(tasking) = unit.tasking {
-            tags.push(match unit.latitude {
-                Latitude::Binding => format!("pressing on to {}", hex_label(tasking)),
-                Latitude::Delegated => format!("moving to {}", hex_label(tasking)),
+        if let Some(march) = unit.march() {
+            tags.push(match march.latitude {
+                Latitude::Binding => format!("pressing on to {}", hex_label(march.to)),
+                Latitude::Delegated => format!("moving to {}", hex_label(march.to)),
             });
         }
         // A passenger is in the formation and not on the map, which reads as
@@ -729,12 +729,12 @@ pub(super) fn format_unit(
     // the same decision are described in the same words.
     if own {
         lines.push(String::new());
-        match unit.tasking {
-            Some(to) => {
+        match unit.march() {
+            Some(march) => {
                 lines.push(format!(
                     "Marching on {} - {}",
-                    hex_label(to),
-                    unit.latitude.promise()
+                    hex_label(march.to),
+                    march.latitude.promise()
                 ));
             }
             None => lines.push("No standing destination.".into()),

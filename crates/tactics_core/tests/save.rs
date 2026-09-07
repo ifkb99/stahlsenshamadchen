@@ -724,7 +724,8 @@ fn an_order_waiting_at_the_radio_survives_a_save() {
             .command
             .waiting_for(deaf)
             .expect("still at the radio")
-            .destination,
+            .march
+            .map(|m| m.to),
         Some(bridge),
     );
 
@@ -998,7 +999,7 @@ fn a_battle_carrying_everything_the_wire_knows_forks_identically() {
         state.command.waiting_for(stray).is_some(),
         "an order held at the radio"
     );
-    assert!(state.units[mate.index()].detached, "a crew under tasking");
+    assert!(state.units[mate.index()].detached(), "a crew under tasking");
     assert!(
         state.formations()[alpha.index()]
             .out_of_contact

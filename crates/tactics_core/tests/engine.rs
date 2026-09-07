@@ -8656,7 +8656,8 @@ fn an_order_to_a_cut_off_unit_waits_at_the_radio() {
             .command
             .waiting_for(crew)
             .expect("it is at the radio")
-            .destination,
+            .march
+            .map(|m| m.to),
         Some(first),
         "the destination is what is held — never a path, which she will \
          recompute from wherever she actually is"
@@ -8678,7 +8679,7 @@ fn an_order_to_a_cut_off_unit_waits_at_the_radio() {
         )
         .expect("accepted too");
     assert_eq!(
-        state.command.waiting_for(crew).unwrap().destination,
+        state.command.waiting_for(crew).unwrap().march.map(|m| m.to),
         Some(second)
     );
     assert_eq!(state.command.waiting().len(), 1, "one slot, one cadet");
@@ -9677,7 +9678,10 @@ fn marching_under_fire(reg: &DataRegistry, latitude: Latitude, seed: u64) -> (Ba
             },
         )
         .expect("a far destination is an order, not a refusal");
-    assert_eq!(state.unit(crew).unwrap().latitude, latitude);
+    assert_eq!(
+        state.unit(crew).unwrap().march().map(|m| m.latitude),
+        Some(latitude)
+    );
     (state, crew)
 }
 
@@ -9813,11 +9817,10 @@ fn a_recall_forgets_that_she_was_pressed_on() {
         .apply(&reg, &Order::ClearIntent { unit: crew })
         .expect("a recall is always sayable");
     let unit = state.unit(crew).unwrap();
-    assert_eq!(unit.tasking, None, "the march is off");
-    assert_eq!(
-        unit.latitude,
-        Latitude::Delegated,
-        "and so is the insistence behind it"
+    assert_eq!(unit.march(), None, "the march is off");
+    assert!(
+        !unit.detached(),
+        "a recall takes back the whole order, and so the insistence behind it"
     );
 }
 
@@ -9846,8 +9849,8 @@ fn an_order_about_her_gun_says_nothing_about_her_march() {
         )
         .expect("hold fire is always sayable");
     assert_eq!(
-        state.unit(crew).unwrap().latitude,
-        Latitude::Binding,
+        state.unit(crew).unwrap().march().map(|m| m.latitude),
+        Some(Latitude::Binding),
         "she is still pressing on"
     );
 }
@@ -10810,7 +10813,7 @@ fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
             },
         )
         .unwrap();
-    assert!(state.unit(member).unwrap().detached, "she is detached");
+    assert!(state.unit(member).unwrap().detached(), "she is detached");
 
     // Play the round out, then let her formation's executor fill the next
     // round's plans. She must not be marched back toward the bridge.
@@ -10861,9 +10864,84 @@ fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
         )
         .unwrap();
     assert!(
-        !state.unit(member).unwrap().detached,
+        !state.unit(member).unwrap().detached(),
         "new orders for the formation reach her too"
     );
+}
+
+#[test]
+fn a_personal_order_is_taken_back_whole_or_not_at_all() {
+    // What used to be `detached`, `tasking` and `latitude` is one
+    // `PersonalOrder`, and this is the property that shape buys. Both routes
+    // out of a personal order are checked on both halves *together*, because
+    // the failure they used to be able to produce was three assignments at
+    // five sites with one of them forgotten: a recalled crew still driving
+    // for her commander's destination, or a crew back under her formation's
+    // mission still refusing the battle drill on an insistence nobody was
+    // insisting on any more. Neither state is reachable now — there is no
+    // third of an order left to stand.
+    let reg = registry_wireless();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 91).unwrap();
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let bridge = state.map.objectives()[0].anchor();
+    let ford = state
+        .map
+        .objectives()
+        .iter()
+        .find(|o| o.id == "north_ford")
+        .unwrap()
+        .anchor();
+    let order = |to| Order::SetMission {
+        formation: armor,
+        mission: Mission::Advance { to },
+        latitude: Latitude::Delegated,
+    };
+    state.apply(&reg, &order(bridge)).unwrap();
+    let member = state.formations()[armor.index()].members[0];
+    let post = state.unit(member).unwrap().pos + tactics_core::Hex::new(0, -2);
+    assert!(state.map.contains(post));
+    let send = |state: &mut BattleState| {
+        state
+            .apply(
+                &reg,
+                &Order::Radio {
+                    unit: member,
+                    to: Some(post),
+                    fire: None,
+                    latitude: Latitude::Binding,
+                },
+            )
+            .unwrap();
+        let unit = state.unit(member).unwrap();
+        assert!(unit.detached(), "a direct order takes personal charge");
+        assert_eq!(
+            unit.march(),
+            Some(tactics_core::battle::March {
+                to: post,
+                latitude: Latitude::Binding,
+            }),
+            "and the ground and the insistence arrive as one value"
+        );
+    };
+
+    // The recall.
+    send(&mut state);
+    state
+        .apply(&reg, &Order::ClearIntent { unit: member })
+        .unwrap();
+    let unit = state.unit(member).unwrap();
+    assert!(
+        !unit.detached(),
+        "a recall puts her back under her formation"
+    );
+    assert_eq!(unit.march(), None, "and takes the march back with it");
+
+    // And a fresh order to the whole formation, which collects everyone.
+    send(&mut state);
+    state.apply(&reg, &order(ford)).unwrap();
+    let unit = state.unit(member).unwrap();
+    assert!(!unit.detached(), "the formation was spoken to as a whole");
+    assert_eq!(unit.march(), None, "so her personal errand is over too");
 }
 
 // --- base of fire ----------------------------------------------------------
@@ -13414,7 +13492,7 @@ fn a_searching_planner_copes_with_missions_a_detachment_and_a_running_clock() {
             },
         )
         .expect("a hex she is already standing on");
-    assert!(state.units[scout.index()].detached);
+    assert!(state.units[scout.index()].detached());
 
     let mut ai = AiDriver::new();
     ai.insert(
@@ -14194,7 +14272,7 @@ fn a_personal_march_carries_across_rounds_and_ends_in_a_hold() {
             },
         )
         .expect("a far destination is an order now, not a refusal");
-    assert_eq!(state.unit(unit).unwrap().tasking, Some(far));
+    assert_eq!(state.unit(unit).unwrap().march().map(|m| m.to), Some(far));
 
     let mut ai = AiDriver::new();
     ai.insert(
@@ -14224,8 +14302,8 @@ fn a_personal_march_carries_across_rounds_and_ends_in_a_hold() {
     // The round after arrival opens with the tasking cleared and her holding.
     ai.plan_round(&reg, &mut state);
     let unit = state.unit(unit).unwrap();
-    assert_eq!(unit.tasking, None, "arrived is done");
-    assert!(unit.detached, "but she stays on her commander's post");
+    assert_eq!(unit.march(), None, "arrived is done");
+    assert!(unit.detached(), "but she stays on her commander's post");
     assert!(
         unit.intent.path.is_empty(),
         "holding the ground she was sent to"

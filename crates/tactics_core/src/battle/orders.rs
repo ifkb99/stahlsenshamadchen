@@ -6,8 +6,8 @@
 //! together.
 
 use super::{
-    BattleResult, BattleState, EndReason, FormationId, Goal, Latitude, Mission, Phase, Unit,
-    UnitId, combat, fog, movement,
+    BattleResult, BattleState, EndReason, FormationId, Goal, Latitude, March, Mission,
+    PersonalOrder, Phase, Unit, UnitId, combat, fog, movement,
 };
 use crate::data::{ArmorFacing, DataRegistry, ShotFelt};
 use crate::map::{LossTrigger, ObjectiveKind};
@@ -748,12 +748,12 @@ impl BattleState {
                 let u = self.unit_mut(*unit).ok_or(OrderError::NoSuchUnit)?;
                 u.intent = UnitIntent::default();
                 u.planned = false;
-                // The recall: she rejoins her formation's tasking. Latitude
-                // goes with the order it belonged to — a recalled crew is
-                // under nobody's insistence.
-                u.detached = false;
-                u.tasking = None;
-                u.latitude = Latitude::default();
+                // The recall: she rejoins her formation's tasking. The
+                // destination and the insistence go with the order they
+                // belonged to, because they *are* the order — a recalled
+                // crew is under nobody's, and there is no longer any way to
+                // drop one of the three and leave the others standing.
+                u.orders = None;
                 Ok(Vec::new())
             }
             Order::Mount { unit, into } => {
@@ -874,12 +874,10 @@ impl BattleState {
                     return Err(OrderError::NotOnMap);
                 }
                 if let Some(unit) = self.unit_mut(id) {
-                    unit.tasking = Some(to);
-                    // Latitude belongs to the destination, so it is set here
-                    // and nowhere else: an order that says nothing about
-                    // where she is going has said nothing about how hard to
-                    // press, and must leave the standing one alone.
-                    unit.latitude = latitude;
+                    // The destination and the latitude land as one value, so
+                    // the rule that they travel together is no longer
+                    // something this line has to remember.
+                    unit.orders = Some(PersonalOrder::Marching(March { to, latitude }));
                 }
                 self.march_toward(registry, id, to);
             }
@@ -891,12 +889,18 @@ impl BattleState {
             // vehicle, and the mission must not quietly reassert itself at
             // the next planning phase and march her off the ground she was
             // put on.
+            //
+            // `get_or_insert` and not an assignment, because an order that
+            // says nothing about where she is going has said nothing about
+            // her march: a fire mission to a crew already marching leaves the
+            // march — and so the insistence it carries — exactly as it was.
             if let Some(unit) = self.unit_mut(id) {
-                unit.detached = true;
+                unit.orders.get_or_insert(PersonalOrder::Holding);
             }
             return Ok(Vec::new());
         }
-        self.command.hold_orders(id, to, fire, latitude);
+        self.command
+            .hold_orders(id, to.map(|to| March { to, latitude }), fire);
         Ok(vec![Event::OrdersWaiting { unit: id }])
     }
 
@@ -929,16 +933,16 @@ impl BattleState {
                 undelivered.push((unit, orders));
                 continue;
             }
-            if let Some(to) = orders.destination {
+            if let Some(march) = orders.march {
                 // The promise of the queue, kept: however far she has come
                 // in the meantime, the delivered order is a destination she
                 // now marches for — this round as far as the round allows,
-                // and every round after until she arrives.
+                // and every round after until she arrives — under the
+                // latitude it was sent with, which travelled inside it.
                 if let Some(u) = self.unit_mut(unit) {
-                    u.tasking = Some(to);
-                    u.latitude = orders.latitude;
+                    u.orders = Some(PersonalOrder::Marching(march));
                 }
-                self.march_toward(registry, unit, to);
+                self.march_toward(registry, unit, march.to);
             }
             // The target may have burned while the order was in the drawer.
             if let Some(fire) = orders.fire
@@ -948,9 +952,11 @@ impl BattleState {
             }
             // Delivery is when the personal tasking takes hold — until the
             // order reached her she was soldiering the standing mission,
-            // which is exactly what the queue promised.
+            // which is exactly what the queue promised. `get_or_insert` for
+            // the same reason as in `radio`: a fire order arriving for a crew
+            // already marching detaches her without touching her march.
             if let Some(u) = self.unit_mut(unit) {
-                u.detached = true;
+                u.orders.get_or_insert(PersonalOrder::Holding);
             }
             events.push(Event::OrdersDelivered { unit });
         }
@@ -1015,9 +1021,7 @@ impl BattleState {
             .unwrap_or_default();
         for member in members {
             if let Some(unit) = self.unit_mut(member) {
-                unit.detached = false;
-                unit.tasking = None;
-                unit.latitude = Latitude::default();
+                unit.orders = None;
                 // Fresh orders end her own errand too. A crew still driving
                 // to ground her *old* mission made sense of is the failure
                 // mode a committed goal introduces, and this is where it is
@@ -2211,9 +2215,10 @@ impl BattleState {
         // she holds the ground she was sent to, still detached, and the
         // panel stops saying she is on her way.
         for unit in self.units.iter_mut().filter(|u| u.alive) {
-            if unit.tasking == Some(unit.pos) {
-                unit.tasking = None;
-                unit.latitude = Latitude::default();
+            if unit.march().is_some_and(|m| m.to == unit.pos) {
+                // One assignment, and the insistence goes with the march it
+                // qualified because it was never anywhere else.
+                unit.orders = Some(PersonalOrder::Holding);
             }
         }
         // A goal that is over is cleared here rather than by whoever notices,

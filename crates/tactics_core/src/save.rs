@@ -87,7 +87,17 @@ use serde::{Deserialize, Serialize};
 /// to struct ones, so an order caught in transit in an older save no longer
 /// reads — and an order that fails to read is a formation that silently
 /// forgets what it was told.
-pub const SAVE_VERSION: u32 = 3;
+///
+/// Version 4 folded a unit's `detached` / `tasking` / `latitude` into one
+/// [`crate::battle::PersonalOrder`], and `WaitingOrders`' destination and
+/// latitude into one [`crate::battle::March`]. An older save is **refused**
+/// rather than migrated, on the grounds that the failure it would otherwise
+/// produce is silent: the new field defaults to `None`, so a version-3 file
+/// would open with every crew quietly back under her formation's mission,
+/// and a hand-placed tank drifting off in the first planning phase is
+/// exactly the bug detachment exists to prevent. `SaveError::Version` says
+/// which version was found, which is the loud failure this is worth.
+pub const SAVE_VERSION: u32 = 4;
 
 /// Which mod, at which version, was loaded when a save was written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

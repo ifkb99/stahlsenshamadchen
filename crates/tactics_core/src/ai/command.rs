@@ -254,7 +254,7 @@ impl SideCommand {
         // Personal tasking excuses her from the formation's bounds too: the
         // commander put her somewhere, and standing overwatch for a bound
         // she is not part of would move her off it.
-        if state.unit(unit).is_some_and(|u| u.detached) {
+        if state.unit(unit).is_some_and(|u| u.detached()) {
             return false;
         }
         // An assault bounds too. Being ordered to press through fire is not
@@ -822,7 +822,7 @@ impl AiPlanner<BattleState, Order> for SideCommand {
         // parking lot stays parked. Any explicit order — including the
         // deliberate "hold and watch" — outranks the drill, because it
         // marks her planned before this is ever consulted.
-        let personal = state.unit(unit).is_some_and(|u| u.detached);
+        let personal = state.unit(unit).is_some_and(|u| u.detached());
         if !self.reviews_missions
             && (personal
                 || !formation
@@ -840,10 +840,14 @@ impl AiPlanner<BattleState, Order> for SideCommand {
             //
             // A crew with no destination at all has nothing to press on
             // *to*, so she drills whatever her latitude says — latitude
-            // qualifies a march, and there is no march to qualify.
+            // qualifies a march, and there is no march to qualify. That is
+            // now the type's doing rather than this line's: `march()` is the
+            // only route to a latitude, and it answers `None` for a crew
+            // holding the ground she was put on.
             let pressing_on = state
                 .unit(unit)
-                .is_some_and(|u| u.tasking.is_some() && !u.latitude.yields_to_drill());
+                .and_then(|u| u.march())
+                .is_some_and(|m| !m.latitude.yields_to_drill());
             if !pressing_on && threatened(registry, state, unit) {
                 self.last_drill = true;
                 self.pending = self.drill.plan_unit(registry, state, unit).into();
@@ -854,7 +858,8 @@ impl AiPlanner<BattleState, Order> for SideCommand {
             // A standing personal destination marches on: one round's worth
             // of ground toward it, the same leg the engine walked on the
             // round it was given.
-            if let Some((tasking, pos)) = state.unit(unit).and_then(|u| Some((u.tasking?, u.pos)))
+            if let Some((tasking, pos)) =
+                state.unit(unit).and_then(|u| Some((u.march()?.to, u.pos)))
                 && tasking != pos
             {
                 let step = crate::battle::reachable(registry, state, unit)

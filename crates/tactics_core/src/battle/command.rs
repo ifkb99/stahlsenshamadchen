@@ -175,6 +175,75 @@ impl Latitude {
     }
 }
 
+/// The marching half of a commander's personal order: the ground, and how
+/// hard she meant it.
+///
+/// The two travel in one struct because latitude is a property of *an order*
+/// rather than of a crew — the same cadet is pressed on one ridge and given
+/// her head on the next — and they used to be two fields on the unit that
+/// could disagree. There is now no way to read the insistence without also
+/// reading what is being insisted upon, and no way to set one without the
+/// other, which is the whole reason this type exists.
+///
+/// A destination, never a path: she re-paths from wherever she stands each
+/// round, marching across as many rounds as the ground demands. A movement
+/// order does not expire for being far away; it is executed until arrival.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct March {
+    /// Where her commander's order is taking her, until she gets there.
+    pub to: Hex,
+    /// How hard it was meant — whether the battle drill may set the march
+    /// aside to keep her alive. `#[serde(default)]` so an order recorded
+    /// before latitude existed reads as the delegated one every order in
+    /// this engine used to be.
+    #[serde(default)]
+    pub latitude: Latitude,
+}
+
+/// A crew under her commander's personal charge, and what she is doing about
+/// it.
+///
+/// **Why one noun and not three flags.** This replaced `detached`, `tasking`
+/// and `latitude` on [`crate::battle::Unit`], which were set and cleared as a
+/// triple at five sites in `orders.rs` and could each be forgotten
+/// individually. Every rule that used to be prose about keeping them in step
+/// is now a fact about this type: an absent order is a crew back under her
+/// formation's mission with no stale destination and no stale insistence
+/// behind her, an arrival is one assignment rather than three, and latitude
+/// cannot outlive the march it qualifies because it lives inside [`March`].
+///
+/// The field is an `Option<PersonalOrder>`, and `None` — deliberately not a
+/// variant here — is "she answers to her formation like everybody else",
+/// because that is the state every unit spawns in and the one a fresh
+/// formation order returns her to. Detached is not idle either way: the
+/// battle drill still applies and she still shoots on her arc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PersonalOrder {
+    /// Holding the ground her commander put her on. Either she has arrived,
+    /// or the order said nothing about where to go — a fire mission detaches
+    /// her from the standing mission exactly as a march does, because the
+    /// commander has taken personal charge of this vehicle either way.
+    Holding,
+    /// Still on her way, at the latitude she was sent under.
+    Marching(March),
+}
+
+impl PersonalOrder {
+    /// Where this order is taking her, if it is taking her anywhere.
+    ///
+    /// The only route from a unit to a [`Latitude`], which is deliberate: a
+    /// crew with no destination has nothing to press on *to*, and the drill
+    /// gate that reads insistence must not be able to read it off a crew who
+    /// is standing still.
+    pub fn march(self) -> Option<March> {
+        match self {
+            Self::Holding => None,
+            Self::Marching(march) => Some(march),
+        }
+    }
+}
+
 /// What one crew means to do next, as opposed to what her formation was
 /// told.
 ///
@@ -682,18 +751,17 @@ impl Formation {
 /// the target.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WaitingOrders {
-    /// Where she is to end up, re-pathed on delivery.
+    /// Where she is to end up and how hard it was meant, re-pathed on
+    /// delivery. One [`March`] rather than a destination beside a latitude,
+    /// for the reason that type exists: an order that waited at the radio
+    /// arrives meaning what it meant when it was sent, and a commander who
+    /// said "press on" and could not be heard has still said it.
     #[serde(default)]
-    pub destination: Option<Hex>,
+    pub march: Option<March>,
     /// What she is to shoot at. Dropped on delivery if the target has since
     /// died — an order to engage a wreck is not an order.
     #[serde(default)]
     pub fire: Option<FireIntent>,
-    /// The latitude the destination was given at, so an order that waited at
-    /// the radio arrives meaning what it meant when it was sent. A commander
-    /// who said "press on" and could not be heard has still said it.
-    #[serde(default)]
-    pub latitude: Latitude,
 }
 
 /// One entry in a side's command picture: an enemy as last *reported*, which
@@ -883,9 +951,8 @@ impl CommandState {
     pub(super) fn hold_orders(
         &mut self,
         unit: UnitId,
-        destination: Option<Hex>,
+        march: Option<March>,
         fire: Option<FireIntent>,
-        latitude: Latitude,
     ) {
         if !self.waiting.iter().any(|(id, _)| *id == unit) {
             self.waiting.push((unit, WaitingOrders::default()));
@@ -897,12 +964,12 @@ impl CommandState {
             .find(|(id, _)| *id == unit)
             .expect("present or just pushed")
             .1;
-        if destination.is_some() {
-            slot.destination = destination;
-            // Latitude belongs to the destination and travels with it: a
-            // later order that says nothing about where she is going has
-            // said nothing about how hard she is to press either.
-            slot.latitude = latitude;
+        if march.is_some() {
+            // Latitude travels inside the march, so a later order that says
+            // nothing about where she is going cannot say anything about how
+            // hard she is to press either — it is one assignment now rather
+            // than two that had to be remembered together.
+            slot.march = march;
         }
         if fire.is_some() {
             slot.fire = fire;

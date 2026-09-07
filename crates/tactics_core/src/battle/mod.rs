@@ -31,8 +31,8 @@ pub use combat::{
     round_worth, struck_facing, weapon_ready,
 };
 pub use command::{
-    CommandState, Contact, CutOff, Formation, FormationId, Goal, Latitude, Mission, MissionChange,
-    WaitingOrders, nearest_exit,
+    CommandState, Contact, CutOff, Formation, FormationId, Goal, Latitude, March, Mission,
+    MissionChange, PersonalOrder, WaitingOrders, nearest_exit,
 };
 pub use danger::{Bearing, Incoming, fire_on, incoming, incoming_from};
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
@@ -267,46 +267,38 @@ pub struct Unit {
     /// How much this crew has had to take. Walks them up the morale ladder;
     /// shed a little at the end of every round.
     pub pressure: u32,
-    /// Under the commander's personal tasking, and therefore excused from
-    /// her formation's standing mission until recalled.
+    /// Her commander's personal order, if she is under one: the whole of
+    /// what used to be `detached`, `tasking` and `latitude`.
     ///
-    /// Set when a direct radioed order reaches her, cleared by an explicit
-    /// recall (`ClearIntent`) or by a NEW mission being set for her
-    /// formation — a fresh formation order collects everyone. This is what
-    /// makes a hand-placed vehicle stay where her commander put her instead
-    /// of drifting back to the mission's axis at the next planning phase,
-    /// which the first playtest rightly read as the game overriding the
-    /// player. Detached is not idle: the battle drill still applies, and
-    /// she still shoots on her arc.
+    /// `Some(_)` is *detached* — excused from her formation's standing
+    /// mission until recalled, which is what makes a hand-placed vehicle
+    /// stay where her commander put her instead of drifting back to the
+    /// mission's axis at the next planning phase (the first playtest rightly
+    /// read that as the game overriding the player). Set when a direct
+    /// radioed order reaches her; cleared by an explicit recall
+    /// (`ClearIntent`) or by a NEW mission being set for her formation — a
+    /// fresh formation order collects everyone.
+    ///
+    /// [`PersonalOrder::Marching`] is *tasking*: a destination she re-paths
+    /// toward each round, carrying the latitude it was given at. Reaching it
+    /// turns her to [`PersonalOrder::Holding`] — she holds the ground she
+    /// was sent to, still detached — which is the one transition the three
+    /// old flags had to perform in concert and now cannot get wrong.
+    ///
+    /// `#[serde(default)]` so a battle spawned or read without one is a crew
+    /// answering to her formation, which is what every unit starts as.
     #[serde(default)]
-    pub detached: bool,
-    /// Where her commander's personal order is taking her, until she gets
-    /// there. A destination, never a path: she re-paths from wherever she
-    /// stands each round, marching across as many rounds as the ground
-    /// demands — a movement order does not expire for being far away, it is
-    /// executed until arrival. Cleared when she reaches it (she then holds
-    /// there, still detached), when she is recalled, or when her formation
-    /// is given fresh orders.
-    #[serde(default)]
-    pub tasking: Option<Hex>,
+    pub orders: Option<crate::battle::PersonalOrder>,
     /// What she has decided to do about it: her own goal, as opposed to her
-    /// formation's mission or her commander's [`Self::tasking`].
+    /// formation's mission or her commander's [`Self::orders`].
     ///
     /// Kept across rounds, which is the whole of its value — a planner that
     /// re-decides where it is going every round is a planner that never gets
     /// anywhere, and measuring that is what put this here. Cleared when the
-    /// goal finishes ([`Goal::finished`]) and wherever `tasking` clears,
-    /// because fresh orders end her own errand too.
+    /// goal finishes ([`Goal::finished`]) and wherever [`Self::orders`]
+    /// clears, because fresh orders end her own errand too.
     #[serde(default)]
     pub goal: Option<crate::battle::Goal>,
-    /// How hard her commander meant [`Self::tasking`]: whether the battle
-    /// drill may set the march aside to keep her alive.
-    ///
-    /// Travels with the destination and is cleared with it, because latitude
-    /// is a property of an order rather than of a crew — the same cadet is
-    /// pressed on one ridge and given her head on the next.
-    #[serde(default)]
-    pub latitude: crate::battle::Latitude,
     pub alive: bool,
     /// This vehicle drove off the map by an exit objective.
     ///
@@ -392,6 +384,27 @@ impl Unit {
     /// nowhere to go.
     pub fn planned_destination(&self) -> Hex {
         self.intent.path.last().copied().unwrap_or(self.pos)
+    }
+
+    /// Whether her commander has taken personal charge of this vehicle, and
+    /// so whether her formation's standing mission still reaches her.
+    ///
+    /// Named as a question rather than left as `orders.is_some()` because
+    /// "detached" is the word the doctrine, the evaluator and the bounding
+    /// drill all use for it, and a reader should not have to know that the
+    /// state is spelled as the presence of an order.
+    pub fn detached(&self) -> bool {
+        self.orders.is_some()
+    }
+
+    /// The march she is on, if her commander's order is taking her anywhere
+    /// — the ground and the latitude together, or nothing.
+    ///
+    /// This is the only way to a [`Latitude`] from a unit, and that is the
+    /// point: a crew holding the ground she was put on has no insistence to
+    /// read off her, because there is no march left for it to qualify.
+    pub fn march(&self) -> Option<crate::battle::March> {
+        self.orders.and_then(crate::battle::PersonalOrder::march)
     }
 }
 
@@ -1077,10 +1090,8 @@ impl BattleState {
             dismounting: false,
             last_hit_by: None,
             pressure: 0,
-            detached: false,
-            tasking: None,
+            orders: None,
             goal: None,
-            latitude: Latitude::default(),
             alive: true,
             exited: false,
         });
