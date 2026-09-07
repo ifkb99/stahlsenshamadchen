@@ -1291,6 +1291,65 @@ pointed at the wrong perf row: `reachable` and `roads` moved more than
 `utility order`, and neither is on the chunk's path — they measure work in a
 particular game state, and the state is what changed.
 
+**Suppression and cadence join the currency** (2026-09-07, Wave 1 of the
+one-currency work). Two facts the resolver always knew and the pricing never
+read: fire that cannot beat a plate expected zero, so a machine gun looking
+at a heavy tank was invisible to every chooser including the shooter's own
+(the designer's `threatened` note), and every term was per shot, so a machine
+gun at six a round and an 88 at three read alike. The shape: suppression is a
+property of the *round* (`AmmoDef::suppression`, what a shot that strikes
+costs the crew it struck, penetration or not), because the loader chooses
+rounds and a belt and a solid shot from one coaxial are different experiences
+for the crew being shot at; `MoraleRules::pressure_for` is the one price list,
+spent by `apply_pressure` charging events and by `combat::round_pressure`
+expecting them, and a test fires several hundred bursts to require the two to
+agree within a fifth (they agree within a couple of percent); `worth = damage
++ pressure × morale.point_worth` in exactly one place; `expected_shot` gives
+damage, pressure, worth and cadence off one profile so the second expectation
+cost nothing measurable; `WeaponDef::shots_per_round` multiplies ground
+prices and leaves a trigger pull per shot. The check that made the rest
+readable: with cadence pinned to 1.0 the determinism stream was byte-identical
+to the baseline once the new `ammo` event field was stripped, so the whole
+suppression refactor was proved behaviour-neutral for the price of one build
+and every line of the 1,193-line diff was cadence.
+
+The win column could not choose the content (`ball_mg.suppression` 0/1/2/3
+reads 24–12 three times then 21–15 against a ±6 band; `point_worth` 0/0.5/1/2
+reads 25–11 / 24–12 / 24–12 / 23–13) and everything else moved: at
+`ball_mg: 2` cadets out per battle went 12.4 → 9.9, bounces 31% → 26% of
+shots, artillery's share of the shooting 75% → 66%. `he_105` at 4 and 6
+shifted the win column by 4 and 6 and added a round, so 2. `point_worth`
+was chosen by a second instrument — how many engine calibrations each
+candidate broke (11 at 0.25 and 0.5, 14 at 1.0, the three extra being
+`deviation_cost`'s family) — which measures exactly the thing CLAUDE.md warns
+about and is a count of broken calibrations, not of whether the game is
+better. At 0.5 a full ladder of fear is worth about a third of a medium tank.
+`rifle_ball` ships at 0 on judgment: at 2 it tripled infantry shot counts
+while the sweep could not tell 0 from 2. `deviation_cost` went 3.0 → 12.0,
+measured twice on `pressed_stage` (the straddle holds 8.5–19 with suppression
+declared nowhere and 12–29 with the base mod's values; 12 is the bottom of
+the intersection); the withdrawing crew's `attack_scale` went 0.25 → 0.0625,
+a quarter of one shot rather than of a round, because a quarter of a round
+put the original 4.6 points back in front of a withdrawing crew and she left
+her lane. Thirteen stages were re-staged, none weakened; one latent flaw was
+found (a "no chain of command" stage zeroed `leader_lost` and not its mirror
+`recovery_near_leader`, green only while nobody crossed a rung in the
+window); three stages that used to bruise now kill; and `mustered` scaled a
+remnant platoon's damage by the riflemen standing but not her suppression, so
+two cadets could pin a tank as hard as a platoon — both scale now.
+
+Measured on the shipped maps at three seeds the outcome, length and skill
+rows all moved inside their spreads; hit% went 51–56 → 65–70 and bounces
+33% → 24%, since crews driven up the ladder miss more and the loader reaches
+for HE at the end of a reach where AP will not get through. `playthrough 7`
+fires six machine-gun bursts at armour where every seed used to fire none.
+Round resolution 1.49 → 1.84 ms, the row that moves with how the AI plays.
+What it left: the objective and the order are still quoted per shot (the
+ridge arena shows what that costs, above), and the ladder charges `hit +
+penetrated` for any penetration regardless of what the round spent, so once
+fear is priced no landing shot is worth nothing and a remnant platoon with no
+riflemen still opens up — a question about the ladder for the designer.
+
 ## Performance
 
 **`fog::recompute` no longer rebuilds every side's vision after every shot** —

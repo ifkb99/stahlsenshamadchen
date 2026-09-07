@@ -124,14 +124,14 @@ Branch `feat/one-system`, off `feat/planner-block`.
 Found while building it, none of it blocking, all of it the next thing of its
 kind:
 
-- [ ] **Cadence is not in the currency.** Every term — attack, threat, the
+- [x] **Cadence is not in the currency.** Every term — attack, threat, the
       overlay's total — is per *shot*. A machine gun at a shot every 10 s
       fires six times in a round and an 88 twice; `WeaponDef::reload` is a
       resolver fact the pricing never reads. Per-round expectation is one
       multiplication in `best_weapon_from`, but it changes every weight quoted
       in the currency (see `deviation_cost` above) and wants its own
       measurement.
-- [ ] **Pressure is not in the currency.** Fire that cannot beat her plate
+- [x] **Pressure is not in the currency.** Fire that cannot beat her plate
       expects zero and is invisible to every planner, which is the designer's
       `threatened` note in DIRECTION.md. The resolver already turns a rattling
       bounce into `rules.bounced`; an expected-pressure twin of `incoming`
@@ -143,7 +143,7 @@ kind:
 - [ ] **`fire_on` names one weapon per enemy**, so a coaxial that also bears
       is under-reported in the panel. A second bearing per enemy is a shape
       change to `danger.rs`.
-- [ ] **The overlay's bands are linear in a quantity that is not.** Yellow is
+- [x] **The overlay's bands are linear in a quantity that is not.** (A gradient since 2026-09-07.) Yellow is
       nearly unreachable in the base mod. Log scale, or a full-complement
       denominator.
 - [x] **The arena is the instrument limit again.** +3 points on the skill
@@ -788,15 +788,10 @@ machine is comparable.
 
 ## Scratch
 
-Temporary probes, to be deleted with this file:
-
-- `crates/tactics_core/examples/_arena_dump.rs` — prints the arena, its terrain
-  counts, deployment ground, and what a tracked vehicle can reach.
-- `crates/tactics_core/examples/_mirror_probe.rs` — plays the arena at
-  difficulty 5 both sides and reports the first round where a decision or a
-  position stops being the mirror of its twin.
-- `crates/tactics_core/examples/_los_probe.rs` — the sight-symmetry census
-  above.
+The three temporary probes are gone (2026-09-07): `_arena_dump` and
+`_los_probe` deleted, their census pinned by
+`a_reflection_leaves_a_sight_line_alone` over every arena; `_mirror_probe`
+promoted to `examples/mirror.rs` with a verdict.
 
 ## Wave 1 — seams: what landed
 
@@ -1485,11 +1480,11 @@ speaks when somebody closes.
       now genuinely wants to fire is under-reported in the panel by the gun
       that is not its best. Phase 2 already listed this; suppression makes it
       bite, because the second weapon is exactly the one the new rule is about.
-- [ ] **The overlay's bands are worse than they were**, for the reason Phase 2
+- [x] **The overlay's bands are worse than they were**, for the reason Phase 2
       predicted: they are linear in a quantity that is not, and worth per round
       is three to six times the per-shot figure they were sized against.
-      Yellow is now unreachable rather than merely rare. The lead's gradient
-      replaces them.
+      Yellow is now unreachable rather than merely rare. Replaced by a
+      gradient the same day (`panel::danger_tint`).
 - [ ] **`rifle_ball` is unswept content.** See above.
 - [ ] **`ai::threats` / `threatened` is a boolean over a currency that now has
       two halves.** It answers "is anybody shooting at me" and picks up the

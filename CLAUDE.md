@@ -299,34 +299,81 @@ script harness and the replay are untouched.
 ### One currency: the evaluator reads the resolver
 
 `score_tile` (`ai/eval.rs`) is the single place a rule becomes behaviour, and
-its terms are denominated in substance points the resolver computes.
+its terms are denominated in **worth per round**: substance points the
+resolver computes, for a round of fire, with what the fire does to her nerve
+converted at the mod's exchange rate.
 
-- **The threat term is `battle::danger::incoming(registry, state, unit,
-  tile)`**: the sum over every *found* enemy of what the resolver says she
-  would take standing on that tile. There is no distance falloff and no range
-  gate — both stood in for positional terms the arithmetic could not see, and
+- **`combat::expected_shot` is the price of one shot and everything reads
+  it**: damage, pressure, worth and cadence off one hit chance and one
+  `shot_profile`. `expected_damage` and `expected_pressure` are its halves.
+  `worth = damage + pressure × morale.point_worth`, applied in exactly one
+  place (`worth_of`, mutation-checked — a draft applied it twice and a
+  mutation to one site passed the suite). `round_worth`, the loader's price,
+  carries the fear term too, which is what lets a crew fire a belt at plate
+  she cannot beat. `best_weapon_from`'s third gate reads worth, not damage.
+- **Suppression is a property of the round** (`AmmoDef::suppression`,
+  `ammo.<id>.suppression`): what a shot that *strikes* costs the crew it
+  struck, penetration or not, on top of the ladder's outcome prices. On the
+  round rather than the ladder because the loader chooses rounds. Zero,
+  the default, is the game before. **`MoraleRules::pressure_for` is the one
+  price list**, spent by `apply_pressure` charging a tick's events and by
+  `combat::round_pressure` expecting them;
+  `fear_is_priced_by_the_same_arithmetic_that_charges_it` fires several
+  hundred bursts and requires the two to agree within a fifth (they agree
+  within a couple of percent). `ShotHit` / `ShotBounced` carry the round
+  (`ammo`) so the event-reading pass can price what arrived.
+- **`morale.point_worth` is the exchange rate** (0.5 shipped: a full ladder
+  of fear is worth about a third of a medium tank) and it belongs in
+  `morale`, not `planner`, because it reaches the loader's AP-or-HE choice
+  and therefore a human's crew. At 0.0 fear is charged and invisible to
+  every chooser, the game before.
+- **Cadence is `WeaponDef::shots_per_round(&scale)`**, ticks per round over
+  `reload(scale)`, fractional for a piece slower than a round. Ground is
+  priced per round and a trigger pull per shot: `best_weapon_from`,
+  `ai::best_weapon_against` and `danger::incoming` are per round;
+  `best_opportunity_shot`, `best_round_against` and the `kill` flag (damage
+  only — times cadence an autocannon believes it finishes everything) are
+  per shot. `fire_on`'s bearings are per shot with `shots` beside them so a
+  panel can name a gun and its rate. With `shots_per_round` pinned to 1.0
+  the determinism stream was byte-identical to the baseline, which is how
+  the suppression refactor was proved behaviour-neutral before the cadence
+  diff was read.
+- **The threat term is `incoming(registry, state, unit, tile).worth`**: the
+  sum over every *found* enemy of a round of what the resolver says she
+  would take standing there. There is no distance falloff and no range gate
+  — both stood in for positional terms the arithmetic could not see, and
   either one reinstated charges the same fact twice. `caution * exposure`
-  scales it afterwards; that is what she makes of the danger, and it is hers.
-  `incoming` and `fire_on` walk one private `guns_bearing_on`, so there is one
-  answer to "who can shoot her there".
+  scales it afterwards; that is what she makes of the danger, and it is
+  hers. `incoming` and `fire_on` walk one private `guns_bearing_on`, so
+  there is one answer to "who can shoot her there".
 - **The terrain prior speaks only where the arithmetic is silent.** Cover and
   elevation taste (`planner.cover_prior`, `elevation_prior` × the doctrine's
   `cover_value`, `elevation_value`) is paid on a tile no found gun can reach
   and withheld inside a found gun's envelope, where the resolver already
-  prices the same timber at about four times the flat bonus. The prior is the
-  **only** reader of those two doctrine fields; zeroing it retires them.
+  prices the same timber. The prior is the **only** reader of those two
+  doctrine fields; zeroing it retires them.
   `the_ground_prior_stands_down_where_the_arithmetic_speaks` pins the gate.
 - **Changing the currency reaches every weight quoted in it.**
-  `planner.deviation_cost` had to move 2.0 → 3.0 when threat stopped being
-  zero over most of the map, because its job is to sit between the shipped
-  doctrines' `initiative` values and at 2.0 all three deviated.
-  `the_shipped_doctrines_straddle_the_price_of_deviating` is the check; expect
-  it to fail again the next time a term grows.
-- **What the currency does not yet carry**: cadence (every term is per shot,
-  so a gun firing six times a round and one firing twice read the same), and
-  pressure (fire that cannot hurt her plate is invisible to every planner —
-  the designer's `threatened` note in DIRECTION.md). Both are in
-  ARCH-TODO.md.
+  `planner.deviation_cost` has been 2.0 → 3.0 → 12.0, each move the same
+  event: its job is to sit between the shipped doctrines' `initiative`
+  values, and each time the threat term grew all three doctrines deviated.
+  It is measured on `pressed_stage` twice, with suppression declared nowhere
+  and with the base mod's values, and sits at the bottom of the intersection
+  so it means the same thing in a mod that declines the rule.
+  `the_shipped_doctrines_straddle_the_price_of_deviating` is the check;
+  expect it to fail the next time a term grows. The withdrawing crew's
+  `attack_scale` in `eval.rs` is 0.0625, a quarter of one *shot* — a quarter
+  of a round put 4.6 points back in front of a withdrawing crew and she left
+  her lane. Thirteen test stages were re-staged for cadence with their
+  margins written in their comments; none was weakened.
+- **What the currency does not yet carry**: the objective and the order
+  (`objective_value` is `value * decay` on a scale of its own,
+  `mission_weight` is quoted in it, and on the ridge arena the best
+  commander declines the crest — Known issues). And a question about the
+  ladder: it charges `hit + penetrated` for any penetration regardless of
+  what the round spent, so once fear is priced *no landing shot is worth
+  nothing*, and a remnant platoon with no riflemen still opens up. That is
+  the designer's to answer (ARCH-TODO.md, Wave 1 — currency).
 
 ### Goals: the seam the AI is meant to be replaced at
 
@@ -663,23 +710,36 @@ with `examples/minimal_window.rs`). Rules:
 The player's half of the currency: `panel::format_danger` (pure over a
 `BattleState`, reading `fire_on` verbatim) leads the tile panel whenever one
 of her own crews is selected and a hex is hovered, and `D` tints the selected
-crew's reachable tiles by the total expected fire.
+crew's reachable tiles by a round of fire in worth.
 
 - **It is `fire_on` and nothing else.** No arithmetic of its own beyond the
-  sum and its share of `substance().0`; the AI and the player price the same
-  ground or the player is pricing a different game from the one her opponent
-  plays.
+  sums and their share of `substance().0`; the AI and the player price the
+  same ground or the player is pricing a different game from the one her
+  opponent plays. Per gun the panel prints one shot and the gun's cadence
+  ("3 shot(s) a round"); the totals are per round — damage ("expected this
+  round"), pressure when there is any, and worth ("all told") with its share
+  of what she has left. The share is of *worth*, the same figure the tint
+  reads, or the panel would give two answers.
 - **Never for an enemy crew**, and not on the shot preview or the ghost
   report — both already answer about a hex somebody else stands on.
 - **Computed under the `range_dirty` gate and cached in `Battle::danger`**,
   never per frame: about 0.5 ms over a full reach.
-- **The overlay replaces the move-range blue rather than stacking on it.**
-  Bands are shares of what she has left; `panel::DANGER_LEGEND` holds the
-  words and `battle::DANGER_COLORS` the colours, sized off each other.
+- **The overlay replaces the move-range blue rather than stacking on it,
+  and it is a gradient, not bands** (the designer's call: distance is most
+  of what decides expected fire, and three cuts threw that away — one 88
+  shot is a third of a medium tank, so every tile it saw was the top band
+  from the first contact). `panel::danger_tint(share)` is the one judgment:
+  the share of what she has left that a round there would cost, linear,
+  clamped, so full red means one thing everywhere — stand here and she is
+  gone this round. `battle::danger_color` mixes `DANGER_LOW` into
+  `DANGER_HIGH` along it and paints `DANGER_NONE` (the move-range blue) at
+  exactly nothing; `panel::DANGER_LEGEND` is three sentences, the blue and
+  the two ends.
 - **`ScriptFacts::danger`** counts tinted tiles, `None` when the overlay is
   off, so `danger >= 1` is false until it is up and has found something.
-- **The total is per shot** ("expected, one shot each"), as `Bearing::expected`
-  is; a 75 mm at a shot every 15 s fires four times a round.
+- **`Bearing` is per shot and the totals are per round.** `damage_per_round`
+  / `pressure_per_round` / `worth_per_round` on the bearing do the
+  multiplication; a 75 mm at a shot every 15 s fires four times a round.
 
 Rust edition 2024, resolver 3. `[profile.dev]` builds the workspace at
 `opt-level = 1` and dependencies at 3. Anything that measures performance must
@@ -831,14 +891,14 @@ instrument's numbers.
 
 `cargo run --release -p tactics_core --example perf` reproduces these; `--mcts`
 adds the slow ones. Measured on the 1261-tile `river_crossing` with 8 units,
-four seeds, after Phase 2 (2026-09-06):
+four seeds, after Wave 1 of the one-currency work (2026-09-07):
 
 | | |
 | --- | --- |
-| round resolution | 1.59 ms (1.08–2.10 across seeds) |
-| `reachable()` per call | 17.8 µs |
-| `roads()` per call | 136.0 µs |
-| `unit_vision` per unit, cold | 88.6 µs |
+| round resolution | 1.84 ms (was 1.59 after Phase 2, 1.49 the same day on the same machine) |
+| `reachable()` per call | 18.6 µs |
+| `roads()` per call | 142.7 µs |
+| `unit_vision` per unit, cold | 94.4 µs |
 | utility order | 0.09 ms |
 | mcts order, difficulty 3 / 4 | 1.84 s / 4.24 s |
 
@@ -855,7 +915,10 @@ says whether the machine is comparable.
 - **`score_tile` is the hottest function the AI has**, paid per candidate
   tile, and its threat loop now costs what its attack loop does (a
   `best_weapon_from` per found enemy per tile). Utility order paid 12% for
-  that. `fog::recompute` after every shot is nearly free because a side whose
+  that and nothing for the pressure expectation, which comes off the same
+  profile. Round resolution is up a fifth since cadence and suppression:
+  crews stand and trade fire where they used to manoeuvre, and the shot
+  census agrees (ShotHit 26 → 36 per snapshot, ShotMissed 59 → 46). `fog::recompute` after every shot is nearly free because a side whose
   `(unit, pos, range)` list is unchanged skips the union — keep the reference
   `los_clear` and `SightGrid::clear` sharing `sight_line_clear`, and keep
   `cached_vision_is_the_same_answer_as_computing_it_fresh` passing.
