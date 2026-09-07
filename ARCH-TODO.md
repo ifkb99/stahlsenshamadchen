@@ -175,10 +175,10 @@ None of these move the baseline. All of them make the next change cheaper.
       or a panic. This tree already converted `Mission::slot`,
       `Event::heard_by` and `ScriptFacts` from "remember to" into "will not
       compile"; this is the largest one left.
-- [ ] **3b. `tasking` / `latitude` / `detached` become one noun.** Set and
+- [x] **3b. `tasking` / `latitude` / `detached` become one noun.** Set and
       cleared as a triple at five sites in `orders.rs`. A `PersonalOrder`
       makes the clear-together rule structural instead of prose.
-- [ ] **3c. `Unit`'s outcome stops being five booleans.** `alive`, `exited`,
+- [x] **3c. `Unit`'s outcome stops being five booleans.** `alive`, `exited`,
       `abandoned`, `brewed`, `wrecked`, plus a prose warning never to classify
       by `!alive`. That is an enum in a costume, and the next fate — captured,
       immobilised and left behind — would be a sixth bool and a sixth warning.

@@ -1431,6 +1431,47 @@ does not read `Latitude`, so an idle crew who has just arrived on her ordered
 hex under fire backs off it; and `threatened` is still a predicate over a
 currency with a magnitude.
 
+**Two enums in a costume** (2026-09-07, Phase 3b and 3c, Wave 3 of the
+one-currency work). No rule changed — the determinism snapshot passed
+unregenerated after each commit and the event stream is byte-identical.
+`tasking` / `latitude` / `detached`, set and cleared as a triple at ten
+sites with a page of prose saying how, are `Unit::orders: Option<PersonalOrder>`
+— `Holding` or `Marching(March { to, latitude })`, `None` for a crew under
+her formation's mission, so *detached* is `is_some()` and the latitude has no
+existence apart from the march it qualifies. `get_or_insert(Holding)` at the
+two detach sites is what keeps "an order about her gun says nothing about
+her march" true, and now structurally. Rejected: a `Free` variant in place
+of the `Option` (a match over two arms where every idiom in the file spells
+the default outside the type), and keeping `detached` as its own bool
+beside the order, which is the field that could disagree.
+
+`alive` / `exited` / `abandoned` / `brewed` / `wrecked` are `Fate`:
+`Fighting { doom: Option<Destruction> }`, `Destroyed(Destruction)`,
+`Exited`, with `Destruction` one of `Crushed`, `Abandoned`, `BrewedUp`,
+`CrewSpent`. `doom` sits inside `Fighting` because damage lands during a
+tick and death is reaped at the end of it, so a doomed vehicle really is
+still on the board, and a fourth variant would have made `alive` a
+two-arm match a reader next year gets wrong. Three verbs (`doomed_by`,
+`destroy`, `withdraw`) replace five assignments; `mcts::determinize`, which
+used to have to set `alive = false` *and* `exited = true` in the right
+combination or open its search on a world where the enemy's commanding
+officer was already dead, is one `withdraw()`. The one judgment was
+measured first: the old flags were independent and all stayed set, each
+reader with its own precedence, and a probe over 900 battles found two on
+one hull about 250 times in 9,131 losses, in all three pairings.
+`Destruction::supersedes` is one rule at the write — burning beats the crew
+leaving beats the hull being crushed — and the middle rung is the one that
+matters, because `behind_armor_effects` refuses to roll for a crew already
+gone, so an abandonment overwritten by a later blast would let the same
+cadets bail out twice. The only visible consequence in the tree is one loss
+in 355 relabelled in `balance`'s cause histogram. The other severity order
+would have kept that histogram byte-identical and lost the abandonment
+under a later crushing, a simulation difference traded for a diagnostic
+one. `SAVE_VERSION` is 5 and older saves are refused rather than migrated,
+because both new fields default to the benign value and a silent migration
+would have put every crew back under her formation and every wreck back on
+the board.
+
 ## Performance
 
 **`fog::recompute` no longer rebuilds every side's vision after every shot** —

@@ -141,9 +141,11 @@ DONE.md under the same heading.
   a result must handle `(Some(winner), Stalemate)`.
 - **An exit is not ground, and leaving is not dying.** A vehicle that takes an
   exit it is entitled to (`side` restricts it — an exit anyone may take is a
-  lane both armies take on round one) has `alive == false` and
-  `exited == true`. **Never classify a unit at the end of a battle by
-  `!alive`**; use `surviving_units()` / `lost_units()`.
+  lane both armies take on round one) has `Fate::Exited`, which is not
+  `alive()` and not `lost()`. Classify at the end of a battle with
+  `surviving_units()` / `lost_units()`, which read `Fate::lost`; since
+  Phase 3c `!alive()` as a loss test is not expressible without going
+  through the accessor that says so.
 - **`check_victory` reads the score before the board**, or a withdrawing
   force that reaches its target on the tick its last vehicle drives off hands
   the battle to whoever is still standing.
@@ -660,10 +662,15 @@ on a mission key.
   counterweight: an idle crew who has just arrived on her ordered hex under
   fire will back off it. Whether that is her nerve (leave it) or her
   judgment (gate it) is an open design question (ARCH-TODO.md, Wave 2).
-- **It belongs to the destination, not the cadet**: set where `tasking` is
-  set, cleared everywhere `tasking` clears, carried in `WaitingOrders`. A
-  radioed order with `to: None` leaves it alone
-  (`an_order_about_her_gun_says_nothing_about_her_march`).
+- **It lives inside the march.** `Unit::orders` is `Option<PersonalOrder>`
+  (`Holding` or `Marching(March { to, latitude })`); `None` is a crew under
+  her formation's mission, so *detached* is `is_some()`. `PersonalOrder::
+  march()` is the only route from a unit to a `Latitude`, so a crew standing
+  still cannot be read as insisting on anything, and an order about her gun
+  cannot touch a latitude it does not carry
+  (`an_order_about_her_gun_says_nothing_about_her_march` still stands as the
+  test; the prose rule it defended is now the type).
+  `a_personal_order_is_taken_back_whole_or_not_at_all` pins both exits.
 - **`Delegated` is the default everywhere and the AI never issues
   `Binding`**, spelled out at all four `Order::SetMission` sites in
   `ai/command.rs`. If `event_stream.txt` moves when you touch latitude,
@@ -732,7 +739,12 @@ The one door between them is `SavedBattle::rehydrate(&registry)`, which
 destructures every field, so a cache added tomorrow stops the build until
 somebody says whether it travels in the file or is rebuilt on load. `SaveGame`
 carries the same parameter; there is no route from a file to a playable battle
-that does not pass a registry. `SAVE_VERSION` is 3.
+that does not pass a registry. `SAVE_VERSION` is 5, and **an older save is
+refused, not migrated** (`SaveError::Version`): the two fields Phase 3
+introduced default to the benign value, so a version-3 file would open with
+every crew quietly back under her formation's mission and a version-4 file
+with every wreck fighting again. Loud is right while there is no released
+build to migrate from.
 
 ### Seeing the game without playing it
 
@@ -876,11 +888,19 @@ through `weapon.reload(&registry.scale)`, never the field.
   `a_march_is_the_same_march_from_either_end`,
   `a_reflection_leaves_a_bearing_alone_and_turns_a_coordinate_around` and
   `a_reflection_leaves_a_sight_line_alone` guard it.
-- **`alive` and "standing on a hex" are two different questions.** `alive`
-  goes false on destruction *and* on exit; a passenger stays `alive` on no
-  hex anybody may interact with. Classify with `surviving_units()` /
-  `lost_units()`, ask occupancy through `unit_at` / `occupants`, and never
-  reimplement either by scanning `units`.
+- **`alive()` and "standing on a hex" are two different questions.** A
+  unit's outcome is `Fate`: `Fighting { doom }` (on the field, targetable,
+  blocking, shooting — `doom` is a destruction taken this tick and not yet
+  reaped, kept *inside* the variant so "is she on the field" stays one
+  arm), `Destroyed(Destruction)` and `Exited`. Only `Fighting` is `alive()`;
+  only `Destroyed` is `lost()`; a passenger is `Fighting` on no hex anybody
+  may interact with, and that half is about `aboard`, not fate. When two
+  destructions land on one hull in a tick — it happens about once in forty
+  losses — `Destruction::supersedes` keeps the more telling one: burning
+  beats the crew leaving beats the hull being crushed, and the middle rung
+  is load-bearing because `behind_armor_effects` will not roll a bail-out
+  for a crew already gone. Ask occupancy through `unit_at` / `occupants`,
+  and never reimplement either by scanning `units`.
 - **Difficulty is a mod.** Every harsh system is an additive rule whose
   absence *is* the gentle game; if switching one off needs an `if` in Rust,
   it was built wrong. The determinism snapshot passing *unregenerated* is the
@@ -937,11 +957,15 @@ instrument's numbers.
   check worth having.
 - **Elevation grids fail soft in a confusing way.** A missing or short
   `elevation` row silently defaults to 0 while a mismatched one only warns.
-- **`Unit`'s outcome is five booleans** (`alive`, `exited`, `abandoned`,
-  `brewed`, `wrecked`) with a prose warning, and "where is she going" is five
-  fields (`intent.path`, `tasking`, `goal`, `boarding`, the formation
-  mission) plus three qualifiers. Both are enums in a costume; ARCH-TODO 3b
-  and 3c.
+- **"Where is she going" is still four fields** (`intent.path`, `orders`,
+  `goal`, `boarding`) plus the formation mission. Phase 3b took one off the
+  list; the four left are genuinely different time scales (this tick, this
+  errand, her own plan, a rendezvous) and folding them wants a design
+  decision rather than a refactor.
+- **The bail-out guard reads two of the four destructions**, so a hull
+  crushed by blast this tick can still roll for a bail-out. The rule as it
+  stood, kept bit-for-bit through Phase 3c, and it reads oddly beside
+  `Fate`; a designer's ruling.
 
 ### Performance
 
