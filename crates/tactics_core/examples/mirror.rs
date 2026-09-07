@@ -239,6 +239,7 @@ fn stage(registry: &DataRegistry, arena: &Arena, seed: u64) -> BattleState {
         Arc::new(roster),
         seed,
     )
+    .expect("an arena's own placements are on its own map")
 }
 
 /// Play one battle and report the first round in which any pair breaks.
