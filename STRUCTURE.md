@@ -400,8 +400,9 @@ Three things follow, and they change the plan:
 3. **Full interning has a real blocker.** Ids are serialised in saves and map
    files, and serde cannot resolve a string to an interned id without the
    registry. Every way around that is a cost the original item did not price: a
-   `#[serde(skip)]` side table is a third rehydrate trap — the very thing this
-   item complains about — and a global interner is process-wide mutable state
+   `#[serde(skip)]` side table is a third cache `rehydrate` has to place (the
+   compiler now insists, but it is still a cost) and a global interner is
+   process-wide mutable state
    next to a determinism guarantee.
 
 **Recommended next step, when someone takes it:** make `substance` and its two
@@ -461,10 +462,11 @@ The registry exposes twelve `&str`-keyed lookups (`terrain`, `vehicle`,
 hashing out of an inner loop — the notes on them say so: `los_clear` was doing
 a `String`-keyed lookup per ray step on the order of a million times a round,
 and `edge_cost` about 7,500 per `roads` call. Each cache costs a
-`#[serde(skip)]`, a rehydrate obligation, and a failure mode where forgetting
-to rebuild gives a silently wrong answer rather than a loud one (an empty
-sight grid answers every question wrongly; an empty move grid says nobody can
-drive).
+`#[serde(skip)]` and a rehydrate obligation; the failure mode where forgetting
+to rebuild gave a silently wrong answer (an empty sight grid answers every
+question wrongly; an empty move grid says nobody can drive) is closed since
+ARCH-TODO 3a, because `SavedBattle::rehydrate` destructures every field and a
+new cache does not compile until it is placed.
 
 That is two bespoke workarounds for one root cause, and the third hot path
 will want a third. Interning ids at load time — `TerrainId(u16)` and friends,

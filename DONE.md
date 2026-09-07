@@ -1254,7 +1254,7 @@ round.
 **The caches a save must rebuild.** `SightGrid`, `MoveGrid` and the per-unit
 vision inside `FogMap` are `#[serde(skip)]` because they are pure functions of
 the map, and either grid alone would be a thousand entries per save. The price
-is that `save::rehydrate` *must* rebuild all three: an empty sight grid
+is that loading *must* rebuild all three: an empty sight grid
 answers every line-of-sight question wrongly rather than loudly, an empty move
 grid says every step is impossible so nobody can drive, and an empty
 `visible_key` panics because recompute indexes it by side. `tests/save.rs`
@@ -1262,6 +1262,31 @@ pins the property that matters — not that the fields round-trip but that the
 *future* does — by forking a battle in progress, sending one copy through a
 save file, and requiring both to produce the same events for the rest of the
 fight. That is why the rng's stream position is saved rather than its seed.
+
+**Rebuilding them became a type (2026-09-07, ARCH-TODO 3a).** `save::rehydrate`
+was four manual duties in prose, and the fourth cache added would have been
+the one somebody forgot. Now `BattleState` is `Battle<Built>` and serde can
+only produce `Battle<Unbuilt>`: a `#[serde(skip)]` field takes
+`Default::default()`, `Unbuilt` has one and `Built` (a private unit field)
+does not, so `serde_json::from_str::<BattleState>` fails to compile. The one
+bridge, `SavedBattle::rehydrate(&registry)`, destructures the struct field by
+field. Two shapes were rejected: a `Caches` struct owning the skipped fields
+renames `state.sight` and `state.moves` at every call site in the engine and
+still cannot own `FogMap`'s two skipped fields; a hand-written saved-form
+mirror is a second copy of sixteen field names, the drift the item exists to
+remove. The marker costs one defaulted generic and every signature still
+reads `BattleState`. The snapshot passed unregenerated and all eleven tours
+passed, which is the proof no rule moved.
+
+**A campaign battle validates (3d, same day).** `from_placements` had never
+called `validate_into`, so a chassis a mod stopped shipping reached
+`spawn_unit`'s `expect` and took the run down. It now returns the same
+`BattleSetupError` as `from_map`, collecting every problem rather than the
+first, and `spawn_unit` is fallible. The game crate asks before it commits:
+`launch_battle` preflights through `field_battle_problem` and declines the
+clash with one log line, leaving the armies where they were, which is the
+difference between a bad mod and a lost run. `choose_battle_map` returns an
+`Option` instead of expecting that some mod ships a battle map.
 
 ## Tooling
 

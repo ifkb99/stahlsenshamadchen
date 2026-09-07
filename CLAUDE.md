@@ -346,7 +346,7 @@ its terms are denominated in substance points the resolver computes.
 all off one Dijkstra (`battle::roads`, `HORIZON` = `planner.horizon_rounds`).
 
 - **Every step is priced through `BattleState::moves`, a `MoveGrid`**,
-  `SightGrid`'s twin, rebuilt by `save::rehydrate`. `movement::edge_cost` is
+  `SightGrid`'s twin, rebuilt by `SavedBattle::rehydrate`. `movement::edge_cost` is
   the reference and shares `step_cost` with it;
   `the_move_grid_answers_exactly_what_the_reference_does` pins them.
 - **`roads` has no occupancy at all.** A march takes rounds and the field
@@ -597,9 +597,16 @@ function over plain data.
 `tactics_core::save`; F5/F9 on the campaign map. The property that matters is
 that **the future round-trips**, which `tests/save.rs` pins by forking a battle
 through a save file. `SightGrid`, `MoveGrid` and the per-unit vision in
-`FogMap` are `#[serde(skip)]` caches and **`save::rehydrate` must rebuild all
-three** — an empty sight grid answers wrongly rather than loudly, an empty move
-grid says nobody can drive, an empty `visible_key` panics. `SAVE_VERSION` is 3.
+`FogMap` are `#[serde(skip)]` caches — an empty sight grid answers wrongly
+rather than loudly, an empty move grid says nobody can drive, an empty
+`visible_key` panics — and **rebuilding them is a type, not a duty**.
+`BattleState` is `Battle<Built>`; what serde produces is `Battle<Unbuilt>`
+(`SavedBattle`), because `Built` has no `Default` for a skipped field to take.
+The one door between them is `SavedBattle::rehydrate(&registry)`, which
+destructures every field, so a cache added tomorrow stops the build until
+somebody says whether it travels in the file or is rebuilt on load. `SaveGame`
+carries the same parameter; there is no route from a file to a playable battle
+that does not pass a registry. `SAVE_VERSION` is 3.
 
 ### Seeing the game without playing it
 
@@ -773,11 +780,15 @@ instrument's numbers.
 
 ### Robustness
 
-- **`spawn_unit` panics on unknown content.** `from_placements`, the path the
-  overworld uses, never calls `validate_into`, so a mod that removes a
-  vehicle, or a save referencing one, panics instead of erroring. Same shape
-  in `game/src/overworld.rs`, where `choose_battle_map` expects at least one
-  battle map. Tracked as ARCH-TODO 3d.
+- **Both setup paths refuse bad content rather than panicking.**
+  `from_placements` returns the same `BattleSetupError` as `from_map`,
+  collecting every problem (a hex off the map, an unknown vehicle or side, a
+  crew id the roster lacks), and `spawn_unit` is fallible. The campaign asks
+  first: `launch_battle` runs `battle::field_battle_problem` and declines the
+  clash with a log line *before* `commit_to_battle`; `choose_battle_map`
+  returns `None` when no mod ships a battle map.
+  `every_clash_the_campaign_map_can_produce_can_be_staged` is what makes the
+  check worth having.
 - **Elevation grids fail soft in a confusing way.** A missing or short
   `elevation` row silently defaults to 0 while a mismatched one only warns.
 - **`Unit`'s outcome is five booleans** (`alive`, `exited`, `abandoned`,
