@@ -1888,3 +1888,186 @@ the interesting number; where they go is.
       bands are still linear in a quantity that is not** — both carried over
       from Wave 1 and both belong to the presentation layer the lead is
       rewriting.
+
+## Wave 3 — enums: what landed
+
+Phase 3 items **3b** and **3c**, on `wave3/enums` off `7553de7`. Two commits,
+readable alone. **No rule changed:** `tests/snapshots/event_stream.txt` passes
+unregenerated after each, which is the evidence. All eleven tours pass
+headless; clippy `-D warnings`, `cargo fmt --check` and `validate-mods` clean.
+Perf, which an enum in place of flags should not move, and does not: round
+resolution 2.04 → 1.99 ms, `unit_vision` 88.7 → 93.5 µs, `roads()` 105.8 →
+111.3 µs, `reachable()` 15.2 → 15.9 µs — all inside the run-to-run spread on
+this machine (one round-resolution figure's own seed spread is 1.31–2.35 ms),
+and the event stream is byte-identical, so the same decisions are being made
+over the same work.
+
+### 3b — a commander's personal order
+
+```rust
+pub struct March { pub to: Hex, pub latitude: Latitude }
+pub enum PersonalOrder { Holding, Marching(March) }
+// on Unit:
+pub orders: Option<PersonalOrder>,
+```
+
+`None` is a crew under her formation's mission — the state every unit spawns
+in and the one a fresh formation order returns her to — so *detached* is
+`orders.is_some()`. `Unit::detached()` and `Unit::march()` are the two
+questions the code was already asking; `PersonalOrder::march()` is the **only**
+route from a unit to a `Latitude`, so the drill gate cannot read insistence
+off a crew standing still. `WaitingOrders` carries the same `March`, which
+retires its `destination` / `latitude` pair.
+
+**Every site the triple used to be set or cleared at**, all in
+`battle/orders.rs` unless noted:
+
+| site | was | is |
+| --- | --- | --- |
+| `BattleState::spawn_unit` (`battle/mod.rs`) | `detached: false, tasking: None, latitude: default()` | `orders: None` |
+| `Order::ClearIntent` — the recall | all three cleared | `orders = None` |
+| `radio()`, with a destination | `tasking = Some(to)`, `latitude = latitude` | `orders = Some(Marching(March { to, latitude }))` |
+| `radio()`, after either half | `detached = true` | `orders.get_or_insert(Holding)` |
+| `radio()`, no contact | `command.hold_orders(id, to, fire, latitude)` | `hold_orders(id, to.map(March…), fire)` |
+| `deliver_waiting_orders`, with a destination | `tasking`, `latitude` from the slot | `orders = Some(Marching(march))` |
+| `deliver_waiting_orders`, always | `detached = true` | `orders.get_or_insert(Holding)` |
+| `set_mission` — a fresh formation order collects everyone | all three cleared, per member | `orders = None` |
+| `begin_round`'s arrival pass | `tasking = None`, `latitude = default()`, `detached` left alone | `orders = Some(Holding)` |
+| `CommandState::hold_orders` (`battle/command.rs`) | `slot.destination`, `slot.latitude` under one `if` | `slot.march` |
+
+`get_or_insert` rather than an assignment at the two detach sites is what
+keeps `an_order_about_her_gun_says_nothing_about_her_march` true — and now
+true structurally, since there is no separate latitude field left to leave
+alone.
+
+**Rejected.** A four-variant `PersonalOrder { Free, Holding, Marching, … }`
+with `Free` in place of the `Option` — it makes "is she detached" a match over
+two variants rather than an `is_some`, and puts the default state inside the
+type where every `Option` idiom in the file already spells it outside.
+Keeping `detached` as its own bool beside the order — that is the field that
+could disagree, and the arrival transition (destination gone, detachment kept)
+is exactly where it used to have to be remembered. Naming the field `tasking`
+— it now holds the insistence and the detachment too, and the old word names
+only the destination.
+
+**Prose rules in CLAUDE.md's *Latitude* section the type now makes redundant**
+(for the lead to delete):
+
+- *"It belongs to the destination, not the cadet: set where `tasking` is set,
+  cleared everywhere `tasking` clears, carried in `WaitingOrders`."* — the
+  latitude lives inside `March`; there is no "where `tasking` is set" distinct
+  from where the latitude is set, and `WaitingOrders` carries the same struct.
+- *"A radioed order with `to: None` leaves it alone
+  (`an_order_about_her_gun_says_nothing_about_her_march`)."* — an order with
+  no destination cannot name a latitude to leave alone. Keep the **test**; the
+  rule no longer needs stating.
+- *"On a crew it is read in exactly one place, the drill gate in
+  `ai/command.rs`. A second `yields_to_drill()` means the model drifted"* —
+  still true and still worth saying, but the reachability half is now
+  structural: `march()` is the only accessor that yields a `Latitude`, and it
+  answers `None` for a crew who is merely holding.
+
+Everything else in that section is about *what latitude means* (the crew
+versus formation split, the contact damping, `Delegated` as the default, the
+drill's round-two rule) and is not made redundant by a type.
+
+`a_personal_order_is_taken_back_whole_or_not_at_all` (`tests/engine.rs`) pins
+both exits on both halves at once.
+
+### 3c — a vehicle's outcome
+
+```rust
+pub enum Destruction { Crushed, Abandoned, BrewedUp, CrewSpent }
+pub enum Fate {
+    Fighting { doom: Option<Destruction> },
+    Destroyed(Destruction),
+    Exited,
+}
+// on Unit:
+pub fate: Fate,
+```
+
+`doom` is **inside** `Fighting` rather than a fourth variant beside it, so
+that "is she on the field" stays one variant. Damage lands during a tick and
+death is reaped at the end of it, so a doomed vehicle is genuinely still on
+the board — targetable, blocking, shooting — and a `Doomed` variant would have
+made `alive` a two-variant match that a reader written next year gets wrong.
+
+Readers: `Unit::alive()`, `exited()`, `destruction()`; `Fate::lost()` behind
+`surviving_units` / `lost_units` and `check_victory`'s decapitation pass.
+Writers: `Unit::doomed_by(how)`, `destroy()`, `withdraw()` — three verbs where
+there were five assignments. `ai/mcts.rs::determinize`, which had to set
+`alive = false` **and** `exited = true` in the right combination or open its
+search on a world where the enemy's commanding officer was already dead, is
+now one `withdraw()`. `panel.rs`'s roll call matches `Fate` exhaustively, so
+the next fate stops the UI compiling until somebody says what to call it.
+
+**The one real decision, and it was measured first.** The old flags were
+independent, all stayed set, and each reader had its own fixed order for
+consulting them — an ordering written out three times and able to disagree. A
+throwaway probe over 900 AI battles (9,131 vehicles lost) found two flags on
+one hull about 250 times, in **all three** pairings, so this is a case that
+happens rather than one to argue about. `Destruction::supersedes` makes it one
+rule at the write: **burning beats the crew leaving beats the hull being
+crushed**. The middle rung is the load-bearing one — `behind_armor_effects`
+refuses to roll for a crew who has already gone, so an abandonment that a
+later shell's blast overwrote would let the same cadets abandon the same tank
+twice.
+
+The only visible consequence anywhere in the tree is `balance`'s cause
+histogram, where a hull that was both crushed and abandoned is now named by
+the abandonment: `--sim --games 36` goes from `abandoned 96 brewed 95 crew out
+86 wrecked by blast 78` to `abandoned 97 … wrecked by blast 77`. One loss in
+355 changed label; nothing else moved.
+
+**Rejected.** Storing the destruction as a set (or a struct of three bools
+inside `Destroyed`) — lossless, and exactly the shape the item exists to
+remove, one level down. The other severity order (brewed > crushed >
+abandoned), which matches the old *read* precedence in `balance.rs` exactly
+and would have kept that histogram byte-identical — it loses the abandonment
+under a later crushing, which is a simulation difference (a second
+`Event::Abandoned`) traded for a diagnostic one, the wrong way round.
+Recording only whether she was lost and pushing the cause onto the event
+stream — the campaign and the harness both read it off the unit after the
+battle, and reconstructing it from events is the drift this item removes.
+
+`a_hull_that_takes_two_ends_in_one_tick_is_remembered_by_the_more_telling_one`
+pins the precedence in both orders for all three pairings plus the doom /
+death / `CrewSpent` transitions; mutation-checked, with last-write-wins and an
+inverted rank both failing it.
+
+**Prose in CLAUDE.md now structural.** The *Invariants* bullet *"`alive` and
+'standing on a hex' are two different questions… classify with
+`surviving_units()` / `lost_units()`, and never reimplement either by scanning
+`units`"* is half retired: the classify half is now the difference between
+`Fate::Exited` and `Fate::Destroyed(_)`, and `lost_units` reads `Fate::lost`,
+so `!alive` as a loss test is no longer expressible without going through the
+accessor that says so. The *passenger* half — a passenger is alive and on no
+hex — is untouched and still needs saying, because that is about `aboard`
+rather than about fate. Likewise the *Objectives* bullet *"Never classify a
+unit at the end of a battle by `!alive`"*: keep the sentence, drop the warning
+tone. **Known issues → Robustness** should lose the *"`Unit`'s outcome is five
+booleans"* entry entirely, and its "where is she going" half drops `tasking`
+from the list of five fields.
+
+### Saves
+
+`SAVE_VERSION` 3 → 4 (3b) → **5** (3c). Old saves are **refused**, not
+migrated, and deliberately: both new fields `#[serde(default)]` to the benign
+value, so a version-3 file would open with every crew quietly back under her
+formation's mission and a version-4 file with every wreck on the board
+fighting again. `SaveError::Version` names the version found, which is the
+loud failure worth having while there is no released build to migrate from.
+
+### Left for whoever picks this up
+
+- **`Unit`'s "where is she going" is still four fields** (`intent.path`,
+  `orders`, `goal`, `boarding`) plus the formation mission. 3b took one of the
+  five off the list; the remaining four are genuinely different time scales
+  (this tick, this errand, her own plan, a rendezvous) and folding them wants
+  a design decision rather than a refactor.
+- **`behind_armor_effects`' bail-out guard reads two of the four
+  destructions**, not all of them. A hull crushed by blast this tick can still
+  roll for a bail-out. That is the rule as it stood and this chunk kept it
+  bit-for-bit, but it now reads oddly next to the enum, and `supersedes` exists
+  partly to protect it. Worth a designer's ruling.
