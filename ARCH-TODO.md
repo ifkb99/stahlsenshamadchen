@@ -119,6 +119,39 @@ Branch `feat/one-system`, off `feat/planner-block`.
       *meant* to move the determinism snapshot; the diff is the evidence for
       the change rather than a cost of it. Read it before regenerating.
 
+## Phase 2 — what it left behind
+
+Found while building it, none of it blocking, all of it the next thing of its
+kind:
+
+- [ ] **Cadence is not in the currency.** Every term — attack, threat, the
+      overlay's total — is per *shot*. A machine gun at a shot every 10 s
+      fires six times in a round and an 88 twice; `WeaponDef::reload` is a
+      resolver fact the pricing never reads. Per-round expectation is one
+      multiplication in `best_weapon_from`, but it changes every weight quoted
+      in the currency (see `deviation_cost` above) and wants its own
+      measurement.
+- [ ] **Pressure is not in the currency.** Fire that cannot beat her plate
+      expects zero and is invisible to every planner, which is the designer's
+      `threatened` note in DIRECTION.md. The resolver already turns a rattling
+      bounce into `rules.bounced`; an expected-pressure twin of `incoming`
+      would let a crew near Breaking value a quiet hex, and give the machine
+      gun on every tank a job.
+- [ ] **A `Shot` struct.** `hit_chance`, `hit_breakdown` and `expected_damage`
+      carry `#[allow(clippy::too_many_arguments)]` at eight parameters; each
+      end of the shot is a crew and a hex.
+- [ ] **`fire_on` names one weapon per enemy**, so a coaxial that also bears
+      is under-reported in the panel. A second bearing per enemy is a shape
+      change to `danger.rs`.
+- [ ] **The overlay's bands are linear in a quantity that is not.** Yellow is
+      nearly unreachable in the base mod. Log scale, or a full-complement
+      denominator.
+- [ ] **The arena is the instrument limit again.** +3 points on the skill
+      rows at 576 battles a row is the right sign and not decisive; the terms
+      that now discriminate (cover under a specific gun, sight, elevation)
+      need ground where a wrong choice is punished harder than a radius-10
+      hexagon with two objectives can.
+
 ## Phase 3 — the smaller seams
 
 None of these move the baseline. All of them make the next change cheaper.

@@ -274,6 +274,38 @@ script harness and the replay are untouched.
 - **A spot belongs to the side that made it.** Being found is not something
   the found crew is told.
 
+### One currency: the evaluator reads the resolver
+
+`score_tile` (`ai/eval.rs`) is the single place a rule becomes behaviour, and
+its terms are denominated in substance points the resolver computes.
+
+- **The threat term is `battle::danger::incoming(registry, state, unit,
+  tile)`**: the sum over every *found* enemy of what the resolver says she
+  would take standing on that tile. There is no distance falloff and no range
+  gate — both stood in for positional terms the arithmetic could not see, and
+  either one reinstated charges the same fact twice. `caution * exposure`
+  scales it afterwards; that is what she makes of the danger, and it is hers.
+  `incoming` and `fire_on` walk one private `guns_bearing_on`, so there is one
+  answer to "who can shoot her there".
+- **The terrain prior speaks only where the arithmetic is silent.** Cover and
+  elevation taste (`planner.cover_prior`, `elevation_prior` × the doctrine's
+  `cover_value`, `elevation_value`) is paid on a tile no found gun can reach
+  and withheld inside a found gun's envelope, where the resolver already
+  prices the same timber at about four times the flat bonus. The prior is the
+  **only** reader of those two doctrine fields; zeroing it retires them.
+  `the_ground_prior_stands_down_where_the_arithmetic_speaks` pins the gate.
+- **Changing the currency reaches every weight quoted in it.**
+  `planner.deviation_cost` had to move 2.0 → 3.0 when threat stopped being
+  zero over most of the map, because its job is to sit between the shipped
+  doctrines' `initiative` values and at 2.0 all three deviated.
+  `the_shipped_doctrines_straddle_the_price_of_deviating` is the check; expect
+  it to fail again the next time a term grows.
+- **What the currency does not yet carry**: cadence (every term is per shot,
+  so a gun firing six times a round and one firing twice read the same), and
+  pressure (fire that cannot hurt her plate is invisible to every planner —
+  the designer's `threatened` note in DIRECTION.md). Both are in
+  ARCH-TODO.md.
+
 ### Goals: the seam the AI is meant to be replaced at
 
 `Goal` (`battle/command.rs`) is what one crew means to do, kept across rounds.
@@ -359,7 +391,7 @@ all off one Dijkstra (`battle::roads`, `HORIZON` = `planner.horizon_rounds`).
 The evaluator's and chooser's numbers are the `planner` block of `mod.json`
 (`data::PlannerRules`): `impatience`, `horizon_rounds`, `boarding_rounds`,
 `deviation_cost`, `devolved`, `mission_weight`, `pull_under_fire`,
-`distance_decay`, `plateau`, `exit_urgency`.
+`distance_decay`, `plateau`, `exit_urgency`, `cover_prior`, `elevation_prior`.
 
 - **The line between `planner` and `balance` is load-bearing.** `balance`
   says what is *true on this battlefield* and reaches a human's shot exactly
@@ -597,6 +629,29 @@ with `examples/minimal_window.rs`). Rules:
 - **A click on a stacked hex cycles through its occupants**;
   `ScriptFacts::selected` lets a tour assert who.
 
+### The danger overlay
+
+The player's half of the currency: `panel::format_danger` (pure over a
+`BattleState`, reading `fire_on` verbatim) leads the tile panel whenever one
+of her own crews is selected and a hex is hovered, and `D` tints the selected
+crew's reachable tiles by the total expected fire.
+
+- **It is `fire_on` and nothing else.** No arithmetic of its own beyond the
+  sum and its share of `substance().0`; the AI and the player price the same
+  ground or the player is pricing a different game from the one her opponent
+  plays.
+- **Never for an enemy crew**, and not on the shot preview or the ghost
+  report — both already answer about a hex somebody else stands on.
+- **Computed under the `range_dirty` gate and cached in `Battle::danger`**,
+  never per frame: about 0.5 ms over a full reach.
+- **The overlay replaces the move-range blue rather than stacking on it.**
+  Bands are shares of what she has left; `panel::DANGER_LEGEND` holds the
+  words and `battle::DANGER_COLORS` the colours, sized off each other.
+- **`ScriptFacts::danger`** counts tinted tiles, `None` when the overlay is
+  off, so `danger >= 1` is false until it is up and has found something.
+- **The total is per shot** ("expected, one shot each"), as `Bearing::expected`
+  is; a 75 mm at a shot every 15 s fires four times a round.
+
 Rust edition 2024, resolver 3. `[profile.dev]` builds the workspace at
 `opt-level = 1` and dependencies at 3. Anything that measures performance must
 be built `--release`.
@@ -707,12 +762,14 @@ instrument's numbers.
 - **Overworld elevation is priced at the battle scale.** `Scale` has one
   `elevation_meters`, so `frontier`'s mountains at elevation 2 read as 20 m.
   Harmless today; a strategic map wants its own vertical scale.
-- **Difficulty barely discriminates above level 1**, and on the varied arena
-  not at all (5 over 1 51.2%, 5 over 3 47.5% at the Phase 2 baseline). This
-  is the evaluator running on a different currency from the resolver —
-  ARCH-TODO.md's diagnosis and the work in progress. Read the skill table at
-  `--games 36` or not at all, and seed-sweep it; the history of numbers quoted
-  from single draws is in DONE.md.
+- **Difficulty barely discriminates above level 1.** On the varied arena at
+  8 seeds × 36, 5 over 1 went 49.5% → 52.5% and 5 over 3 48.7% → 51.4% when
+  the evaluator started reading the resolver (ARCH-TODO.md Phase 2): the
+  right sign, weakly. The arena is radius 10 with two objectives and has
+  little for a commander who now prices cover under a specific gun to be
+  better at; ground is the next instrument. Read the skill table at
+  `--games 36` or not at all, seed-swept — the four-seed baseline was a high
+  draw, the fourth single-draw number in this project to flatter itself.
 
 ### Robustness
 
@@ -733,16 +790,21 @@ instrument's numbers.
 
 `cargo run --release -p tactics_core --example perf` reproduces these; `--mcts`
 adds the slow ones. Measured on the 1261-tile `river_crossing` with 8 units,
-four seeds, at the Phase 2 baseline (2026-08-30):
+four seeds, after Phase 2 (2026-09-06):
 
 | | |
 | --- | --- |
-| round resolution | 1.66 ms |
-| `reachable()` per call | 15.4 µs |
-| `roads()` per call | 111.6 µs |
-| `unit_vision` per unit, cold | 90.5 µs |
-| utility order | 0.08 ms |
+| round resolution | 1.59 ms (1.08–2.10 across seeds) |
+| `reachable()` per call | 17.8 µs |
+| `roads()` per call | 136.0 µs |
+| `unit_vision` per unit, cold | 88.6 µs |
+| utility order | 0.09 ms |
 | mcts order, difficulty 3 / 4 | 1.84 s / 4.24 s |
+
+`reachable` and `roads` measure work *in a particular game state*; they moved
+with Phase 2 because the units they are measured on stand somewhere else by
+then, not because either function changed. `unit_vision` is the row that
+says whether the machine is comparable.
 
 - **Round resolution moves with how well the AI plays, not only with how much
   work the tick loop does.** Crews that pick ground they can drive to spend
@@ -750,7 +812,9 @@ four seeds, at the Phase 2 baseline (2026-08-30):
   work and are the numbers to read when the question is whether something got
   slower.
 - **`score_tile` is the hottest function the AI has**, paid per candidate
-  tile. `fog::recompute` after every shot is nearly free because a side whose
+  tile, and its threat loop now costs what its attack loop does (a
+  `best_weapon_from` per found enemy per tile). Utility order paid 12% for
+  that. `fog::recompute` after every shot is nearly free because a side whose
   `(unit, pos, range)` list is unchanged skips the union — keep the reference
   `los_clear` and `SightGrid::clear` sharing `sight_line_clear`, and keep
   `cached_vision_is_the_same_answer_as_computing_it_fresh` passing.

@@ -787,9 +787,12 @@ another objective matters more is `Unit::detached`, which already exists and
 is a chain-of-command decision rather than an evaluator one.
 
 **Calibration, which is the part worth keeping.** At `deviation_cost: 2.0` the
-three shipped doctrines straddle the threshold on a staged march: massed
-armour (0.3) drives at the hex she was given, elastic defence (0.7) and recon
-pull (0.9) stop to fight from ground of their own. A number that separates the
+three shipped doctrines straddled the threshold on a staged march: massed
+armour (0.3) drove at the hex she was given, elastic defence (0.7) and recon
+pull (0.9) stopped to fight from ground of their own. (The number is 3.0
+since 2026-09-06: when the threat term started reading the resolver, 2.0 no
+longer held massed armour, and 3.0 is the smallest value that does — see
+*The evaluator prices danger in the resolver's own arithmetic* below.) A number that separates the
 content that ships is a number that means something; `balance.blind_penalty`
 is the counter-example this was checked against.
 
@@ -1123,6 +1126,106 @@ join is silent — rename a verb in core and the panel simply lists one order
 fewer. The panel went 240 px → 300 px, because a promise that wraps to three
 lines is one nobody reads.
 
+**A shot has two ends, and both of them are ground** (2026-09-06, Phase 2a
+of ARCH-TODO.md). `hit_chance`, `hit_breakdown`, `shot_profile`,
+`expected_damage` and `ai::best_weapon_against` gained the target's
+hypothetical hex `at` beside the attacker's `from`; every real firing path
+passes her real hex, and the determinism snapshot and the balance output were
+byte-identical, which is the whole claim that it was a rearrangement. Two
+things deliberately did not follow the hypothesis: `tgt.moved` (charging a
+moving-target discount for a drive she has not made is `hexes_under_way`'s
+measured bias with the sign flipped — far ground would read as systematically
+safer) and the loader's round choice (`best_round_against` had always judged
+from real positions, which nobody had noticed). `combat::best_weapon_from`
+holds the three gates a shot must pass in one place, and
+`battle::danger::fire_on` is the currency: every spotted enemy who could put
+fire on her there, the resolver's arithmetic and nothing else. Three tests,
+each mutation-checked. `hit_chance` and its siblings now trip
+`clippy::too_many_arguments` at eight, the first time `combat.rs` has, exactly
+as the hygiene note predicted; a `Shot` struct is due and was not built inside
+a chunk claiming nothing changed.
+
+**The evaluator prices danger in the resolver's own arithmetic** (2026-09-06,
+Phase 2b–2d). `score_tile`'s threat had been the enemy's shot at the hex she
+was *already* standing on, scaled by `1/distance` to the tile under discussion
+and gated at six hexes — so cover, elevation, facing, profile and range never
+reached the decision about where to stand, and the AI's opinion of a wood was
+`cover × 0.03 × doctrine` in a model `balance` never touched. It is now
+`battle::danger::incoming(registry, state, unit, tile)`, the sum over every
+found enemy of what the resolver says she would take there; the gate and the
+falloff were deleted rather than retuned, because each stood in for a
+positional term the arithmetic can now state exactly. `caution * exposure`
+stays: the sum is what the rules say, that is what she makes of it.
+
+*What remained of the terrain term, and why it is a gate.* The obvious move —
+keep `cover × 0.03` and shrink it — was measured first. At four seeds zeroing
+the prior looked like a five-point win on the skill table; at eight seeds it
+was 1.5 and 0.6 points, and the tell was already there at four, because
+zeroing cover alone and elevation alone each did nothing and only the pair
+did, an interaction with no mechanism. Zero also cost the arena its side
+symmetry (46.7% against 51.7%), and zero is not available anyway: the prior is
+the only reader of `cover_value` and `elevation_value`, so pricing it at
+nothing retires two doctrine fields. So the prior *stands down where the
+arithmetic speaks* — paid on a tile no found gun can reach, withheld inside a
+found gun's envelope, where the resolver prices the same timber at 3.5
+substance points against the flat bonus's 0.9. The coefficients became
+`planner.cover_prior` (0.03) and `elevation_prior` (0.4) and ship unchanged.
+
+*The one content number that moved.* `planner.deviation_cost` 2.0 → 3.0.
+Threat used to be zero over most of the map and is now three to eight points
+wherever a found gun reaches, so at 2.0 all three shipped doctrines deviated
+from an order on the staged march, massed armour included. 3.0 is the smallest
+value that restores the straddle and 3.0–6.0 all do; at 8.0 elastic defence
+obeys too. Changing the currency a weight is quoted in reaches every weight
+quoted in it, and this was the one that crossed a threshold. It is also
+subordinate initiative finally having something to say: the tile her own
+sweep offers is now priced against the gun covering it.
+
+*Three knife-edge stages, repaired rather than weakened.*
+`an_assault_presses_through_what_an_advance_pauses_for` moved its forward tile
+from seven hexes to ten — at seven the old threat was zero at *both* tiles and
+the assault won by 0.48; at ten the assault presses on by 0.62 and the advance
+still halts by 1.63, with a new assertion keeping the tile under the gun.
+`ground_the_enemy_reaches_first_is_worth_less_marching_for` asserts
+`contest_aversion` at 5 instead of 3, because the resolver disagrees with the
+old falloff about how much more dangerous a hill with a tank one hex away is
+than ground five hexes off. The protected order-versus-judgment tests
+(`a_binding_march_presses_on_where_an_ordinary_one_takes_cover`,
+`a_cut_off_unit_keeps_the_orders_she_had`,
+`a_binding_mission_is_not_discounted_by_a_loose_doctrine`) passed unweakened,
+and `a_crew_who_breaks_off_says_so_and_one_who_was_meant_does_not` pins the
+half that had been prose: a delegated crew who breaks off raises
+`Decision::drill`, a binding one never reaches the drill.
+
+*The determinism diff, read before regenerating.* 517 of 1503 lines, six of
+eight units picking different ground, kills per seed unchanged (7 / 6 / 6 / 5):
+what moved is where crews stood on the way. Seed 1, unit 4, used to take
+(9,18,−27), drive into the open at (11,16), get spotted and open an eight-hex
+duel; she now takes (6,19,−25) one row south, is first seen two rounds later,
+and the answering medium engages from elsewhere. Nobody ordered any of it.
+
+*The measurements.* 36 battles at seed 0: 24–12 → 22–14, 13.2 → 13.5 rounds,
+shots 1894 → 1850 at 33% penetration both, infantry surviving 64 → 69 of 96,
+delegation tax inside the ±6 band (massed 3 → 2, bounding 2 → 4). **Skill at
+8 seeds × 36 = 576 a row: 5 over 1 49.5% → 52.5% (+1.2 sd), 5 over 3 48.7% →
+51.4% (+0.7 sd).** The prediction written down before the work — that the
+rows would rise — held, directionally and weakly, both rows moving together;
+neither is individually decisive, and half the movement came from the terrain
+gate rather than the threat term. The four-seed baseline (51.2% / 47.5%) was
+a high draw on one row and a low one on the other, the fourth single-draw
+number in this project to mislead. Utility order paid 12% (0.08 → 0.09 ms);
+round resolution went *down* (1.62 → about 1.5 ms), which CLAUDE.md predicts
+— crews that stop driving into guns spend fewer ticks manoeuvring.
+
+*What the plan got wrong, in the agent's words.* "2c: cover and elevation stop
+being a second opinion" reads as delete the term; the question was *where* it
+applies, not how much survives. The plan expected 2b to be the whole effect;
+2b alone at the shipped prior left 5-over-1 slightly worse at four seeds.
+Nothing anticipated a shipped weight having to move. And "watch the cost"
+pointed at the wrong perf row: `reachable` and `roads` moved more than
+`utility order`, and neither is on the chunk's path — they measure work in a
+particular game state, and the state is what changed.
+
 ## Performance
 
 **`fog::recompute` no longer rebuilds every side's vision after every shot** —
@@ -1240,6 +1343,30 @@ wrong: `combat.rs` never tripped the lint; every offender was a Bevy system in
 the game crate. `cargo fmt --check` gates alongside, with
 `style_edition = "2024"` pinned in `rustfmt.toml` so a toolchain upgrade
 cannot turn CI red on its own.
+
+**The danger overlay** (2026-09-06). `panel::format_danger` reads `fire_on`
+verbatim and leads the tile panel whenever one of the player's crews is
+selected and a hex is hovered — *Danger at (15,20): Irma Krieger 45% for 3.0,
+75mm KwK; Nadja Orlov 82% for 10.6, 88mm PaK; 13.6 expected, one shot each;
+151% of what she has left*. `D` tints the selected crew's reachable tiles by
+the same total, replacing the move-range blue rather than stacking a third
+colour on it, in four bands of what she has left. Decisions worth knowing: it
+leads the panel because a full datasheet pushed the one mouse-dependent line
+below the fold; never for an enemy crew and not on the shot preview or ghost
+report; computed under `range_dirty` and cached rather than per frame, because
+`fire_on` over a 42-tile reach with four spotted enemies is 228 µs in release;
+the tour pins a seed because it asserts positions, and commits one round
+first because an honest overlay has nothing to say before anybody is found.
+What it cannot show: an ambush (it reports the *picture*), the enemy where
+she will be rather than where she is, a thinner plate from turning in (her
+facing at the tile is her facing now), and a coaxial that also bears
+(`fire_on` names one weapon per enemy). The yellow band is nearly unreachable
+in the base mod — an 88 expects 10.6 against a medium tank's ~9, so any tile
+it covers is instantly "a third or more" — which is correct and reads as
+harsh; a log scale or a full-complement denominator is the honest fix. The
+total was first labelled "a round" and is per shot; a 75 mm at a shot every
+15 s fires four times a round, so the label was wrong by the whole cadence of
+the fastest guns.
 
 ## Bugs that turned out not to be ours
 
