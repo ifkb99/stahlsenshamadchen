@@ -620,15 +620,18 @@ fn two_unit_field(
         },
     ];
     let (roster, crews) = Roster::stamp_for(reg, &placements);
-    Some(BattleState::from_placements(
-        reg,
-        map,
-        sides,
-        &placements,
-        &crews,
-        std::sync::Arc::new(roster),
-        1,
-    ))
+    Some(
+        BattleState::from_placements(
+            reg,
+            map,
+            sides,
+            &placements,
+            &crews,
+            std::sync::Arc::new(roster),
+            1,
+        )
+        .expect("the staged placements are content the base mod ships"),
+    )
 }
 
 fn roster_table(reg: &DataRegistry) {
@@ -2237,15 +2240,18 @@ fn muster_arena(
         },
     ];
     let (roster, crews) = Roster::stamp_for(reg, &placements);
-    Some(BattleState::from_placements(
-        reg,
-        map,
-        sides,
-        &placements,
-        &crews,
-        std::sync::Arc::new(roster),
-        seed,
-    ))
+    Some(
+        BattleState::from_placements(
+            reg,
+            map,
+            sides,
+            &placements,
+            &crews,
+            std::sync::Arc::new(roster),
+            seed,
+        )
+        .expect("the staged placements are content the base mod ships"),
+    )
 }
 
 /// Enough mirror-paired standing room for an army of `wanted` vehicles.
@@ -2337,15 +2343,18 @@ fn symmetric_arena(reg: &DataRegistry, seed: u64) -> Option<BattleState> {
         },
     ];
     let (roster, crews) = Roster::stamp_for(reg, &placements);
-    Some(BattleState::from_placements(
-        reg,
-        map,
-        sides,
-        &placements,
-        &crews,
-        std::sync::Arc::new(roster),
-        seed,
-    ))
+    Some(
+        BattleState::from_placements(
+            reg,
+            map,
+            sides,
+            &placements,
+            &crews,
+            std::sync::Arc::new(roster),
+            seed,
+        )
+        .expect("the staged placements are content the base mod ships"),
+    )
 }
 
 /// One battle's outcome, reduced to what the tables count.
@@ -3231,15 +3240,18 @@ fn map_battle(reg: &DataRegistry, id: &str, seed: u64, swap: bool) -> Option<Bat
         }
     }
     let (roster, crews) = Roster::stamp_for(reg, &placements);
-    Some(BattleState::from_placements(
-        reg,
-        map,
-        sides,
-        &placements,
-        &crews,
-        std::sync::Arc::new(roster),
-        seed,
-    ))
+    Some(
+        BattleState::from_placements(
+            reg,
+            map,
+            sides,
+            &placements,
+            &crews,
+            std::sync::Arc::new(roster),
+            seed,
+        )
+        .expect("the staged placements are content the base mod ships"),
+    )
 }
 
 fn ground_battle(reg: &DataRegistry, id: &str, seed: u64, swap: bool) -> Ground {

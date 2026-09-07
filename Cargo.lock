@@ -4844,6 +4844,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tactics_core",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

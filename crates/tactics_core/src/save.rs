@@ -19,10 +19,37 @@
 //! an entry per tile, so over a thousand on a battle map — and neither can
 //! hold anything a player did.
 //!
-//! The cost of that is one obligation: [`rehydrate`] has to rebuild the sight
-//! grid,
-//! because an empty one answers every line-of-sight question wrongly rather
-//! than loudly. That is why loading takes a registry.
+//! The cost of that is an obligation to put them back, and it used to be a
+//! list of manual duties in a function called `rehydrate` — the kind of rule
+//! that is only ever stated in prose and is therefore only ever remembered.
+//! Forgetting one is silent: an empty sight grid answers every line-of-sight
+//! question wrongly rather than loudly, an empty move grid says nobody can
+//! drive, and an empty `visible_key` panics.
+//!
+//! # The obligation is a type
+//!
+//! Rebuilding needs the [`DataRegistry`], which serde cannot hand to a
+//! `Deserialize` impl, so the shape here says "not yet" in the type system
+//! instead. [`crate::battle::Battle`] carries a marker saying whether its
+//! caches hold anything; the unbuilt marker is [`Default`] and the built one
+//! is not, and serde fills a `#[serde(skip)]` field with `Default::default()`.
+//! So [`crate::battle::SavedBattle`] deserializes and
+//! [`crate::battle::BattleState`] does not, and the only bridge between them
+//! is [`crate::battle::SavedBattle::rehydrate`], which takes a registry and
+//! destructures the battle field by field — so a cache added tomorrow stops
+//! the build until somebody has said where it comes from.
+//!
+//! That reaches this module the same way: [`SavedGame`] is what comes off the
+//! disk, [`SaveGame`] is what a caller gets, and there is no route from one to
+//! the other except [`SaveGame::from_json`]. A battle whose caches nobody
+//! rebuilt is not a value this crate can produce.
+//!
+//! Chosen over the two alternatives — a `Caches` struct owning the skipped
+//! fields, or a hand-written mirror of the saved shape — because both would
+//! have meant either a second copy of `BattleState`'s field list, which
+//! drifts, or renaming `state.sight` and `state.moves` at every call site in
+//! the engine. This costs one type parameter with a default, so every
+//! signature in the codebase still says `BattleState` and reads as it did.
 //!
 //! # Which mods were playing
 //!
@@ -43,11 +70,10 @@
 //! nothing to migrate, because the alternative is discovering the need for it
 //! from a player's corrupted campaign.
 
-use crate::battle::{BattleState, MoveGrid, SightGrid};
+use crate::battle::{BattleState, SavedBattle};
 use crate::data::DataRegistry;
 use crate::overworld::OverworldState;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 /// Save format version. Bump when a field changes meaning rather than merely
 /// being added — serde's `default` handles additions on its own.
@@ -98,8 +124,14 @@ pub enum SaveError {
 /// Both are optional because the two layers are genuinely independent — a
 /// scenario battle has no campaign behind it, and a campaign between battles
 /// has no battle.
+///
+/// `B` is the battle's *condition*, not a choice a caller makes: `SaveGame` is
+/// the ordinary one and carries a playable [`BattleState`], while
+/// [`SavedGame`] carries a battle whose caches are still empty and is the only
+/// one serde can produce. See the module docs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SaveGame {
+#[serde(bound(deserialize = "B: Deserialize<'de>"))]
+pub struct SaveGame<B = BattleState> {
     pub version: u32,
     /// The mods in effect when this was written. Empty in saves from before
     /// this was recorded, which are then accepted without a mod check.
@@ -108,10 +140,15 @@ pub struct SaveGame {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overworld: Option<OverworldState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub battle: Option<BattleState>,
+    pub battle: Option<B>,
 }
 
-impl SaveGame {
+/// A save exactly as it comes off the disk: its battle's caches are empty, so
+/// it is not yet a game anybody can play. [`SaveGame::from_json`] is the only
+/// thing that reads one, and what it hands back is a `SaveGame`.
+pub type SavedGame = SaveGame<SavedBattle>;
+
+impl SaveGame<BattleState> {
     /// Stamp a save with the mods currently loaded.
     pub fn new(
         registry: &DataRegistry,
@@ -137,12 +174,14 @@ impl SaveGame {
         Ok(serde_json::to_string_pretty(self)?)
     }
 
-    /// Parse a save and put back everything [`SaveGame`] chose not to store.
-    ///
-    /// The registry is needed for exactly that: the sight grid is rebuilt from
-    /// the map and terrain rather than carried in the file.
     /// Parse a save, check it belongs to this game, and put back everything
     /// [`SaveGame`] chose not to store.
+    ///
+    /// The registry is needed for exactly that: the sight and movement grids
+    /// are rebuilt from the map and its terrain rather than carried in the
+    /// file. It is also the only door: what serde reads is a [`SavedGame`],
+    /// which nothing can play until its battle has been through
+    /// [`SavedBattle::rehydrate`] here.
     ///
     /// Returns any warnings alongside — mirroring
     /// [`DataRegistry::load_dir`], which reports rather than refuses for
@@ -151,20 +190,38 @@ impl SaveGame {
         registry: &DataRegistry,
         text: &str,
     ) -> Result<(Self, Vec<String>), SaveError> {
-        let mut save: Self = serde_json::from_str(text)?;
-        if save.version != SAVE_VERSION {
+        let saved: SavedGame = serde_json::from_str(text)?;
+        if saved.version != SAVE_VERSION {
             return Err(SaveError::Version {
-                found: save.version,
+                found: saved.version,
                 expected: SAVE_VERSION,
             });
         }
-        let warnings = save.check_mods(registry)?;
-        if let Some(battle) = &mut save.battle {
-            rehydrate(registry, battle);
-        }
-        Ok((save, warnings))
+        let warnings = saved.check_mods(registry)?;
+        // Destructured rather than field-assigned so that a field added to
+        // `SaveGame` has to be carried across deliberately: the two halves of
+        // the save differ only in the battle's condition, and anything that
+        // silently failed to make the crossing would be state a player lost by
+        // loading.
+        let SaveGame {
+            version,
+            mods,
+            overworld,
+            battle,
+        } = saved;
+        Ok((
+            Self {
+                version,
+                mods,
+                overworld,
+                battle: battle.map(|b| b.rehydrate(registry)),
+            },
+            warnings,
+        ))
     }
+}
 
+impl<B> SaveGame<B> {
     /// Compare the save's mods against what is loaded.
     fn check_mods(&self, registry: &DataRegistry) -> Result<Vec<String>, SaveError> {
         // A save written before mods were stamped cannot be checked, and
@@ -206,32 +263,6 @@ impl SaveGame {
             })
             .collect())
     }
-}
-
-/// Rebuild what the save left out. Separate and public so a caller that
-/// deserializes a `BattleState` by some other route cannot forget it.
-pub fn rehydrate(registry: &DataRegistry, battle: &mut BattleState) {
-    if battle.sight.is_empty() {
-        battle.sight = Arc::new(SightGrid::build(registry, &battle.map));
-    }
-    // The movement grid is skipped for the same reason and has the same
-    // failure mode, one step worse: an empty one says every step is
-    // impossible, so a loaded battle would have nobody able to move at all.
-    if battle.moves.is_empty() {
-        battle.moves = Arc::new(MoveGrid::build(registry, &battle.map));
-    }
-    // The fog's per-unit vision and per-side keys are skipped too, and the
-    // key list is indexed by side during recompute, so an empty one panics
-    // rather than simply recomputing.
-    battle.fog.rehydrate();
-    // Objective control and the scoreboard are indexed positionally — by
-    // objective and by side — and scoring writes through those indices. A
-    // save written before objectives existed carries neither, so size them
-    // from the map and the sides rather than trusting the file to agree.
-    battle
-        .objective_held
-        .resize(battle.map.objectives().len(), None);
-    battle.score.resize(battle.sides.len(), 0);
 }
 
 /// Write a save to disk.

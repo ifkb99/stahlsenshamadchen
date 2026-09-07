@@ -464,4 +464,159 @@ fn infantry_field(reg: &DataRegistry) -> BattleState {
         std::sync::Arc::new(roster),
         1,
     )
+    .expect("the staged placements are content the base mod ships")
+}
+
+// -- The campaign's way into a battle refuses what a scenario's does --------
+//
+// `from_map` reads a file whose author can be shown warnings; the campaign's
+// `from_placements` assembles its order of battle at run time out of armies,
+// and used to trust it completely. A mod that dropped a vehicle between one
+// save and the next reached `spawn_unit` and panicked there. These pin that it
+// is now the same refusal a bad scenario map gets, and that the content
+// actually shipped passes it.
+
+/// A scrap of grass, so a test can say what is wrong with a placement without
+/// also being a test of terrain.
+fn scrap_of_grass() -> HexMap {
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "scrap_of_grass",
+        "palette": { "g": "grass" },
+        "rows": ["ggggg", "ggggg"],
+    }))
+    .expect("map file");
+    HexMap::from_map_file(&file).expect("map")
+}
+
+fn two_sides() -> Vec<SideState> {
+    vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ]
+}
+
+fn standing_at(at: [i32; 2], side: u8, vehicle: &str) -> UnitPlacement {
+    UnitPlacement {
+        aboard_at: None,
+        at,
+        side,
+        vehicle: vehicle.into(),
+        crew: Vec::new(),
+        name: None,
+        facing: None,
+        formation: None,
+        leads: false,
+    }
+}
+
+#[test]
+fn a_placement_naming_a_vehicle_no_mod_ships_is_refused_rather_than_fatal() {
+    let reg = registry();
+    let placements = vec![
+        standing_at([0, 0], 0, "medium_tank"),
+        standing_at([4, 1], 1, "chariot"),
+    ];
+    let crews = vec![Vec::new(), Vec::new()];
+    let err = BattleState::from_placements(
+        &reg,
+        scrap_of_grass(),
+        two_sides(),
+        &placements,
+        &crews,
+        std::sync::Arc::new(tactics_core::roster::Roster::new()),
+        1,
+    )
+    .expect_err("a chassis nothing declares cannot be put on the field");
+    let said = err.to_string();
+    assert!(
+        said.contains("chariot") && said.contains("missing vehicle"),
+        "the error should name what is missing, got: {said}"
+    );
+    // And only the one that is wrong: a campaign whose mod lost one chassis
+    // should not be told its whole order of battle is broken.
+    assert!(
+        !said.contains("medium_tank"),
+        "the tank the mod does ship was blamed too: {said}"
+    );
+}
+
+#[test]
+fn a_placement_crewed_by_a_cadet_the_roster_never_heard_of_is_refused() {
+    let reg = registry();
+    let placements = vec![standing_at([0, 0], 0, "medium_tank")];
+    // A campaign roster with one cadet on it, and a placement asking for a
+    // second who is not. That is the shape a save takes when the roster it was
+    // written against has moved on: her seat would be empty, substance counts
+    // people aboard, and the tank would go out about twice as easy to kill for
+    // a reason nobody could see.
+    let mut roster = tactics_core::roster::Roster::new();
+    let commander = roster.enlist(
+        0,
+        &tactics_core::data::CharacterDef {
+            id: "commander".into(),
+            name: "Commander".into(),
+            ..Default::default()
+        },
+        &reg,
+    );
+    let ghost = tactics_core::roster::CadetId(commander.0 + 7);
+    let crews = vec![vec![commander, ghost]];
+    let err = BattleState::from_placements(
+        &reg,
+        scrap_of_grass(),
+        two_sides(),
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        1,
+    )
+    .expect_err("a cadet who is not on the roll cannot climb in");
+    let said = err.to_string();
+    assert!(
+        said.contains("not on this roster"),
+        "the error should say who is missing, got: {said}"
+    );
+}
+
+#[test]
+fn every_army_the_campaign_ships_can_be_put_on_a_battlefield() {
+    // The refusal above is only worth having if the content actually passes
+    // it. Every vehicle every army on the campaign map fields is spawned
+    // through the campaign's own constructor, with the campaign's own roster,
+    // one army at a time — so a chassis a mod renamed or a cadet a map forgot
+    // shows up here rather than the first time a player is attacked.
+    let reg = registry();
+    let campaign = tactics_core::overworld::OverworldState::from_map(&reg, "frontier", 1)
+        .expect("the campaign map builds");
+    let map = scrap_of_grass();
+    assert!(
+        !campaign.armies.is_empty(),
+        "this test is meaningless without armies"
+    );
+    for army in &campaign.armies {
+        let placements: Vec<UnitPlacement> = army
+            .units
+            .iter()
+            .enumerate()
+            .map(|(i, u)| standing_at([i as i32 % 5, (i as i32 / 5) % 2], 0, &u.vehicle))
+            .collect();
+        let crews: Vec<Vec<tactics_core::roster::CadetId>> =
+            army.units.iter().map(|u| u.crew.clone()).collect();
+        BattleState::from_placements(
+            &reg,
+            map.clone(),
+            two_sides(),
+            &placements,
+            &crews,
+            std::sync::Arc::new(campaign.roster.clone()),
+            1,
+        )
+        .unwrap_or_else(|e| panic!("army `{}` cannot take the field: {e}", army.name));
+    }
 }

@@ -253,7 +253,7 @@ impl Heights {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SightGrid {
     /// The two observer heights, resolved with the tiles. `#[serde(skip)]`
-    /// like the rest of the grid, and put back by `save::rehydrate`.
+    /// like the rest of the grid, and put back by [`crate::battle::SavedBattle::rehydrate`].
     #[serde(skip)]
     eyes: Option<Eyes>,
     /// Not saved: derived entirely from the map and the terrain definitions,

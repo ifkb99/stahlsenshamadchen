@@ -706,6 +706,86 @@ fn seed() -> u64 {
         .unwrap_or(4)
 }
 
+/// Why a battle could not be staged at all.
+///
+/// Every arm of this used to be an `expect`, which meant a mod that dropped a
+/// vehicle between one save and the next took the whole game down rather than
+/// declining one fight. The campaign asks the same question through
+/// [`field_battle_problem`] *before* it commits its armies, so in practice
+/// nobody should ever see one of these; it exists so that the day somebody
+/// does, they see a line in the log.
+#[derive(Debug, thiserror::Error)]
+pub enum StagingError {
+    #[error("no map `{0}` in the loaded mods")]
+    MissingMap(String),
+    #[error("map `{0}` will not parse: {1}")]
+    Map(String, tactics_core::map::MapError),
+    #[error("{0}")]
+    Setup(#[from] tactics_core::battle::BattleSetupError),
+}
+
+/// Build the battle two armies have caused, on the map the terrain picked.
+///
+/// Split out of `setup_battle` so the campaign can ask whether a fight is
+/// stageable *before* it commits armies to it — see [`field_battle_problem`].
+/// Returns the state and, for each unit, the army it came from, so casualties
+/// go home to the right one.
+#[allow(clippy::type_complexity)]
+fn stage_field_battle(
+    registry: &tactics_core::data::DataRegistry,
+    map_id: &str,
+    sides: &[SideState],
+    attacker_side: u8,
+    forces: &[BattleForce],
+    roster: &Arc<Roster>,
+    seed: u64,
+) -> Result<(BattleState, Vec<ArmyId>), StagingError> {
+    let file = registry
+        .map(map_id)
+        .ok_or_else(|| StagingError::MissingMap(map_id.to_string()))?;
+    let map = tactics_core::map::HexMap::from_map_file(file)
+        .map_err(|e| StagingError::Map(map_id.to_string(), e))?;
+    let (placements, crews, origins) = deploy(registry, &map, forces, attacker_side);
+    // The campaign's own roster, so these are the same cadets who will carry
+    // whatever happens here back out again.
+    let state = BattleState::from_placements(
+        registry,
+        map,
+        sides.to_vec(),
+        &placements,
+        &crews,
+        roster.clone(),
+        seed,
+    )?;
+    Ok((state, origins))
+}
+
+/// Whether the campaign can stage this fight, as a sentence for the log.
+///
+/// `None` means it can. The campaign calls this before `commit_to_battle`,
+/// because refusing a battle is survivable and losing the whole run to a
+/// panic in `setup_battle` is not. It stages the battle and throws it away,
+/// which costs about a millisecond of grid building once per clash; doing
+/// anything cleverer would mean a second copy of the rules about what a valid
+/// order of battle is, and a second copy is how the two answers drift.
+pub fn field_battle_problem(
+    registry: &tactics_core::data::DataRegistry,
+    map_id: &str,
+    sides: &[SideState],
+    attacker_side: u8,
+    forces: &[BattleForce],
+    roster: &Arc<Roster>,
+) -> Option<String> {
+    stage_field_battle(registry, map_id, sides, attacker_side, forces, roster, 0)
+        .err()
+        .map(|e| e.to_string())
+}
+
+// A Bevy system's arguments are its dependency list, not a signature anybody
+// designed: this one now also needs the state machine, because a battle that
+// cannot be staged has to hand the player back to the campaign instead of
+// panicking.
+#[allow(clippy::too_many_arguments)]
 fn setup_battle(
     mut commands: Commands,
     mods: Res<Mods>,
@@ -714,6 +794,7 @@ fn setup_battle(
     view: map_render::View,
     mut log: ResMut<BattleLog>,
     mut focus: ResMut<CameraFocus>,
+    mut next: ResMut<NextState<AppState>>,
 ) {
     let registry = &mods.0;
     let pending = pending
@@ -722,11 +803,10 @@ fn setup_battle(
             map_id: "river_crossing".into(),
         });
 
-    let (mut state, field) = match &pending {
-        PendingBattle::Scenario { map_id } => (
-            BattleState::from_map(registry, map_id, seed()).expect("scenario map builds"),
-            None,
-        ),
+    let staged = match &pending {
+        PendingBattle::Scenario { map_id } => BattleState::from_map(registry, map_id, seed())
+            .map(|state| (state, None))
+            .map_err(StagingError::from),
         PendingBattle::Field {
             map_id,
             roster,
@@ -735,21 +815,16 @@ fn setup_battle(
             sides,
             attacker_side,
             forces,
-        } => {
-            let file = registry.map(map_id).expect("field battle map exists");
-            let map = tactics_core::map::HexMap::from_map_file(file).expect("map parses");
-            let (placements, crews, origins) = deploy(registry, &map, forces, *attacker_side);
-            // The campaign's own roster, so these are the same cadets who will
-            // carry whatever happens here back out again.
-            let state = BattleState::from_placements(
-                registry,
-                map,
-                sides.clone(),
-                &placements,
-                &crews,
-                roster.clone(),
-                seed(),
-            );
+        } => stage_field_battle(
+            registry,
+            map_id,
+            sides,
+            *attacker_side,
+            forces,
+            roster,
+            seed(),
+        )
+        .map(|(state, origins)| {
             (
                 state,
                 Some(FieldBattle {
@@ -758,6 +833,17 @@ fn setup_battle(
                     origins,
                 }),
             )
+        }),
+    };
+
+    // Nothing has been spawned yet, so backing out is just declining to enter:
+    // the campaign is still where it was, and it hears why on its own log.
+    let (mut state, field) = match staged {
+        Ok(staged) => staged,
+        Err(e) => {
+            log.push(format!("This battle cannot be staged: {e}"));
+            next.set(AppState::Overworld);
+            return;
         }
     };
 
@@ -3517,7 +3603,8 @@ mod tests {
             &crews,
             std::sync::Arc::new(tactics_core::roster::Roster::new()),
             9,
-        );
+        )
+        .expect("the staged placements are content the base mod ships");
         let lines = inherit_army_missions(&reg, &mut state, &forces, ArmyId(0), ArmyId(1));
         // One army per side, so one formation per side exists: a declaration
         // nobody joined is dropped rather than carried empty.

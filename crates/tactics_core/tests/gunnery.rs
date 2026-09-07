@@ -83,6 +83,7 @@ fn field(reg: &DataRegistry, attacker: &str, target: &str, dist: i32, seed: u64)
         std::sync::Arc::new(roster),
         seed,
     )
+    .expect("the staged placements are content the base mod ships")
 }
 
 /// The attacker's main gun.

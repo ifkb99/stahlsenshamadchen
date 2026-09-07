@@ -399,8 +399,9 @@ impl Unit {
 pub enum EndReason {
     /// One side (or every side) was wiped out.
     Eliminated,
-    /// The sides lost each other: [`STALEMATE_ROUNDS`] rounds passed with no
-    /// damage dealt and nobody holding an enemy in sight, so both disengage
+    /// The sides lost each other: [`crate::data::Balance::stalemate_rounds`]
+    /// rounds passed with no damage dealt and nobody holding an enemy in
+    /// sight, so both disengage
     /// with whatever they have left. Without this, survivors who lose
     /// contact in the fog wander until they happen to collide — hundreds of
     /// rounds, with the campaign stuck behind them.
@@ -427,9 +428,49 @@ pub struct BattleResult {
     pub reason: EndReason,
 }
 
-/// The full battle simulation state.
+/// A battle whose `#[serde(skip)]` caches have been rebuilt, said as a type.
+///
+/// The inner `()` is private, so the only places one can be made are the two
+/// constructors below and [`SavedBattle::rehydrate`] — which is the whole
+/// point: see [`Battle`].
+#[derive(Debug, Clone, Copy)]
+pub struct Built(());
+
+/// A battle straight off disk, with every cache still empty.
+///
+/// Deliberately [`Default`] where [`Built`] is not, because that one
+/// asymmetry is what decides which of the two serde is able to produce.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Unbuilt;
+
+/// The full battle simulation state, in one of two conditions.
+///
+/// `C` is not data. It is a marker saying whether the fields this struct
+/// declares `#[serde(skip)]` — [`Self::sight`], [`Self::moves`], and the
+/// per-unit vision inside [`Self::fog`] — hold anything. [`BattleState`] is
+/// the playable battle and is what every signature in the engine names;
+/// [`SavedBattle`] is what deserializing produces, and the only thing anybody
+/// can do with one is [`SavedBattle::rehydrate`].
+///
+/// **Why a type rather than a comment.** Those caches are pure functions of
+/// the map and the registry, so leaving them out of a save is right; the cost
+/// used to be a list of manual duties in `save::rehydrate`, and forgetting one
+/// is silent — an empty sight grid answers every line-of-sight question
+/// wrongly rather than loudly, an empty move grid says nobody can drive, and
+/// an empty `visible_key` panics. Rebuilding needs the [`DataRegistry`], which
+/// serde has no way to hand a `Deserialize` impl, so the type system is used
+/// to say "not yet": `Unbuilt` is `Default` and `Built` is not, and serde
+/// fills a skipped field with `Default::default()`. That single fact makes
+/// `Battle<Unbuilt>` deserializable and `Battle<Built>` not, so there is
+/// exactly one door from a file to a playable battle and it takes a registry.
+///
+/// The second half of the obligation — that a cache added tomorrow is
+/// rebuilt too — is [`SavedBattle::rehydrate`], which destructures this struct
+/// by name. A new field there is a compile error until somebody has said
+/// whether it comes off the disk or off the map.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BattleState {
+#[serde(bound(deserialize = "C: Default"))]
+pub struct Battle<C = Built> {
     pub map: Arc<HexMap>,
     /// Sight heights for every tile, resolved once from the map and the
     /// registry. Shared rather than recomputed because line of sight is the
@@ -473,7 +514,7 @@ pub struct BattleState {
     /// have to be taken back.
     ///
     /// Defaulted on load so a save written before objectives existed opens as
-    /// what it was — a battle with no ground worth taking. `save::rehydrate`
+    /// what it was — a battle with no ground worth taking. [`SavedBattle::rehydrate`]
     /// then sizes it against the map, because scoring indexes through it.
     #[serde(default)]
     pub objective_held: Vec<Option<u8>>,
@@ -494,11 +535,108 @@ pub struct BattleState {
     /// Who answers to whom: the map's formations resolved against the units
     /// that actually spawned.
     ///
-    /// Inert as of this chunk — populated, saved, and read by nothing that
-    /// makes a decision. `#[serde(default)]` so a save written before the
-    /// chain of command existed opens as what it was: one flat pool per side.
+    /// No longer inert: `ai::eval` reads it for the standing mission a crew is
+    /// carrying, `ai::command` reads a formation's doctrine and delegation to
+    /// decide what she is told and how literally, and rallying reads a
+    /// formation's leader. It is state a decision depends on, so it saves and
+    /// forks with everything else. `#[serde(default)]` so a save written
+    /// before the chain of command existed opens as what it was: one flat pool
+    /// per side.
     #[serde(default)]
     pub command: CommandState,
+    /// Evidence that the skipped caches above hold something.
+    ///
+    /// Skipped itself, which is exactly what makes it work: serde reaches for
+    /// `Default::default()` here, [`Built`] has no `Default`, and so a
+    /// [`BattleState`] cannot be deserialized at all. See [`Battle`].
+    #[serde(skip)]
+    built: C,
+}
+
+/// A battle anybody may play: its caches are built.
+pub type BattleState = Battle<Built>;
+
+/// A battle as it comes off disk. See [`Battle`] for why it is a separate
+/// type, and [`Self::rehydrate`] for the one thing to do with it.
+pub type SavedBattle = Battle<Unbuilt>;
+
+impl SavedBattle {
+    /// Put back everything a save deliberately left out, and hand back a
+    /// battle that can be asked a question.
+    ///
+    /// This is the only route from a deserialized battle to a playable one,
+    /// and it destructures the struct field by field on purpose: a field
+    /// added to [`Battle`] stops this compiling until its author has decided
+    /// whether it travels in the file or is rebuilt here. That is the
+    /// obligation `save::rehydrate` used to state in prose.
+    pub fn rehydrate(self, registry: &DataRegistry) -> BattleState {
+        let Battle {
+            map,
+            sight,
+            moves,
+            sides,
+            roster,
+            units,
+            round,
+            phase,
+            mut fog,
+            rng,
+            over,
+            last_contact_round,
+            mut objective_held,
+            mut score,
+            shells,
+            command,
+            built: Unbuilt,
+        } = self;
+
+        // Both grids are pure functions of the map and the terrain
+        // definitions. They are rebuilt rather than trusted because a save
+        // written before a mod retuned its terrain would otherwise carry the
+        // old answer; `is_empty` is checked first only so that a caller who
+        // already holds a built grid — a fork inside the engine — pays
+        // nothing.
+        let sight = if sight.is_empty() {
+            Arc::new(SightGrid::build(registry, &map))
+        } else {
+            sight
+        };
+        let moves = if moves.is_empty() {
+            Arc::new(MoveGrid::build(registry, &map))
+        } else {
+            moves
+        };
+        // The fog's per-unit vision and per-side keys are skipped too, and the
+        // key list is indexed by side during recompute, so an empty one panics
+        // rather than simply recomputing.
+        fog.rehydrate();
+        // Objective control and the scoreboard are indexed positionally — by
+        // objective and by side — and scoring writes through those indices. A
+        // save written before objectives existed carries neither, so size them
+        // from the map and the sides rather than trusting the file to agree.
+        objective_held.resize(map.objectives().len(), None);
+        score.resize(sides.len(), 0);
+
+        Battle {
+            map,
+            sight,
+            moves,
+            sides,
+            roster,
+            units,
+            round,
+            phase,
+            fog,
+            rng,
+            over,
+            last_contact_round,
+            objective_held,
+            score,
+            shells,
+            command,
+            built: Built(()),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -513,6 +651,71 @@ pub enum BattleSetupError {
     Invalid(Vec<String>),
     #[error(transparent)]
     Data(#[from] DataError),
+}
+
+/// Everything wrong with an order of battle that was assembled rather than
+/// written down, as the same list of sentences [`crate::map::MapFile::validate_into`]
+/// produces for a scenario.
+///
+/// This is [`BattleState::from_placements`]'s half of the check that
+/// [`BattleState::from_map`] gets from map validation. It cannot simply *be*
+/// that function: a placement here carries [`CadetId`]s into a roster that
+/// already exists, where a map file carries character ids into the registry,
+/// and the campaign's roster is the thing that can have lost somebody. So the
+/// questions asked are the same four — is that hex on this map, does that
+/// chassis exist, is that side real, is that cadet on the roll — and the last
+/// two are asked of different books.
+///
+/// Every problem is collected rather than returned at the first, because a mod
+/// that dropped a vehicle usually dropped it from every army that had one and
+/// a player fixing content wants the whole list.
+fn validate_placements(
+    registry: &DataRegistry,
+    map: &HexMap,
+    sides: &[SideState],
+    placements: &[UnitPlacement],
+    crews: &[Vec<CadetId>],
+    roster: &Roster,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    for (i, placement) in placements.iter().enumerate() {
+        let at = placement.at;
+        if !map.contains(crate::offset_to_hex(at[0], at[1])) {
+            errors.push(format!(
+                "placement at [{}, {}] is outside the map",
+                at[0], at[1]
+            ));
+        }
+        if registry.vehicle(&placement.vehicle).is_none() {
+            errors.push(format!(
+                "placement at [{}, {}] references missing vehicle `{}`",
+                at[0], at[1], placement.vehicle
+            ));
+        }
+        if placement.side as usize >= sides.len() {
+            errors.push(format!(
+                "placement at [{}, {}] references side {} but only {} sides are in this battle",
+                at[0],
+                at[1],
+                placement.side,
+                sides.len()
+            ));
+        }
+        // A cadet the roster does not know is not a cosmetic problem: her seat
+        // would be empty, substance counts people aboard, and the vehicle
+        // would go out about twice as easy to kill for a reason nobody could
+        // see. She also cannot come home, because `apply_battle_result` drops
+        // crew ids the campaign roster does not know.
+        for cadet in crews.get(i).into_iter().flatten() {
+            if roster.get(*cadet).is_none() {
+                errors.push(format!(
+                    "placement at [{}, {}] is crewed by cadet {}, who is not on this roster",
+                    at[0], at[1], cadet.0
+                ));
+            }
+        }
+    }
+    errors
 }
 
 impl BattleState {
@@ -572,9 +775,15 @@ impl BattleState {
             score: vec![0; side_count],
             shells: Vec::new(),
             command,
+            built: Built(()),
         };
         for (placement, crew) in file.units.iter().zip(&crews) {
-            state.spawn_unit(registry, placement, crew.clone());
+            // `validate_into` above has already said these placements name
+            // content this registry has, so this cannot fail here. It is still
+            // a `?` rather than an `expect`, because the day somebody adds a
+            // check to `spawn_unit` that validation does not make, the error
+            // should reach the caller rather than the player's screen.
+            state.spawn_unit(registry, placement, crew.clone())?;
         }
         state.face_units_at_enemies(&file.units);
         state.board_mounted_starts(registry, &file.units);
@@ -585,6 +794,16 @@ impl BattleState {
 
     /// Build a battle directly from placements (used by the overworld when
     /// two armies clash on a generated or terrain-picked map).
+    ///
+    /// Validated, and for the same reasons [`Self::from_map`] is. This is the
+    /// campaign's path into a battle, and its order of battle is assembled at
+    /// run time out of armies rather than read from a file an author could be
+    /// shown warnings about — so a mod that dropped a vehicle between one save
+    /// and the next, or a campaign carrying a cadet the roster no longer
+    /// knows, arrives here. It used to arrive as a panic inside
+    /// [`Self::spawn_unit`]; it is now the same [`BattleSetupError::Invalid`]
+    /// a bad scenario map produces, and the presentation layer can say so and
+    /// decline to start the battle.
     pub fn from_placements(
         registry: &DataRegistry,
         map: HexMap,
@@ -593,7 +812,11 @@ impl BattleState {
         crews: &[Vec<CadetId>],
         roster: Arc<Roster>,
         seed: u64,
-    ) -> Self {
+    ) -> Result<Self, BattleSetupError> {
+        let errors = validate_placements(registry, &map, &sides, placements, crews, &roster);
+        if !errors.is_empty() {
+            return Err(BattleSetupError::Invalid(errors));
+        }
         let side_count = sides.len();
         let objective_count = map.objectives().len();
         let sight = Arc::new(SightGrid::build(registry, &map));
@@ -623,19 +846,20 @@ impl BattleState {
             score: vec![0; side_count],
             shells: Vec::new(),
             command,
+            built: Built(()),
         };
         for (i, placement) in placements.iter().enumerate() {
             state.spawn_unit(
                 registry,
                 placement,
                 crews.get(i).cloned().unwrap_or_default(),
-            );
+            )?;
         }
         state.face_units_at_enemies(placements);
         state.board_mounted_starts(registry, placements);
         state.fog = FogMap::new(state.sides.len());
         fog::recompute(registry, &mut state);
-        state
+        Ok(state)
     }
 
     /// Board everyone a scenario says starts aboard, after every unit exists.
@@ -732,16 +956,27 @@ impl BattleState {
         }
     }
 
+    /// Put one placement on the board.
+    ///
+    /// Fallible rather than panicking on a chassis the registry has never
+    /// heard of. Both setup paths validate before they get here, so in
+    /// practice this only fires if a check is added to one and not the other —
+    /// but it used to be an `expect`, and the campaign's path did not validate
+    /// at all, so a mod that dropped a vehicle took the game down instead of
+    /// declining the battle.
     pub fn spawn_unit(
         &mut self,
         registry: &DataRegistry,
         placement: &UnitPlacement,
         crew: Vec<CadetId>,
-    ) -> UnitId {
+    ) -> Result<UnitId, BattleSetupError> {
         let id = UnitId(self.units.len() as u32);
-        let vehicle = registry
-            .vehicle(&placement.vehicle)
-            .expect("placement validated against registry");
+        let vehicle = registry.vehicle(&placement.vehicle).ok_or_else(|| {
+            BattleSetupError::Invalid(vec![format!(
+                "placement at [{}, {}] references missing vehicle `{}`",
+                placement.at[0], placement.at[1], placement.vehicle
+            )])
+        })?;
         // A placement that names no cadets gets an anonymous, average crew —
         // one per seat the chassis declares. Without hit points, dying is
         // something that happens to the people aboard, and whether a
@@ -848,7 +1083,7 @@ impl BattleState {
             alive: true,
             exited: false,
         });
-        id
+        Ok(id)
     }
 
     /// Which of this crew actually climbs in, as the seat-aligned condition

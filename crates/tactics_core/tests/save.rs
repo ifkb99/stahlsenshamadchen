@@ -11,7 +11,7 @@ use tactics_core::battle::{BattleState, Event, Latitude, Order};
 use tactics_core::data::DataRegistry;
 use tactics_core::overworld::{ArmyMission, OverworldOrder, OverworldState};
 use tactics_core::roster::CadetStatus;
-use tactics_core::save::{SAVE_VERSION, SaveGame};
+use tactics_core::save::{SAVE_VERSION, SaveGame, SavedGame};
 
 mod common;
 use common::{registry, seen};
@@ -797,6 +797,7 @@ fn scripted_battle(
         std::sync::Arc::new(roster),
         44,
     )
+    .expect("the staged placements are content the base mod ships")
 }
 
 fn commit_all(reg: &DataRegistry, state: &mut BattleState) {
@@ -1302,4 +1303,88 @@ fn a_mounted_platoon_rides_through_a_save() {
     assert_eq!(r.aboard, Some(carrier), "still aboard");
     assert_eq!(r.pos, pos, "still where the carrier is");
     assert!(r.dismounting, "and still under orders to get off");
+}
+
+/// The obligation to rebuild the caches is the type system's, not a reader's.
+///
+/// `SightGrid`, `MoveGrid` and the fog's per-unit vision are `#[serde(skip)]`,
+/// and every one of them fails *quietly* when it comes back empty: an empty
+/// sight grid answers every line-of-sight question wrongly rather than loudly,
+/// an empty move grid says every step is impossible so nobody can drive, and
+/// an empty `visible_key` panics on the first recompute because it is indexed
+/// by side. Rebuilding needs the registry, which serde cannot be handed.
+///
+/// So the wrong path is not a thing anybody can write any more. It would have
+/// looked like this, and it is the line this test exists to say is gone:
+///
+/// ```compile_fail
+/// # use tactics_core::battle::BattleState;
+/// let text = String::new();
+/// let wrong: BattleState = serde_json::from_str(&text).unwrap();
+/// wrong.sight.clear(a, b); // silently "yes, you can see that"
+/// ```
+///
+/// It does not compile: `BattleState` is `Battle<Built>`, `Built` has no
+/// `Default`, and serde needs one to fill a skipped field. What deserializing
+/// *does* produce is a `SavedBattle`, and the only thing anybody can do with
+/// one is hand it a registry.
+#[test]
+fn a_battle_off_a_save_file_cannot_be_asked_anything_until_its_caches_are_back() {
+    let reg = registry();
+    let mut original = BattleState::from_map(&reg, "river_crossing", 5).expect("battle");
+    play(&reg, &mut original, 2, 7);
+    let text = SaveGame::new(&reg, None, Some(original.clone()))
+        .to_json()
+        .expect("serialises");
+
+    // What serde can build out of that text is the saved form, and its caches
+    // really are empty — this is the state the old `rehydrate` was trusted to
+    // notice.
+    let raw: SavedGame = serde_json::from_str(&text).expect("the saved form reads");
+    let raw_battle = raw.battle.expect("a battle is in there");
+    assert!(
+        raw_battle.sight.is_empty(),
+        "the sight grid is not carried in the file"
+    );
+    assert!(
+        raw_battle.moves.is_empty(),
+        "the move grid is not carried either"
+    );
+
+    // Across the one bridge there is, and every question answers as it did
+    // before the save.
+    let restored = raw_battle.rehydrate(&reg);
+    let mut hexes: Vec<_> = restored.map.iter().map(|(h, _)| h).collect();
+    hexes.sort_by_key(|h| (h.x, h.y));
+    let mut checked = 0;
+    for from in hexes.iter().step_by(37) {
+        for to in hexes.iter().step_by(53) {
+            assert_eq!(
+                restored.sight.clear(*from, *to),
+                original.sight.clear(*from, *to),
+                "sight differs at {from:?} -> {to:?}"
+            );
+            for next in from.all_neighbors() {
+                assert_eq!(
+                    restored
+                        .moves
+                        .cost(tactics_core::data::MovementClass::Tracked, 1, *from, next),
+                    original
+                        .moves
+                        .cost(tactics_core::data::MovementClass::Tracked, 1, *from, next),
+                    "the road out of {from:?} differs"
+                );
+            }
+            checked += 1;
+        }
+    }
+    assert!(
+        checked > 500,
+        "sampled too little to mean anything: {checked}"
+    );
+
+    // And the fog: an unrehydrated `visible_key` panics on the first
+    // recompute, which is what resolving a round does over and over.
+    let mut restored = restored;
+    play(&reg, &mut restored, 1, 7);
 }

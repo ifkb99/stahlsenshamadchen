@@ -931,7 +931,8 @@ fn pressed_stage(reg: &DataRegistry, seed: u64) -> (BattleState, tactics_core::H
         &crews,
         std::sync::Arc::new(roster),
         seed,
-    );
+    )
+    .expect("the staged placements are content the base mod ships");
     let told = tactics_core::offset_to_hex(18, 2);
     state
         .apply(
@@ -1369,7 +1370,8 @@ fn ordered_against_the_ground(reg: &DataRegistry, seed: u64) -> BattleState {
         &crews,
         std::sync::Arc::new(roster),
         seed,
-    );
+    )
+    .expect("the staged placements are content the base mod ships");
     state
         .apply(
             reg,
@@ -2102,7 +2104,8 @@ fn sides_that_can_see_each_other_are_never_called_off() {
         &crews,
         std::sync::Arc::new(roster),
         1,
-    );
+    )
+    .expect("the staged placements are content the base mod ships");
     assert!(
         !state.fog.side(0).spotted.is_empty(),
         "test needs the two units to start in sight of one another"
@@ -3003,7 +3006,8 @@ fn a_withdrawing_army_fights_its_battle_toward_the_exit() {
         &[Vec::new(), Vec::new(), Vec::new(), Vec::new()],
         std::sync::Arc::new(tactics_core::roster::Roster::new()),
         11,
-    );
+    )
+    .expect("the staged placements are content the base mod ships");
 
     // The helper first, on its own terms: each side is sent down its own
     // road, and a side the map offers no lane to is sent nowhere.
@@ -3099,6 +3103,7 @@ fn two_side_battle(
         std::sync::Arc::new(roster),
         seed,
     )
+    .expect("the staged placements are content the base mod ships")
 }
 
 /// A battle on a hand-drawn map that declares ground worth holding.
@@ -3144,6 +3149,7 @@ fn goal_battle(
         std::sync::Arc::new(roster),
         seed,
     )
+    .expect("the staged placements are content the base mod ships")
 }
 
 /// What ground this planner sends `unit` to, with the blur switched off and
@@ -3621,6 +3627,7 @@ fn objective_battle(
         std::sync::Arc::new(roster),
         1,
     )
+    .expect("the staged placements are content the base mod ships")
 }
 
 /// The two crews of an objective test, out of contact behind the curtain.
@@ -5934,7 +5941,8 @@ fn an_officer_in_sight_settles_a_crew_faster() {
             &crews,
             std::sync::Arc::new(roster),
             71,
-        );
+        )
+        .expect("the staged placements are content the base mod ships");
         // High enough that neither branch reaches the floor: pressure
         // saturates at zero, and a comparison against a floor measures the
         // floor.
@@ -6713,7 +6721,8 @@ fn an_executor_only_command_fills_gaps_without_issuing_missions() {
         &crews,
         std::sync::Arc::new(roster),
         17,
-    );
+    )
+    .expect("the staged placements are content the base mod ships");
 
     // The human's order, issued exactly as the UI issues it.
     let target = tactics_core::offset_to_hex(12, 1);
@@ -7505,6 +7514,7 @@ fn picture_stage(reg: &DataRegistry, seed: u64) -> BattleState {
         std::sync::Arc::new(roster),
         seed,
     )
+    .expect("the staged placements are content the base mod ships")
 }
 
 #[test]
@@ -7638,6 +7648,7 @@ fn scripted_battle(
         std::sync::Arc::new(roster),
         1,
     )
+    .expect("the staged placements are content the base mod ships")
 }
 
 /// A placement that answers to a formation, and optionally commands it.
@@ -8083,6 +8094,7 @@ fn signal_stage(reg: &DataRegistry, forest: bool, seed: u64) -> BattleState {
         std::sync::Arc::new(roster),
         seed,
     )
+    .expect("the staged placements are content the base mod ships")
 }
 
 #[test]
@@ -8171,6 +8183,7 @@ fn radio_stage(reg: &DataRegistry, seed: u64) -> BattleState {
         std::sync::Arc::new(roster),
         seed,
     )
+    .expect("the staged placements are content the base mod ships")
 }
 
 /// A two-hex radio, nobody relaying, no flags: the narrowest net there is, so
@@ -9000,7 +9013,8 @@ fn a_formations_orders_are_not_overheard_by_the_enemy() {
         &crews,
         std::sync::Arc::new(roster),
         1,
-    );
+    )
+    .expect("the staged placements are content the base mod ships");
 
     let mission = Mission::Hold {
         at: Some(state.units[0].pos),
@@ -9520,6 +9534,7 @@ fn bounding_stage(
         std::sync::Arc::new(roster),
         seed,
     )
+    .expect("the staged placements are content the base mod ships")
 }
 
 /// Plan one executor-only round for side 0 and say who moved.
@@ -9693,7 +9708,8 @@ fn contact_stage(reg: &DataRegistry, seed: u64) -> (BattleState, FormationId) {
         &crews,
         std::sync::Arc::new(roster),
         seed,
-    );
+    )
+    .expect("the staged placements are content the base mod ships");
     let section = formation_named(&state, "section");
     (state, section)
 }
@@ -10000,6 +10016,7 @@ fn hardware_stage(reg: &DataRegistry, ridge: bool, forest: bool, seed: u64) -> B
         std::sync::Arc::new(roster),
         seed,
     )
+    .expect("the staged placements are content the base mod ships")
 }
 
 #[test]
@@ -10151,6 +10168,7 @@ fn pulse_stage(reg: &DataRegistry, seed: u64) -> BattleState {
         std::sync::Arc::new(roster),
         seed,
     )
+    .expect("the staged placements are content the base mod ships")
 }
 
 #[test]
@@ -10425,7 +10443,8 @@ fn base_of_fire_stage(reg: &DataRegistry, seed: u64) -> BattleState {
         &crews,
         std::sync::Arc::new(roster),
         seed,
-    );
+    )
+    .expect("the staged placements are content the base mod ships");
     assert!(
         state.fog.side(0).spotted.is_empty(),
         "the stage needs no enemy in sight, or the attack term joins in"
@@ -11878,6 +11897,7 @@ fn taxi_run_stage(reg: &DataRegistry, walk: i32, seed: u64) -> BattleState {
         std::sync::Arc::new(roster),
         seed,
     )
+    .expect("the staged placements are content the base mod ships")
 }
 
 /// Every order one side's planner issues in a round, in the order it issues
@@ -14168,7 +14188,8 @@ fn crewed_stage(reg: &DataRegistry, crew: &[&str]) -> (BattleState, UnitId) {
         &crews,
         std::sync::Arc::new(roster),
         7,
-    );
+    )
+    .expect("the staged placements are content the base mod ships");
     (state, UnitId(0))
 }
 
@@ -14229,7 +14250,8 @@ fn stage_with_a_wounded_girl(
         &crews,
         std::sync::Arc::new(roster),
         7,
-    );
+    )
+    .expect("the staged placements are content the base mod ships");
     (state, ours)
 }
 

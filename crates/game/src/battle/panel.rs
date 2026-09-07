@@ -810,6 +810,7 @@ mod tests {
             std::sync::Arc::new(roster),
             7,
         )
+        .expect("the staged placements are content the base mod ships")
     }
 
     fn placement(at: [i32; 2], side: u8, vehicle: &str, name: &str) -> UnitPlacement {
