@@ -178,7 +178,7 @@ impl Evaluator {
             let riding: u32 = state
                 .units
                 .iter()
-                .filter(|u| u.alive && u.aboard == Some(unit))
+                .filter(|u| u.alive() && u.aboard == Some(unit))
                 .map(|u| state.substance(registry, u).0)
                 .sum();
             let fragility = state.typical_substance(registry) / left;

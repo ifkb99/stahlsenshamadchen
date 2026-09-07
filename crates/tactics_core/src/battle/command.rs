@@ -1620,7 +1620,7 @@ impl BattleState {
                 if next.iter().any(|c| c.unit == old.unit) {
                     continue;
                 }
-                let gone = self.units.get(old.unit.index()).is_none_or(|u| !u.alive);
+                let gone = self.units.get(old.unit.index()).is_none_or(|u| !u.alive());
                 if gone && old.fresh {
                     continue;
                 }

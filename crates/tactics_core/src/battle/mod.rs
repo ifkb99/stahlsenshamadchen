@@ -131,6 +131,147 @@ impl CrewCondition {
     }
 }
 
+/// What ended a vehicle, now that there are no hit points.
+///
+/// The variants are the four ways a fight finishes a machine, and they are
+/// deliberately *not* four independent facts: a vehicle dies once, and this
+/// is what she is remembered by. When more than one of them happens to the
+/// same hull inside one tick — the crew bails out of a hull a later shell
+/// then crushes — [`Self::supersedes`] decides which sticks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Destruction {
+    /// Blast overmatch crushed her: the round did not need the penetration
+    /// gate's permission, and there is nothing left to fight from.
+    Crushed,
+    /// The crew left her under fire, rolled through the same discipline
+    /// check that governs refusing orders. A wreck as far as the battle is
+    /// concerned — reaped like a kill, scored like a loss — but the cadets
+    /// are walking home, which the campaign's fate machinery treats very
+    /// differently from burning.
+    Abandoned,
+    /// The ammunition went up. Instantly destroyed, and the fate rolls for
+    /// everyone aboard carry the fire.
+    BrewedUp,
+    /// Nobody aboard can fight any more. Not a flag anything sets: it is
+    /// what [`reap`](crate::battle::orders) concludes about a hull that is
+    /// intact and has nobody left to work it.
+    CrewSpent,
+}
+
+impl Destruction {
+    /// Whether this end of hers is the one to remember, given one already
+    /// recorded.
+    ///
+    /// **This is a read precedence turned into a write precedence.** The
+    /// three flags this replaced were independent bools, all of which stayed
+    /// set, and every reader had its own fixed order for consulting them —
+    /// which is the same thing as an ordering, written out three times and
+    /// able to disagree. Measured over 900 AI battles (9,131 vehicles lost),
+    /// two of them land on one hull about 250 times, in all three pairings,
+    /// so this is a case that happens rather than a case that is argued
+    /// about.
+    ///
+    /// The order is *burning beats the crew leaving beats the hull being
+    /// crushed*, and the middle rung is where the simulation depends on it:
+    /// the bail-out check refuses to roll for a crew who has already gone,
+    /// so an abandonment that a later shell's blast overwrote would let the
+    /// same crew abandon the same tank twice.
+    fn supersedes(self, existing: Destruction) -> bool {
+        fn rank(d: Destruction) -> u8 {
+            match d {
+                Destruction::CrewSpent => 0,
+                Destruction::Crushed => 1,
+                Destruction::Abandoned => 2,
+                Destruction::BrewedUp => 3,
+            }
+        }
+        rank(self) > rank(existing)
+    }
+}
+
+/// Where a vehicle stands in this battle: on the field, off it in a wreck, or
+/// off it under her own power.
+///
+/// **Why one enum and not five bools.** This replaced `alive`, `exited`,
+/// `abandoned`, `brewed` and `wrecked`, which between them could spell
+/// thirty-two states of which four were meaningful, and a prose warning
+/// never to classify a unit by `!alive` — because `!alive` is true of a
+/// vehicle that withdrew successfully, and reading it as a loss records a
+/// clean withdrawal as a massacre. The distinction the warning was defending
+/// is now the difference between two variants, and the next fate anybody
+/// wants — captured, immobilised and left behind — is a sixth *variant*,
+/// which is a compile error at every reader rather than a sixth flag nobody
+/// notices.
+///
+/// Note that [`Self::alive`] and "standing on a hex" remain two different
+/// questions: a passenger is [`Self::Fighting`] and on no hex anybody may
+/// interact with. Occupancy is asked through `unit_at` / `occupants`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Fate {
+    /// On the battlefield: targetable, blocking, and still shooting.
+    ///
+    /// `doom` is a destruction she has already taken and has not yet been
+    /// reaped for. Damage lands during a tick and death is reaped at the end
+    /// of it, which is the simultaneity bargain the whole resolver keeps, so
+    /// between the shell and `reap` a vehicle is genuinely still on the
+    /// board with her end already decided. It is inside this variant rather
+    /// than beside it so that "is she on the field" stays one variant and
+    /// cannot be got wrong by a match written later.
+    Fighting { doom: Option<Destruction> },
+    /// Reaped: off the board, and counted as a loss, with what ended her.
+    Destroyed(Destruction),
+    /// She drove off the map by an exit objective she was entitled to take.
+    ///
+    /// Off the board — nothing can see her, shoot her or be blocked by her —
+    /// but emphatically *not* destroyed: the campaign counts her among the
+    /// survivors and her crew walk home.
+    Exited,
+}
+
+impl Default for Fate {
+    /// Whole and on the field, which is what every vehicle spawns as and
+    /// what a save that says nothing about her means. Written out rather
+    /// than derived because `#[default]` cannot name a struct variant.
+    fn default() -> Self {
+        Self::Fighting { doom: None }
+    }
+}
+
+impl Fate {
+    /// Whether she is on the battlefield. False for a wreck *and* for a
+    /// vehicle that withdrew, which is why it is never the question to ask
+    /// about who came home.
+    pub fn alive(self) -> bool {
+        matches!(self, Self::Fighting { .. })
+    }
+
+    /// Whether she left under her own power by an exit she was entitled to.
+    pub fn exited(self) -> bool {
+        matches!(self, Self::Exited)
+    }
+
+    /// Whether this battle is going to record her as a loss — the complement
+    /// of "came home", and the honest reading of what `!alive` used to be
+    /// asked for.
+    pub fn lost(self) -> bool {
+        matches!(self, Self::Destroyed(_))
+    }
+
+    /// What ended her, or is about to: the same answer either side of the
+    /// reaping, because a doom taken this tick and a death recorded last
+    /// tick are the same fact at different ages, and every caller that
+    /// consults it wants it that way.
+    pub fn destruction(self) -> Option<Destruction> {
+        match self {
+            Self::Fighting { doom } => doom,
+            Self::Destroyed(how) => Some(how),
+            Self::Exited => None,
+        }
+    }
+}
+
 /// A crewed vehicle on the battlefield.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Unit {
@@ -225,17 +366,16 @@ pub struct Unit {
     /// grows it to crew length the first time anyone is hurt.
     #[serde(default)]
     pub crew_state: Vec<CrewCondition>,
-    /// The crew left her: a bail-out under fire, rolled through the same
-    /// discipline check that governs refusing orders. The vehicle is a
-    /// wreck as far as the battle is concerned — reaped like a kill,
-    /// scored like a loss — but the cadets are walking home, which the
-    /// campaign's fate machinery treats very differently from burning.
+    /// Where she stands in this battle: on the field, destroyed and how, or
+    /// withdrawn by an exit — the whole of what used to be `alive`,
+    /// `exited`, `abandoned`, `brewed` and `wrecked`.
+    ///
+    /// Ask it through [`Self::alive`], [`Self::exited`] and
+    /// [`Self::destruction`], or match it exhaustively; see [`Fate`] for
+    /// why it is one value. `#[serde(default)]` is
+    /// [`Fate::Fighting`] with no doom, which is what every unit spawns as.
     #[serde(default)]
-    pub abandoned: bool,
-    /// The ammunition went up. Instantly destroyed, and the fate rolls for
-    /// everyone aboard carry the fire.
-    #[serde(default)]
-    pub brewed: bool,
+    pub fate: Fate,
     /// The carrier this unit is riding in, when she is riding at all.
     ///
     /// Aboard, she is off the map in every sense that matters to the enemy:
@@ -255,12 +395,6 @@ pub struct Unit {
     /// onto the first free tile beside the carrier.
     #[serde(default)]
     pub dismounting: bool,
-    /// Destroyed as a vehicle by catastrophic damage that was not a fire —
-    /// blast overmatch flattening a soft skin, for now. Kept separate from
-    /// [`Self::brewed`] because the campaign's fate rolls care about the
-    /// difference between a crushed hull and a burning one.
-    #[serde(default)]
-    pub wrecked: bool,
     /// Damage type of the last hit this unit took, if any. Read by the
     /// campaign when working out what became of the crew.
     pub last_hit_by: Option<crate::data::DamageType>,
@@ -299,16 +433,6 @@ pub struct Unit {
     /// clears, because fresh orders end her own errand too.
     #[serde(default)]
     pub goal: Option<crate::battle::Goal>,
-    pub alive: bool,
-    /// This vehicle drove off the map by an exit objective.
-    ///
-    /// Off the board — so `alive` is false and nothing can see it, shoot it
-    /// or be blocked by it — but emphatically *not* destroyed: the campaign
-    /// counts it among the survivors and its crew walk home. Everything that
-    /// classifies a unit at the end of a battle has to ask this before it
-    /// reads `alive`, or a successful withdrawal is recorded as a massacre.
-    #[serde(default)]
-    pub exited: bool,
 }
 
 impl Unit {
@@ -395,6 +519,62 @@ impl Unit {
     /// state is spelled as the presence of an order.
     pub fn detached(&self) -> bool {
         self.orders.is_some()
+    }
+
+    /// Whether she is on the battlefield: targetable, blocking, and still
+    /// shooting.
+    ///
+    /// **Not the question to ask about who came home.** It is false for a
+    /// wreck and equally false for a vehicle that withdrew by an exit, and
+    /// a passenger answers `true` while standing on no hex anybody may
+    /// interact with. Classify an outcome with
+    /// [`BattleState::surviving_units`] / [`BattleState::lost_units`] and
+    /// ask occupancy through `unit_at` / `occupants`.
+    pub fn alive(&self) -> bool {
+        self.fate.alive()
+    }
+
+    /// Whether she drove off the map by an exit objective she was entitled
+    /// to take — off the board and not a loss.
+    pub fn exited(&self) -> bool {
+        self.fate.exited()
+    }
+
+    /// What ended her, or is about to before the tick is reaped.
+    pub fn destruction(&self) -> Option<Destruction> {
+        self.fate.destruction()
+    }
+
+    /// Record what has finished her, to be reaped at the end of the tick.
+    ///
+    /// Keeps whichever end is the more telling when she has already taken
+    /// one ([`Destruction::supersedes`]); a vehicle already off the board is
+    /// left alone, because nothing that happens to a wreck changes what
+    /// killed her.
+    pub fn doomed_by(&mut self, how: Destruction) {
+        if let Fate::Fighting { doom } = &mut self.fate
+            && doom.is_none_or(|existing| how.supersedes(existing))
+        {
+            *doom = Some(how);
+        }
+    }
+
+    /// Take her off the board as a loss, remembered by whatever doomed her —
+    /// or, if nothing did, by there being nobody left aboard to fight.
+    ///
+    /// The one door from [`Fate::Fighting`] to [`Fate::Destroyed`], so that
+    /// the reaping is a transition rather than an assignment somebody could
+    /// make from anywhere.
+    pub fn destroy(&mut self) {
+        if let Fate::Fighting { doom } = self.fate {
+            self.fate = Fate::Destroyed(doom.unwrap_or(Destruction::CrewSpent));
+        }
+    }
+
+    /// Take her off the board under her own power. Not a loss, and the
+    /// campaign counts her among the survivors.
+    pub fn withdraw(&mut self) {
+        self.fate = Fate::Exited;
     }
 
     /// The march she is on, if her commander's order is taking her anywhere
@@ -1082,9 +1262,7 @@ impl BattleState {
                 .map(|m| (m.id.clone(), m.toughness))
                 .collect(),
             crew_state,
-            abandoned: false,
-            brewed: false,
-            wrecked: false,
+            fate: Fate::default(),
             aboard: None,
             boarding: None,
             dismounting: false,
@@ -1092,8 +1270,6 @@ impl BattleState {
             pressure: 0,
             orders: None,
             goal: None,
-            alive: true,
-            exited: false,
         });
         Ok(id)
     }
@@ -1222,11 +1398,11 @@ impl BattleState {
     }
 
     pub fn unit(&self, id: UnitId) -> Option<&Unit> {
-        self.units.get(id.index()).filter(|u| u.alive)
+        self.units.get(id.index()).filter(|u| u.alive())
     }
 
     pub fn unit_mut(&mut self, id: UnitId) -> Option<&mut Unit> {
-        self.units.get_mut(id.index()).filter(|u| u.alive)
+        self.units.get_mut(id.index()).filter(|u| u.alive())
     }
 
     pub fn unit_at(&self, hex: Hex) -> Option<&Unit> {
@@ -1249,7 +1425,7 @@ impl BattleState {
     pub fn occupants(&self, hex: Hex) -> impl Iterator<Item = &Unit> {
         self.units
             .iter()
-            .filter(move |u| u.alive && u.aboard.is_none() && u.pos == hex)
+            .filter(move |u| u.alive() && u.aboard.is_none() && u.pos == hex)
     }
 
     /// How much of `hex`'s capacity is already taken.
@@ -1308,7 +1484,7 @@ impl BattleState {
     pub fn passengers(&self, carrier: UnitId) -> Vec<UnitId> {
         self.units
             .iter()
-            .filter(|u| u.alive && u.aboard == Some(carrier))
+            .filter(|u| u.alive() && u.aboard == Some(carrier))
             .map(|u| u.id)
             .collect()
     }
@@ -1540,7 +1716,7 @@ impl BattleState {
     }
 
     pub fn alive_units(&self) -> impl Iterator<Item = &Unit> {
-        self.units.iter().filter(|u| u.alive)
+        self.units.iter().filter(|u| u.alive())
     }
 
     pub fn side_units(&self, side: u8) -> impl Iterator<Item = &Unit> {
@@ -1556,13 +1732,13 @@ impl BattleState {
     /// wants. Reading `alive` for the second question records a successful
     /// withdrawal as a burned-out vehicle and a dead crew.
     pub fn surviving_units(&self) -> impl Iterator<Item = &Unit> {
-        self.units.iter().filter(|u| u.alive || u.exited)
+        self.units.iter().filter(|u| !u.fate.lost())
     }
 
     /// Vehicles actually destroyed — the complement of
     /// [`Self::surviving_units`], and never merely `!alive`.
     pub fn lost_units(&self) -> impl Iterator<Item = &Unit> {
-        self.units.iter().filter(|u| !u.alive && !u.exited)
+        self.units.iter().filter(|u| u.fate.lost())
     }
 
     pub fn is_over(&self) -> bool {

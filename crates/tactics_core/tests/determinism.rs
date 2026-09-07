@@ -141,7 +141,11 @@ fn record(registry: &DataRegistry, seed: u64) -> String {
     for unit in &state.units {
         out.push_str(&format!(
             "final {} {:?} crew {:?} modules {:?} alive {}\n",
-            unit.name, unit.pos, unit.crew_state, unit.modules, unit.alive
+            unit.name,
+            unit.pos,
+            unit.crew_state,
+            unit.modules,
+            unit.alive()
         ));
     }
     out

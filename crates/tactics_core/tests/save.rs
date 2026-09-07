@@ -78,8 +78,8 @@ fn round_trips_and_keeps_the_future_identical() {
     assert_eq!(restored.units.len(), original.units.len());
     for (a, b) in restored.units.iter().zip(&original.units) {
         assert_eq!(
-            (a.id, a.pos, &a.crew_state, a.alive, a.facing),
-            (b.id, b.pos, &b.crew_state, b.alive, b.facing)
+            (a.id, a.pos, &a.crew_state, a.alive(), a.facing),
+            (b.id, b.pos, &b.crew_state, b.alive(), b.facing)
         );
     }
 
@@ -689,7 +689,7 @@ fn an_order_waiting_at_the_radio_survives_a_save() {
     let deaf = state
         .units
         .iter()
-        .filter(|u| u.alive && u.side == 0)
+        .filter(|u| u.alive() && u.side == 0)
         .map(|u| u.id)
         .find(|id| !state.hears_orders(*id))
         .expect("a one-hex net leaves somebody outside it");

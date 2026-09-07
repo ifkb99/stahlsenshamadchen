@@ -1269,7 +1269,7 @@ impl BattleState {
         }
 
         let mut events = vec![Event::TickStarted { tick }];
-        for unit in self.units.iter_mut().filter(|u| u.alive) {
+        for unit in self.units.iter_mut().filter(|u| u.alive()) {
             for cd in &mut unit.cooldowns {
                 *cd = cd.saturating_sub(1);
             }
@@ -1541,7 +1541,7 @@ impl BattleState {
             .iter()
             // A passenger has no ground to break for; her cover is the
             // carrier, for better and much worse.
-            .filter(|u| u.alive && u.intent.is_empty() && u.aboard.is_none())
+            .filter(|u| u.alive() && u.intent.is_empty() && u.aboard.is_none())
             .map(|u| u.id)
             .collect();
         for id in ids {
@@ -1651,7 +1651,7 @@ impl BattleState {
         let dismounting: Vec<UnitId> = self
             .units
             .iter()
-            .filter(|u| u.alive && u.dismounting && u.aboard.is_some())
+            .filter(|u| u.alive() && u.dismounting && u.aboard.is_some())
             .map(|u| u.id)
             .collect();
         for id in dismounting {
@@ -1683,11 +1683,11 @@ impl BattleState {
         let boarding: Vec<(UnitId, UnitId)> = self
             .units
             .iter()
-            .filter(|u| u.alive && u.aboard.is_none())
+            .filter(|u| u.alive() && u.aboard.is_none())
             .filter_map(|u| u.boarding.map(|c| (u.id, c)))
             .collect();
         for (id, carrier) in boarding {
-            let Some(c) = self.unit(carrier).filter(|c| c.alive) else {
+            let Some(c) = self.unit(carrier).filter(|c| c.alive()) else {
                 // The ride she was walking to is gone; the order dies with
                 // it and she is simply a platoon standing where she stands.
                 if let Some(u) = self.unit_mut(id) {
@@ -1726,7 +1726,7 @@ impl BattleState {
         let rides: Vec<(UnitId, Hex)> = self
             .units
             .iter()
-            .filter(|u| u.alive)
+            .filter(|u| u.alive())
             .filter_map(|u| u.aboard.and_then(|c| self.unit(c)).map(|c| (u.id, c.pos)))
             .collect();
         for (id, pos) in rides {
@@ -1783,7 +1783,7 @@ impl BattleState {
             .units
             .iter()
             .filter(|u| {
-                u.alive
+                u.alive()
                     && !u.intent.path.is_empty()
                     && !u.intent.own_idea
                     && !self.obeys(registry, u)
@@ -1850,7 +1850,7 @@ impl BattleState {
         let ids: Vec<UnitId> = self
             .units
             .iter()
-            .filter(|u| u.alive)
+            .filter(|u| u.alive())
             .map(|u| u.id)
             .collect();
         // Held across the loop because the body takes `&mut self`; cloning the
@@ -1959,7 +1959,7 @@ impl BattleState {
         let decisions: Vec<(UnitId, combat::FireAction)> = self
             .units
             .iter()
-            .filter(|u| u.alive)
+            .filter(|u| u.alive())
             .map(|u| u.id)
             .collect::<Vec<_>>()
             .into_iter()
@@ -1982,7 +1982,7 @@ impl BattleState {
         let mut before: Vec<(UnitId, String)> = self
             .units
             .iter()
-            .filter(|u| u.alive)
+            .filter(|u| u.alive())
             .map(|u| (u.id, rules.rung(u.pressure).id.clone()))
             .collect();
 
@@ -2094,7 +2094,9 @@ impl BattleState {
             let watchers: Vec<UnitId> = self
                 .units
                 .iter()
-                .filter(|u| u.alive && u.side == side && self.fog.side(side).visible.contains(&at))
+                .filter(|u| {
+                    u.alive() && u.side == side && self.fog.side(side).visible.contains(&at)
+                })
                 .map(|u| u.id)
                 .collect();
             for id in watchers {
@@ -2172,7 +2174,7 @@ impl BattleState {
                 // officer and the condition was true for everybody, always.
                 // `fog::sees` is the per-unit question, answered off the
                 // cache the last recompute left warm.
-                .filter(|leader| leader.alive && fog::sees(registry, self, id, leader.pos))
+                .filter(|leader| leader.alive() && fog::sees(registry, self, id, leader.pos))
                 .map(|_| registry.morale.recovery_near_leader)
                 .unwrap_or(0);
             let shed = level.map(|l| registry.morale.recovered(l)).unwrap_or(0) + rallied;
@@ -2196,11 +2198,11 @@ impl BattleState {
         let boarders: Vec<(UnitId, Hex)> = self
             .units
             .iter()
-            .filter(|u| u.alive && u.aboard.is_none())
+            .filter(|u| u.alive() && u.aboard.is_none())
             .filter_map(|u| {
                 u.boarding
                     .and_then(|c| self.unit(c))
-                    .filter(|c| c.alive)
+                    .filter(|c| c.alive())
                     .map(|c| (u.id, c.pos))
             })
             .collect();
@@ -2214,7 +2216,7 @@ impl BattleState {
         // A personal destination reached is a personal destination done:
         // she holds the ground she was sent to, still detached, and the
         // panel stops saying she is on her way.
-        for unit in self.units.iter_mut().filter(|u| u.alive) {
+        for unit in self.units.iter_mut().filter(|u| u.alive()) {
             if unit.march().is_some_and(|m| m.to == unit.pos) {
                 // One assignment, and the insistence goes with the march it
                 // qualified because it was never anywhere else.
@@ -2228,7 +2230,7 @@ impl BattleState {
         let done: Vec<UnitId> = self
             .units
             .iter()
-            .filter(|u| u.alive)
+            .filter(|u| u.alive())
             .filter(|u| u.goal.is_some_and(|g| g.finished(registry, self, u.id)))
             .map(|u| u.id)
             .collect();
@@ -2269,15 +2271,15 @@ impl BattleState {
         {
             for index in 0..self.units.len() {
                 let unit = &self.units[index];
-                if !unit.alive || !objective.open_to(unit.side) || !objective.contains(unit.pos) {
+                if !unit.alive() || !objective.open_to(unit.side) || !objective.contains(unit.pos) {
                     continue;
                 }
                 let (id, side, at) = (unit.id, unit.side, unit.pos);
                 let unit = &mut self.units[index];
-                // Off the board but not destroyed. `exited` is what keeps the
-                // campaign from mourning her.
-                unit.alive = false;
-                unit.exited = true;
+                // Off the board but not destroyed. `Fate::Exited` is what keeps
+                // the campaign from mourning her, and it is one transition
+                // rather than two flags that had to be set together.
+                unit.withdraw();
                 unit.intent = UnitIntent::default();
                 if let Some(score) = self.score.get_mut(side as usize) {
                     *score += objective.value;
@@ -2318,7 +2320,7 @@ impl BattleState {
             let mut occupiers: Vec<u8> = self
                 .units
                 .iter()
-                .filter(|u| u.alive && objective.contains(u.pos))
+                .filter(|u| u.alive() && objective.contains(u.pos))
                 .map(|u| u.side)
                 .collect();
             occupiers.sort_unstable();
@@ -2443,14 +2445,12 @@ impl BattleState {
             else {
                 continue;
             };
-            // `lost` throughout, never `!alive`: a vehicle that drove off by
-            // an exit is off the board but home, and reading `alive` here
-            // would turn every ordered withdrawal into a decapitation.
-            let lost = |id: &UnitId| {
-                self.units
-                    .get(id.index())
-                    .is_some_and(|u| !u.alive && !u.exited)
-            };
+            // `Fate::lost` throughout, never `!alive`: a vehicle that drove
+            // off by an exit is off the board but home, and reading `alive`
+            // here would turn every ordered withdrawal into a decapitation.
+            // The two are different variants now rather than a flag and a
+            // qualifier, so the wrong reading is at least visible.
+            let lost = |id: &UnitId| self.units.get(id.index()).is_some_and(|u| u.fate.lost());
             let fallen = match condition.when {
                 LossTrigger::LeaderLost => formation.founding_leader.iter().any(lost),
                 LossTrigger::Wiped => {
@@ -2458,7 +2458,7 @@ impl BattleState {
                         && formation
                             .members
                             .iter()
-                            .all(|id| self.units.get(id.index()).is_some_and(|u| !u.alive))
+                            .all(|id| self.units.get(id.index()).is_some_and(|u| !u.alive()))
                 }
             };
             if fallen {

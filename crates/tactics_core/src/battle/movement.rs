@@ -296,7 +296,7 @@ fn claimed_by_friend(registry: &DataRegistry, state: &BattleState, unit: &Unit, 
     let claimed: u32 = state
         .units
         .iter()
-        .filter(|other| other.alive && other.id != unit.id && other.side == unit.side)
+        .filter(|other| other.alive() && other.id != unit.id && other.side == unit.side)
         .filter(|other| !other.intent.path.is_empty() && other.planned_destination() == hex)
         .filter_map(|other| registry.vehicle(&other.vehicle))
         .map(|v| v.footprint())

@@ -685,7 +685,7 @@ fn publish_script_facts(
             .iter()
             .map(|unit| crate::devtools::UnitFact {
                 name: unit.name.clone(),
-                alive: unit.alive,
+                alive: unit.alive(),
                 aboard: unit.aboard.is_some(),
             })
             .collect(),

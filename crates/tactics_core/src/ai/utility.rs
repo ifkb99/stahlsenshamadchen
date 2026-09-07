@@ -148,7 +148,7 @@ impl UtilityPlanner {
         state
             .units
             .iter()
-            .filter(|u| u.alive && u.aboard.is_none() && u.boarding == Some(carrier))
+            .filter(|u| u.alive() && u.aboard.is_none() && u.boarding == Some(carrier))
             .map(|u| u.id)
             .min_by_key(|id| id.index())
     }

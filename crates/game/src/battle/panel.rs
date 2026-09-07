@@ -22,7 +22,7 @@
 
 use tactics_core::Hex;
 use tactics_core::battle::{
-    BattleState, Contact, CrewCondition, Formation, Latitude, Mission, UnitId,
+    BattleState, Contact, CrewCondition, Fate, Formation, Latitude, Mission, UnitId,
 };
 
 /// What to call a formation in the log: the name its map gave it, falling back
@@ -139,16 +139,22 @@ pub(super) fn format_formation(
         let Some(unit) = state.units.get(id.index()) else {
             continue;
         };
-        if !unit.alive {
-            // Gone is gone, and the panel says which kind: a crew that drove
-            // off by an exit came home, and listing her as lost would be the
-            // UI telling the lie the engine is careful not to.
-            lines.push(format!(
-                "  {} - {}",
-                unit.name,
-                if unit.exited { "withdrawn" } else { "lost" }
-            ));
-            continue;
+        // Gone is gone, and the panel says which kind: a crew that drove off
+        // by an exit came home, and listing her as lost would be the UI
+        // telling the lie the engine is careful not to. Matched exhaustively
+        // on `Fate` rather than tested for `!alive`, so the next way a
+        // vehicle can leave the battle stops this file compiling until
+        // somebody has decided what the roll call calls it.
+        match unit.fate {
+            Fate::Fighting { .. } => {}
+            Fate::Exited => {
+                lines.push(format!("  {} - withdrawn", unit.name));
+                continue;
+            }
+            Fate::Destroyed(_) => {
+                lines.push(format!("  {} - lost", unit.name));
+                continue;
+            }
         }
         // Two different silences, and the panel must not conflate them: one
         // says she cannot hear you, the other says you have already spoken and

@@ -754,7 +754,7 @@ pub fn recompute(registry: &DataRegistry, state: &mut BattleState) -> Vec<Event>
         for unit in state
             .units
             .iter()
-            .filter(|u| u.alive && u.side != side && u.aboard.is_none())
+            .filter(|u| u.alive() && u.side != side && u.aboard.is_none())
         {
             let revealed = fog.revealed.contains(&unit.id);
             if !(fog.visible.contains(&unit.pos) || revealed) {

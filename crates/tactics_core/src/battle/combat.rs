@@ -1,7 +1,7 @@
 //! Combat resolution: accuracy, armor facings, terrain cover, elevation
 //! advantage, blind fire, opportunity fire, and shells in the air.
 
-use super::{BattleState, Event, FireIntent, Unit, UnitId, fog, stats};
+use super::{BattleState, Destruction, Event, FireIntent, Unit, UnitId, fog, stats};
 use crate::data::{
     AmmoClass, AmmoDef, ArmorFacing, Balance, DamageType, DataRegistry, Scale, TerrainDef,
     WeaponDef,
@@ -1953,7 +1953,7 @@ fn effect_rolls(
         let Some(unit) = state.unit(target) else {
             return;
         };
-        if unit.brewed {
+        if unit.destruction() == Some(Destruction::BrewedUp) {
             break;
         }
         // The pool is everything physically inside the hull: the target's
@@ -2069,7 +2069,17 @@ fn behind_armor_effects(
     let Some(unit) = state.unit(target) else {
         return;
     };
-    if unit.brewed || unit.abandoned || state.fighting_crew(unit) == 0 {
+    // Burning or already left: there is nobody aboard deciding anything, and
+    // a crew cannot abandon the same tank twice. Deliberately *not* every
+    // destruction — a hull crushed by blast this same tick does not stop the
+    // check, which is the rule as it stood, and `Destruction::supersedes`
+    // exists so that a crushing cannot overwrite an abandonment and let the
+    // roll happen again.
+    if matches!(
+        unit.destruction(),
+        Some(Destruction::BrewedUp | Destruction::Abandoned)
+    ) || state.fighting_crew(unit) == 0
+    {
         return;
     }
     let rules = &registry.morale;
@@ -2090,7 +2100,7 @@ fn behind_armor_effects(
     if !crate::data::holds_together(&mut state.rng, level)
         && let Some(unit) = state.unit_mut(target)
     {
-        unit.abandoned = true;
+        unit.doomed_by(Destruction::Abandoned);
         events.push(Event::Abandoned { unit: target });
     }
 }
@@ -2201,7 +2211,7 @@ fn module_hit(
             let roll = state.rng.random_range(0..100u32);
             if roll < chance {
                 if let Some(unit) = state.unit_mut(target) {
-                    unit.brewed = true;
+                    unit.doomed_by(Destruction::BrewedUp);
                 }
                 events.push(Event::BrewedUp { unit: target });
                 return;
@@ -2303,7 +2313,7 @@ fn overpressure(
         // the destruction, the same simultaneity bargain every other death
         // keeps.
         if let Some(unit) = state.unit_mut(target) {
-            unit.wrecked = true;
+            unit.doomed_by(Destruction::Crushed);
         }
         return;
     }
@@ -2336,8 +2346,10 @@ fn overpressure(
 /// went up, blast overmatch crushed her, her crew walked away, or nobody
 /// aboard can fight any more. All four leave the board as
 /// [`Event::UnitDestroyed`] — the scoring consumers want one word for
-/// "she is a loss" — with the *why* already told by the events that set
-/// the flags. A vehicle that is merely mission-killed, gun and tracks
+/// "she is a loss" — with the *why* already told by the events that named
+/// the [`Destruction`], and kept on her as
+/// [`Fate::Destroyed`](crate::battle::Fate::Destroyed) afterwards. A
+/// vehicle that is merely mission-killed, gun and tracks
 /// gone with the crew grimly aboard, stays alive: recovering her is a
 /// campaign story, not a contradiction.
 pub fn reap(registry: &DataRegistry, state: &mut BattleState, events: &mut Vec<Event>) {
@@ -2350,18 +2362,23 @@ pub fn reap(registry: &DataRegistry, state: &mut BattleState, events: &mut Vec<E
             // scaffolding, a mod without a roster), and "everyone aboard
             // nobody is out" must read as today's game, not as a ghost
             // ship.
-            u.alive
-                && (u.brewed
-                    || u.wrecked
-                    || u.abandoned
+            u.alive()
+                && (u.destruction().is_some()
                     || (!u.crew.is_empty() && state.fighting_crew(u) == 0))
         })
         .map(|u| (u.id, u.pos))
         .collect();
     for (id, at) in done {
-        let brewed = state.units.get(id.index()).is_some_and(|u| u.brewed);
+        let brewed = state
+            .units
+            .get(id.index())
+            .is_some_and(|u| u.destruction() == Some(Destruction::BrewedUp));
         if let Some(unit) = state.units.get_mut(id.index()) {
-            unit.alive = false;
+            // `destroy` is the one door from `Fighting` to `Destroyed`, and
+            // it carries the doom she took with her — or `CrewSpent`, which
+            // is the case this loop's second clause found and which nothing
+            // ever writes down in advance.
+            unit.destroy();
         }
         events.push(Event::UnitDestroyed { unit: id, at });
         // The ride ending the hard way. A brew rolls every passenger
@@ -2830,7 +2847,7 @@ pub fn execute_fire(
     action: FireAction,
     events: &mut Vec<Event>,
 ) {
-    if state.unit(unit).is_none_or(|u| !u.alive) {
+    if state.unit(unit).is_none_or(|u| !u.alive()) {
         return;
     }
     match action {

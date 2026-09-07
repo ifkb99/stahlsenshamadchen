@@ -97,7 +97,12 @@ use serde::{Deserialize, Serialize};
 /// and a hand-placed tank drifting off in the first planning phase is
 /// exactly the bug detachment exists to prevent. `SaveError::Version` says
 /// which version was found, which is the loud failure this is worth.
-pub const SAVE_VERSION: u32 = 4;
+///
+/// Version 5 folded a unit's `alive` / `exited` / `abandoned` / `brewed` /
+/// `wrecked` into one [`crate::battle::Fate`], and is refused for the same
+/// reason: the field defaults to *whole and on the field*, so a version-4
+/// file would open with every wreck on the board fighting again.
+pub const SAVE_VERSION: u32 = 5;
 
 /// Which mod, at which version, was loaded when a save was written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

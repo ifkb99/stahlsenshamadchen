@@ -71,8 +71,8 @@ use std::io::Write;
 use tactics_core::Hex;
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{
-    AttackPreview, BattleState, EndReason, Event, Order, SideState, UnitId, blast_overmatches,
-    flight_ticks, hit_breakdown, preview_attack,
+    AttackPreview, BattleState, Destruction, EndReason, Event, Order, SideState, UnitId,
+    blast_overmatches, flight_ticks, hit_breakdown, preview_attack,
 };
 use tactics_core::data::{ArmorFacing, DataRegistry, ModuleEffect, TerrainDef, WeaponDef};
 use tactics_core::force;
@@ -1440,7 +1440,11 @@ fn fight_one(reg: &DataRegistry, maps: &[&str], seed: u64) -> Tally {
             // Taken from state rather than from events because sharing a hex is
             // a *state* and nothing announces it.
             let mut per_hex: BTreeMap<(i32, i32), usize> = BTreeMap::new();
-            for unit in state.units.iter().filter(|u| u.alive && u.aboard.is_none()) {
+            for unit in state
+                .units
+                .iter()
+                .filter(|u| u.alive() && u.aboard.is_none())
+            {
                 *per_hex.entry((unit.pos.x, unit.pos.y)).or_default() += 1;
             }
             let deepest = per_hex.values().copied().max().unwrap_or(0);
@@ -1466,7 +1470,7 @@ fn fight_one(reg: &DataRegistry, maps: &[&str], seed: u64) -> Tally {
                     let range = state
                         .units
                         .iter()
-                        .filter(|u| u.alive && u.aboard.is_none() && u.side == *by_side)
+                        .filter(|u| u.alive() && u.aboard.is_none() && u.side == *by_side)
                         .map(|u| u.pos.distance_to(*at))
                         .min();
                     if let Some(hexes) = range {
@@ -1550,17 +1554,18 @@ fn fight_one(reg: &DataRegistry, maps: &[&str], seed: u64) -> Tally {
                 Event::UnitDestroyed { unit, .. } => {
                     if let Some(u) = state.units.get(unit.index()) {
                         *t.deaths.entry(u.vehicle.clone()).or_default() += 1;
-                        // The flags are still on her: reap clears `alive`
-                        // and nothing else, so the cause of death is
-                        // readable exactly here.
-                        let cause = if u.brewed {
-                            "brewed"
-                        } else if u.wrecked {
-                            "wrecked by blast"
-                        } else if u.abandoned {
-                            "abandoned"
-                        } else {
-                            "crew out"
+                        // Reap carries the destruction into `Fate::Destroyed`
+                        // rather than discarding it, so the cause of death is
+                        // readable exactly here — and it is now one value
+                        // with one name, instead of three flags read in a
+                        // precedence this table had to know about. A hull
+                        // that took two ends inside one tick is remembered by
+                        // whichever `Destruction::supersedes` kept.
+                        let cause = match u.destruction() {
+                            Some(Destruction::BrewedUp) => "brewed",
+                            Some(Destruction::Crushed) => "wrecked by blast",
+                            Some(Destruction::Abandoned) => "abandoned",
+                            Some(Destruction::CrewSpent) | None => "crew out",
                         };
                         *t.causes.entry(cause).or_default() += 1;
                     }

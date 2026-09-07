@@ -294,7 +294,7 @@ fn claimed_by_another(
     let taken: u32 = state
         .units
         .iter()
-        .filter(|u| u.alive && u.id != unit && u.side == me.side)
+        .filter(|u| u.alive() && u.id != unit && u.side == me.side)
         .filter(|u| (u.aboard.is_none() && u.pos == hex) || u.goal == Some(Goal::Take(hex)))
         .filter_map(|u| registry.vehicle(&u.vehicle))
         .map(|v| v.footprint())

@@ -381,7 +381,7 @@ fn main() {
             state.sides[u.side as usize].name,
             u.name,
             (state.condition(&registry, u) * 100.0).round(),
-            if u.alive { "" } else { " (destroyed)" }
+            if u.alive() { "" } else { " (destroyed)" }
         );
     }
 }

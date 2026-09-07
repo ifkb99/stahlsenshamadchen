@@ -452,7 +452,7 @@ fn every_shot_fired_costs_exactly_one_round_from_the_racks() {
                 .map(|m| m.effect != tactics_core::data::ModuleEffect::Ammo || *hits > 0)
                 .unwrap_or(true)
         });
-        if rack_intact && !unit.brewed {
+        if rack_intact && unit.destruction() != Some(tactics_core::battle::Destruction::BrewedUp) {
             assert_eq!(
                 spent, fired,
                 "{}'s racks and her gun camera disagree",

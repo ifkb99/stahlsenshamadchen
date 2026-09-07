@@ -345,19 +345,19 @@ pub fn determinize(state: &BattleState, side: u8, seed: u64) -> BattleState {
         if unit.side == side {
             continue;
         }
-        if unit.alive && !spotted.contains(&unit.id) {
-            // Off the board, and *not destroyed* — which is the whole point of
-            // `exited` and the only honest thing the search can say about a
-            // vehicle it has never seen. Clearing `alive` alone made her read
-            // as a wreck, and one reader takes that literally:
+        if unit.alive() && !spotted.contains(&unit.id) {
+            // Off the board, and *not destroyed* — which is the whole point
+            // of `Fate::Exited` and the only honest thing the search can say
+            // about a vehicle it has never seen. Clearing `alive` alone made
+            // her read as a wreck, and one reader takes that literally:
             // `check_victory`'s decapitation pass classifies a loss by
-            // `!alive && !exited`, so on a map that declared
-            // `loss_conditions` the search opened on a world where the enemy's
-            // commanding officer was already dead and this side had already
-            // won. Every branch then scores the same and the tree is worth
-            // nothing. Nobody else inside a rollout reads `exited`.
-            unit.alive = false;
-            unit.exited = true;
+            // `Fate::lost`, so on a map that declared `loss_conditions` the
+            // search opened on a world where the enemy's commanding officer
+            // was already dead and this side had already won. Every branch
+            // then scores the same and the tree is worth nothing. Nobody else
+            // inside a rollout reads `exited`. It is one call now, and the
+            // wrong half of it is no longer expressible.
+            unit.withdraw();
         }
         unit.intent = UnitIntent::default();
         unit.planned = false;

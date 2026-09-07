@@ -57,8 +57,8 @@ use tactics_core::ai::{
     AiConfig, AiDriver, AiPlanner, Evaluator, UtilityPlanner, make_battle_planner,
 };
 use tactics_core::battle::{
-    BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Latitude, Mission,
-    Order, SideState, SightGrid, UnitId, los_clear, reachable,
+    BattleState, Destruction, EndReason, Event as BattleEvent, Fate, FireIntent, FormationId,
+    Latitude, Mission, Order, SideState, SightGrid, UnitId, los_clear, reachable,
 };
 use tactics_core::data::{DataRegistry, MovementClass, RoundPressure, ShotFelt};
 use tactics_core::map::{HexMap, UnitPlacement};
@@ -4255,8 +4255,8 @@ fn driving_off_an_exit_takes_the_crew_home_rather_than_killing_them() {
     );
 
     let leaver = &state.units[0];
-    assert!(!leaver.alive, "she is off the board");
-    assert!(leaver.exited, "but she left under her own power");
+    assert!(!leaver.alive(), "she is off the board");
+    assert!(leaver.exited(), "but she left under her own power");
     assert_eq!(state.score(0), 5, "and the exit paid its value once");
 
     assert!(
@@ -4266,6 +4266,82 @@ fn driving_off_an_exit_takes_the_crew_home_rather_than_killing_them() {
     assert!(
         !state.lost_units().any(|u| u.id == UnitId(0)),
         "and must not count her among the losses"
+    );
+}
+
+#[test]
+fn a_hull_that_takes_two_ends_in_one_tick_is_remembered_by_the_more_telling_one() {
+    // `Destruction` is one value where three independent flags used to
+    // stand, and a hull really can take two ends inside a single tick: over
+    // 900 AI battles and 9,131 losses the pairs land about 250 times, in all
+    // three combinations. So which one sticks is a rule, not a corner, and
+    // it is the read precedence those flags were consulted in, moved to the
+    // write.
+    //
+    // Burning outranks the crew leaving because a brew-up rolls every
+    // passenger through the fire and a bail-out does not. The crew leaving
+    // outranks the hull being crushed for a reason the simulation depends
+    // on: the bail-out check refuses to roll for a crew who has already
+    // gone, so an abandonment a later shell's blast overwrote would let the
+    // same cadets abandon the same tank twice.
+    let reg = registry();
+    let mut state = two_side_battle(
+        &reg,
+        &["ggggg"],
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "Doomed"),
+            unit_at([4, 0], 1, "medium_tank", "Spare"),
+        ],
+        7,
+    );
+    let unit = UnitId(0);
+
+    let end = |state: &mut BattleState, first, second| {
+        let u = state.unit_mut(unit).expect("she is on the board");
+        u.fate = Fate::default();
+        u.doomed_by(first);
+        u.doomed_by(second);
+        u.destruction()
+    };
+    for (a, b) in [
+        (Destruction::Abandoned, Destruction::BrewedUp),
+        (Destruction::Crushed, Destruction::BrewedUp),
+        (Destruction::Crushed, Destruction::Abandoned),
+    ] {
+        assert_eq!(end(&mut state, a, b), Some(b), "{b:?} outranks {a:?}");
+        assert_eq!(
+            end(&mut state, b, a),
+            Some(b),
+            "{b:?} still outranks {a:?} from the other order"
+        );
+    }
+
+    // She is on the board the whole time she is doomed — damage lands during
+    // a tick and death is reaped at the end of it — and the reaping carries
+    // the end she took rather than losing it.
+    assert_eq!(
+        end(&mut state, Destruction::Crushed, Destruction::BrewedUp),
+        Some(Destruction::BrewedUp)
+    );
+    let doomed = state.unit(unit).expect("still there");
+    assert!(doomed.alive(), "a doom is not yet a death");
+    let u = state.unit_mut(unit).expect("still there");
+    u.destroy();
+    let dead = &state.units[unit.index()];
+    assert!(!dead.alive() && !dead.exited(), "reaped as a loss");
+    assert_eq!(
+        dead.destruction(),
+        Some(Destruction::BrewedUp),
+        "and remembered by what ended her"
+    );
+
+    // A hull nothing had doomed is remembered as having nobody left to work
+    // her, which is the case `reap` finds and nothing ever writes down.
+    let spare = UnitId(1);
+    state.unit_mut(spare).expect("the other one").destroy();
+    assert_eq!(
+        state.units[spare.index()].destruction(),
+        Some(Destruction::CrewSpent)
     );
 }
 
@@ -4290,7 +4366,7 @@ fn an_exit_belongs_to_the_side_it_names() {
     );
     play_round(&reg, &mut state);
     assert!(
-        state.units[1].alive && !state.units[1].exited,
+        state.units[1].alive() && !state.units[1].exited(),
         "side 1 may not leave by side 0's road"
     );
     assert_eq!(state.score(1), 0);
@@ -8099,7 +8175,7 @@ fn maul(reg: &DataRegistry, state: &mut BattleState, unit: UnitId) {
 /// pressure of watching a friend burn.
 fn strike_down(state: &mut BattleState, unit: UnitId) {
     let victim = state.unit_mut(unit).expect("she was alive");
-    victim.alive = false;
+    victim.destroy();
 }
 
 #[test]
@@ -8390,7 +8466,7 @@ fn a_formation_that_withdrew_intact_is_not_a_decapitation() {
     play_round(&reg, &mut state);
 
     assert!(
-        state.units[0].exited && state.units[1].exited,
+        state.units[0].exited() && state.units[1].exited(),
         "the whole staff group got away"
     );
     assert_ne!(
@@ -9724,9 +9800,9 @@ fn second_round_plan(
     let _ = state.apply(reg, &Order::Commit { side: 1 });
     state.resolve_round(reg);
     let unit = state.unit(crew).expect("she survives being shot at");
-    assert!(unit.alive, "the stage is meant to bruise, not to kill");
+    assert!(unit.alive(), "the stage is meant to bruise, not to kill");
     assert!(
-        state.unit(UnitId(1)).is_some_and(|e| e.alive),
+        state.unit(UnitId(1)).is_some_and(|e| e.alive()),
         "and the gun watching the road has to still be watching it, or there \
          is no threat left for the drill to answer"
     );
@@ -12262,7 +12338,9 @@ fn a_bounced_shell_wrecks_no_plate_it_never_touched() {
     assert!(bounces > 0, "the shells arrive and the glacis holds");
     assert_eq!(pens, 0, "a 105 cannot beat a heavy tank's front");
     assert!(
-        state.unit(wall).is_some_and(|u| u.alive && !u.wrecked),
+        state
+            .unit(wall)
+            .is_some_and(|u| u.alive() && u.destruction() != Some(Destruction::Crushed)),
         "and she is not wrecked through a plate the bursts never touched"
     );
 }
@@ -12408,7 +12486,7 @@ fn springing_the_ambush_spends_it() {
         "the rocket goes out"
     );
     assert!(
-        state.fog.side(1).spotted.contains(&platoon) || state.unit(taxi).is_none_or(|u| !u.alive),
+        state.fog.side(1).spotted.contains(&platoon) || state.unit(taxi).is_none_or(|u| !u.alive()),
         "and the ambush is spent: sprung means seen"
     );
 }
@@ -12500,7 +12578,7 @@ fn a_shellburst_beside_a_platoon_is_attrition_not_erasure() {
     assert!(bled, "four volleys next door draw blood");
     let unit = state.units[platoon.index()].clone();
     assert!(
-        !unit.wrecked,
+        unit.destruction() != Some(Destruction::Crushed),
         "but a spread-out platoon is not a hull to crush"
     );
 }
@@ -12566,7 +12644,7 @@ fn a_remnant_platoon_is_a_story_not_a_gun() {
         );
     }
     assert!(
-        state.units[platoon.index()].alive,
+        state.units[platoon.index()].alive(),
         "and she is a story still on the field, not a deletion"
     );
 }
@@ -13158,7 +13236,7 @@ fn a_brewed_carrier_burns_its_passengers_and_spits_out_the_rest() {
     );
     let riders_unit = &state.units[riders.index()];
     assert!(riders_unit.aboard.is_none(), "nobody stays aboard a pyre");
-    if riders_unit.alive {
+    if riders_unit.alive() {
         assert_eq!(
             riders_unit.pos,
             state.units[taxi.index()].pos,
@@ -13204,7 +13282,7 @@ fn a_carrier_that_leaves_the_map_takes_her_passengers_home() {
     for unit in [taxi, riders] {
         let u = &state.units[unit.index()];
         assert!(
-            !u.alive && u.exited,
+            !u.alive() && u.exited(),
             "{} left the battle by the road, not the graveyard",
             u.name
         );
@@ -15890,7 +15968,7 @@ fn a_crew_who_breaks_off_says_so_and_one_who_was_meant_does_not() {
         let _ = state.apply(&reg, &Order::Commit { side: 1 });
         state.resolve_round(&reg);
         assert!(
-            state.unit(crew).is_some_and(|u| u.alive),
+            state.unit(crew).is_some_and(|u| u.alive()),
             "the stage is meant to bruise, not to kill"
         );
         let mut hers = Vec::new();

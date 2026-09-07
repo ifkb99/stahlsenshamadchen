@@ -731,7 +731,7 @@ impl SideCommand {
                 continue;
             };
             let (h, t) = state.substance(registry, unit);
-            if unit.alive {
+            if unit.alive() {
                 have += i64::from(h);
             }
             max += i64::from(t);
