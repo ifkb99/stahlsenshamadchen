@@ -158,9 +158,10 @@ pub struct MoveGrid {
     /// Not saved: derived entirely from the map and the terrain definitions,
     /// exactly like `SightGrid`, so a loaded game rebuilds it rather than
     /// carrying a copy of something that holds no state a player changed.
-    /// [`crate::save::rehydrate`] *must* refill it — an empty grid says every
-    /// step is impossible, which is a silent wrong answer rather than a loud
-    /// one.
+    /// [`crate::battle::SavedBattle::rehydrate`] refills it, and since that
+    /// is the only way a deserialised battle becomes a [`BattleState`] the
+    /// refill cannot be forgotten — an empty grid says every step is
+    /// impossible, which is a silent wrong answer rather than a loud one.
     #[serde(skip)]
     tiles: HashMap<Hex, TileMove>,
 }
