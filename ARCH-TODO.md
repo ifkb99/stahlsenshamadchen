@@ -1496,3 +1496,395 @@ speaks when somebody closes.
 - [ ] **A `Shot` struct**, still. `expected_shot`, `expected_damage` and
       `expected_pressure` all carry `#[allow(clippy::too_many_arguments)]` at
       eight; there are three of them now rather than one.
+
+## Wave 2 — readers, orders and objectives: what landed
+
+Two commits: `ecea65a` the readers, `cc8ca23` the objective and the order.
+The wave's brief was Wave 1's last open item — *"the objective is not in the
+currency, and on real ground the best commander declines it"* — and the
+headline is that the diagnosis was half right, in an instructive way.
+
+**On `ridge_arena` at eight seeds and 576 battles a row, `5 over 1` goes
+45.3% → 53.5% and `5 over 3` 48.3% → 52.3%.** Both rows move together and the
+control row is honest (`the ends` 50.0% → 52.8%, zero draws at every
+pairing). That is the largest, and the first decisive, movement the skill
+table has recorded in five arcs.
+
+**But two thirds of it came from the readers, not from the objective.** The
+`ecea65a` commit alone — which touched no weight and added no field — took
+`5 over 1` from 45.3% to 52.3%. What Wave 1 read as "nothing prices what
+holding the crest is *for*" was at least as much "the reflex that decides
+where a frightened crew stands was reading a different model from the one
+that decides where she drives". A crew who broke for cover went to the
+reachable tile with the highest terrain `cover`, which on ground built out of
+woods a crest looks into is frequently the worst hex on the map.
+
+### Part 1 — the readers walk one gate
+
+`ai::threats` and `ai::threatened` were a second walk over the visible
+enemies with a gate of their own, six callers between them. `threats` is
+`fire_on(..)`'s membership now and `threatened` is `incoming(..).worth > 0`.
+The two were arithmetically identical when they were joined —
+`best_weapon_from` admits a gun precisely when one shot from it is worth
+something, and a sum of positive terms is positive — so that half is a
+refactor with a test on it rather than a behaviour change. What it buys is
+that they stay identical, which is what
+`there_is_one_answer_to_who_can_shoot_her` defends: the stage's seven
+bearings run from 1.27 to 8.99 substance points a round, so any threshold
+reintroduced above 1.27 fails it.
+
+`danger::incoming_from(registry, state, unit, at, &[UnitId])` is the one new
+public shape: the same private `guns_bearing_on`, restricted to a named list.
+The drill needs it because it has to price ground against the guns this crew
+has actually caught up with on her per-enemy `spotted_since` clock. Reacting
+to a gun she has not noticed would be the reaction-latency defect rebuilt
+inside the reflex that latency is about.
+
+**The drill and the rout are two different things and the code now says which
+is which**, which is the designer's own split:
+
+| | first key | second key | what it means |
+| --- | --- | --- | --- |
+| the drill (`run_crew_drill`) | lowest `incoming_from` worth | cheapest drive, then the coordinate | *minimise the fire on me* — no distance term at all, so a hex nearer the gun that the gun cannot see beats a hex further off in the open |
+| the rout (`flight_destination`) | most distance from every threat | lowest `incoming_from` worth | *get away* — the second key only sorts the hexes that tie on the first, which also keeps it cheap (a handful of hexes rather than ninety) |
+
+`worth_key` quantises a round of expected fire to about a thousandth of a
+substance point, so the tiebreak has a total order and near-identical ground
+is settled by the cheaper drive rather than by a rounding artefact.
+
+**The `perf` scare did not happen.** The drill now prices every reachable tile
+per tick for a threatened crew, and round resolution went *down*, 1.90 →
+1.78 ms. The drill only ever visits an idle crew, and a crew who goes where
+the gun cannot see her spends fewer ticks being shot at. `reachable` 19.7 →
+15.9 µs and `roads` 151.0 → 111.3 µs moved for the reason CLAUDE.md already
+gives: they measure work in a particular game state, and the state changed.
+
+`playthrough 7 battle_forest` has the clearest single before-and-after in the
+wave. Raven 2, tick 10, under fire from a light tank two hexes off: she used
+to break one hex to the nearest trees at (9, 25, −34), and now drives four
+hexes to (6, 27, −33), out of the gun's sight altogether.
+
+### Part 2 — the objective and the order in the currency
+
+`planner.score_worth` is what one point of an objective's `value` is worth in
+substance points a round; `planner.exit_urgency` rides on it, because it was
+quoted in objective-value units and would otherwise have silently stopped
+meaning that. `planner.order_worth` is the share of what a crew still has
+aboard, per round, that being on the ground her commander named is worth to
+her. `planner.mission_weight` is gone.
+
+**A retired field is warned about, not refused.** Serde ignores what it does
+not recognise, so a mod that had tuned `mission_weight` would have loaded
+cleanly and played a different game from the one it wrote, with nothing to
+grep for. It deserialises under its old name into a field nothing serialises,
+so `--set planner.mission_weight=4` fails with the list of fields that do
+exist (which names `order_worth`), and `validate-mods` prints one warning
+naming the replacement and the arithmetic to port it. A warning rather than
+an error because carrying a stale key from an older engine is a legitimate
+thing for a mod to do; silence is not.
+
+Three shape decisions, recorded because each had a live alternative:
+
+- **The arrival rewards in `mission_value` are rebased 1.5 → 1.0 and 0.75 →
+  0.5**, once, so that `order_worth` means the share it says it means rather
+  than two thirds of it. Keeping 1.5 and setting `order_worth` to 0.167 would
+  have reproduced the old behaviour *exactly* for a typical chassis — both the
+  arrival step and the slope — and was rejected because the number would then
+  have needed a mental multiplication to read, which is the whole thing this
+  wave was undoing. What the rebase costs is stated on the field: arriving is
+  worth about seven hexes of `distance_decay`'s slope where it was ten.
+- **`distance_decay` stays one slope**, and its justification is better than
+  it was. It used to be shared because `mission_weight` was quoted in
+  objective-value units and the sentence "an order pulls about as hard as the
+  ford" was only true while the gradients matched. The two are quoted in
+  different things now, so the reason is that the slope is not a statement
+  about what ground is worth at all — it is *how far off a crew can still tell
+  which way to drive*, a fact about her and the map.
+  `an_order_and_an_objective_are_led_to_by_the_same_slope` passes unweakened.
+- **`Withdraw` is the one mission still priced on the objective scale.** Being
+  ordered out is not worth *less* to a crew who is nearly finished, and
+  quoting it as a share of what is left would have inverted exactly the thing
+  the unordered version's flight gate exists to say.
+
+`score_tile` hoists `left` out of `exposure`, and the comment says what the
+two readings of it mean together: danger is priced as a *fraction* of her and
+an order as a *share* of her, so the order/threat ratio scales as `left²`. A
+half-destroyed crew weighs her orders against the guns covering them about
+four times more cautiously than a fresh one. That is defensible — there is
+simply less of her, twice over — but it is a design decision nobody has
+argued with and it is listed below.
+
+**The mechanism is provably behaviour-neutral.** At `score_worth: 1.0` the
+determinism snapshot passed *unregenerated*, because 1.0 is exactly the game
+before and the baseline's sides field no formations, so `mission_value` is
+never called. Every line of the content diff is therefore attributable to the
+one number. Worth doing again; it is the second wave running in which the
+trick has turned an unreadable diff into a legible one.
+
+### Content, and how it was chosen
+
+`score_worth: 3.0` (1.0 is the game before; the Rust default follows the
+shipped value, as `deviation_cost`'s has three times, because the base mod
+must ship the defaults). `order_worth: 0.25`.
+
+**The `score_worth` sweep is a null and the reason is the result.** On
+`--arena ridge_arena`, `--only skill --absolute --games 36`, eight seeds:
+
+| `score_worth` | 5 over 1 | 5 over 3 | the ends | 5v5 draws |
+| --- | --- | --- | --- | --- |
+| 0 | **9.2%** | 9.2% | 32.6% | **225 of 288** |
+| 1 (the game before) | 52.3% | 51.6% | 51.4% | 1 |
+| 2 | 53.3% | 50.5% | 52.8% | 1 |
+| **3 (ships)** | **53.5%** | **52.3%** | 52.8% | 0 |
+| 4 | 52.1% | 51.7% | 52.8% | 0 |
+| 6 | 53.0% | 51.4% | 53.3% | 0 |
+| 12 | 54.0% | 51.4% | 51.7% | 0 |
+
+One spread of noise from 1 to 12. **This is not `pull_under_fire`'s kind of
+null** — that term was never evaluated; this one is evaluated on every
+candidate tile of every sweep. It is a *symmetric* number: both commanders get
+the same rate, so it changes what a battle is about rather than which side is
+better at it, and a table whose entire content is one side against another
+cannot see it. The one value the table can see is zero, and it is
+catastrophic: 9.2% and 225 draws of 288, because nothing then leaves cover.
+**That is a third species of null worth naming, beside "no effect" and "never
+evaluated": symmetric, and therefore invisible to every table this harness
+has.**
+
+What `score_worth` does move is the battle. Over the determinism baseline's
+four seeds of `river_crossing`, 1.0 → 3.0 takes `ObjectiveTaken` from 5 to 8
+and the rounds fought from 22 to 17, with two more vehicles destroyed. 3.0 is
+also the rate at which the ridge's crest, worth three, prices at 13.5
+substance points against the 8 to 29 a round a found gun puts on a crew
+standing on it — inside a factor of two of the fire it has to argue with,
+which is the comparison the field exists to make possible. Below that it is
+arithmetic nobody consults.
+
+**`order_worth`, swept on the delegation tax table** at 288 battles a cell
+with `--set planner.devolved=1.1`, so that both commanded doctrines actually
+assign ground. (In the shipped game elastic defence devolves and issues none,
+which is why the same sweep without it moves three wins in 36 and says
+nothing — the same caveat DONE.md records for `mission_weight`.)
+
+| `order_worth` | massed armour's tax | bounding overwatch's tax |
+| --- | --- | --- |
+| 0.0 | +2 | +53 |
+| 0.1 | −6 | +43 |
+| **0.25 (ships)** | **−10** | **+35** |
+| 0.5 | −15 | +29 |
+| 1.0 | −11 | +30 |
+| 2.0 | −18 | +30 |
+
+A doctrine's tax is what it loses by fighting through missions instead of for
+itself against the same flat opponent; zero is the target. **Both flat
+controls are bit-identical at every value**, which is the additivity claim
+measured rather than asserted: this number reaches commanded sides and
+nothing else. Massed armour crosses zero under a tenth and overshoots;
+bounding overwatch takes most of the improvement available to it by a quarter
+and flattens. A quarter is the designer's number and it is where the first is
+still near zero and the second has stopped improving.
+
+### The autonomy line
+
+`the_shipped_doctrines_straddle_the_price_of_deviating` passes unweakened and
+**`deviation_cost` did not have to move**, which is the first time a wave has
+changed the currency without moving it. The band did move, and the test's
+comment now carries the re-measurement: on `pressed_stage` massed armour obeys
+from **10** and elastic defence starts obeying at **24**, so the straddle is
+10–23 where Wave 1 measured 12–29. The ordered ground on that stage is worth
+3.25 to a thirteen-point medium where it was a flat 3.0, and its slope is half
+again as steep. 12.0 sits inside with room at both ends.
+
+`a_binding_march_presses_on_where_an_ordinary_one_takes_cover`,
+`a_cut_off_unit_keeps_the_orders_she_had` and
+`a_binding_mission_is_not_discounted_by_a_loose_doctrine` all pass
+unweakened. `Latitude::Binding` reaches the same one number it always did.
+
+### Part 3 — the rest of the family, surveyed
+
+The brief for this part was to say, for every weight quoted in the
+evaluator's currency, what unit it is in, whether cadence and the objective
+rate left it proportionally cheaper, and either restate it with a sweep or
+leave it with a written reason.
+
+| number | quoted in | left cheaper? | what was done |
+| --- | --- | --- | --- |
+| `planner.impatience` 0.35 | `score_tile` points per round of driving | yes, by the full 2–12× | **swept, null.** Ridge, eight seeds, `5 over 1` / `5 over 3`: 0.35 → 53.5 / 52.3, 0.7 → 51.4 / 51.0, 1.4 → 52.4 / 53.8, 3.0 → 54.0 / 52.4. Left at 0.35. |
+| `planner.plateau` 0.3 | `score_tile` points (a band width) | yes | **swept, null.** 0.1 → 53.5 / 51.6, 0.3 → 53.5 / 52.3, 1.0 → 52.3 / 52.3, 3.0 → 51.9 / 51.7. Mildly worse wide, inside the spread. Left at 0.3. |
+| `planner.exit_urgency` 3.0 | objective-value points | it would have been | **restated by construction**: it is multiplied by `score_worth` with every other objective, so "an exit is worth about a good piece of ground" stays literally true. The relationship is the invariant, not the number. |
+| `planner.pull_under_fire` 0.25 | a dimensionless share of the mission term | no | untouched. A share of a term is immune to that term's units. Still a number the AI never meets (DONE.md's null); still player-facing. |
+| `planner.cover_prior` 0.03, `elevation_prior` 0.4 | `score_tile` points, gated to tiles no found gun reaches | partly | **left, with a reason.** The gate means they never argue with the fighting terms at all; the only thing they argue with is the objective pull, and the `score_worth` sweep above varies exactly that ratio twelve-fold and comes back null. Sweeping the prior would be sweeping the same ratio from the other end. |
+| `doctrine.route_caution` 0.25–1.2, `contest_aversion` 0.15–0.7 | `score_tile` points per round of exposure / lateness | yes | **swept, null.** On the shipped maps, `massed_armor.route_caution` at 1.0 is a *bit-identical* game to 0.25, and 4.0 and 12.0 move nothing outside the ±6 band; `contest_aversion` is bit-identical at 0.6 and moves two wins at 7.0. Wave 1 already restated the *test* thresholds (asserting `contest_aversion` at 15 rather than 5); the shipped content still says nothing the instrument can hear. |
+| `planner.deviation_cost` 12.0 | `score_tile` points | yes | **re-measured, not moved.** Band 12–29 → 10–23; see above. |
+| `planner.horizon_rounds`, `boarding_rounds`, `devolved`, `distance_decay` | rounds, rounds, a delegation level, a per-hex fraction | no | a currency change cannot reach any of them. |
+| the mass band, −0.45 / −0.15 at one and two hexes and −0.12 per hex beyond support, × `concentration` | `score_tile` points | **yes, and it is the largest one left** | **not restated, and not restatable: it is three constants in Rust.** See below. |
+| the kill bonus +4.0, the advance slope 0.3 × `aggression`, the centre-seeking 0.15 × `scouting` | `score_tile` points | yes | same: bare Rust, unsweepable, unmeasured. |
+
+So the survey's real finding is not a number. **Every weight in the family
+that is *data* was swept and came back null; every weight that is still bare
+Rust could not be swept at all, and between them they are now the largest
+un-restated block in `score_tile`.** The mass band in particular is a
+spacing rule denominated in a currency that has grown by an order of
+magnitude since it was written, and the reason nobody has noticed is that
+nobody can ask.
+
+### Determinism, read before regenerating
+
+Twice, once per commit, and both broad and behavioural.
+
+**The readers** (223 of 1492 lines): `TookCover` 3 → 5, `ShotFired` 97 → 108,
+`ShotBounced` 13 → 22, kills per seed 4/6/6/6 → 4/6/6/5. Seed 4 runs eleven
+rounds where it ran five. The clearest single case is seed 1, unit 4: she
+takes cover one hex north mid-round, is struck frontally instead of in the
+side, and everything after that is a different battle.
+
+**The objective** (1022 of 1371 lines): `ObjectiveTaken` 5 → 8,
+`RoundStarted` 22 → 17, `UnitDestroyed` 21 → 23, `UnitSpotted` 72 → 58. Three
+of four seeds finish sooner — seed 4 goes from eleven rounds to three, seed 3
+from four to eight with the ford changing hands four times. Ground changes
+hands more and the fights over it are settled faster, which is what pricing
+the scoreboard in the currency is supposed to do.
+
+### Test stages repaired, with their margins
+
+Five, none weakened.
+
+- `a_crew_caught_in_the_open_breaks_for_cover_before_the_round_ends` asserted
+  `Some("forest")`. It asserts what the currency can claim instead — the hex
+  she took is one the walker expects strictly less on — priced against **the
+  board the drill was looking at** rather than the end of the round, since
+  both crews move inside a tick and pricing after it reads "the gun expects
+  nothing anywhere". `spring_the_ambush` returns that board as a fourth
+  element.
+- `a_crew_with_no_better_ground_in_reach_stands_where_she_is` asserted that
+  nobody moves on a bare field. True of the terrain table, false of the
+  currency: a gun loses accuracy with range, so the far corner of a billiard
+  table really is quieter and a crew who has noticed the gun really ought to
+  back off. It asserts the strictness itself now — every dash goes to strictly
+  quieter ground — which is the rule the old stage was one consequence of,
+  and it requires at least one dash so it cannot pass on an empty loop.
+- `driving_is_counted_once_however_she_came_to_drive` (gunnery) asserted
+  `moved == 2`. The ordered march ends inside the enemy's arc and the drill
+  adds a third hex, so it counts the hexes she actually crossed and requires
+  `moved` to equal them — a stricter reading of the same rule.
+- `FLIGHT_SEED` 84 → 3. The rout's new second key sends her to a different hex
+  of the same ring, she presents a different aspect, and on 84 the gun killed
+  her in round two before there was anything to watch. Scanned rather than
+  guessed: 63 of the first 400 seeds have her open the range in the first
+  round and in two of three.
+- `what_the_ground_a_commander_names_is_worth_is_a_mod_decision` sweeps
+  `order_worth` (0 / 0.25 / 0.75) instead of `mission_weight`, and
+  `ordered_against_the_ground` is parameterised by chassis so the
+  heavy-versus-scout comparison is two runs of one stage rather than two crews
+  on one, which would have put each in the other's mass term.
+
+### Tests added
+
+A new section of `tests/engine.rs`, *one walk, one gate: the readers of the
+currency*, plus three in the order-versus-terrain section and one in
+`tests/harness.rs`. All mutation-checked.
+
+| test | mutation that must fail it |
+| --- | --- |
+| `there_is_one_answer_to_who_can_shoot_her` | any threshold in `threats` above 1.27, the cheapest of the stage's seven bearings |
+| `the_drill_goes_where_the_gun_cannot_see_her_not_to_the_nearest_wood` | the drill reads terrain `cover` again |
+| `a_frightened_crew_runs_from_the_gun_and_an_orderly_one_ducks_out_of_its_sight` | the rout drops its distance key and minimises fire |
+| `an_order_is_worth_a_share_of_herself_so_it_asks_more_of_a_heavier_crew` | `order_worth * left` → `order_worth * 11.0` |
+| `a_point_of_score_is_priced_in_the_currency` | `score_worth` dropped from `objective_value` |
+| `a_delegated_crew_takes_ordered_ground_until_it_costs_more_than_her_share_of_herself` | the delegation floor stops moving with latitude |
+| `a_mod_setting_a_field_that_no_longer_exists_is_told_which_one_replaced_it` | the retired field is dropped instead of captured |
+
+The sixth measures the margins it asserts, which is the one worth keeping: a
+recon car with nine substance points left, seven hexes from a tank
+destroyer's 88, is looking at 29.2 points of expected fire a round, and
+crosses at `order_worth` 1.20 delegated against 0.95 binding — four fifths of
+it, the ratio of 0.8 to the floored 1.0 and nothing more. At the shipped
+quarter she declines that order, which is the right answer.
+
+### Measurements
+
+`--only skill --absolute --games 36`, eight seeds, 576 battles a row.
+
+| | 5 over 1 | 5 over 3 | the ends | 5v5 draws |
+| --- | --- | --- | --- | --- |
+| `ridge_arena`, baseline `1f7d76e` | 261–315 **45.3%** | 278–298 48.3% | 288–288 50.0% | 0 |
+| `ridge_arena`, + readers | 301–275 52.3% | 297–279 51.6% | 296–279 51.4% | 1 |
+| `ridge_arena`, + the currency | 308–268 **53.5%** | 301–274 **52.3%** | 304–272 52.8% | 0 |
+| `skill_arena`, baseline | 301–268 52.3% | 285–283 49.5% | 236–331 41.0% | 7 |
+| `skill_arena`, + readers | 282–287 49.0% | 278–285 48.3% | 277–293 48.1% | 3 |
+| `skill_arena`, + the currency | 290–281 50.3% | 282–285 49.0% | 269–298 46.7% | 7 |
+
+The old arena gives back two points on `5 over 1` and gains six on its own
+control row, which is the trade this project has now made twice: ground that
+punishes a wrong choice discriminates, and a radius-10 hexagon with two
+objectives does not.
+
+Delegation tax over three seeds: massed armour 8 → 1 → 4, bounding overwatch
+14 → 13 → 19; all inside the ±6 band a single 36-battle pairing wanders in,
+let alone three.
+
+`perf`, median of three quiet runs:
+
+| | baseline | + readers | + the currency |
+| --- | --- | --- | --- |
+| round resolution | 1.90 ms | 1.78 ms | 1.99 ms |
+| `reachable()` | 19.7 µs | 15.9 µs | 15.8 µs |
+| `roads()` | 151.0 µs | 111.3 µs | 111.5 µs |
+| `unit_vision` cold | 99.7 µs | 93.1 µs | 93.3 µs |
+| utility order (diff. 3) | 0.10 ms | 0.08 ms | 0.08 ms |
+
+Five per cent over the baseline in all, against the twenty the brief allowed,
+and the row that moved is the one CLAUDE.md already warns moves with how well
+the AI plays. Nothing on either commit's path is hot: `objective_value` and
+`mission_value` each gained one multiplication, and the drill's per-tick
+sweep is paid only by an idle crew who has noticed a gun.
+
+`playthrough 7 battle_forest`: "breaks for cover" 6 → 4 → 6. The count is not
+the interesting number; where they go is.
+
+### What this wave leaves behind — the next things of their kind
+
+- [ ] **`score_tile`'s remaining bare-Rust weights are the largest
+      un-restated block in the currency**, and the survey above is the
+      argument: every weight that is data was swept and came back null, and
+      every weight that is not could not be asked at all. The mass band
+      (−0.45 / −0.15 / −0.12 × `concentration`), the +4.0 kill bonus, the 0.3
+      advance slope and the 0.15 centre-seeking fallback are four numbers in
+      the same sum as three that have each moved twice. They want to be
+      `planner` fields for the reason the others are: *the prize is the
+      sweep*.
+- [ ] **A symmetric number is invisible to every table this harness has.**
+      `score_worth` is evaluated on every candidate tile and moves
+      `ObjectiveTaken` by sixty per cent, and the skill table cannot tell 1
+      from 12 because both commanders get the same rate. The harness needs a
+      table whose question is *what was this battle about* rather than *who
+      won it* — objectives taken and held, rounds spent in contact, ground
+      changing hands. `sim` has the columns for shots and casualties and none
+      for ground.
+- [ ] **The order/threat ratio is quadratic in what she has left.** Danger is
+      priced as a fraction of her (`exposure`'s fragility) and an order as a
+      share of her (`order_worth * left`), so a crew at half substance values
+      her orders at half and her danger at double. That follows from two
+      separately defensible rules and nobody has decided it is the intended
+      one. The alternative is to quote the order against her *full*
+      complement, which keeps "the same order is worth more to a heavy tank"
+      while making an order's weight constant through a battle. A question for
+      the designer, not a defect.
+- [ ] **The mid-round drill has no counterweight.** At the planning table a
+      crew balances threat against the shot in front of her and the ground she
+      was sent to; mid-round the drill reads danger alone, so an idle crew who
+      has arrived where she was ordered and is under fire will back off it.
+      That is right for a crew nobody has told anything and questionable for
+      one who has just arrived at her objective, and it is the mechanism
+      behind `driving_is_counted_once_however_she_came_to_drive`'s third hex.
+      It is also unaffected by `Latitude`, which is read only at the planning
+      table. Worth a decision before the player meets it.
+- [ ] **`ai::threatened` is still a predicate over a currency with a
+      magnitude.** Wave 1 asked whether the drill wants a *threshold* rather
+      than a boolean now that being shot at harmlessly is expressible. Making
+      the readers walk one gate did not answer it; it only made the question
+      askable in one place. A `threatened_above(worth)` would be one line.
+- [ ] **`Bearing` still names one weapon per enemy**, and **the overlay's
+      bands are still linear in a quantity that is not** — both carried over
+      from Wave 1 and both belong to the presentation layer the lead is
+      rewriting.
