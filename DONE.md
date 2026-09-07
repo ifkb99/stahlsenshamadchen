@@ -1073,6 +1073,71 @@ instrument: the skill table fought on `river_crossing`, whose sides field
 different vehicles, so it measured the map. It fights on the mirrored arena
 now, and the deterministic 36–0 sweep is gone.
 
+**The ridge arena, and what it said about the evaluator** (2026-09-07, Wave 1
+of the one-currency work). Phase 2 left "the arena is the instrument limit"
+as its last open item: +3 points on the skill rows at 576 battles a row, on a
+radius-10 hexagon with nothing for a commander who now prices cover under a
+specific gun to be better at. `ridge_arena` is that ground — radius 12, a
+level-2 crest in the middle worth 3, a spur on each flank ridge worth 2, near
+woods the crest rim sees into at four and six hexes and reverse-slope woods
+it cannot see at all (`los_clear` counts: summit 68 tiles, rim 148, spur inner
+edge 112, a reverse-slope wood 9). The military crest and the topographic
+crest are different hexes and the arithmetic can tell. It is written in the
+coordinates its symmetry group is diagonal in — `s = 2x + y`, `t = y`, so
+`mirror` negates both and `flip` negates the second, and a feature given as
+`|s|`/`|t|` bands cannot come out asymmetric, which is a stronger guarantee
+than the runtime check the old arena relies on. A first draft put the
+level-1 shoulder three hexes out and hid the near woods in dead ground from
+the crest, the opposite of their purpose: from a 22.5 m eye to a 2 m hull the
+ray is under 10 m for the last two fifths of its length, so a lip that far out
+hides the ground just beyond it. Each shoulder is now the minimum
+`max_climb: 1` allows.
+
+As an instrument it is the better one on the axis that matters. Its `ground`
+row is 146–142 with no draws at difficulty 3, against the skill arena's
+149–123 with sixteen, and `the ends` on it reads 144–144 at four seeds with a
+spread of 2. `--arena` selects it for `skill`, `brains`, `mustered` and
+`ground`; the default is unchanged and the eight-seed skill table on the old
+arena came back with the same three pairs of integers ARCH-TODO records
+(286–267 / 287–271 / 292–264), not merely the same percentages. The mirror
+probe from Phase 1a became `examples/mirror` and gained a verdict: it names
+the root (lowest pair in the first broken round; everything decided after it
+inherits an unmirrored board) and says whether the root is an *equal-key
+tiebreak* — two hexes of one objective the same distance from her, settled by
+the coordinate the invariants allow to go last — or a *different key*, which
+is a rule reading the compass. Both arenas come back with nothing but the
+first, which closes the hunt Phase 1a left open: the residual is a coin, and
+adding a key could not help because two hexes at equal distance on a mirrored
+map are congruent ground by construction.
+
+What it measured is a null with a sign on it. At eight seeds, 5 over 1 is
+52.5% on the skill arena and **47.5% on the ridge**; 5 over 3 is 51.4% and
+47.4%; both rows move together. The four-seed draw agreed. Two diagnostic
+reweightings of the same map, 36 battles a pairing, say what it means. At the
+shipped 3 / 2 the crest is nearer than the spurs for every crew and both sides
+must contest it — and the difficulty-5 commander, who alone can see what a
+bare plateau under a found gun costs, is the one who declines it. At 2 / 4 the
+safe flank outscores the lethal middle and she beats difficulty 1 by 17 points
+(66.7%) while **drawing every one of 36 equal-skill battles**, because each
+side takes its own flank and nobody attacks. Building the crest up as a town
+gives 60.0% at the price of half the battles drawn and a nine-point side
+edge, since a blind defensible objective goes to whoever arrives first. So the
+threat term, now priced honestly, outweighs an objective term that is still a
+`value * decay` pull on a scale of its own: a crew who refuses the mission is
+judging the ground right and valuing it wrong, and nothing in `score_tile`
+says taking the objective is what the battle is for. The shipped 3 / 2 stays
+because it is the configuration with an honest control (zero draws), and the
+finding is the brief for the next chunk: quote the objective and the order in
+the currency, and measure on the ridge.
+
+Two properties fell out of building it. The base mod has no cover that does
+not also block sight (forest 30 / 2, town 40 / 2), so everything commanding is
+bare and everything covered is blind — true of the skill arena's hilltop
+village too, where a crew in the middle can barely see out, and nobody had
+noticed. And the knoll cuts the map in half lengthwise, so each side's
+approach is covered from the *far* rim, and the prize for winning the race to
+the crest is a shot at the loser's approach.
+
 **A taxi run is two halves, and the AI plans both** (infantry employment,
 2026-08-14; the design record is `infantry.md`). The fare mounts when riding
 beats walking — rounds to cover the journey on foot against rounds to reach

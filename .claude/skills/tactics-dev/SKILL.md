@@ -25,6 +25,8 @@ messages** — that is the house style and it is why claims here are checkable.
 | What did that data change do? | `cargo run --release -p tactics_core --example balance` — instant analytic tables. `-- --sim` fights whole battles. |
 | What does that number do *that the old one did not*? | `balance -- --sim --games 36 --sweep <path>=<a,b,c>` — every value at once, with a table of differences. `--set` for a single run, `--help` for the paths. |
 | How much of that difference was the dice? | `balance -- --sim --games 36 --sweep seed=0,1000,2000` — the same game, sampled; every fought-out table moves together, and each swept row prints its own `spread`. Read a difference against this before believing it. Add `--only skill --absolute` for one table in three seconds. |
+| Is the AI better on ground where a wrong choice is punished? | the same, with `--arena ridge_arena` — the skill arena is the control, the ridge is the instrument |
+| Did a rule start reading the compass? | `cargo run --release -p tactics_core --example mirror -- --arena ridge_arena` — plays both sides at difficulty 5 and names the first decision that is not its twin's reflection; *equal-key tiebreak* is the documented coin, *different key* is a defect |
 | Did behaviour change, and did I mean it? | `cargo test -p tactics_core --test determinism` |
 | Is it still fast? | `cargo run --release -p tactics_core --example perf` |
 | What does it look like? | `STAHL_PRESENT=immediate STAHL_DEBUG=1 STAHL_BATTLE=river_crossing STAHL_SCRIPT=scripts/dev/battle-tour.txt cargo run -p stahlsenshamädchen` |

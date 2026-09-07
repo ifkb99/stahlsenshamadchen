@@ -146,11 +146,24 @@ kind:
 - [ ] **The overlay's bands are linear in a quantity that is not.** Yellow is
       nearly unreachable in the base mod. Log scale, or a full-complement
       denominator.
-- [ ] **The arena is the instrument limit again.** +3 points on the skill
+- [x] **The arena is the instrument limit again.** +3 points on the skill
       rows at 576 battles a row is the right sign and not decisive; the terms
       that now discriminate (cover under a specific gun, sight, elevation)
       need ground where a wrong choice is punished harder than a radius-10
-      hexagon with two objectives can.
+      hexagon with two objectives can. **Built: `ridge_arena`, `--arena`,
+      `examples/mirror` (Wave 1 — ground, below).** What it found is the
+      next item.
+- [ ] **The objective is not in the currency.** On `ridge_arena` the
+      difficulty-5 commander loses to difficulty 1 (47.5% at 576 battles a
+      row) because she prices the crest's danger honestly and nothing prices
+      what holding it is *for*: the objective term is `value * decay` on a
+      scale a single found gun outweighs. Reweight the arena so the safe
+      flank scores and she wins 66.7% while drawing every equal battle.
+      Orders have the same defect from the other end (`mission_weight` is
+      quoted in objective units, not substance). Wave 2: quote both in the
+      currency — what a point of score is worth in substance per round, and
+      what a delegated order is worth — chosen by sweep on the ridge, where
+      the win column punishes a crew who will not go where the points are.
 
 ## Phase 3 — the smaller seams
 

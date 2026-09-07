@@ -42,6 +42,11 @@ cargo run --release -p tactics_core --example balance -- --sim --games 36 --swee
 # one table, in about three seconds
 cargo run --release -p tactics_core --example balance -- \
     --sim --games 36 --only skill --absolute --sweep seed=0,1000,2000,3000
+# ...on ground where a wrong choice is punished (the same flag on brains, mustered, ground)
+cargo run --release -p tactics_core --example balance -- \
+    --sim --games 36 --only skill --absolute --sweep seed=0,1000,2000,3000 --arena ridge_arena
+# does the AI play a mirrored battle as its own reflection? (a coordinate leaking into a decision)
+cargo run --release -p tactics_core --example mirror -- --arena ridge_arena
 ```
 
 ### Reading a balance number
@@ -92,6 +97,23 @@ the game. `--sim` fights whole battles. The rules for reading it:
   every doctrine conclusion `--sim` prints is partly about that tank
   destroyer. Numbers and method: DONE.md, and
   `assets/wiki/reference/battlefields.md`.
+- **`--arena <id>` picks the mirrored battlefield** the `skill`, `brains`,
+  `mustered` and `ground` tables fight on: `skill_arena` (the default, byte for
+  byte the map every quoted number was measured on) or `ridge_arena` (radius
+  12; a level-2 crest in the middle worth 3, a spur on each flank ridge worth
+  2 between them, near woods the crest rim sees into and reverse-slope woods
+  it cannot). `Arena` is a struct, so the map, the deployment and the
+  symmetry checks are one choice. The ridge arena is written in the
+  coordinates its symmetry group is diagonal in (`s = 2x + y`, `t = y`;
+  `Arena::band`), so a feature described by `|s|` and `|t|` cannot come out
+  asymmetric. Its `ground` row has no side edge (146–142, no draws, where the
+  skill arena still leans 54.8% to the western end at difficulty 3).
+  **`examples/mirror`** plays an arena at difficulty 5 on both sides and
+  reports the first decision that is not its twin's reflection, with a
+  verdict: *equal-key tiebreak* (two hexes of one objective the same distance
+  from her, settled by the coordinate the invariants allow to go last — a
+  coin, not a defect) or *different key* (a rule read the compass). Both
+  arenas come back with nothing but the coin.
 - **Mustered forces** is the one table that buys its own army per doctrine at
   a points budget (`tactics_core::force::muster`), recognising roles off the
   chassis. It pays the asking price rather than hunting value per point, on
@@ -769,14 +791,22 @@ instrument's numbers.
 - **Overworld elevation is priced at the battle scale.** `Scale` has one
   `elevation_meters`, so `frontier`'s mountains at elevation 2 read as 20 m.
   Harmless today; a strategic map wants its own vertical scale.
-- **Difficulty barely discriminates above level 1.** On the varied arena at
-  8 seeds × 36, 5 over 1 went 49.5% → 52.5% and 5 over 3 48.7% → 51.4% when
-  the evaluator started reading the resolver (ARCH-TODO.md Phase 2): the
-  right sign, weakly. The arena is radius 10 with two objectives and has
-  little for a commander who now prices cover under a specific gun to be
-  better at; ground is the next instrument. Read the skill table at
-  `--games 36` or not at all, seed-swept — the four-seed baseline was a high
-  draw, the fourth single-draw number in this project to flatter itself.
+- **The objective is not in the currency, and on real ground the best
+  commander declines it.** At 8 seeds × 36, 5 over 1 is 52.5% on
+  `skill_arena` and **47.5% on `ridge_arena`**; 5 over 3 is 51.4% and 47.4%.
+  Both rows move together, so it is not a draw. The diagnosis is Phase 2's
+  success read as a cost: the threat term is now priced honestly and the
+  objective term is a `value * decay` pull that one found 88 outweighs, so
+  the difficulty-5 commander, who alone can see what a bare level-2 plateau
+  costs, is the one who refuses to take it. Reweighting the ridge's
+  objectives so the safe flank scores (2 / 4) sends 5 over 1 to 66.7% *and*
+  draws every equal-skill battle, because nobody attacks. Nothing in
+  `score_tile` says taking the objective is what the battle is for.
+  Cadence and pressure both add to the threat side; whatever re-quotes the
+  objective and the order in substance points is measured on
+  `--arena ridge_arena`, where a crew who will not go where the points are
+  shows up in the win column. Read the skill table at `--games 36` or not at
+  all, seed-swept.
 
 ### Robustness
 
@@ -849,6 +879,13 @@ says whether the machine is comparable.
   `river_crossing` deliberately fields no infantry and keeps its partial
   crews: it is the determinism baseline.
 - **`battle_forest` declares no `exit`**, so nobody on it can withdraw.
+- **There is no cover without `vision_block`.** Forest (30) and town (40)
+  are the only covering terrains and both block sight at 2, so everything
+  commanding is bare and everything covered is blind: a crew in the middle
+  of the skill arena's hilltop village can barely see out of it. A hedge, a
+  wall or a treeline that hides a hull without blinding the crew is content
+  nobody has written, and until one exists "cover" and "dead ground" are the
+  same word to the evaluator.
 - **The base mod's doctrines exercise a narrow slice of the command model.**
   `Recon` is issued by nobody, elastic defence devolves and issues no ground
   missions, and only `bounding_overwatch` ever orders an `Advance`. Every
