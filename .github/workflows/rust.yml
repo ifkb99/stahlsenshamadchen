@@ -1,4 +1,4 @@
-name: Rust
+﻿name: Rust
 
 # `develop` is the working branch, so CI that only watched `main` effectively
 # never ran. Both are watched now, and pull requests into either.
@@ -18,29 +18,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Bevy links against ALSA and udev on Linux. Without these the game
-      # crate fails to build while `tactics_core` is perfectly fine, which is
-      # a confusing way to discover the dependency.
+      # Pin the toolchain so clippy/rustfmt are present and the runner image
+      # cannot quietly move the edition-2024 baseline out from under us.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # Bevy's default Linux features need ALSA, udev, X11, Wayland and
+      # xkbcommon. Without them the game crate fails to build while
+      # `tactics_core` is perfectly fine, which is a confusing way to
+      # discover the dependency. `g++` and `pkg-config` are already on
+      # ubuntu-latest; the rest matches Bevy's Ubuntu install list.
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+          sudo apt-get install -y \
+            libasound2-dev \
+            libudev-dev \
+            libx11-dev \
+            libxkbcommon-x11-0 \
+            libwayland-dev \
+            libxkbcommon-dev
 
       # Bevy is a large dependency tree; without a cache most of the run is
       # spent rebuilding it unchanged.
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --workspace --all-targets --verbose
+        run: cargo build --workspace --all-targets --locked --verbose
 
       - name: Test
-        run: cargo test --workspace --verbose
+        run: cargo test --workspace --locked --verbose
 
       # The one that matters most for a project whose content is data: a mod
       # file that fails validation is otherwise a mergeable regression, since
       # nothing in the Rust test suite reads it as a modder would.
       - name: Validate mods
-        run: cargo run --bin validate-mods
+        run: cargo run --locked --bin validate-mods
 
       # Gating. This covers rustc's own lints too — clippy runs the full lint
       # pass, so unused imports and dead code fail here as well as clippy's own
@@ -52,7 +66,7 @@ jobs:
       # Bevy systems whose parameter list *is* their dependency list, and each
       # carries a comment saying why.
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       # Gating. `rustfmt.toml` pins `style_edition = "2024"` so this cannot
       # start failing because a newer rustfmt changed its defaults.
