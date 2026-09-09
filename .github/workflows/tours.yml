@@ -1,0 +1,79 @@
+name: Tours
+
+# The presentation layer is the half of this project nothing else gates:
+# `cargo test --workspace` never touches Bevy and neither does rust.yml. The
+# dev tours (`scripts/dev/run-tours.sh`) are the only check on that half, and
+# they only run by hand today. They can run headless — `STAHL_HEADLESS=1`
+# drives the real app under `xvfb-run` with Mesa's lavapipe, a software
+# Vulkan device — but that path is roughly an order of magnitude slower than
+# a GPU, because everything a tour waits on is paced by animation and
+# llvmpipe draws this scene at a handful of frames a second. That is too slow
+# to gate a push, so this is a nightly job plus a manual trigger rather than
+# a third thing rust.yml runs. See TODO.md under Tooling and MVP.md under
+# "Tooling that keeps the MVP honest".
+on:
+  schedule:
+    # 04:00 UTC, off-peak for both a US and a European working day.
+    - cron: "0 4 * * *"
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  tours:
+    runs-on: ubuntu-latest
+
+    # Measured locally (11 tours, headless, cached build): 207s of tour time,
+    # 3m27s wall including cargo's own no-op check. `after-action` was the
+    # longest single tour at 63s. A GitHub runner is weaker than the machine
+    # that number came from and llvmpipe is CPU-bound, so this gives several
+    # times that headroom rather than the bare measurement — see TODO.md
+    # under Tooling for the per-tour table.
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pin the toolchain so the edition-2024 baseline cannot move out from
+      # under us, matching rust.yml. This job never runs clippy or rustfmt,
+      # so it does not need their components.
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Bevy's default Linux features need ALSA, udev, X11, Wayland and
+      # xkbcommon, matching rust.yml's list; `mesa-vulkan-drivers` and
+      # `xvfb` are additionally what `STAHL_HEADLESS=1` needs — the lavapipe
+      # ICD and a virtual display for a runner with no screen of its own.
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libudev-dev \
+            libx11-dev \
+            libxkbcommon-x11-0 \
+            libwayland-dev \
+            libxkbcommon-dev \
+            mesa-vulkan-drivers \
+            xvfb
+
+      # Bevy is a large dependency tree; without a cache most of the run is
+      # spent rebuilding it unchanged, matching rust.yml.
+      - uses: Swatinem/rust-cache@v2
+
+      # The runner itself builds the game crate once up front and prints a
+      # per-tour ok/FAILED/TIMED OUT line with its own elapsed time, so a red
+      # night's log carries both which tour failed and how long everything
+      # else took.
+      - name: Run dev tours
+        run: STAHL_HEADLESS=1 scripts/dev/run-tours.sh 2>&1 | tee tours.log
+
+      # A red tour is otherwise only visible in the Actions log, which is not
+      # what gets linked when someone asks "why did tonight's run fail" — the
+      # `SCRIPT FAIL` and any panic are already grep'd into it by the runner.
+      - name: Upload tour log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tour-log
+          path: tours.log
