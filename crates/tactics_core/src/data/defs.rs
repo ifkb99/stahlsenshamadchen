@@ -637,6 +637,25 @@ pub struct TerrainDef {
     /// it.
     #[serde(default)]
     pub capacity: Option<u32>,
+    /// The battlefield a field battle on this ground is fought on.
+    ///
+    /// The campaign map is one hex per battle map, so when two armies meet
+    /// somewhere the game has to turn "they met in the mountains" into a
+    /// battlefield. That used to be the naming convention alone —
+    /// `battle_<terrain>` — which is a fine default and a poor contract: it
+    /// says a terrain may only ever have one battlefield, that the two must
+    /// share a name, and it fails *silently*, dropping the fight onto
+    /// whichever battle map iterated first. `deep_forest` did not even reach
+    /// `battle_forest`.
+    ///
+    /// Saying it out loud lets several terrains share ground (a city and a
+    /// factory are both fought over the same town), lets one be renamed
+    /// without the link going quiet, and — the reason it is worth a field —
+    /// makes a missing link something `validate-mods` can name. The
+    /// convention still answers for a mod that declares nothing, so this is
+    /// additive: a mod written before the field behaves exactly as it did.
+    #[serde(default)]
+    pub battlefield: Option<String>,
 }
 
 fn default_terrain_color() -> String {

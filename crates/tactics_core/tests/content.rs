@@ -15,10 +15,24 @@ use tactics_core::battle::{BattleState, Event, Order, SideState};
 use tactics_core::data::{DataRegistry, MovementClass};
 use tactics_core::map::{HexMap, MapKind, UnitPlacement};
 
-/// The two battlefields added to stop the balance harness overfitting to
-/// `river_crossing`. Named here rather than derived so that deleting one is a
-/// test failure rather than a quietly smaller sample.
-const NEW_MAPS: [&str; 2] = ["battle_plains", "battle_forest"];
+/// The battlefields added since `river_crossing`: the first two to stop the
+/// balance harness overfitting to one river, the second two so the campaign's
+/// mountains, cities and factories are fought on their own ground rather than
+/// on whichever map iterated first. Named here rather than derived so that
+/// deleting one is a test failure rather than a quietly smaller sample.
+///
+/// They share an order of battle on purpose — nine placements a side, the
+/// same nine both ways round — because it is the `ground` table's control:
+/// with the armies exchanged between the ends, a map whose two sides field
+/// identical forces has to read level in the force column whatever the ground
+/// does, so a build where it drifts has a bug in the exchange rather than a
+/// finding about the content.
+const NEW_MAPS: [&str; 4] = [
+    "battle_plains",
+    "battle_forest",
+    "battle_hills",
+    "battle_town",
+];
 
 mod common;
 use common::registry;

@@ -3497,17 +3497,26 @@ mod tests {
     /// attacker's leading vehicles spawn standing on their own way out and
     /// drive off the map on the first tick, ending the battle before it
     /// starts.
+    ///
+    /// Fought over *every* shipped battlefield rather than over
+    /// `river_crossing` alone, and the loop asserts a second thing on the way
+    /// past: that each of them offers a way off it at all. The rule is a fact
+    /// about `deploy` rather than about one map, and the map it was written
+    /// against was for a long time the only one with a lane to stand on —
+    /// `battle_forest` declared no exit until the terrain-coverage chunk, so
+    /// nobody on it could withdraw and this check had nothing to say about
+    /// it.
     #[test]
     fn nobody_deploys_onto_their_own_way_off_the_map() {
         let reg = registry();
-        let file = reg.map("river_crossing").expect("shipped battle map");
-        let map = tactics_core::map::HexMap::from_map_file(file).expect("map parses");
-        assert!(
-            map.objectives()
-                .iter()
-                .any(|o| o.kind == ObjectiveKind::Exit),
-            "this test is meaningless if the map has no exits"
-        );
+        let mut ids: Vec<&str> = reg
+            .maps
+            .values()
+            .filter(|m| m.kind == tactics_core::map::MapKind::Battle)
+            .map(|m| m.id.as_str())
+            .collect();
+        ids.sort_unstable();
+        assert!(ids.len() >= 5, "the base mod ships five battlefields");
 
         let forces: Vec<BattleForce> = [0u8, 1]
             .iter()
@@ -3525,20 +3534,31 @@ mod tests {
             })
             .collect();
 
-        let (placements, _, _) = deploy(&reg, &map, &forces, 0);
-        assert_eq!(placements.len(), 8, "everyone was placed");
-        for placement in &placements {
-            let hex = tactics_core::offset_to_hex(placement.at[0], placement.at[1]);
-            for objective in map.objectives() {
-                assert!(
-                    !(objective.kind == ObjectiveKind::Exit
-                        && objective.open_to(placement.side)
-                        && objective.contains(hex)),
-                    "side {} deployed onto exit `{}` at {:?}",
-                    placement.side,
-                    objective.id,
-                    placement.at
-                );
+        for id in ids {
+            let file = reg.map(id).expect("shipped battle map");
+            let map = tactics_core::map::HexMap::from_map_file(file).expect("map parses");
+            assert!(
+                map.objectives()
+                    .iter()
+                    .any(|o| o.kind == ObjectiveKind::Exit),
+                "battlefield `{id}` declares no exit, so nobody fighting on it can withdraw"
+            );
+
+            let (placements, _, _) = deploy(&reg, &map, &forces, 0);
+            assert_eq!(placements.len(), 8, "everyone was placed on `{id}`");
+            for placement in &placements {
+                let hex = tactics_core::offset_to_hex(placement.at[0], placement.at[1]);
+                for objective in map.objectives() {
+                    assert!(
+                        !(objective.kind == ObjectiveKind::Exit
+                            && objective.open_to(placement.side)
+                            && objective.contains(hex)),
+                        "on `{id}` side {} deployed onto exit `{}` at {:?}",
+                        placement.side,
+                        objective.id,
+                        placement.at
+                    );
+                }
             }
         }
     }

@@ -1503,15 +1503,42 @@ fn update_roster_ui(
         .join("\n");
 }
 
-/// Prefer a battle map named `battle_<terrain>`, fall back to any battle map.
+/// Which battlefield a clash on this ground is fought on, best answer first.
+///
+/// Three answers, in the order of how much the content actually said:
+///
+/// 1. `TerrainDef::battlefield`, the link written down. Several terrains may
+///    name one battlefield — a city and a factory are both a fight through
+///    the same town — and `validate-mods` refuses a name that is not a battle
+///    map, so this arm cannot fail quietly.
+/// 2. The `battle_<terrain>` convention, kept because it is what every map
+///    shipped before the field existed and a mod that declares nothing has to
+///    behave exactly as it did.
+/// 3. Any battle map at all, which is a shrug: the fight happens somewhere
+///    rather than not at all. Nothing on the shipped campaign map reaches it,
+///    and `every_terrain_the_campaign_fields_names_its_own_battlefield` is
+///    what keeps that true.
 ///
 /// `None` when the loaded mods ship no battle map at all. That used to be an
 /// `expect`, on the reasoning that the base mod always provides one — which is
 /// true of the base mod and says nothing about the mod somebody loads on top
 /// of it. A campaign that cannot stage a fight should say so and carry on.
 fn choose_battle_map(registry: &tactics_core::data::DataRegistry, terrain: &str) -> Option<String> {
+    let is_battle = |id: &String| {
+        registry
+            .maps
+            .get(id)
+            .is_some_and(|m| m.kind == MapKind::Battle)
+    };
+    if let Some(named) = registry
+        .terrain(terrain)
+        .and_then(|t| t.battlefield.clone())
+        .filter(&is_battle)
+    {
+        return Some(named);
+    }
     let preferred = format!("battle_{terrain}");
-    if registry.maps.contains_key(&preferred) {
+    if is_battle(&preferred) {
         return Some(preferred);
     }
     registry
@@ -2315,5 +2342,53 @@ mod tests {
             None,
             "with no maps loaded there is nowhere to fight"
         );
+    }
+
+    /// Every terrain the campaign map is made of names the battlefield a
+    /// clash on it is fought over, and does so *itself*.
+    ///
+    /// The third arm of `choose_battle_map` — any battle map at all — is a
+    /// shrug, and until the `battlefield` field existed the shipped campaign
+    /// reached it constantly: `deep_forest`, `city`, `factory`, `highway` and
+    /// `mountains` all name no `battle_<terrain>` map, so a fight in the
+    /// mountains was resolved on whichever battlefield the map table happened
+    /// to iterate first. That is not a wrong answer anybody could see, which
+    /// is exactly why it wants a test rather than a glance.
+    ///
+    /// Written against the terrain the campaign map actually *uses* rather
+    /// than against the roster, because a terrain nobody has put on a map is
+    /// allowed to have no battlefield yet.
+    #[test]
+    fn every_terrain_the_campaign_fields_names_its_own_battlefield() {
+        let reg = registry();
+        let file = reg
+            .map("frontier")
+            .expect("the base mod ships a campaign map");
+        let map = tactics_core::map::HexMap::from_map_file(file).expect("campaign map parses");
+        let mut terrains: Vec<String> = map.iter().map(|(_, t)| t.terrain.clone()).collect();
+        terrains.sort();
+        terrains.dedup();
+        assert!(terrains.len() > 1, "a one-terrain campaign proves nothing");
+        for terrain in &terrains {
+            let def = reg
+                .terrain(terrain)
+                .unwrap_or_else(|| panic!("the campaign map stands on `{terrain}`"));
+            let named = def.battlefield.clone().unwrap_or_else(|| {
+                panic!(
+                    "terrain `{terrain}` is on the campaign map and names no battlefield, so a                      clash there falls through to whichever battle map iterates first"
+                )
+            });
+            assert!(
+                reg.maps
+                    .get(&named)
+                    .is_some_and(|m| m.kind == MapKind::Battle),
+                "terrain `{terrain}` is fought on `{named}`, which is not a battle map"
+            );
+            assert_eq!(
+                choose_battle_map(&reg, terrain).as_deref(),
+                Some(named.as_str()),
+                "a clash on `{terrain}` must be fought where the terrain says"
+            );
+        }
     }
 }

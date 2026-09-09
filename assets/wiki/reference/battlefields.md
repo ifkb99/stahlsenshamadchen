@@ -4,8 +4,13 @@
 label on the maps rather than a plan to change them: a battlefield favouring
 one end is strategy, and a scenario where one side holds the ridge is a
 scenario about holding a ridge. What it must not be is unmeasured, because
-`balance --sim` samples all three of these and every number it prints then
-carries the term.*
+`balance --sim` samples all of these and every number it prints then carries
+the term.*
+
+*Extended 2026-09-09 with `battle_hills` and `battle_town`, so that a campaign
+clash in the mountains or in a city is fought on its own ground. There are
+five battlefields now, and the fought-out sample is a fifth of each rather
+than a third.*
 
 ## How the numbers are made
 
@@ -42,6 +47,58 @@ maps ship *identical* orders of battle, so it has to read level whatever the
 ground does, and it reads 288–288 exactly. A build where that column drifts
 has a bug in the exchange rather than a finding about the content.
 
+## The two generated battlefields, 4 seeds × 36 = 288 per map
+
+*Measured 2026-09-09, after the currency work; read against the same-run rows
+for the older maps rather than against the August table above, which predates
+several changes to how the AI moves.*
+
+| map | fought for | ground (west share) | | force |
+| --- | --- | --- | --- | --- |
+| `battle_hills` | `mountains` | 148–140, 51.4% | +0.5 sd | 144–144 |
+| `battle_town` | `city`, `factory` | 156–132, 54.2% | +1.4 sd | 144–144 |
+| `battle_plains` | `plains`, `highway` | 148–140, 51.4% | +0.5 sd | 143–143 |
+| `battle_forest` | `deep_forest` | 82–206, 28.5% | −7.3 sd | 144–144 |
+| `river_crossing` | — (the baseline) | 163–124, 56.6% | +2.2 sd | **63–224** |
+
+**`battle_hills` and `battle_town` are the first shipped battlefields whose
+ground is *exactly* mirror-symmetric** — every hex's terrain and elevation
+equals its reflection's, and so does every placement. The hand-drawn maps are
+not: `battle_plains` has 40 hexes that differ from their mirror image,
+`battle_forest` 28 and `river_crossing` 960. That is what makes these two
+rows worth reading twice. A perfectly symmetric map fought by two mirrored
+forces has *nothing* in the ground for the west column to find, so whatever it
+reads is the engine's own residual compass bias — the coordinate this project
+allows to go last in a tie-break, which is a coin that always falls the same
+way. At ±0.5 and ±1.4 sd there is not much of it left, which is the useful
+result.
+
+`tools/make_battle_maps.py` is what makes the symmetry a property rather than
+an intention: every feature is written as a function of `a = |2·col − (40 −
+row % 2)|`, the doubled distance from the map's vertical axis, and the script
+asserts the whole grid against its own mirror before writing. **Regenerate;
+do not edit the json.**
+
+## What the ridge cost to get level
+
+`battle_hills` took three drafts, all of them symmetric, and the win column
+moved five standard deviations across them:
+
+| draft | ground | |
+| --- | --- | --- |
+| two wide elevation bands, one straight crag bar across the approach | 186–102 | **+4.9 sd** west |
+| a stepped ridge climbing to elevation 3, crags broken into knots | 98–190 | **−5.4 sd** east |
+| the same ridge capped at elevation 2, smaller knots | 148–140 | +0.5 sd |
+
+None of those three maps is unfair — all are exact mirrors — so the whole
+swing is the engine's tie-breaks being resolved more or less often, and in
+which direction, by how much ground the map leaves at exactly one value. The
+first draft's wide bands are wide *plateaus of identical score*; the second
+draft's steep narrow ridge funnels every crew through the same few hexes.
+The lesson for the next generated map is the same one twice: **broken ground
+is ground the engine has to decide about on its merits**, and a map that
+leaves large expanses tied hands those decisions to a compass.
+
 ## What each row says
 
 **`battle_forest` leans very slightly east** and **`battle_plains` very
@@ -57,6 +114,26 @@ so the doctrine table has been reading a three-map average in which one map
 hands one side a large head start. It is not a bug — a scenario is allowed to
 be uneven — but any conclusion drawn from `--sim` about *doctrines* is partly
 a conclusion about that tank destroyer.
+
+**`battle_hills` — the Rauhkamm.** A ridge running north to south, which is
+the only arrangement in which a hill is a thing to be *taken* rather than a
+thing one side was handed: it sits between the two ends and both have to
+climb it. Two humps at elevation 2 with a saddle between them where the road
+crosses — the crest, worth 3, is on the northern hump and the saddle, worth 2,
+is the one lane over the ridge that does not climb. Spurs of elevation 1 reach
+out to both flanks for a commander who would rather go round, and four knots
+of `mountains` on the humps' outer rims are the map's only impassable ground:
+foot-only, small, and easily driven round, which is the difference between a
+channel and a smaller map. Level ground, 51.4% west.
+
+**`battle_town` — Immenrode.** A market town round a crossroads, with a hamlet
+up the northern road on a slight rise. The junction, worth 3, is *on the
+roads* rather than in a building, because `town` blocks sight at two levels
+and a solid block of it would be an objective nobody inside can see out of;
+the lanes are the sight lines and holding the junction means holding them.
+Fields out to nine hexes, meadow beyond, woodlots on the field boundaries.
+The hamlet is worth 2. Level ground, 54.2% west, and the widest seed spread of
+any map here — a town fight turns on who gets into which building.
 
 ## The figures this replaces, and why
 

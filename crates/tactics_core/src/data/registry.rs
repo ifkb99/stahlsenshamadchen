@@ -7,7 +7,7 @@ use super::{
     ModuleEffect, MoraleRules, PlannerRules, ReactionRules, RoleDef, STANDARD_MODULES, Scale,
     SkillDef, TraitDef,
 };
-use crate::map::MapFile;
+use crate::map::{MapFile, MapKind};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
@@ -500,6 +500,30 @@ impl DataRegistry {
                     "terrain `{}` color `{}` is not #rrggbb",
                     t.id, t.color
                 ));
+            }
+            // The link from ground to battlefield is the one piece of terrain
+            // data whose failure mode is silence: a campaign clash on a
+            // terrain naming a map that does not exist does not stop, it
+            // falls through to whichever battle map iterated first and the
+            // mountains are fought out on a plain. An error rather than a
+            // warning for that reason — there is no reading of a dangling
+            // `battlefield` under which the modder got what she asked for.
+            if let Some(id) = &t.battlefield {
+                match self.maps.get(id) {
+                    None => report.error(format!(
+                        "terrain `{}` is fought on `{id}`, which no mod ships",
+                        t.id
+                    )),
+                    Some(m) if m.kind != MapKind::Battle => report.error(format!(
+                        "terrain `{}` is fought on `{id}`, which is a {} map rather than a battlefield",
+                        t.id,
+                        match m.kind {
+                            MapKind::Overworld => "campaign",
+                            MapKind::Battle => "battle",
+                        }
+                    )),
+                    Some(_) => {}
+                }
             }
         }
         for m in self.maps.values() {
