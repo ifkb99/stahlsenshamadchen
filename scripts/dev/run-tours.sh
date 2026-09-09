@@ -5,6 +5,7 @@
 #   scripts/dev/run-tours.sh              # all of them
 #   scripts/dev/run-tours.sh infantry     # just the ones whose name matches
 #   STAHL_HEADLESS=1 scripts/dev/run-tours.sh   # no display, no GPU
+#   STAHL_TOUR_TIMEOUT=120 scripts/dev/run-tours.sh   # override the per-tour cap
 #
 # A tour is a test: `expect` and a timed-out `until` make the game exit
 # nonzero, so a red tour here is a real regression in the presentation layer.
@@ -34,6 +35,13 @@ cd "$(dirname "$0")/../.."
 
 filter="${1:-}"
 
+# Headless is roughly an order of magnitude slower than a real GPU (see
+# below), so the per-tour cap that is generous on a workstation could still
+# be tight on a loaded CI runner. Overridable rather than raised outright:
+# raising it by default would let a genuinely hung tour burn ten minutes on
+# every run that hits it, on a display where every run hits it.
+tour_timeout="${STAHL_TOUR_TIMEOUT:-600}"
+
 # The software-rendering path, assembled once. `-a` picks a free display
 # number so two runs cannot collide, and pinning the ICD stops Vulkan finding
 # a real GPU that is present but headless.
@@ -53,6 +61,7 @@ cargo build -p stahlsenshamädchen || exit 1
 
 pass=0
 fail=0
+total_elapsed=0
 failed=()
 for script in scripts/dev/*.txt; do
     name="$(basename "$script" .txt)"
@@ -62,19 +71,22 @@ for script in scripts/dev/*.txt; do
     # The tour's own declared boot environment.
     env_line="$(grep -m1 '^#!env' "$script" | sed 's/^#!env *//')"
     printf '%-18s ' "$name"
-    out="$(timeout 600 "${headless[@]}" env STAHL_PRESENT=immediate STAHL_DEBUG=1 \
+    start=$(date +%s)
+    out="$(timeout "$tour_timeout" "${headless[@]}" env STAHL_PRESENT=immediate STAHL_DEBUG=1 \
         $env_line STAHL_SCRIPT="$script" \
         cargo run -q -p stahlsenshamädchen 2>&1)"
     code=$?
+    elapsed=$(($(date +%s) - start))
+    total_elapsed=$((total_elapsed + elapsed))
     fails="$(printf '%s' "$out" | grep -c 'SCRIPT FAIL')"
     if [[ $code -eq 0 && $fails -eq 0 ]]; then
-        echo "ok"
+        printf 'ok (%ds)\n' "$elapsed"
         pass=$((pass + 1))
     else
         if [[ $code -eq 124 ]]; then
-            echo "TIMED OUT"
+            printf 'TIMED OUT (%ds)\n' "$elapsed"
         else
-            echo "FAILED ($fails)"
+            printf 'FAILED (%d) (%ds)\n' "$fails" "$elapsed"
         fi
         printf '%s\n' "$out" | grep -E 'SCRIPT FAIL|panicked' | sed 's/^/    /'
         fail=$((fail + 1))
@@ -83,7 +95,7 @@ for script in scripts/dev/*.txt; do
 done
 
 echo
-echo "$pass passed, $fail failed"
+echo "$pass passed, $fail failed, ${total_elapsed}s total"
 if [[ $fail -gt 0 ]]; then
     echo "red: ${failed[*]}"
     exit 1

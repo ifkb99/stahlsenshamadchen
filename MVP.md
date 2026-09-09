@@ -117,10 +117,12 @@ can ask what any number does.
 
 ### Tooling that keeps the MVP honest
 
-- **Tours in CI.** The presentation layer is the half nothing gates; the
-  runner works headless and is an order of magnitude slower without a GPU,
-  so a nightly job (TODO, *Tooling*). `rust.yml` runs build, test, clippy,
-  fmt and validate-mods today.
+- ~~**Tours in CI.**~~ **done 2026-09-09.** The presentation layer is the
+  half nothing else gates; `.github/workflows/tours.yml` runs the headless
+  runner nightly and on `workflow_dispatch` rather than on push, since it is
+  still an order of magnitude slower without a GPU — measured at 207s of
+  tour time for all eleven (TODO, *Tooling*). `rust.yml` runs build, test,
+  clippy, fmt and validate-mods today.
 - **A headless test of a whole field battle into the roster.**
   `finish_battle`'s survivor accounting and `apply_battle_result` have no
   coverage and are the seam where campaign state corrupts silently (TODO,
