@@ -1,0 +1,502 @@
+{
+    "id": "battle_town",
+    "name": "Immenrode",
+    "kind": "battle",
+    "palette": {
+        "g": "grass",
+        "p": "plains",
+        "f": "forest",
+        "t": "town",
+        "R": "road"
+    },
+    "rows": [
+        "          ggggggggggRgggggggggg",
+        "         ggggggggggRRgggggggggg",
+        "         gggggggffggRggffggggggg",
+        "        gggggggfffgRRgfffggggggg",
+        "        ggggggggffggRggffgggggggg",
+        "       ffggggggggggRRggggggggggff",
+        "       fffggggggggggRggggggggggfff",
+        "      gffggggggggggRRggggggggggffg",
+        "      gggggggggggggtRtggggggggggggg",
+        "     gggggggggggggtRRtggggggggggggg",
+        "     gggggggggggggttRttggggggggggggg",
+        "    gggggggggggppptRRtpppggggggggggg",
+        "    gggggggggggpppptRtppppggggggggggg",
+        "   gggggggggggpppppRRpppppggggggggggg",
+        "   gggggggggggppppppRppppppggggggggggg",
+        "  gggggggffggppppppRRppppppggffggggggg",
+        "  gggggggfffgpppppttRttpppppgfffggggggg",
+        " ggggggggffgpppppttRRttpppppgffgggggggg",
+        " gggggggggggppppptttRtttpppppggggggggggg",
+        "gggggggggggppppptttRRtttpppppggggggggggg",
+        "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
+        "gggggggggggppppptttRRtttpppppggggggggggg",
+        " gggggggggggppppptttRtttpppppggggggggggg",
+        " gggggggggggpppppttRRttpppppggggggggggg",
+        "  gggggggggggpppppttRttpppppggggggggggg",
+        "  ggffgggggggppppppRRppppppgggggggffgg",
+        "   gfffgggggggppppppRppppppgggggggfffg",
+        "   gffggggggggpppppRRpppppggggggggffg",
+        "    gggggggggggpppppRpppppggggggggggg",
+        "    gggggggggggppppRRppppggggggggggg",
+        "     gggggggggggggggRggggggggggggggg",
+        "     ggggggggggggggRRgggggggggggggg",
+        "      gggggggffgggggRgggggffggggggg",
+        "      ggggggfffggggRRggggfffgggggg",
+        "       ggggggffgggggRgggggffgggggg",
+        "       ggffggggggggRRggggggggffgg",
+        "        gfffggggggggRggggggggfffg",
+        "        gffggggggggRRggggggggffg",
+        "         gggggggggggRggggggggggg",
+        "         ggggggggggRRgggggggggg",
+        "          ggggggggggRgggggggggg"
+    ],
+    "elevation": [
+        "          000000000000000000000",
+        "         0000000000000000000000",
+        "         00000000000000000000000",
+        "        000000000000000000000000",
+        "        0000000000000000000000000",
+        "       00000000000000000000000000",
+        "       000000000000000000000000000",
+        "      0000000000001111000000000000",
+        "      00000000000011111000000000000",
+        "     000000000000111111000000000000",
+        "     0000000000001111111000000000000",
+        "    00000000000001111110000000000000",
+        "    000000000000001111100000000000000",
+        "   0000000000000001111000000000000000",
+        "   00000000000000000000000000000000000",
+        "  000000000000000000000000000000000000",
+        "  0000000000000000000000000000000000000",
+        " 00000000000000000000000000000000000000",
+        " 000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000",
+        "00000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000",
+        " 000000000000000000000000000000000000000",
+        " 00000000000000000000000000000000000000",
+        "  0000000000000000000000000000000000000",
+        "  000000000000000000000000000000000000",
+        "   00000000000000000000000000000000000",
+        "   0000000000000000000000000000000000",
+        "    000000000000000000000000000000000",
+        "    00000000000000000000000000000000",
+        "     0000000000000000000000000000000",
+        "     000000000000000000000000000000",
+        "      00000000000000000000000000000",
+        "      0000000000000000000000000000",
+        "       000000000000000000000000000",
+        "       00000000000000000000000000",
+        "        0000000000000000000000000",
+        "        000000000000000000000000",
+        "         00000000000000000000000",
+        "         0000000000000000000000",
+        "          000000000000000000000"
+    ],
+    "sides": [
+        {
+            "name": "Kuhlmann Academy"
+        },
+        {
+            "name": "Iron Valkyries",
+            "ai": {
+                "planner": "utility",
+                "difficulty": 4,
+                "doctrine": "elastic_defense"
+            }
+        }
+    ],
+    "formations": [
+        {
+            "id": "kuhlmann_line",
+            "name": "1st Armored Platoon",
+            "side": 0
+        },
+        {
+            "id": "kuhlmann_grenadiers",
+            "name": "1st Grenadier Section",
+            "side": 0
+        },
+        {
+            "id": "kuhlmann_scouts",
+            "name": "Reconnaissance Section",
+            "side": 0
+        },
+        {
+            "id": "valkyrie_line",
+            "name": "Valkyrie Armor",
+            "side": 1
+        },
+        {
+            "id": "valkyrie_grenadiers",
+            "name": "Valkyrie Grenadiers",
+            "side": 1
+        },
+        {
+            "id": "valkyrie_scouts",
+            "name": "Valkyrie Screen",
+            "side": 1
+        }
+    ],
+    "units": [
+        {
+            "at": [
+                4,
+                20
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Anvil 1",
+            "crew": [
+                "anka",
+                "juno",
+                "mina",
+                "rosa"
+            ],
+            "formation": "kuhlmann_line",
+            "leads": true
+        },
+        {
+            "at": [
+                5,
+                16
+            ],
+            "side": 0,
+            "vehicle": "light_tank",
+            "name": "Anvil 2",
+            "crew": [
+                "elsa",
+                "ada",
+                "hanne"
+            ],
+            "formation": "kuhlmann_line"
+        },
+        {
+            "at": [
+                5,
+                24
+            ],
+            "side": 0,
+            "vehicle": "tank_destroyer",
+            "name": "Anvil 3",
+            "crew": [
+                "yuki",
+                "ilse",
+                "lore"
+            ],
+            "formation": "kuhlmann_line"
+        },
+        {
+            "at": [
+                7,
+                13
+            ],
+            "side": 0,
+            "vehicle": "recon_car",
+            "name": "Fenn 1",
+            "crew": [
+                "nele",
+                "sigrun"
+            ],
+            "formation": "kuhlmann_scouts",
+            "leads": true
+        },
+        {
+            "at": [
+                6,
+                27
+            ],
+            "side": 0,
+            "vehicle": "light_tank",
+            "name": "Fenn 2",
+            "crew": [
+                "marlen",
+                "katrin",
+                "doro"
+            ],
+            "formation": "kuhlmann_scouts"
+        },
+        {
+            "at": [
+                2,
+                20
+            ],
+            "side": 0,
+            "vehicle": "artillery",
+            "name": "Fenn 3",
+            "crew": [
+                "petra",
+                "emmi",
+                "vera",
+                "berit"
+            ],
+            "formation": "kuhlmann_scouts"
+        },
+        {
+            "at": [
+                7,
+                21
+            ],
+            "side": 0,
+            "vehicle": "halftrack",
+            "name": "Grenadier 1",
+            "crew": [
+                "lotte",
+                "wilma"
+            ],
+            "formation": "kuhlmann_grenadiers",
+            "leads": true
+        },
+        {
+            "at": [
+                8,
+                21
+            ],
+            "aboard_at": [
+                7,
+                21
+            ],
+            "side": 0,
+            "vehicle": "rifle_platoon",
+            "name": "Grenadier 2",
+            "crew": [
+                "ines",
+                "traudl"
+            ],
+            "formation": "kuhlmann_grenadiers"
+        },
+        {
+            "at": [
+                4,
+                18
+            ],
+            "side": 0,
+            "vehicle": "scout_section",
+            "name": "Spaeher",
+            "crew": [],
+            "formation": "kuhlmann_scouts"
+        },
+        {
+            "at": [
+                36,
+                20
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Wotan 1",
+            "crew": [
+                "irma",
+                "astrid",
+                "beatrix",
+                "franka"
+            ],
+            "formation": "valkyrie_line",
+            "leads": true
+        },
+        {
+            "at": [
+                35,
+                16
+            ],
+            "side": 1,
+            "vehicle": "light_tank",
+            "name": "Wotan 2",
+            "crew": [
+                "sofia",
+                "kira",
+                "rea"
+            ],
+            "formation": "valkyrie_line"
+        },
+        {
+            "at": [
+                35,
+                24
+            ],
+            "side": 1,
+            "vehicle": "tank_destroyer",
+            "name": "Wotan 3",
+            "crew": [
+                "greta",
+                "runa",
+                "britta"
+            ],
+            "formation": "valkyrie_line"
+        },
+        {
+            "at": [
+                32,
+                13
+            ],
+            "side": 1,
+            "vehicle": "recon_car",
+            "name": "Raven 1",
+            "crew": [
+                "malin",
+                "zofia"
+            ],
+            "formation": "valkyrie_scouts",
+            "leads": true
+        },
+        {
+            "at": [
+                33,
+                27
+            ],
+            "side": 1,
+            "vehicle": "light_tank",
+            "name": "Raven 2",
+            "crew": [
+                "marta",
+                "ingrid",
+                "selin"
+            ],
+            "formation": "valkyrie_scouts"
+        },
+        {
+            "at": [
+                38,
+                20
+            ],
+            "side": 1,
+            "vehicle": "artillery",
+            "name": "Raven 3",
+            "crew": [
+                "nadja",
+                "hedda",
+                "tamara",
+                "carmen"
+            ],
+            "formation": "valkyrie_scouts"
+        },
+        {
+            "at": [
+                32,
+                21
+            ],
+            "side": 1,
+            "vehicle": "halftrack",
+            "name": "Sturm 1",
+            "crew": [
+                "ludmila",
+                "odette"
+            ],
+            "formation": "valkyrie_grenadiers",
+            "leads": true
+        },
+        {
+            "at": [
+                31,
+                21
+            ],
+            "aboard_at": [
+                32,
+                21
+            ],
+            "side": 1,
+            "vehicle": "rifle_platoon",
+            "name": "Sturm 2",
+            "crew": [
+                "alma",
+                "cecile"
+            ],
+            "formation": "valkyrie_grenadiers"
+        },
+        {
+            "at": [
+                36,
+                18
+            ],
+            "side": 1,
+            "vehicle": "scout_section",
+            "name": "Vixen",
+            "crew": [],
+            "formation": "valkyrie_scouts"
+        }
+    ],
+    "objectives": [
+        {
+            "id": "market",
+            "name": "The Immenrode Crossroads",
+            "at": [
+                [
+                    19,
+                    20
+                ],
+                [
+                    20,
+                    20
+                ],
+                [
+                    21,
+                    20
+                ]
+            ],
+            "value": 3
+        },
+        {
+            "id": "hamlet",
+            "name": "Oberdorf",
+            "at": [
+                [
+                    19,
+                    10
+                ],
+                [
+                    20,
+                    10
+                ],
+                [
+                    21,
+                    10
+                ]
+            ],
+            "value": 2
+        },
+        {
+            "id": "west_road",
+            "name": "The Western Road",
+            "at": [
+                [
+                    0,
+                    20
+                ],
+                [
+                    0,
+                    19
+                ],
+                [
+                    0,
+                    21
+                ]
+            ],
+            "value": 1,
+            "kind": "exit",
+            "side": 0
+        },
+        {
+            "id": "east_road",
+            "name": "The Eastern Road",
+            "at": [
+                [
+                    40,
+                    20
+                ],
+                [
+                    39,
+                    19
+                ],
+                [
+                    39,
+                    21
+                ]
+            ],
+            "value": 1,
+            "kind": "exit",
+            "side": 1
+        }
+    ],
+    "victory_score": 60
+}

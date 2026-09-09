@@ -91,11 +91,13 @@ the game. `--sim` fights whole battles. The rules for reading it:
   table was born with.
 - **`ground` separates the battlefield from the order of battle** by fighting
   every map twice per seed with the armies exchanged between the ends. Its
-  control is that `battle_plains` and `battle_forest` ship identical orders of
+  control is that every map but `river_crossing` ships identical orders of
   battle. **`river_crossing`'s armies are badly unbalanced** (24/76 to the side
-  with the tank destroyer), and it is a third of the fought-out sample, so
+  with the tank destroyer), and it is a fifth of the fought-out sample, so
   every doctrine conclusion `--sim` prints is partly about that tank
-  destroyer. Numbers and method: DONE.md, and
+  destroyer. **`battle_hills` and `battle_town` are exactly mirror-symmetric**
+  (the hand-drawn maps are not), so their rows read the engine's residual
+  compass bias rather than the ground. Numbers and method: DONE.md, and
   `assets/wiki/reference/battlefields.md`.
 - **`--arena <id>` picks the mirrored battlefield** the `skill`, `brains`,
   `mustered` and `ground` tables fight on: `skill_arena` (the default, byte for
@@ -1044,12 +1046,29 @@ says whether the machine is comparable.
 
 ### Content gaps
 
-- **Terrain coverage.** `choose_battle_map` looks for `battle_<terrain>` and
-  falls through to the first battle map; only plains and forest exist, so a
-  fight on a mountain or in a town lands on whichever iterates first.
-  `river_crossing` deliberately fields no infantry and keeps its partial
-  crews: it is the determinism baseline.
-- **`battle_forest` declares no `exit`**, so nobody on it can withdraw.
+- **Terrain coverage is declared, not guessed** (2026-09-09).
+  `TerrainDef::battlefield` names the map a clash on that ground is fought
+  over; `choose_battle_map` reads it first, keeps the `battle_<terrain>`
+  convention as the fallback and only then shrugs at the first battle map,
+  and `validate-mods` **errors** on a name that is not a battle map. Five
+  battlefields ship — `battle_plains` (plains, highway), `battle_forest`
+  (deep_forest), `battle_hills` (mountains), `battle_town` (city, factory)
+  and `river_crossing`, which no terrain names because it is the determinism
+  baseline: it deliberately fields no infantry and keeps its partial crews.
+  Nothing on `frontier` reaches the fallback, pinned by
+  `every_terrain_the_campaign_fields_names_its_own_battlefield`.
+  **`battle_hills` and `battle_town` are generated**, by
+  `tools/make_battle_maps.py` — every feature is a function of the doubled
+  lateral coordinate `a = |2·col − (40 − row % 2)|`, so a west/east tilt is
+  inexpressible and the generator asserts it; edit the script and regenerate
+  rather than editing the json. Its first draft wrote the ridge as two wide
+  bands and read 186–102 west over four seeds (+4.9 sd) — wide bands of
+  identical ground are wide plateaus of identical *score*, and every tie left
+  in this engine is a coin that falls the same compass way.
+- **Every shipped battlefield declares an `exit`**, `battle_forest` included
+  since 2026-09-09. `nobody_deploys_onto_their_own_way_off_the_map` now
+  fights all five and asserts both halves: that each offers a way off it, and
+  that `deploy` forms nobody up on her own lane home.
 - **There is no cover without `vision_block`.** Forest (30) and town (40)
   are the only covering terrains and both block sight at 2, so everything
   commanding is bare and everything covered is blind: a crew in the middle
