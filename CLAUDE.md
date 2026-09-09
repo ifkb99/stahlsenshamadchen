@@ -380,9 +380,15 @@ converted at the mod's exchange rate.
   a `validate-mods` warning naming the new one. `exit_urgency` rides on
   `score_worth`; `Withdraw` alone stays on the objective scale, because
   being ordered out is not worth *less* to a crew who is nearly finished.
-  **The order/threat ratio is therefore quadratic in what she has left**
-  (danger a fraction of her, an order a share of her) — a consequence of two
-  defensible rules that nobody has yet decided is the intended one.
+  **The order/threat ratio was quadratic in what she has left** (danger a
+  fraction of her, an order a share of her), and the designer's ruling
+  (2026-09-09) is `planner.order_complement` (0.5): the order is quoted
+  against her *and*, scaled down, against her full complement —
+  `order_worth × ((1 − c) × left + c × full)` — so a fresh crew reads it
+  exactly as before at every value and a crew with nothing left still holds
+  it at half. Below the instrument's floor: bit-identical in 140 of 160
+  delegation-table rows and on every ridge row (no side there is under a
+  mission), the snapshot unmoved at 0.5. The value is the designer's.
 - **`score_worth` is a symmetric number and the skill table cannot see
   it.** Swept 1 to 12 on the ridge it is one spread of noise, because both
   commanders get the same rate: it changes what a battle is *about*
@@ -406,11 +412,24 @@ converted at the mod's exchange rate.
 - **What the currency does not carry**: the mass band, the +4.0 kill bonus,
   the 0.3 advance slope and the 0.15 centre-seeking fallback are bare Rust
   in `score_tile`, unsweepable and therefore unmeasured — now the largest
-  un-restated block in the sum. And a question about the ladder: it charges
-  `hit + penetrated` for any penetration regardless of what the round spent,
-  so once fear is priced *no landing shot is worth nothing*, and a remnant
-  platoon with no riflemen still opens up. That is the designer's to answer
-  (ARCH-TODO.md, Wave 1 — currency).
+  un-restated block in the sum.
+- **The ladder charges a shell for what it spent** (the designer's ruling,
+  2026-09-09). `pressure_for(ShotFelt::Penetrated { spent }, ..)` scales
+  `hit + penetrated` by the share of the round's *listed* budget the
+  penetration spent (`combat::spent_share`, one reading for the charge, the
+  expectation through `pen_share`, and the bail-out's prospective rung, which
+  asks the price list now rather than restating it); suppression is charged
+  whole and a bounce is priced on the ring. `Round::listed` is the datasheet
+  budget before `mustered`; `ShotHit::budget` carries it. What the ruling
+  leaves: `resolve_impact` floors every penetration's spend at one point, so
+  a remnant platoon with no riflemen charges a third of a rifle's price
+  rather than nothing
+  (`a_remnant_platoon_frightens_by_the_one_point_her_bullet_still_spends`
+  records it) — whether she should be spending that point is a question
+  about the floor. And the base mod declares `morale.hit` 3 and never
+  declares `morale.penetrated`, so on shipped content a penetration costs
+  three points plus the round's suppression, not the engine default's
+  eight.
 
 ### Goals: the seam the AI is meant to be replaced at
 
@@ -499,8 +518,9 @@ all off one Dijkstra (`battle::roads`, `HORIZON` = `planner.horizon_rounds`).
 
 The evaluator's and chooser's numbers are the `planner` block of `mod.json`
 (`data::PlannerRules`): `impatience`, `horizon_rounds`, `boarding_rounds`,
-`deviation_cost`, `devolved`, `order_worth`, `score_worth`, `pull_under_fire`,
-`distance_decay`, `plateau`, `exit_urgency`, `cover_prior`, `elevation_prior`.
+`deviation_cost`, `devolved`, `order_worth`, `order_complement`,
+`score_worth`, `pull_under_fire`, `distance_decay`, `plateau`,
+`exit_urgency`, `cover_prior`, `elevation_prior`.
 `mission_weight` is retired (2026-09-07): it deserialises into a field nothing
 reads so that `validate-mods` can warn a mod that still declares it.
 
@@ -655,21 +675,25 @@ on a mission key.
   in the `CutOff` snapshot (read through `Formation::latitude_for`), on
   `Order::SetMission` / `QueueMission`. It belongs to the orders as a whole,
   not one leg.
-- **On a crew it is read in exactly one place**, the drill gate in
-  `ai/command.rs`. A second `yields_to_drill()` means the model drifted:
-  latitude buys priority over her *own judgment*, never over her nerve.
-  **The mid-round drill in `orders.rs` does not read it** and has no
-  counterweight: an idle crew who has just arrived on her ordered hex under
-  fire will back off it. Whether that is her nerve (leave it) or her
-  judgment (gate it) is an open design question (ARCH-TODO.md, Wave 2).
-- **It lives inside the march.** `Unit::orders` is `Option<PersonalOrder>`
-  (`Holding` or `Marching(March { to, latitude })`); `None` is a crew under
-  her formation's mission, so *detached* is `is_some()`. `PersonalOrder::
-  march()` is the only route from a unit to a `Latitude`, so a crew standing
-  still cannot be read as insisting on anything, and an order about her gun
-  cannot touch a latitude it does not carry
-  (`an_order_about_her_gun_says_nothing_about_her_march` still stands as the
-  test; the prose rule it defended is now the type).
+- **On a crew it is read in exactly one place, `Unit::yields_to_drill`, and
+  both drills ask it**: the planner's gate in `ai/command.rs` and the
+  engine's mid-round reflex in `run_crew_drill` (the designer's ruling,
+  2026-09-09 — before it the reflex read nothing, so a binding crew pressed
+  on through the planning phase and was pulled into the trees five seconds
+  later). A second reader of `Latitude::yields_to_drill` means the model
+  drifted: latitude buys priority over her *own judgment*, never over her
+  nerve, and the nerve check comes first at both sites. A delegated crew
+  who has arrived on her ordered hex under fire still backs off it; that is
+  her judgment, and the gate is the counterweight.
+- **It lives inside the order, and arrives with her.** `Unit::orders` is
+  `Option<PersonalOrder>` (`Holding { latitude }` or `Marching(March { to,
+  latitude })`); `None` is a crew under her formation's mission, so
+  *detached* is `is_some()`. A march that reaches its ground becomes a hold
+  at the same latitude — "get there, I mean it" is not "get there and then
+  use your judgment" — and an order that said nothing about her ground holds
+  at `Delegated`, so an order about her gun cannot touch a latitude it does
+  not carry (`an_order_about_her_gun_says_nothing_about_her_march`,
+  `an_arrival_keeps_the_insistence_she_arrived_under`).
   `a_personal_order_is_taken_back_whole_or_not_at_all` pins both exits.
 - **`Delegated` is the default everywhere and the AI never issues
   `Binding`**, spelled out at all four `Order::SetMission` sites in
@@ -739,12 +763,13 @@ The one door between them is `SavedBattle::rehydrate(&registry)`, which
 destructures every field, so a cache added tomorrow stops the build until
 somebody says whether it travels in the file or is rebuilt on load. `SaveGame`
 carries the same parameter; there is no route from a file to a playable battle
-that does not pass a registry. `SAVE_VERSION` is 5, and **an older save is
+that does not pass a registry. `SAVE_VERSION` is 6, and **an older save is
 refused, not migrated** (`SaveError::Version`): the two fields Phase 3
 introduced default to the benign value, so a version-3 file would open with
 every crew quietly back under her formation's mission and a version-4 file
-with every wreck fighting again. Loud is right while there is no released
-build to migrate from.
+with every wreck fighting again; version 6 gave `Holding` its latitude and a
+version-5 `"holding"` no longer parses. Loud is right while there is no
+released build to migrate from.
 
 ### Seeing the game without playing it
 
@@ -928,11 +953,13 @@ instrument's numbers.
 - **Overworld elevation is priced at the battle scale.** `Scale` has one
   `elevation_meters`, so `frontier`'s mountains at elevation 2 read as 20 m.
   Harmless today; a strategic map wants its own vertical scale.
-- **Difficulty discriminates on the ridge and not on the old arena.** At 8
-  seeds × 36 (576 a row) on `ridge_arena`, 5 over 1 is **53.5%** and 5 over
-  3 **52.3%** with the control row honest and no draws; before Wave 2 they
-  were 45.3% and 48.3%, the best commander declining the crest. Two thirds
-  of the gain came from the drill and the rout reading the resolver instead
+- **Difficulty discriminates on the ridge and not on the old arena — but
+  only just.** At 8 seeds × 36 (576 a row) on `ridge_arena`, 5 over 1 is
+  **51.4%** and 5 over 3 **49.7%** since the ladder scaled by damage spent
+  (2026-09-09; 53.5% and 52.3% after Wave 2, both moves inside the table's
+  own spread, and the control row 144–144); before Wave 2 they were 45.3%
+  and 48.3%, the best commander declining the crest. Two thirds of the
+  Wave 2 gain came from the drill and the rout reading the resolver instead
   of the terrain table, before any weight moved. On `skill_arena` the same
   rows are 50.8% and 49.7%: a radius-10 hexagon with two objectives has
   nothing for a commander to be better at, and it stays the default only
@@ -962,25 +989,26 @@ instrument's numbers.
   list; the four left are genuinely different time scales (this tick, this
   errand, her own plan, a rendezvous) and folding them wants a design
   decision rather than a refactor.
-- **The bail-out guard reads two of the four destructions**, so a hull
-  crushed by blast this tick can still roll for a bail-out. The rule as it
-  stood, kept bit-for-bit through Phase 3c, and it reads oddly beside
-  `Fate`; a designer's ruling.
+- **The bail-out guard reads two of the four destructions, and that is the
+  rule**: a hull crushed by blast this tick can still roll for a bail-out,
+  because there may be survivors (the designer's ruling, 2026-09-09). Its
+  prospective rung asks `pressure_for` for the shell's real price now, so
+  it counts the round's suppression, which it did not before.
 
 ### Performance
 
 `cargo run --release -p tactics_core --example perf` reproduces these; `--mcts`
 adds the slow ones. Measured on the 1261-tile `river_crossing` with 8 units,
-four seeds, after Wave 1 of the one-currency work (2026-09-07):
+four seeds, after the ladder scaled by damage spent (2026-09-09):
 
 | | |
 | --- | --- |
-| round resolution | 1.84 ms (was 1.59 after Phase 2, 1.49 the same day on the same machine) |
-| `reachable()` per call | 18.6 µs |
-| `roads()` per call | 142.7 µs |
-| `unit_vision` per unit, cold | 94.4 µs |
-| utility order | 0.09 ms |
-| mcts order, difficulty 3 / 4 | 1.84 s / 4.24 s |
+| round resolution | 1.96 ms (was 1.84 after Wave 1, 1.59 after Phase 2, 1.49 the same day on the same machine) |
+| `reachable()` per call | 15.4 µs |
+| `roads()` per call | 108.7 µs |
+| `unit_vision` per unit, cold | 90.8 µs (94.4 the run before: the machine is comparable) |
+| utility order | 0.08 ms |
+| mcts order, difficulty 3 / 4 | 1.84 s / 4.24 s (not re-measured since Wave 1) |
 
 `reachable` and `roads` measure work *in a particular game state*; they moved
 with Phase 2 because the units they are measured on stand somewhere else by

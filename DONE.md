@@ -1472,6 +1472,48 @@ because both new fields default to the benign value and a silent migration
 would have put every crew back under her formation and every wreck back on
 the board.
 
+**Four rulings** (2026-09-09, Wave 4 of the one-currency work; the designer's
+answers to what Waves 1–3 left open, each landed with its own proof).
+*The ladder charges a shell for what it spent.* `pressure_for` scales
+`hit + penetrated` by `spent_share(damage, budget)`, the share of the round's
+listed budget the penetration put inside; suppression stays whole and a
+bounce is priced on the ring. `Round::listed` is the datasheet budget before
+`mustered`, `ShotHit::budget` carries it, and the bail-out's prospective rung
+asks the price list instead of restating it. Proved neutral first: with the
+share pinned to one the regenerated stream was byte-identical to the baseline
+once the new `budget:` field was stripped from its 25 ShotHit lines; unpinned,
+257 lines moved and the first divergence is a crew who no longer breaks on a
+partial penetration. The agreement test that had to be written for it is the
+lesson: an 88 at a 120%-overmatch plate spends seven eighths of itself and a
+fifth's band could not tell the rule from its own mutation; at parity (the
+heavy tank's glacis thickened to the 88's penetration) over 400 single-round
+stages the ratio is 0.954 against a mutation of 1.27 — and at sixty stages it
+read 0.84 on a two-sigma draw of the hit roll, which is why the sample is what
+it is. Ridge 5 over 1 53.5% → 51.4%, 5 over 3 52.3% → 49.7%, inside the
+spread; a symmetric rule. What the ruling leaves is the floor:
+`resolve_impact` puts at least one point inside on any penetration, so a
+remnant platoon charges a third of a rifle's price rather than nothing. Found
+on the way: the base mod never declares `morale.penetrated`, so a shipped
+penetration costs three points, not eight.
+*The reflex asks the same gate.* `Unit::yields_to_drill` is the one reader of
+`Latitude::yields_to_drill` and both the planner's drill and `run_crew_drill`
+ask it, nerve first at both. That needed `PersonalOrder::Holding` to carry the
+latitude the march arrived under, or the case the ruling was about — a crew
+just arrived on her ordered hex under fire — was exactly the one no gate could
+reach; `SAVE_VERSION` 6. Snapshot unmoved, because the AI never issues
+`Binding`.
+*An order is quoted against her and, scaled down, her complement.*
+`planner.order_complement` (0.5): `order_worth × ((1 − c) × left + c × full)`,
+so a fresh crew reads the same weight at every value and a crew with nothing
+left still holds her orders at half. Swept where `order_worth` was chosen —
+eight seeds × 36 with `devolved` 1.1 — and bit-identical in 140 of 160 rows,
+the rest one win or a few shots, nearly all at 1.0; bit-identical on the
+ridge, where no side fights under a mission; snapshot unmoved. Below the
+instrument's floor, so the value is the designer's, and said so.
+*A crushed hull still rolls for a bail-out* — there may be survivors. The
+guard reads two of four destructions and that is now the rule rather than an
+open question.
+
 ## Performance
 
 **`fog::recompute` no longer rebuilds every side's vision after every shot** —

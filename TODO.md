@@ -172,6 +172,9 @@ Things that shape everything below them. Deciding late means rework; ordered by 
 - separate engine from game if needed. I want to use this for a roguelike in the future. (mostly already true: tactics_core has no bevy dependency, the rng is seeded ChaCha8, BattleState is Clone for search branching, and the boundary really is intents-in/events-out. what is left is that VehicleDef/ArmorSpec/MovementSpec are tank-shaped — and those live behind the registry in data/defs.rs, so the seam is where it should be)
 ### Combat Sim
 - morale system, route/retreat when morale too low. affected by flanking and ambushes
+  - **allies should boost morale** (designer, 2026-09-09). The one rule of that shape today is `morale.recovery_near_leader`, shed at the end of a round by a crew who can *see* her formation's leader (`fog::sees`). Unwritten: whether a friend in sight lowers what a shell costs, raises what a round sheds, or both; whether any friend counts or only her section; and whether it is sight or distance. Additive either way — a mod that declares nothing recovers as it does now.
+  - **`morale.penetrated` is not declared in the base mod** and so charges nothing: a shipped penetration costs `hit` (3) plus the round's suppression, where the engine's stand-in ladder charges 8. Found 2026-09-09 measuring the ladder's damage-spent scaling; decide whether that is meant.
+  - **the spend floor**: `resolve_impact` puts at least one point inside on any penetration, so a platoon with no riflemen left still spends one and, since the ladder charges by what was spent, still frightens by a third of a rifle's price. Whether a remnant should spend that point at all is the last thing between "a shot that accomplishes nothing" and existing.
 - ability to retreat from a battle, with lowered morale. maybe other penalties too
 - indirect fire option for artillery. rethink how this operates once implementing chain of command
 ### Realistic Ballistics

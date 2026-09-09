@@ -1455,8 +1455,9 @@ speaks when somebody closes.
 
 ### What this wave leaves behind — the next things of their kind
 
-- [ ] **Every landing shot is now worth something, and "a shot that
-      accomplishes nothing" has stopped existing.** The morale ladder charges
+- [x] **Every landing shot is now worth something, and "a shot that
+      accomplishes nothing" has stopped existing.** *Ruled and built 2026-09-09
+      (Wave 4): the outcome price scales by the share spent.* The morale ladder charges
       `hit + penetrated` for any round that gets through, so once fear is
       priced at all, a remnant platoon whose damage `mustered` has scaled to
       nothing still expects three points of pressure a shot against soft
@@ -1861,7 +1862,8 @@ the interesting number; where they go is.
       won it* — objectives taken and held, rounds spent in contact, ground
       changing hands. `sim` has the columns for shots and casualties and none
       for ground.
-- [ ] **The order/threat ratio is quadratic in what she has left.** Danger is
+- [x] **The order/threat ratio is quadratic in what she has left.** *Ruled
+      and built 2026-09-09 (Wave 4): `planner.order_complement`.* Danger is
       priced as a fraction of her (`exposure`'s fragility) and an order as a
       share of her (`order_worth * left`), so a crew at half substance values
       her orders at half and her danger at double. That follows from two
@@ -1870,7 +1872,8 @@ the interesting number; where they go is.
       complement, which keeps "the same order is worth more to a heavy tank"
       while making an order's weight constant through a battle. A question for
       the designer, not a defect.
-- [ ] **The mid-round drill has no counterweight.** At the planning table a
+- [x] **The mid-round drill has no counterweight.** *Ruled and built
+      2026-09-09 (Wave 4): both drills ask `Unit::yields_to_drill`.* At the planning table a
       crew balances threat against the shot in front of her and the ground she
       was sent to; mid-round the drill reads danger alone, so an idle crew who
       has arrived where she was ordered and is under fire will back off it.
@@ -2066,8 +2069,134 @@ loud failure worth having while there is no released build to migrate from.
   five off the list; the remaining four are genuinely different time scales
   (this tick, this errand, her own plan, a rendezvous) and folding them wants
   a design decision rather than a refactor.
-- **`behind_armor_effects`' bail-out guard reads two of the four
-  destructions**, not all of them. A hull crushed by blast this tick can still
-  roll for a bail-out. That is the rule as it stood and this chunk kept it
-  bit-for-bit, but it now reads oddly next to the enum, and `supersedes` exists
-  partly to protect it. Worth a designer's ruling.
+- ~~**`behind_armor_effects`' bail-out guard reads two of the four
+  destructions**, not all of them.~~ Ruled 2026-09-09: a crushed hull still
+  rolls, there may be survivors. The guard is the rule (Wave 4).
+
+## Wave 4 — four rulings: what landed
+
+2026-09-09. The designer's answers to the questions Waves 1–3 left open, in
+the order they were given: *scale by damage spent; make binding use the same
+planning drill gate; quote the order against her and, scaled down, her
+complement; bail-out on hull crush makes sense, there may be survivors.*
+Three commits, one per ruling that changed code; the fourth is a sentence in
+CLAUDE.md. Branch `feat/one-system`.
+
+### The reflex asks the same gate (e9328d5)
+
+`Unit::yields_to_drill` is the one reader of `Latitude::yields_to_drill`, and
+both the planner's drill (`ai/command.rs`) and the engine's mid-round reflex
+(`run_crew_drill`) ask it, nerve first at both sites. Before, the reflex read
+nothing: a binding crew pressed on through the planning phase and was pulled
+into the trees by the reflex on the first tick she noticed the gun.
+
+The case the ruling was about — an idle crew just arrived on her ordered hex
+under fire — needed the type to change: `PersonalOrder::Holding` dropped the
+latitude at the last hex, so an arrived binding crew was an ordinary crew and
+no gate could reach her. `Holding { latitude }` now carries what the march
+arrived under; a fire order that said nothing about her ground holds at
+`Delegated`. `PersonalOrder::latitude()` is the accessor and `march()` is no
+longer the only route to a latitude. `SAVE_VERSION` 5 → 6, because a
+version-5 `"holding"` no longer parses and the refusal should name the
+version.
+
+**Proof:** the determinism snapshot passed unregenerated — the AI never issues
+`Binding`. Tests: `an_arrival_keeps_the_insistence_she_arrived_under`,
+`a_crew_told_to_hold_her_ground_and_meaning_it_is_not_moved_by_the_reflex`
+(mutation-checked by deleting the gate).
+
+### The ladder charges a shell for what it spent (44d4bfe)
+
+`MoraleRules::pressure_for(ShotFelt::Penetrated { spent }, round)` scales
+`hit + penetrated` by `spent`, the share of the round's listed budget the
+penetration put inside; suppression is charged whole, a bounce is priced on
+the ring. `combat::spent_share(damage, budget)` is the one reading — floored
+at the one point `resolve_impact` always spends, clamped at the whole — and
+three readers spend it: the charge in `apply_pressure`, the expectation in
+`round_pressure` (through the profile's `pen_share`), and the bail-out's
+prospective rung, which now asks the price list rather than restating it and
+therefore counts the round's suppression. `Round::listed` is the datasheet
+budget before `mustered`; `Event::ShotHit::budget` carries it. `pressure_for`
+returns a real number and the ledger rounds once.
+
+**Proof, in two halves.** With the share pinned to one and the old prospective
+the regenerated stream was byte-identical to the baseline once `budget:` was
+stripped from its 25 ShotHit lines. Unpinned, 257 lines moved; first
+divergence seed 3, a crew who no longer breaks on a partial penetration and so
+no longer falls back. Census pinned → real: ShotFired 109 → 107, ShotHit
+25 → 26, ShotBounced 18 → 19, RoundStarted 17 → 19, UnitDestroyed 23 → 23,
+BrewedUp 7 → 8.
+
+**The agreement test was the work.** The glacis test never penetrates, so it
+proves nothing about the arm the ruling changed. A first stage at 120%
+overmatch (a 75 at a medium tank's front) spends seven eighths of the shell,
+and charging the whole of it instead read 0.915 — inside a fifth's band. A
+second at parity (an 88 at a heavy tank's glacis thickened from 8 to 9) over
+sixty single-round stages read 0.84 real, 1.11 mutated — both inside. At 400
+stages and 1200 shots: 64.8% arriving against a promised 65%, 49.0%
+penetrating against 51.6%, ratio **0.954** against a mutation of **1.27**,
+band a tenth. The sixty-stage 0.84 was a two-sigma draw of the hit roll, and
+the first version also counted the coaxial belt's bounces (suppression 2 each)
+against a promise that priced only the 88. The residue at 0.954 is the twin
+rounding its expected spend before dividing (9 of 13 where the shots average
+8.6) and the ledger rounding each charge.
+
+**Measured:** ridge at 8 × 36, 5 over 1 51.4% (was 53.5%), 5 over 3 49.7%
+(was 52.3%), control 144–144 — a symmetric rule, both moves inside the spread.
+perf: round 1.96 ms (1.84), reachable 15.4 µs, roads 108.7 µs, unit_vision
+90.8 µs (94.4), utility order 0.08 ms.
+
+**What it leaves.** The floor: `resolve_impact` puts at least one point inside
+on any penetration, so a remnant platoon with no riflemen charges a third of
+a rifle's price rather than nothing, and at any non-zero `point_worth` still
+opens up, more quietly.
+`a_remnant_platoon_frightens_by_the_one_point_her_bullet_still_spends`
+records it. Whether a platoon with no riflemen should be spending that point
+is a question about the floor, and the designer's. Found on the way: **the
+base mod never declares `morale.penetrated`**, so on shipped content a
+penetration costs `hit` 3 plus the round's suppression, not the engine
+default's 8; every number above was measured on that.
+
+### An order is quoted against her and, scaled down, her complement (10066de)
+
+`planner.order_complement` (0.5 ships, 0 is the game before, warned outside
+0..=1): `mission_value` weighs an order at
+`order_worth × ((1 − c) × left + c × full)`. A fresh crew reads the same
+weight at every value; a crew with nothing left still holds her orders at
+half what a fresh one would; the danger term is untouched, so the product
+that was quadratic is now linear in her condition.
+
+**Swept where `order_worth` was chosen** — the delegation table at eight
+seeds × 36 with `--set planner.devolved=1.1`, 288 a cell — and it is below
+the floor: 0 / 0.25 / 0.5 / 0.75 / 1 bit-identical in 140 of 160 non-baseline
+rows, the twenty that move doing so by one win or a handful of shots, nearly
+all at 1.0. On `ridge_arena` the skill table is bit-identical at every value:
+no side there fights under a mission and the field is never reached. The
+snapshot passed unregenerated at 0.5. A crew both worn and under orders at a
+decision is one AI-vs-AI play rarely produces; the case the field is for is a
+player's — a crew half gone and still told to hold. The value is the
+designer's "scaled down", recorded as such rather than dressed up as a
+measurement. Test: `a_worn_crew_still_holds_her_orders_against_what_she_was`
+(mutation-checked by pinning `full` to `left`).
+
+### A crushed hull still rolls for a bail-out
+
+The designer's ruling: there may be survivors. The guard in
+`behind_armor_effects` reads two of four destructions and that is the rule;
+the Wave 3 note asking for a ruling is struck through.
+
+### Left for whoever picks this up
+
+- **The floor** (above): `resolve_impact`'s `.max(1)` on a penetration's
+  spend is now the only reason a remnant platoon's fire is worth anything.
+- **`morale.penetrated` is undeclared in the base mod** and so zero. Either
+  it is meant (a penetration is `hit` plus what the round declares) or it is
+  a key that was never written; either way it wants saying in `mod.json`.
+- **Allies should boost morale** (the designer, 2026-09-09, alongside the
+  order ruling). `recovery_near_leader` is the one rule of that shape today
+  and it reads the leader alone through `fog::sees`. Whether a friend in
+  sight lowers what a shell costs, raises what a round sheds, or both, and
+  whether any friend counts or only her section, is unwritten — TODO.md.
+- Still open from Wave 2: `threatened` as a threshold; `Bearing` naming one
+  weapon per enemy; the four bare constants in `score_tile`; a table whose
+  question is what a battle was about.
