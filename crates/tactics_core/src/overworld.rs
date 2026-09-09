@@ -6,7 +6,7 @@
 
 use crate::ai::{AiConfig, AiPlanner};
 use crate::data::{DataRegistry, MovementClass};
-use crate::map::{HexMap, MapFile, MapKind};
+use crate::map::{CampaignVictory, HexMap, MapFile, MapKind};
 use crate::roster::{CadetId, CasualtyRules, Roster, resolve_crew_fate, resolve_station_fate};
 use hexx::Hex;
 use rand::seq::IndexedRandom;
@@ -135,6 +135,15 @@ pub struct Army {
     /// as one whose armies have no orders, which is what it was.
     #[serde(default)]
     pub mission: Option<ArmyMission>,
+    /// Whether this army carries the side's headquarters — the root of its
+    /// signals net, and under [`CampaignVictory::decapitation`] the army it
+    /// cannot afford to lose. Copied from [`crate::map::ArmyPlacement::headquarters`].
+    ///
+    /// `#[serde(default)]` so a campaign saved before the flag existed opens
+    /// with nobody flagged, which routes [`OverworldState::senior_army`] to
+    /// the first-declared army: what it always was.
+    #[serde(default)]
+    pub headquarters: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,7 +231,77 @@ pub enum OverworldEvent {
     },
     GameEnded {
         winner: Option<u8>,
+        /// Which rule ended it, so the log can say *why* and not only who.
+        reason: CampaignEnd,
     },
+}
+
+/// Why a campaign ended. The rules are [`CampaignVictory`]'s plus the one
+/// every campaign has always had.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CampaignEnd {
+    /// Every other side has no army left on the map.
+    Elimination,
+    /// Every other side has lost the army carrying its headquarters.
+    Decapitation,
+    /// One side held every tile the map said to hold when the day turned.
+    Held,
+}
+
+/// What a field battle hands back to the campaign.
+///
+/// One struct rather than a list of arguments because it crosses a crate
+/// boundary in one direction and a test boundary in the other, and every
+/// field added to it — `withdrew` was the first — would otherwise be a
+/// signature change at every call site. The battle fills it in from what it
+/// knows (who is alive, who left, who was hurt) and the campaign decides
+/// what that cost, because whether this game kills its characters is a
+/// campaign rule.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BattleReport {
+    pub attacker: ArmyId,
+    pub defender: ArmyId,
+    /// Who the battle went to, if anybody; the campaign only uses it for the
+    /// headline, since what actually happened is in the rosters below.
+    pub winner: Option<u8>,
+    /// Both sides broke contact rather than one being destroyed.
+    pub stalemate: bool,
+    /// Every army that took part, with the vehicles it still has. An army
+    /// that lost everything is listed with none, so its destruction is
+    /// reported rather than inferred from its absence.
+    pub survivors: Vec<(ArmyId, Vec<ArmyUnit>)>,
+    /// Cadets who were aboard a vehicle that was destroyed, and cadets hurt
+    /// at their station in one that came home.
+    pub losses: Vec<CrewLoss>,
+    /// Armies whose every surviving vehicle left the field by an exit. They
+    /// were not beaten and they are not where the battle was: the campaign
+    /// puts them a hex back along the way they were going.
+    #[serde(default)]
+    pub withdrew: Vec<ArmyId>,
+}
+
+impl BattleReport {
+    /// A report with only the rosters in it: no headline, nobody withdrew.
+    /// What a test that is about casualties or about who holds the tile
+    /// wants to say, and what every caller said before the report had more
+    /// fields than that.
+    pub fn of(
+        attacker: ArmyId,
+        defender: ArmyId,
+        survivors: Vec<(ArmyId, Vec<ArmyUnit>)>,
+        losses: Vec<CrewLoss>,
+    ) -> Self {
+        Self {
+            attacker,
+            defender,
+            winner: None,
+            stalemate: false,
+            survivors,
+            losses,
+            withdrew: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -292,6 +371,19 @@ pub struct OverworldState {
     #[serde(default)]
     pub waiting_missions: Vec<(ArmyId, ArmyMission)>,
     pub over: Option<Option<u8>>,
+    /// What ends this campaign beyond running out of armies, copied from the
+    /// map. `#[serde(default)]` is the empty rule, so a campaign saved before
+    /// the block existed opens as one fought to elimination, which it was.
+    #[serde(default)]
+    pub victory: CampaignVictory,
+    /// Who has held every tile of [`CampaignVictory::hold`] through how many
+    /// dawns in a row: `(side, nights)`. `None` until somebody holds the set
+    /// at a dawn, and back to `None` the first dawn nobody does. Saved,
+    /// because a campaign loaded on the third night of three must not owe a
+    /// fourth. `#[serde(default)]` is nobody, which is what a campaign saved
+    /// before the streak existed had.
+    #[serde(default)]
+    pub hold_streak: Option<(u8, u32)>,
     /// Drives casualty resolution. Seeded, and consumed in a fixed order, so
     /// a campaign replays identically.
     pub rng: ChaCha8Rng,
@@ -404,6 +496,7 @@ impl OverworldState {
                     .collect(),
                 alive: true,
                 mission: None,
+                headquarters: a.headquarters,
             })
             .collect();
         let mut state = Self {
@@ -418,6 +511,8 @@ impl OverworldState {
             out_of_contact: Vec::new(),
             waiting_missions: Vec::new(),
             over: None,
+            victory: file.victory.clone(),
+            hold_streak: None,
             rng: ChaCha8Rng::seed_from_u64(seed),
         };
         // Who can hear whom on the morning of day one. The events are dropped
@@ -452,20 +547,113 @@ impl OverworldState {
             .filter(move |a| a.alive && a.side == side)
     }
 
-    /// The army a side's signals net is rooted at: its first-declared living
-    /// one, by [`ArmyId`].
+    /// The army a side's signals net is rooted at: the one the map flagged as
+    /// [headquarters](Army::headquarters) while it lives, and otherwise its
+    /// first-declared living army, by [`ArmyId`].
     ///
-    /// **A documented placeholder.** Contact ought to root at a *person* — the
-    /// side's commanding cadet, sitting in a headquarters or a command vehicle
-    /// with a radius priced on her crew's `signals`, the way a battle
-    /// formation's net is priced on its leader. Neither the command unit nor
-    /// the academy that would issue her exists yet (TODO.md, Chain of Command:
-    /// the command-unit item), so seniority stands in for command, exactly as
-    /// the battle layer's succession rule does: the first army the map wrote
-    /// down is the one carrying the headquarters. When the command unit
-    /// arrives, this function is the only thing that has to change.
+    /// The fallback is succession, the same rule a battle formation uses when
+    /// its leader dies: somebody has to give the orders, and seniority is who.
+    /// It is also the whole of the rule for a map that flags nobody, which is
+    /// every map written before the flag existed. Whether losing the flagged
+    /// army *also* loses the campaign is a separate question the map answers
+    /// with [`CampaignVictory::decapitation`]; the net does not decide it.
+    ///
+    /// **Still a placeholder in one respect.** Contact ought to root at a
+    /// *person* — the side's commanding cadet, in a command vehicle with a
+    /// radius priced on her crew's `signals`, the way a battle formation's
+    /// net is priced on its leader. The command vehicle does not exist yet
+    /// (TODO.md, Chain of Command: the command-unit item); when it does, it
+    /// will live inside this army, and this function is the only thing that
+    /// has to change.
     pub fn senior_army(&self, side: u8) -> Option<ArmyId> {
-        self.side_armies(side).map(|a| a.id).min()
+        self.headquarters(side)
+            .or_else(|| self.side_armies(side).map(|a| a.id).min())
+    }
+
+    /// The living army flagged as `side`'s headquarters, if the map flagged
+    /// one and it is still on the map. `None` for a side that flagged nobody
+    /// *and* for one whose headquarters has been destroyed; [`Self::decapitated`]
+    /// tells those apart.
+    pub fn headquarters(&self, side: u8) -> Option<ArmyId> {
+        self.side_armies(side)
+            .filter(|a| a.headquarters)
+            .map(|a| a.id)
+            .min()
+    }
+
+    /// Whether `side` flagged a headquarters and has lost it. Reads the flag
+    /// on dead armies too, which is the point: a side that never flagged one
+    /// cannot be decapitated, and a side whose flagged army is gone has been.
+    pub fn decapitated(&self, side: u8) -> bool {
+        self.armies.iter().any(|a| a.side == side && a.headquarters)
+            && self.headquarters(side).is_none()
+    }
+
+    /// Whether `side` is out of the campaign under the rules the map wrote:
+    /// no army left, or — when the map said losing headquarters is losing —
+    /// no headquarters left.
+    pub fn defeated(&self, side: u8) -> bool {
+        self.side_armies(side).next().is_none()
+            || (self.victory.decapitation && self.decapitated(side))
+    }
+
+    /// How much of the ground the map says to hold `side` holds: `(held,
+    /// total)` over every tile of the terrains in [`CampaignVictory::hold`],
+    /// or `None` when the map names no such ground. The number the campaign
+    /// screen prints and the dawn check reads, so they cannot disagree.
+    pub fn hold_progress(&self, registry: &DataRegistry, side: u8) -> Option<(usize, usize)> {
+        if self.victory.hold.is_empty() {
+            return None;
+        }
+        let (mut held, mut total) = (0, 0);
+        for (hex, tile) in self.map.iter() {
+            if !self.victory.hold.contains(&tile.terrain)
+                || !registry
+                    .terrain(&tile.terrain)
+                    .is_some_and(|t| t.capturable)
+            {
+                continue;
+            }
+            total += 1;
+            if self.owners.get(&hex) == Some(&side) {
+                held += 1;
+            }
+        }
+        Some((held, total))
+    }
+
+    /// The hold rule in words, for the screen: "hold every Factory", or
+    /// `None` when the map declares none. Named after the terrains rather
+    /// than counted, because the count is what [`Self::hold_progress`] is for.
+    pub fn hold_objective(&self, registry: &DataRegistry) -> Option<String> {
+        if self.victory.hold.is_empty() {
+            return None;
+        }
+        let names: Vec<String> = self
+            .victory
+            .hold
+            .iter()
+            .map(|id| {
+                registry
+                    .terrain(id)
+                    .map(|t| t.name.clone())
+                    .unwrap_or_else(|| id.clone())
+            })
+            .collect();
+        let nights = self.victory.hold_days;
+        Some(if nights > 1 {
+            format!("hold every {} for {nights} nights", names.join(" and "))
+        } else {
+            format!("hold every {}", names.join(" and "))
+        })
+    }
+
+    /// How many dawns running `side` has held the set, for the screen.
+    pub fn nights_held(&self, side: u8) -> u32 {
+        match self.hold_streak {
+            Some((who, nights)) if who == side => nights,
+            _ => 0,
+        }
     }
 
     /// Whether this army can still be given new orders.
@@ -1045,6 +1233,7 @@ impl OverworldState {
             // or a two-academy campaign would heal twice as fast as a four.
             self.roster.advance_day();
         }
+        let dawn = next <= self.active_side;
         self.active_side = next;
         for army in self.armies.iter_mut().filter(|a| a.alive && a.side == next) {
             army.moved = false;
@@ -1072,29 +1261,38 @@ impl OverworldState {
         // ...and whatever headquarters has been holding for the ones it can
         // reach again goes out with the morning's traffic.
         events.extend(self.transmit_waiting_missions(next));
+        // Last of all, whoever held the ground through the night has held
+        // it. Dawn rather than the moment of capture, so that taking the last
+        // factory on your turn is not the end of the campaign but the start
+        // of the enemy's last chance to take it back; and after the morning's
+        // events rather than before them, so the ending is the last thing the
+        // day says.
+        if dawn {
+            self.check_held(registry, &mut events);
+        }
         events
     }
 
     /// Feed a battle outcome back into the strategic layer. Every
     /// participating army gets its surviving roster back; armies that lost
-    /// everything are destroyed, and a victorious attacker advances onto the
-    /// contested tile.
+    /// everything are destroyed, armies that withdrew fall back a hex, and
+    /// the victor advances onto the contested tile if it has been vacated.
     pub fn apply_battle_result(
         &mut self,
         registry: &DataRegistry,
-        attacker: ArmyId,
-        defender: ArmyId,
-        survivors: &[(ArmyId, Vec<ArmyUnit>)],
-        losses: &[CrewLoss],
+        report: &BattleReport,
     ) -> Vec<OverworldEvent> {
         let mut events = Vec::new();
+        let attacker = report.attacker;
+        let defender = report.defender;
+        let attacker_pos = self.army(attacker).map(|a| a.pos);
         let defender_pos = self.army(defender).map(|a| a.pos);
 
         // Casualties first, so a cadet's fate is settled before the surviving
         // rosters are written back. Resolved in cadet-id order rather than the
         // order the battle happened to report them, because the rng is shared
         // and the campaign has to replay identically.
-        let mut losses: Vec<&CrewLoss> = losses.iter().collect();
+        let mut losses: Vec<&CrewLoss> = report.losses.iter().collect();
         losses.sort_by_key(|loss| loss.cadet);
         for loss in losses {
             let safety = registry
@@ -1128,7 +1326,7 @@ impl OverworldState {
         }
 
         // Everyone who came through it has one more battle behind her.
-        for (_, units) in survivors {
+        for (_, units) in &report.survivors {
             for unit in units {
                 for cadet in &unit.crew {
                     self.roster.credit_battle(*cadet);
@@ -1136,7 +1334,7 @@ impl OverworldState {
             }
         }
 
-        for (id, units) in survivors {
+        for (id, units) in &report.survivors {
             let id = *id;
             // A vehicle that marched out with no named crew is given an
             // anonymous one at the battle — enlisted into the battle's *copy*
@@ -1159,35 +1357,191 @@ impl OverworldState {
             }
         }
 
+        // An army that left the field by an exit is not where the battle
+        // was. It falls back a hex — along its own orders if it is under a
+        // withdrawal, and otherwise straight away from whoever it was
+        // fighting — so that a withdrawal *goes* somewhere instead of leaving
+        // the army standing on the ground it just gave up, in contact with
+        // the enemy it just broke contact with. In id order, because two
+        // armies falling back onto one hex is settled by who moves first.
+        let mut withdrew: Vec<ArmyId> = report.withdrew.clone();
+        withdrew.sort_unstable();
+        withdrew.dedup();
+        for id in withdrew {
+            let Some(army) = self.army(id) else {
+                continue;
+            };
+            let enemy = if army.side == self.army(attacker).map_or(u8::MAX, |a| a.side) {
+                defender_pos
+            } else {
+                attacker_pos
+            };
+            let Some(enemy) = enemy else {
+                continue;
+            };
+            if let Some(to) = self.fallback_hex(registry, id, enemy) {
+                self.place_army(registry, id, to, &mut events);
+            }
+        }
+
+        // The ground was contested and the attacker is the one still on it.
+        // Advancing onto a *vacated* tile rather than onto a destroyed
+        // defender's is what makes the two ways of losing ground the same
+        // ground lost: a defender who withdrew has yielded it exactly as one
+        // who burned has. An attacker who herself withdrew has yielded her
+        // claim, and one who has been wiped out has nobody to advance.
         if let (Some(pos), Some(att)) = (defender_pos, self.army(attacker))
-            && self.army(defender).is_none()
+            && !report.withdrew.contains(&attacker)
+            && self.army_at(pos).is_none()
         {
             let att_id = att.id;
-            if let Some(a) = self.army_mut(att_id) {
-                a.pos = pos;
-            }
+            self.place_army(registry, att_id, pos, &mut events);
         }
         self.check_victory(&mut events);
         events
     }
 
+    /// Where an army that withdrew from a battle at `enemy` ends up: one hex
+    /// back, along its orders if it has any, and otherwise away.
+    ///
+    /// Under a [`ArmyMission::Withdraw`] the first step of the road toward
+    /// where it was told to go, so a withdrawal ordered and a withdrawal
+    /// fought agree about which way is back. Otherwise the free neighbouring
+    /// hex furthest from the enemy, cheapest to enter among those, with the
+    /// coordinate last as the only key a reflection does not preserve
+    /// (CLAUDE.md, the tiebreak invariant). `None` when there is nowhere to
+    /// go — hemmed in by armies or the map edge — and the army stands where
+    /// it was.
+    fn fallback_hex(&self, registry: &DataRegistry, id: ArmyId, enemy: Hex) -> Option<Hex> {
+        let army = self.army(id)?;
+        let pos = army.pos;
+        let free = |hex: Hex| self.army_at(hex).is_none();
+        if let Some(ArmyMission::Withdraw { to }) = army.mission
+            && to != pos
+            && let Some(path) = hexx::algorithms::a_star(pos, to, |from, next| {
+                if from == next {
+                    return Some(0);
+                }
+                if self
+                    .army_at(next)
+                    .is_some_and(|other| other.side != army.side)
+                {
+                    return None;
+                }
+                self.edge_cost(registry, from, next)
+            })
+            && let Some(step) = path.get(1).copied()
+            && free(step)
+        {
+            return Some(step);
+        }
+        let mut candidates: Vec<(Hex, u32)> = pos
+            .all_neighbors()
+            .into_iter()
+            .filter(|hex| free(*hex))
+            .filter_map(|hex| self.edge_cost(registry, pos, hex).map(|cost| (hex, cost)))
+            .collect();
+        candidates
+            .sort_by_key(|(hex, cost)| (Reverse(hex.distance_to(enemy)), *cost, hex.x, hex.y));
+        candidates.first().map(|(hex, _)| *hex)
+    }
+
+    /// Put an army on a hex without a march: the way a victor takes the
+    /// contested tile and a withdrawn army falls back. Captures what it
+    /// stands on, exactly as [`Self::move_army`] does — an army standing on a
+    /// factory holds it however it came to be standing there — and reports
+    /// the step as a one-hex [`OverworldEvent::ArmyMoved`] so the screen
+    /// can show it.
+    fn place_army(
+        &mut self,
+        registry: &DataRegistry,
+        id: ArmyId,
+        to: Hex,
+        events: &mut Vec<OverworldEvent>,
+    ) {
+        let Some(army) = self.army_mut(id) else {
+            return;
+        };
+        let from = army.pos;
+        let side = army.side;
+        if from == to {
+            return;
+        }
+        army.pos = to;
+        events.push(OverworldEvent::ArmyMoved {
+            army: id,
+            path: vec![from, to],
+        });
+        if let Some(tile) = self.map.get(to)
+            && registry
+                .terrain(&tile.terrain)
+                .is_some_and(|t| t.capturable)
+            && self.owners.get(&to) != Some(&side)
+        {
+            self.owners.insert(to, side);
+            events.push(OverworldEvent::ObjectiveCaptured { at: to, side });
+        }
+    }
+
+    /// Whether anybody has won by the rules that read the board — running
+    /// the enemy out of armies, or out of headquarters — and if so, say so.
+    ///
+    /// One test, [`Self::defeated`], and the campaign is over when at most
+    /// one side passes it: that side wins, or nobody does if none is left.
+    /// Elimination is reported ahead of decapitation when both would be
+    /// true, because a side with no armies has no headquarters either and the
+    /// larger fact is the one worth saying.
     fn check_victory(&mut self, events: &mut Vec<OverworldEvent>) {
         if self.over.is_some() {
             return;
         }
-        let mut living: Vec<u8> = self
-            .armies
-            .iter()
-            .filter(|a| a.alive)
-            .map(|a| a.side)
+        let standing: Vec<u8> = (0..self.sides.len() as u8)
+            .filter(|side| !self.defeated(*side))
             .collect();
-        living.sort_unstable();
-        living.dedup();
-        if living.len() <= 1 {
-            let winner = living.first().copied();
-            self.over = Some(winner);
-            events.push(OverworldEvent::GameEnded { winner });
+        if standing.len() > 1 {
+            return;
         }
+        let winner = standing.first().copied();
+        let eliminated = (0..self.sides.len() as u8)
+            .filter(|side| Some(*side) != winner)
+            .all(|side| self.side_armies(side).next().is_none());
+        let reason = if eliminated {
+            CampaignEnd::Elimination
+        } else {
+            CampaignEnd::Decapitation
+        };
+        self.finish(winner, reason, events);
+    }
+
+    /// The dawn check: whether one side held every tile the map said to
+    /// hold through the night, and for as many nights running as it asked.
+    fn check_held(&mut self, registry: &DataRegistry, events: &mut Vec<OverworldEvent>) {
+        if self.over.is_some() {
+            return;
+        }
+        let holder = (0..self.sides.len() as u8).find(|side| {
+            self.hold_progress(registry, *side)
+                .is_some_and(|(held, total)| total > 0 && held == total)
+        });
+        self.hold_streak = holder.map(|side| match self.hold_streak {
+            Some((who, nights)) if who == side => (side, nights + 1),
+            _ => (side, 1),
+        });
+        if let Some((side, nights)) = self.hold_streak
+            && nights >= self.victory.hold_days.max(1)
+        {
+            self.finish(Some(side), CampaignEnd::Held, events);
+        }
+    }
+
+    fn finish(
+        &mut self,
+        winner: Option<u8>,
+        reason: CampaignEnd,
+        events: &mut Vec<OverworldEvent>,
+    ) {
+        self.over = Some(winner);
+        events.push(OverworldEvent::GameEnded { winner, reason });
     }
 }
 
@@ -1214,6 +1568,19 @@ pub fn ai_reinforcements(
 /// turns nobody spends on it; this planner is the side's own hand and spends
 /// every turn itself, so telling its armies what to do and then doing it for
 /// them would be the same decision made twice.
+///
+/// The one thing it knows beyond "what is worth going to" is what the map
+/// said the campaign turns on. Under [`CampaignVictory::decapitation`] the
+/// enemy's headquarters is the target that ends the war and its own is the
+/// army that must not be caught, and it plays both: the enemy's
+/// headquarters is worth [`Self::HEADQUARTERS_WORTH`] times an ordinary
+/// army, and its own backs away from a *stronger* force that could reach
+/// it and never picks a fight with one. It is still an army — five vehicles
+/// with a staff aboard, not a staff car — so against an equal or weaker
+/// force it fights like any other; a headquarters that ran from parity
+/// would be chased off every objective on the map by one company. On a map
+/// that declares no decapitation rule the flag is just where the radio is,
+/// and the planner reads nothing.
 pub struct SimpleOverworldPlanner {
     rng: ChaCha8Rng,
     /// Chance to pick a suboptimal target, derived from difficulty.
@@ -1221,6 +1588,14 @@ pub struct SimpleOverworldPlanner {
 }
 
 impl SimpleOverworldPlanner {
+    /// How much more the enemy's headquarters is worth than another army of
+    /// the same size, when losing it loses the campaign. Three, because the
+    /// score an ordinary army earns is scaled by relative strength and a
+    /// headquarters is usually the best-found army on the map; anything
+    /// smaller left the planner preferring the weak flank column it could
+    /// beat to the command it could end the war on.
+    pub const HEADQUARTERS_WORTH: f32 = 3.0;
+
     pub fn with_difficulty(difficulty: u8, seed: u64) -> Self {
         Self {
             rng: ChaCha8Rng::seed_from_u64(seed),
@@ -1232,6 +1607,49 @@ impl SimpleOverworldPlanner {
                 _ => 0.0,
             },
         }
+    }
+
+    /// Whether a visible enemy could march onto `hex` next turn: within its
+    /// movement plus one, since a march that stops beside a hex attacks it.
+    /// Crow flight rather than the road, which is the same generosity the
+    /// rest of this planner allows itself.
+    fn within_reach(enemies: &[&Army], hex: Hex) -> bool {
+        enemies
+            .iter()
+            .any(|e| e.pos.distance_to(hex) <= e.movement as i32 + 1)
+    }
+
+    /// Whether `enemy` outnumbers `army` in vehicles: the one measure of
+    /// strength this planner has, and the one it already scores targets by.
+    fn stronger(enemy: &Army, army: &Army) -> bool {
+        enemy.units.len() > army.units.len()
+    }
+
+    /// Where the headquarters goes: the reachable hex that keeps it furthest
+    /// from the nearest enemy that could reach it, or where it stands if
+    /// nothing can. Distance first, then the cheaper road, then the
+    /// coordinate — last, because it is the one key a reflection does not
+    /// preserve.
+    fn shelter(
+        registry: &DataRegistry,
+        state: &OverworldState,
+        army: &Army,
+        enemies: &[&Army],
+    ) -> Hex {
+        let mut options: Vec<(Hex, u32)> = state
+            .reachable(registry, army.id)
+            .into_iter()
+            .filter(|(hex, _)| *hex == army.pos || state.army_at(*hex).is_none())
+            .collect();
+        let nearest = |hex: Hex| {
+            enemies
+                .iter()
+                .map(|e| e.pos.distance_to(hex))
+                .min()
+                .unwrap_or(i32::MAX)
+        };
+        options.sort_by_key(|(hex, cost)| (Reverse(nearest(*hex)), *cost, hex.x, hex.y));
+        options.first().map_or(army.pos, |(hex, _)| *hex)
     }
 }
 
@@ -1255,15 +1673,46 @@ impl AiPlanner<OverworldState, OverworldOrder> for SimpleOverworldPlanner {
         let Some(army) = state.side_armies(side).find(|a| !a.moved) else {
             return OverworldOrder::EndTurn;
         };
+        let enemies: Vec<&Army> = state
+            .visible_armies(registry, side)
+            .into_iter()
+            .filter(|e| e.side != side)
+            .collect();
+        let guarded = state.victory.decapitation && army.headquarters;
+
+        // The headquarters, when losing it is losing, and a stronger force
+        // that could reach it: it backs away. Whatever it does spends the
+        // turn — a move to its own hex is how it says "hold" — because a
+        // planner that returned no order for an unmoved army would be asked
+        // about the same army for ever.
+        if guarded {
+            let stronger: Vec<&Army> = enemies
+                .iter()
+                .copied()
+                .filter(|e| Self::stronger(e, army))
+                .collect();
+            if Self::within_reach(&stronger, army.pos) {
+                let to = Self::shelter(registry, state, army, &stronger);
+                return OverworldOrder::MoveArmy { army: army.id, to };
+            }
+        }
 
         let mut targets: Vec<(Hex, f32)> = Vec::new();
-        // Enemy armies we can see: value inversely proportional to size.
-        for enemy in state.visible_armies(registry, side) {
-            if enemy.side != side {
-                let strength = enemy.units.len().max(1) as f32;
-                let ours = army.units.len().max(1) as f32;
-                targets.push((enemy.pos, 6.0 * (ours / strength)));
+        // Enemy armies we can see: value inversely proportional to size, and
+        // the one carrying the enemy's headquarters worth the campaign. A
+        // guarded headquarters never picks a fight with a stronger army.
+        for enemy in &enemies {
+            if guarded && Self::stronger(enemy, army) {
+                continue;
             }
+            let strength = enemy.units.len().max(1) as f32;
+            let ours = army.units.len().max(1) as f32;
+            let worth = if state.victory.decapitation && enemy.headquarters {
+                Self::HEADQUARTERS_WORTH
+            } else {
+                1.0
+            };
+            targets.push((enemy.pos, 6.0 * worth * (ours / strength)));
         }
         // Objectives we don't own.
         for (hex, tile) in state.map.iter() {
@@ -1278,10 +1727,16 @@ impl AiPlanner<OverworldState, OverworldOrder> for SimpleOverworldPlanner {
             return OverworldOrder::EndTurn;
         }
 
+        // The coordinate last, and only because `map.iter()` walks a hash
+        // map: two targets tied on the score would otherwise be ordered by
+        // wherever the table happened to put them, and the planner would be
+        // a different planner on every machine.
         targets.sort_by(|a, b| {
             let da = army.pos.distance_to(a.0) as f32 - a.1;
             let db = army.pos.distance_to(b.0) as f32 - b.1;
             da.total_cmp(&db)
+                .then(a.0.x.cmp(&b.0.x))
+                .then(a.0.y.cmp(&b.0.y))
         });
         let pick = if targets.len() > 1 && self.rng.random_bool(self.blunder) {
             targets[1..].choose(&mut self.rng).copied()

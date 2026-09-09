@@ -58,6 +58,7 @@
 //! | `shot <path>` | capture the window; the script waits for it to land |
 //! | `log <text>` | print a marker, to correlate stdout with screenshots |
 //! | `until <predicate> [<secs>]` | block until the game says so, or give up |
+//! | `press <key> until <predicate> [<secs>]` | tap the key each time the game is idle, until the predicate holds or the deadline passes |
 //!
 //! Predicates: `idle`, `waiting`, `over`, `turn <cmp> <n>`,
 //! `score <side> <cmp> <n>`, `unit "<name>" alive|dead|aboard|afoot`,
@@ -277,6 +278,17 @@ enum Action {
         predicate: Predicate,
         secs: f32,
     },
+    /// Tap a key every time the game will take one, until the predicate
+    /// holds. The loop the format never had: "press Enter until the battle
+    /// is over" used to be twenty `key Enter` / `until idle` pairs, which is
+    /// a guess about how many rounds a battle takes, and a tour built on
+    /// that guess broke the day a content change moved the fight to a
+    /// different map. The deadline is the whole loop's, not one tap's.
+    PressUntil {
+        code: KeyCode,
+        predicate: Predicate,
+        secs: f32,
+    },
     Expect(Predicate),
     Quit,
 }
@@ -400,6 +412,10 @@ struct Script {
     cursor: usize,
     /// When the currently blocking `wait` started, in elapsed seconds.
     waiting_since: Option<f32>,
+    /// When a `press … until` last tapped its key, so it does not tap again
+    /// on the frame after, before the game has had a chance to stop being
+    /// idle — a keystroke is read the frame after it is pressed.
+    pressed_at: Option<f32>,
     /// Keys and buttons tapped last frame, released at the start of this one.
     tapped_keys: Vec<KeyCode>,
     tapped_buttons: Vec<MouseButton>,
@@ -440,6 +456,7 @@ impl Script {
             actions,
             cursor: 0,
             waiting_since: None,
+            pressed_at: None,
             tapped_keys: Vec::new(),
             tapped_buttons: Vec::new(),
             seen_log: HashSet::new(),
@@ -491,6 +508,25 @@ fn parse_action(line: &str) -> Option<Action> {
             parse_predicate(body).map(|predicate| Action::Until { predicate, secs })
         }
         "expect" => parse_predicate(rest).map(Action::Expect),
+        // `press Enter until waiting 300`: the key, the word, then exactly
+        // what an `until` line would say.
+        "press" => {
+            let (key, tail) = rest.split_once(char::is_whitespace)?;
+            let body = tail.trim().strip_prefix("until")?.trim();
+            let code = parse_key(key)?;
+            let (body, secs) = match body.rsplit_once(char::is_whitespace) {
+                Some((head, tail)) => match tail.parse::<f32>() {
+                    Ok(secs) => (head.trim(), secs),
+                    Err(_) => (body, DEFAULT_TIMEOUT),
+                },
+                None => (body, DEFAULT_TIMEOUT),
+            };
+            parse_predicate(body).map(|predicate| Action::PressUntil {
+                code,
+                predicate,
+                secs,
+            })
+        }
         "quit" => Some(Action::Quit),
         _ => None,
     }
@@ -725,6 +761,39 @@ fn run_script(
                 script.waiting_since = None;
             }
         }
+        Action::PressUntil {
+            code,
+            predicate,
+            secs,
+        } => {
+            let started = *script.waiting_since.get_or_insert(now);
+            let met = facts
+                .as_ref()
+                .is_some_and(|f| predicate.holds(f, &script.seen_log));
+            if met {
+                script.waiting_since = None;
+                script.pressed_at = None;
+            } else if now - started < secs {
+                // A tap only when the game would take one — listening, or
+                // held behind a page a keystroke dismisses — and never on
+                // the frame right after the last: the press is read next
+                // frame, so `idle` is still true for one frame after a tap
+                // that is about to start a round.
+                let idle = facts.as_ref().is_some_and(|f| f.idle || f.waiting);
+                let settled = script.pressed_at.is_none_or(|t| now - t > 0.2);
+                if idle && settled {
+                    keys.press(code);
+                    script.tapped_keys.push(code);
+                    script.pressed_at = Some(now);
+                }
+                return;
+            } else {
+                script.failures += 1;
+                warn!("dev script: SCRIPT FAIL: gave up pressing {code:?} for {predicate:?}");
+                script.waiting_since = None;
+                script.pressed_at = None;
+            }
+        }
         Action::Expect(predicate) => {
             let met = facts
                 .as_ref()
@@ -945,6 +1014,34 @@ mod tests {
         assert!(parse_predicate("turn ~ 4").is_none());
         assert!(parse_predicate("unit Grenadier 2 aboard").is_none());
         assert!(parse_predicate("idle please").is_none());
+    }
+
+    #[test]
+    fn press_until_reads_the_key_the_predicate_and_the_deadline() {
+        assert!(matches!(
+            parse_action("press Enter until log \"Battle \" 400"),
+            Some(Action::PressUntil {
+                code: KeyCode::Enter,
+                predicate: Predicate::Log(ref text),
+                secs,
+            }) if text == "Battle " && secs == 400.0
+        ));
+        assert!(matches!(
+            parse_action("press Enter until waiting"),
+            Some(Action::PressUntil {
+                predicate: Predicate::Waiting,
+                secs,
+                ..
+            }) if secs == DEFAULT_TIMEOUT
+        ));
+        assert!(
+            parse_action("press Enter waiting").is_none(),
+            "the word is not optional"
+        );
+        assert!(
+            parse_action("press until waiting").is_none(),
+            "nor is the key"
+        );
     }
 
     #[test]

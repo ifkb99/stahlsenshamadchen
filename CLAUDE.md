@@ -159,6 +159,62 @@ DONE.md under the same heading.
   `a_map_that_names_no_objectives_is_fought_exactly_as_it_was_before`. Re-check
   it when touching `Evaluator::objective_value`.
 
+### The campaign's ending
+
+The overworld map declares it (`victory` in the map file, typed as
+`map::CampaignVictory`, copied onto `OverworldState::victory`), and a map
+that declares nothing is fought to elimination exactly as every campaign
+was. Tests: `tests/campaign.rs`.
+
+- **Two rules, independent, both additive.** `hold` is a list of terrain
+  ids whose every tile one side must own **at dawn**, for `hold_days` dawns
+  running (`OverworldState::hold_streak`, saved; default 1, `frontier` 3) —
+  checked when the day turns, after the morning's traffic, so the last
+  capture never ends the campaign on the turn it is made and the ending is
+  the day's last event. A dawn nobody holds the set resets the streak.
+  `decapitation` is losing the army flagged `headquarters`. An empty list
+  never fires and `false` is the rule's absence; `validate-mods` errors on
+  a `hold` naming ground that is not capturable or not on the map, on
+  `hold_days: 0`, and on `decapitation` for a side that flagged no
+  headquarters. **Why three on the frontier**: with one, the AI took both
+  factories by day 4 and won at dawn on day 5 while the `after-action`
+  tour's army sat unseen in a forest — a campaign that ends before its
+  first battle.
+- **`headquarters` is one flag read twice.** `senior_army` roots the signals
+  net at it while it lives and falls back to seniority when it dies, which
+  is the whole rule for a map that flags nobody; `decapitated` reads the flag
+  on dead armies too. Do not add a second flag for "the army that must not
+  die": the army the orders come from is the army whose loss leaves nobody
+  to give them.
+- **`defeated(side)` is the one test** — no armies, or (under
+  `decapitation`) no headquarters — and `check_victory` ends the campaign
+  when at most one side passes it. `GameEnded` carries a `CampaignEnd`
+  reason; elimination is reported ahead of decapitation when both hold.
+- **A battle hands back a `BattleReport`**, one struct across the crate
+  boundary (`survivors`, `losses`, `withdrew`, and the headline). The game
+  crate's `battle_outcome` fills it from a finished `BattleState` and is
+  pure over it, which is what lets `crates/game`'s headless tests fight a
+  whole field battle into the roster.
+- **A withdrawn army arrives a hex back.** `withdrew` names every army whose
+  every surviving vehicle left by an exit (`Fate::Exited`, none still
+  `Fighting`); `apply_battle_result` moves each one hex — along its
+  `Withdraw { to }` road if it has one, else the free neighbour furthest
+  from the enemy it fought, cheapest to enter, coordinate last — and then
+  the attacker takes the contested tile if it is **vacant**, whether the
+  defender burned or left. An attacker who withdrew has yielded her claim.
+  Both steps go through `place_army`, which captures what it stands on, so
+  a victor advancing onto a factory holds it (it did not, before).
+- **The campaign planner reads the rule.** Under `decapitation` the enemy
+  headquarters is worth `HEADQUARTERS_WORTH` (3.0) armies of its size and
+  its own headquarters backs away from a **stronger** force within
+  `movement + 1` and never picks a fight with one; at parity or better it
+  is an army like any other, or one company could chase it off every
+  objective on the map. Sheltering that finds nothing better *moves to its
+  own hex* — a planner that returned no order for an unmoved army would be
+  asked about her for ever. Target ties fall to the
+  coordinate last because `HexMap::iter` walks a hash map; before this the
+  planner's tie-break was hash order.
+
 ### Looking is not seeing
 
 Finding somebody inside your own field of view costs a roll
@@ -765,7 +821,10 @@ The one door between them is `SavedBattle::rehydrate(&registry)`, which
 destructures every field, so a cache added tomorrow stops the build until
 somebody says whether it travels in the file or is rebuilt on load. `SaveGame`
 carries the same parameter; there is no route from a file to a playable battle
-that does not pass a registry. `SAVE_VERSION` is 6, and **an older save is
+that does not pass a registry. `Army::headquarters` and `OverworldState::victory` are `#[serde(default)]`
+to the benign value (nobody flagged, elimination only), which is a
+version-6 campaign exactly as it was, so the version did not move for
+them. `SAVE_VERSION` is 6, and **an older save is
 refused, not migrated** (`SaveError::Version`): the two fields Phase 3
 introduced default to the benign value, so a version-3 file would open with
 every crew quietly back under her formation's mission and a version-4 file
@@ -791,7 +850,15 @@ with `examples/minimal_window.rs`). Rules:
   scripts name a hex.
 - **`run_script` must stay `.after(InputSystems)`.**
 - **Scripts wait on the game** (`until` / `expect` over `ScriptFacts`), never
-  on a stopwatch.
+  on a stopwatch. **And never on a count**: `press <key> until <predicate>
+  [<secs>]` taps a key each time the game is listening or held behind a
+  page, until the predicate holds. `after-action` used to press Enter twenty
+  times to fight a battle out and relied on the AI wandering into it; it
+  now presses Enter until somebody `engages`, fights through the muster
+  prompt, and presses Enter until the campaign holds the screen with the
+  after-action page. Key on the game's *phases* (`waiting`, `idle`) rather
+  than on log text where you can: "Battle " matched the battle screen's own
+  "Battle started" line on the first try.
 - **`idle` is `Battle::listening`, one predicate.** Anything new that makes
   `handle_input` refuse a keystroke belongs inside `listening`, not beside
   it. `waiting` means "held behind something the player must dismiss".

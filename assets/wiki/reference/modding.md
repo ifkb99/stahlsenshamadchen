@@ -75,8 +75,32 @@ the map, and a parallel `elevation` grid of digits raises tiles:
 }
 ```
 
+An overworld map (`"kind": "overworld"`) places armies and, since
+2026-09-09, says what ends the campaign:
+
+```json
+{
+  "kind": "overworld",
+  "victory": { "hold": ["factory"], "hold_days": 3, "decapitation": true },
+  "armies": [
+    { "at": [1, 1], "side": 0, "name": "1st Company", "headquarters": true,
+      "units": [ ... ] }
+  ]
+}
+```
+
+`victory.hold` lists terrain ids; a side that owns every tile of them when
+the day turns over, for `hold_days` days running (default 1), wins. `victory.decapitation` makes losing the army flagged
+`headquarters` lose the campaign. Both are optional and a map that declares
+neither is fought until one side has no armies. The `headquarters` flag is
+also where the side's radio net roots, so it means something even without
+the rule; a side that flags nobody roots at its first-declared army.
+`validate-mods` refuses a `hold` over ground that is not capturable or not
+on the map, and `decapitation` for a side with no headquarters.
+
 Run `cargo run --bin validate-mods` to check every reference (weapons,
-terrain, palettes, placements) without launching the game.
+terrain, palettes, placements, the campaign's ending) without launching the
+game.
 
 ## Campaign scripts
 

@@ -63,8 +63,8 @@ use tactics_core::battle::{
 use tactics_core::data::{DataRegistry, MovementClass, RoundPressure, ShotFelt};
 use tactics_core::map::{HexMap, UnitPlacement};
 use tactics_core::overworld::{
-    Army, ArmyId, ArmyMission, OverworldError, OverworldEvent, OverworldOrder, OverworldState,
-    make_overworld_planner,
+    Army, ArmyId, ArmyMission, BattleReport, OverworldError, OverworldEvent, OverworldOrder,
+    OverworldState, make_overworld_planner,
 };
 
 mod common;
@@ -2750,14 +2750,16 @@ fn battle_results_are_returned_to_each_army() {
     let helper_units = state.army(helper).unwrap().units.clone();
     let events = state.apply_battle_result(
         &reg,
-        attacker,
-        defender,
-        &[
-            (attacker, survivor.clone()),
-            (helper, helper_units.clone()),
-            (defender, Vec::new()),
-        ],
-        &[],
+        &BattleReport::of(
+            attacker,
+            defender,
+            vec![
+                (attacker, survivor.clone()),
+                (helper, helper_units.clone()),
+                (defender, Vec::new()),
+            ],
+            Vec::new(),
+        ),
     );
 
     assert_eq!(state.army(attacker).unwrap().units.len(), survivor.len());
@@ -2921,6 +2923,7 @@ fn extra_army(state: &mut OverworldState, side: u8, name: &str, at: [i32; 2]) ->
         units: Vec::new(),
         alive: true,
         mission: None,
+        headquarters: false,
     });
     id
 }
@@ -5896,7 +5899,10 @@ fn girls_persist_across_battles_and_recover_over_days() {
     let attacker = state.side_armies(0).next().unwrap().id;
     let defender = state.side_armies(1).next().unwrap().id;
     let survivors = vec![(attacker, state.army(attacker).unwrap().units.clone())];
-    state.apply_battle_result(&reg, attacker, defender, &survivors, &[]);
+    state.apply_battle_result(
+        &reg,
+        &BattleReport::of(attacker, defender, survivors.clone(), Vec::new()),
+    );
     assert_eq!(state.roster.get(cadet).unwrap().battles, 1);
 
     // And so is being shot out of it. With permadeath off, the worst case is
@@ -5908,7 +5914,10 @@ fn girls_persist_across_battles_and_recover_over_days() {
         killed_by: Some(tactics_core::data::DamageType::Kinetic),
         found: None,
     };
-    let events = state.apply_battle_result(&reg, attacker, defender, &[], &[loss]);
+    let events = state.apply_battle_result(
+        &reg,
+        &BattleReport::of(attacker, defender, Vec::new(), vec![loss]),
+    );
     assert!(
         events.iter().any(|e| matches!(
             e,
@@ -14501,13 +14510,15 @@ fn a_campaign_run_by_standing_orders_and_planners_plays_itself_out() {
             .collect();
         state.apply_battle_result(
             reg,
-            attacker,
-            defender,
-            &[
-                (attacker, attacking),
-                (defender, defending.into_iter().skip(1).collect()),
-            ],
-            &losses,
+            &BattleReport::of(
+                attacker,
+                defender,
+                vec![
+                    (attacker, attacking),
+                    (defender, defending.into_iter().skip(1).collect()),
+                ],
+                losses.clone(),
+            ),
         );
     }
 
@@ -14577,13 +14588,22 @@ fn a_campaign_run_by_standing_orders_and_planners_plays_itself_out() {
     // battles on different days and this run gets the junior overrun instead.
     // The rule the waiting tray actually promises is pinned properly by
     // `an_army_mission_out_of_range_waits_and_then_transmits`.
+    //
+    // And a third exit, since the map learned what winning it is: the
+    // campaign can *end* with the order still in the drawer, because the
+    // senior company this test sends at the enemy's ground is the one
+    // carrying headquarters and `frontier` says losing it loses. An order
+    // nobody will ever carry out because the war is over is not an order
+    // sitting in the drawer; there is no drawer. (Measured: this run ends
+    // on day 9 after five battles, to the Valkyries.)
+    let over = state.over.is_some();
     assert!(
-        transmitted || state.army(junior).is_none(),
+        transmitted || state.army(junior).is_none() || over,
         "a held order must either go out or die with the army it was for, \
          never sit in the drawer while she is alive to receive it"
     );
     assert!(
-        state.waiting_missions.is_empty(),
+        over || state.waiting_missions.is_empty(),
         "and headquarters is not still holding it: {:?}",
         state.waiting_missions
     );
@@ -15507,7 +15527,10 @@ fn a_wound_taken_at_her_station_survives_the_battle() {
         killed_by: None,
         found: Some(CrewCondition::Out),
     };
-    state.apply_battle_result(&reg, attacker, defender, &survivors, &[hurt]);
+    state.apply_battle_result(
+        &reg,
+        &BattleReport::of(attacker, defender, survivors.clone(), vec![hurt]),
+    );
 
     let status = state.roster.get(cadet).unwrap().status;
     assert!(
@@ -15685,7 +15708,10 @@ fn a_battle_does_not_enlist_anybody_into_the_academy() {
     let stranger = tactics_core::roster::CadetId(state.roster.len() as u32 + 5);
     let mut units = state.army(attacker).unwrap().units.clone();
     units[0].crew.push(stranger);
-    state.apply_battle_result(&reg, attacker, defender, &[(attacker, units)], &[]);
+    state.apply_battle_result(
+        &reg,
+        &BattleReport::of(attacker, defender, vec![(attacker, units)], Vec::new()),
+    );
 
     for unit in &state.army(attacker).unwrap().units {
         for cadet in &unit.crew {

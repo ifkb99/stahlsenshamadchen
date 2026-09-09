@@ -36,12 +36,18 @@
         { "name": "Kuhlmann Academy", "funds": 20 },
         { "name": "Iron Valkyries", "funds": 20, "ai": { "planner": "utility", "difficulty": 3, "doctrine": "massed_armor" } }
     ],
+    "victory": {
+        "hold": ["factory"],
+        "hold_days": 3,
+        "decapitation": true
+    },
     "armies": [
         {
             "at": [1, 1],
             "side": 0,
             "name": "1st Company",
             "movement": 4,
+            "headquarters": true,
             "units": [
                 { "at": [2, 3], "side": 0, "vehicle": "medium_tank", "crew": ["anka", "juno", "mina", "rosa"] },
                 { "at": [1, 2], "side": 0, "vehicle": "recon_car", "crew": ["elsa", "ada"] },
@@ -67,6 +73,7 @@
             "side": 1,
             "name": "Valkyrie Vanguard",
             "movement": 4,
+            "headquarters": true,
             "units": [
                 { "at": [11, 3], "side": 1, "vehicle": "medium_tank", "crew": ["irma", "astrid", "beatrix", "franka"] },
                 { "at": [12, 4], "side": 1, "vehicle": "light_tank", "crew": ["sofia", "kira", "rea"] },

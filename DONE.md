@@ -1514,6 +1514,75 @@ instrument's floor, so the value is the designer's, and said so.
 guard reads two of four destructions and that is now the rule rather than an
 open question.
 
+## The campaign
+
+**What ends it is map data (2026-09-09).** `frontier` had a Lua wrapper
+handing out funds and no idea what winning it was; the engine ended a
+campaign only when one side ran out of armies, and told nobody why. The
+designer's ruling was *either factories held, or leadership dies*, with the
+leader properly weighted on the map. Shipped as a `victory` block on the
+overworld map — `hold`, a list of terrain ids one side must own **at dawn**
+for `hold_days` dawns running, and `decapitation`, losing the army flagged
+`headquarters` — plus the flag itself on `ArmyPlacement`. `hold_days` was
+not in the first draft: at one night the AI took both of the frontier's
+factories by day 4 and won at dawn on day 5, before the `after-action` tour
+had got its battle, and a headless replay of the tour's inputs showed why —
+the tour's army had stopped in a concealing forest, the AI could not see it
+and went for the ground instead. Three nights on the frontier; the number is
+the map's. Three things worth recording. The dawn rule is
+deliberately not the capture rule: the check runs after the morning's
+traffic when the day turns, so the last factory taken on your turn is the
+start of the enemy's last chance rather than the end, and the ending is the
+day's last event. The headquarters flag is one flag read twice — the net
+roots at it (`senior_army`, with seniority as the succession when it dies)
+and the loss rule reads it on dead armies (`decapitated`) — because the army
+the orders come from is the army whose loss leaves nobody to give them; a
+second flag for "the one that must not die" would drift from the first. And
+"leader" here is an *army*, chosen with the designer over a command vehicle
+and a commanding cadet because it works under the gentle rules too and is
+the container the vehicle will live in when it arrives. Fifteen tests in
+`tests/campaign.rs`, the sixty-day campaign test in `engine.rs` re-staged to
+accept a campaign that ends (it now does, by decapitation, because the test
+sends the headquarters at the enemy), and the determinism snapshot
+unregenerated: nothing on the battlefield moved.
+
+**The campaign AI plays the rule.** Under `decapitation` the enemy
+headquarters is worth `HEADQUARTERS_WORTH = 3.0` armies of its size to the
+`SimpleOverworldPlanner`, which is the smallest integer that beats the
+relative-strength scaling on an army that is usually the best-found one on
+the map, and its own headquarters backs away from a *stronger* force within
+`movement + 1` and never targets one; at parity it fights like any army.
+The first draft had it flee anything in reach, and the `after-action` tour
+caught it within the hour: the tour marches the player's headquarters at the
+Valkyries' and waits for the battle, and a headquarters that ran from parity
+never gave it one — which is also the design argument, since one company
+could then chase it off every objective on the map. Sheltering that finds
+nothing better moves to its own hex; the planner is a one-order-per-call
+loop over unmoved armies, so an army that declined to move would be asked
+about for ever. Found and
+fixed on the way: the planner's target sort had no tie-break and the targets
+come off `HexMap::iter`, a hash map, so two targets tied on score were ordered
+by hash — the campaign planner was not deterministic across machines. The
+coordinate is last in the key now, per the tiebreak invariant.
+
+**A withdrawn army arrives somewhere.** The battle half of withdrawal
+existed (exits, `Fate::Exited`, survivors counted as survivors) and the
+campaign half did not: an army whose crews all drove off the map stood on
+the contested tile afterwards, in contact with the army it had just broken
+contact with. `BattleReport` — the one struct a battle now hands back,
+lifted from the game crate so a headless test can build it — carries
+`withdrew`, an army whose every surviving vehicle exited and none is still
+`Fighting`; `apply_battle_result` moves each one a hex, the first step of
+its `Withdraw { to }` road if it has orders and else the free neighbour
+furthest from the enemy, and the attacker advances onto the contested tile
+if it is *vacant* rather than if the defender is *dead*, which makes a
+defender who left and a defender who burned yield the same ground. Both
+steps go through one `place_army` that captures what it stands on, which
+closes a gap the old advance had: a victor who took a destroyed defender's
+factory did not hold it until she moved again. The game-crate test that
+fights a real withdrawal on `river_crossing` now asserts the `withdrew` list
+in both directions and the one-hex fallback.
+
 ## Performance
 
 **`fog::recompute` no longer rebuilds every side's vision after every shot** —
