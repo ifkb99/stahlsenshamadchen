@@ -1769,6 +1769,81 @@ fn an_order_is_worth_a_share_of_herself_so_it_asks_more_of_a_heavier_crew() {
     );
 }
 
+/// A worn crew still holds her orders against what she was.
+///
+/// `order_worth` is a share of what she has left and the threat term is a
+/// fraction of the same number, so as a crew wore down the order shrank and
+/// the danger grew, and the ratio between them fell with the *square* of her
+/// condition — a consequence of two rules nobody had chosen. The designer's
+/// ruling is `planner.order_complement`: the order is quoted against her
+/// and, scaled down, against her full complement. Two claims, on one stage
+/// with the same order and the same gun:
+///
+/// - a fresh crew reads her orders identically at every value of the field,
+///   because what she has left *is* what she was — the additivity half;
+/// - a crew with half her seats empty holds the order harder the more of
+///   it is quoted against what she was, monotonically.
+///
+/// Mutation-checked by pinning `full` to `left` in `mission_value`: the worn
+/// crew's gap then stops moving and the strict inequalities fail.
+#[test]
+fn a_worn_crew_still_holds_her_orders_against_what_she_was() {
+    let mut reg = seen(registry_wireless());
+    let hedge = tactics_core::offset_to_hex(2, 1);
+    let hill = tactics_core::offset_to_hex(18, 1);
+    let eval = Evaluator::new(reg.doctrine("massed_armor").cloned().unwrap());
+    let fresh = ordered_against_the_ground_in(&reg, "heavy_tank", 19);
+    let mut worn = fresh.clone();
+    {
+        // `crew_state` may be shorter than the crew — a seat it does not
+        // name is read as fine — so it is written out whole: every other
+        // seat knocked out, which takes about half of her.
+        let her = &mut worn.units[0];
+        her.crew_state = (0..her.crew.len())
+            .map(|seat| {
+                if seat % 2 == 0 {
+                    tactics_core::battle::CrewCondition::Out
+                } else {
+                    tactics_core::battle::CrewCondition::Fine
+                }
+            })
+            .collect();
+    }
+    let (left, full) = worn.substance(&reg, worn.unit(UnitId(0)).unwrap());
+    assert!(
+        left < full && left > 0,
+        "the stage needs a crew with something taken off her: {left} of {full}"
+    );
+    let gap = |reg: &DataRegistry, state: &BattleState| {
+        eval.score_tile(reg, state, UnitId(0), hill).score
+            - eval.score_tile(reg, state, UnitId(0), hedge).score
+    };
+
+    reg.planner.order_complement = 0.0;
+    let (fresh_at_none, worn_at_none) = (gap(&reg, &fresh), gap(&reg, &worn));
+    reg.planner.order_complement = 0.5;
+    let (fresh_at_half, worn_at_half) = (gap(&reg, &fresh), gap(&reg, &worn));
+    reg.planner.order_complement = 1.0;
+    let (fresh_at_whole, worn_at_whole) = (gap(&reg, &fresh), gap(&reg, &worn));
+
+    assert!(
+        (fresh_at_none - fresh_at_half).abs() < 1e-4
+            && (fresh_at_none - fresh_at_whole).abs() < 1e-4,
+        "a fresh crew reads the same order at every value: {fresh_at_none} / {fresh_at_half} / {fresh_at_whole}"
+    );
+    assert!(
+        worn_at_none < worn_at_half && worn_at_half < worn_at_whole,
+        "and a worn one holds it harder the more of it is quoted against what she was: \
+         {worn_at_none} < {worn_at_half} < {worn_at_whole}"
+    );
+    assert!(
+        worn_at_whole <= fresh_at_whole + 1e-4,
+        "quoted wholly against her complement, the order pulls a worn crew no harder than a \
+         fresh one — it is the danger that differs between them, not the order: \
+         {worn_at_whole} against {fresh_at_whole}"
+    );
+}
+
 /// What a point on the scoreboard is worth is the mod's to choose.
 ///
 /// The other half of Wave 2, and the thing `ridge_arena` measured the absence

@@ -240,6 +240,13 @@ fn the_planner_numbers_can_be_swept_and_ship_at_the_values_they_replaced() {
          which is what a sweep's legend prints"
     );
     assert_eq!(reg.planner.score_worth, 4.0);
+    let was = apply_override(
+        &mut reg,
+        &Override::parse("planner.order_complement=1").expect("a well-formed override"),
+    )
+    .expect("the field exists");
+    assert_eq!(was, "0.5", "the field Wave 4 added ships at a half");
+    assert_eq!(reg.planner.order_complement, 1.0);
 
     // And the field Wave 2 retired is addressable by nothing, which is the
     // point of it never being serialised: a designer who sweeps the name they

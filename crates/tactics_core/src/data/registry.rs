@@ -812,6 +812,14 @@ impl DataRegistry {
                 p.order_worth
             ));
         }
+        if !(0.0..=1.0).contains(&p.order_complement) {
+            report.warn(format!(
+                "planner order_complement is {}; below zero a worn crew values an order at \
+                 less than a share of what she has left, and above one at more than a \
+                 fresh crew would",
+                p.order_complement
+            ));
+        }
         if p.score_worth < 0.0 {
             report.warn(format!(
                 "planner score_worth is {}; every objective on every map is then worth \

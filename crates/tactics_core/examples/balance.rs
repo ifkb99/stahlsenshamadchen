@@ -292,7 +292,7 @@ examples
   --sim --sweep mods=assets/mods,../old/assets/mods
   --sim --sweep planner.horizon_rounds=2,4,6 --games 36  # how the AI thinks
   --only delegation --sim --games 36 --set planner.devolved=1.1 \
-\n      --sweep planner.mission_weight=0,2,8     # what is an order worth?
+\n      --sweep planner.order_worth=0,0.25,1     # what is an order worth?
   --sim --sweep seed=0,1000,2000 --games 36         # what is the noise floor?
   --sim --only skill --absolute --sweep seed=0,1000,2000,3000   # ...for one table
   --sim --games 36 --arena ridge_arena --only skill,ground --absolute \\

@@ -160,16 +160,21 @@ impl Evaluator {
         // sum above is what the *rules* say can be put on her, which is the
         // resolver's to answer, and this is what she makes of it, which is
         // hers and her doctrine's. One is arithmetic and one is a preference.
-        // What she has left, in substance points. Two terms spend it and they
-        // spend it in opposite directions, which is worth saying out loud
-        // because it is the same fact read twice: danger is priced as a
-        // *fraction* of her below, so a worn crew feels the same shell more;
-        // an order is priced as a *share* of her, so a worn crew has less to
-        // spend on obeying one. Both are true — there is simply less of her —
-        // and together they mean a half-destroyed crew weighs her orders
-        // against the guns covering them about four times more cautiously
-        // than a fresh one does.
-        let left = state.substance(registry, me).0.max(1) as f32;
+        // What she has left, in substance points, and what she was raised
+        // as. Two terms spend the first and they spend it in opposite
+        // directions, which is worth saying out loud because it is the same
+        // fact read twice: danger is priced as a *fraction* of her below, so
+        // a worn crew feels the same shell more; an order is priced as a
+        // *share* of her, so a worn crew has less to spend on obeying one.
+        // Both are true — there is simply less of her — and together they
+        // meant a half-destroyed crew weighed her orders against the guns
+        // covering them about four times more cautiously than a fresh one,
+        // which is why `mission_value` now quotes part of the order against
+        // the second number (`planner.order_complement`).
+        let (left, full) = {
+            let (have, total) = state.substance(registry, me);
+            (have.max(1) as f32, total.max(1) as f32)
+        };
         let exposure = {
             /// Most a crew may multiply danger by for being small, worn down,
             /// or loaded. Four is "refuses what a fresh crew accepts", which
@@ -373,7 +378,7 @@ impl Evaluator {
                     registry,
                     state,
                     tile,
-                    left,
+                    (left, full),
                     mission,
                     formation,
                     formation.latitude_for(unit),
@@ -611,7 +616,7 @@ impl Evaluator {
         registry: &DataRegistry,
         state: &BattleState,
         tile: Hex,
-        left: f32,
+        (left, full): (f32, f32),
         mission: &crate::battle::Mission,
         formation: &crate::battle::Formation,
         latitude: crate::battle::Latitude,
@@ -636,7 +641,17 @@ impl Evaluator {
         // means rather than two thirds of it. What that costs is stated on
         // the field: arriving used to be worth ten hexes of the slope and is
         // now worth about seven.
-        let weight = registry.planner.order_worth * left;
+        //
+        // **Part of the share is of what she was, not of what is left.** A
+        // share of what she has left shrinks as she is shot up while the
+        // danger term, a fraction of the same number, grows, and the product
+        // made a worn crew quadratically shy of her orders. `order_complement`
+        // is the designer's answer: quote the order against her and, scaled
+        // down, against her full complement. A fresh crew reads the same
+        // weight at every value of it, because `left` and `full` are the
+        // same number until something has been taken off her.
+        let complement = registry.planner.order_complement;
+        let weight = registry.planner.order_worth * ((1.0 - complement) * left + complement * full);
         let decay = registry.planner.distance_decay;
         let doctrine = &self.doctrine;
         let floor = match latitude {

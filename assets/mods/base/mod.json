@@ -78,6 +78,7 @@
     "exit_urgency": 3.0,
     "score_worth": 3.0,
     "order_worth": 0.25,
+    "order_complement": 0.5,
     "pull_under_fire": 0.25,
     "distance_decay": 0.15,
     "plateau": 0.3,

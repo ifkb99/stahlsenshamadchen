@@ -35,6 +35,7 @@
 //! *drive* for and who she trusts to pick their own ground. The evaluator's
 //! — [`score_worth`](PlannerRules::score_worth),
 //! [`order_worth`](PlannerRules::order_worth),
+//! [`order_complement`](PlannerRules::order_complement),
 //! [`pull_under_fire`](PlannerRules::pull_under_fire),
 //! [`distance_decay`](PlannerRules::distance_decay),
 //! [`plateau`](PlannerRules::plateau),
@@ -126,6 +127,18 @@ fn score_worth() -> f32 {
 /// ground rather than on it.
 fn order_worth() -> f32 {
     0.25
+}
+
+/// Serde's default for [`PlannerRules::order_complement`].
+///
+/// 0.0 is the game before the field existed — an order quoted against what
+/// she has left and nothing else — and a half ships, for the reason on the
+/// field: the designer's "scaled down", and the instrument could not choose
+/// better. The default follows the shipped value, as every field in this
+/// block's does, because a mod that declares no `planner` block must play
+/// the game the base mod plays.
+fn order_complement() -> f32 {
+    0.5
 }
 
 /// Serde's default for [`PlannerRules::pull_under_fire`].
@@ -399,6 +412,45 @@ pub struct PlannerRules {
     /// is what disobedience costs.
     #[serde(default = "order_worth")]
     pub order_worth: f32,
+    /// How much of an order is quoted against her full complement rather
+    /// than against what she has left.
+    ///
+    /// [`Self::order_worth`] is a share of what she still has aboard, and
+    /// the threat term is what the resolver says a round of fire would take
+    /// off her, so as a crew wears down the two move in opposite directions:
+    /// the danger at the ordered ground is priced as a fraction of *less*
+    /// and the order as a share of *less*, and a half-destroyed crew weighs
+    /// her orders against the guns covering them about four times more
+    /// cautiously than a fresh one does. Two defensible rules, and their
+    /// product was a consequence nobody had chosen. The designer's ruling
+    /// (2026-09-09) is that an order is quoted against her *and*, scaled
+    /// down, against what she was raised as: at `c`, the order is worth
+    /// `order_worth × ((1 − c) × left + c × full)` a round, so a fresh crew
+    /// reads her orders exactly as before at every value, and a crew with
+    /// nothing left still holds them at `c` of what a fresh one would.
+    ///
+    /// 0 is the game before, and 1 quotes the order against her full
+    /// complement only, which makes a nearly finished crew as obedient as a
+    /// fresh one while the danger term prices the same ground as far more —
+    /// the other end of the same product. `validate-mods` warns outside
+    /// `0..=1`: below zero a worn crew values an order *less* than a share
+    /// of what she has left, and above one more than a fresh one would.
+    ///
+    /// **A half ships, and the honest report of the sweep is that it is
+    /// below the instrument's floor.** On the delegation table at eight
+    /// seeds × 36 with `--set planner.devolved=1.1` (288 battles a cell, the
+    /// sweep that chose `order_worth`), 0, 0.25, 0.5, 0.75 and 1 are
+    /// bit-identical in 140 of 160 non-baseline rows, and the twenty that
+    /// differ move by one win or a handful of shots, nearly all at 1.0. On
+    /// `ridge_arena` the skill table is bit-identical at every value,
+    /// because no side there fights under a mission and the field is never
+    /// reached. The number is live — something moves at 1 — and a crew both
+    /// worn and under orders is rare enough in AI-vs-AI play that the table
+    /// cannot see her; the case it is for is a player's, a crew half gone
+    /// and still told to hold. So the value is the designer's, not the
+    /// instrument's, which is recorded rather than dressed up.
+    #[serde(default = "order_complement")]
+    pub order_complement: f32,
     /// `mission_weight`, retired in Wave 2 and kept here only so that a mod
     /// still declaring it can be told.
     ///
@@ -530,6 +582,7 @@ impl Default for PlannerRules {
             exit_urgency: exit_urgency(),
             score_worth: score_worth(),
             order_worth: order_worth(),
+            order_complement: order_complement(),
             retired_mission_weight: None,
             pull_under_fire: pull_under_fire(),
             distance_decay: distance_decay(),
