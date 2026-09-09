@@ -830,25 +830,19 @@ impl AiPlanner<BattleState, Order> for SideCommand {
                     .is_some_and(|f| f.latest_mission().is_some()))
         {
             // Survival first, *unless she was told otherwise*: the drill
-            // outranks an ordinary personal march, because nobody drives a
+            // outranks an ordinary personal order, because nobody drives a
             // parade route through effective fire to keep an appointment —
             // but a commander who said "press on" has already answered that
             // objection, and overriding her anyway is what made an order
             // feel like a suggestion. See [`Latitude`]: this is the
-            // per-unit twin of the `Advance`/`Assault` distinction, and it
-            // is the only place latitude is read.
+            // per-unit twin of the `Advance`/`Assault` distinction.
             //
-            // A crew with no destination at all has nothing to press on
-            // *to*, so she drills whatever her latitude says — latitude
-            // qualifies a march, and there is no march to qualify. That is
-            // now the type's doing rather than this line's: `march()` is the
-            // only route to a latitude, and it answers `None` for a crew
-            // holding the ground she was put on.
-            let pressing_on = state
-                .unit(unit)
-                .and_then(|u| u.march())
-                .is_some_and(|m| !m.latitude.yields_to_drill());
-            if !pressing_on && threatened(registry, state, unit) {
+            // Asked through `Unit::yields_to_drill`, the one gate, which the
+            // engine's mid-round reflex asks too; a crew holding ground she
+            // was sent to under a binding order holds it, because the
+            // insistence arrived with her.
+            let yields = state.unit(unit).is_none_or(|u| u.yields_to_drill());
+            if yields && threatened(registry, state, unit) {
                 self.last_drill = true;
                 self.pending = self.drill.plan_unit(registry, state, unit).into();
                 if let Some(order) = self.pending.pop_front() {

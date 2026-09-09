@@ -102,7 +102,12 @@ use serde::{Deserialize, Serialize};
 /// `wrecked` into one [`crate::battle::Fate`], and is refused for the same
 /// reason: the field defaults to *whole and on the field*, so a version-4
 /// file would open with every wreck on the board fighting again.
-pub const SAVE_VERSION: u32 = 5;
+///
+/// Version 6 gave [`crate::battle::PersonalOrder::Holding`] the latitude the
+/// march arrived under. A version-5 `"holding"` is a bare string that no
+/// longer parses, and the honest refusal is this one rather than a serde
+/// error naming a byte offset.
+pub const SAVE_VERSION: u32 = 6;
 
 /// Which mod, at which version, was loaded when a save was written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

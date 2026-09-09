@@ -415,9 +415,10 @@ pub struct Unit {
     ///
     /// [`PersonalOrder::Marching`] is *tasking*: a destination she re-paths
     /// toward each round, carrying the latitude it was given at. Reaching it
-    /// turns her to [`PersonalOrder::Holding`] — she holds the ground she
-    /// was sent to, still detached — which is the one transition the three
-    /// old flags had to perform in concert and now cannot get wrong.
+    /// turns her to [`PersonalOrder::Holding`] at the same latitude — she
+    /// holds the ground she was sent to, still detached, still meaning it
+    /// if her commander did — which is the one transition the three old
+    /// flags had to perform in concert and now cannot get wrong.
     ///
     /// `#[serde(default)]` so a battle spawned or read without one is a crew
     /// answering to her formation, which is what every unit starts as.
@@ -579,12 +580,31 @@ impl Unit {
 
     /// The march she is on, if her commander's order is taking her anywhere
     /// — the ground and the latitude together, or nothing.
-    ///
-    /// This is the only way to a [`Latitude`] from a unit, and that is the
-    /// point: a crew holding the ground she was put on has no insistence to
-    /// read off her, because there is no march left for it to qualify.
     pub fn march(&self) -> Option<crate::battle::March> {
         self.orders.and_then(crate::battle::PersonalOrder::march)
+    }
+
+    /// Whether the battle drill may set her personal order aside: take her
+    /// off the road for cover, or off the ground she was put on.
+    ///
+    /// **The one gate, and both drills ask it.** The planner's, at the top
+    /// of a round, when it decides whether to plan cover for her instead of
+    /// the next leg of her march (`ai/command.rs`); and the engine's own
+    /// mid-round reflex (`run_crew_drill`), which fires the tick she notices
+    /// a gun and used to read nothing at all, so a crew whose commander had
+    /// said "I mean it" pressed on through the planning phase and was then
+    /// pulled into the trees by the reflex five seconds later. Latitude buys
+    /// an order priority over her *judgment* — that is all it buys, and the
+    /// drill is her judgment wherever it runs. It buys nothing over her
+    /// nerve: a crew whose rung no longer obeys does what the rung says,
+    /// and that check comes before this one at both sites.
+    ///
+    /// A crew under no personal order yields: the drill is what every crew in
+    /// this engine has always done, and the type is what makes "nobody is
+    /// insisting on anything" unrepresentable as anything else.
+    pub fn yields_to_drill(&self) -> bool {
+        self.orders
+            .is_none_or(|order| order.latitude().yields_to_drill())
     }
 }
 

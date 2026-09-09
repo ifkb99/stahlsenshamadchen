@@ -224,22 +224,43 @@ pub enum PersonalOrder {
     /// or the order said nothing about where to go — a fire mission detaches
     /// her from the standing mission exactly as a march does, because the
     /// commander has taken personal charge of this vehicle either way.
-    Holding,
+    ///
+    /// **The latitude arrives with her.** A binding march that reaches its
+    /// ground becomes a binding hold: "get there, I mean it" was never
+    /// "get there and then use your judgment", and the first draft of this
+    /// type dropped the insistence at the last hex, so the battle drill
+    /// backed a crew off the ordered ground the tick after she reached it —
+    /// the designer's ruling (2026-09-09) is that the same gate that keeps
+    /// her on the road keeps her on the ground. An order that said nothing
+    /// about where to go holds at [`Latitude::Delegated`], because there was
+    /// no march for an insistence to ride in on.
+    Holding {
+        /// How hard the order she is holding under was meant.
+        latitude: Latitude,
+    },
     /// Still on her way, at the latitude she was sent under.
     Marching(March),
 }
 
 impl PersonalOrder {
     /// Where this order is taking her, if it is taking her anywhere.
-    ///
-    /// The only route from a unit to a [`Latitude`], which is deliberate: a
-    /// crew with no destination has nothing to press on *to*, and the drill
-    /// gate that reads insistence must not be able to read it off a crew who
-    /// is standing still.
     pub fn march(self) -> Option<March> {
         match self {
-            Self::Holding => None,
+            Self::Holding { .. } => None,
             Self::Marching(march) => Some(march),
+        }
+    }
+
+    /// How hard this order is meant, marching or holding.
+    ///
+    /// Read by [`crate::battle::Unit::yields_to_drill`] and by nothing else
+    /// that decides anything: latitude answers one question — may the battle
+    /// drill set this order aside — and one accessor on the unit is where it
+    /// is answered.
+    pub fn latitude(self) -> Latitude {
+        match self {
+            Self::Holding { latitude } => latitude,
+            Self::Marching(march) => march.latitude,
         }
     }
 }

@@ -895,7 +895,9 @@ impl BattleState {
             // her march: a fire mission to a crew already marching leaves the
             // march — and so the insistence it carries — exactly as it was.
             if let Some(unit) = self.unit_mut(id) {
-                unit.orders.get_or_insert(PersonalOrder::Holding);
+                unit.orders.get_or_insert(PersonalOrder::Holding {
+                    latitude: Latitude::Delegated,
+                });
             }
             return Ok(Vec::new());
         }
@@ -956,7 +958,9 @@ impl BattleState {
             // the same reason as in `radio`: a fire order arriving for a crew
             // already marching detaches her without touching her march.
             if let Some(u) = self.unit_mut(unit) {
-                u.orders.get_or_insert(PersonalOrder::Holding);
+                u.orders.get_or_insert(PersonalOrder::Holding {
+                    latitude: Latitude::Delegated,
+                });
             }
             events.push(Event::OrdersDelivered { unit });
         }
@@ -1577,6 +1581,16 @@ impl BattleState {
                         to: Some(dest),
                     });
                 }
+                continue;
+            }
+            // Nerve first, then latitude, in that order at both drills: a
+            // commander who said "I mean it" has answered the drill's
+            // objection in advance, and this reflex is the same judgment the
+            // planner's drill is, five seconds sooner. Before this gate a
+            // binding crew pressed on through the planning phase and was
+            // pulled into the trees by the reflex on the first tick she
+            // noticed the gun — one gate read, one not.
+            if !unit.yields_to_drill() {
                 continue;
             }
             let delay =
@@ -2217,10 +2231,15 @@ impl BattleState {
         // she holds the ground she was sent to, still detached, and the
         // panel stops saying she is on her way.
         for unit in self.units.iter_mut().filter(|u| u.alive()) {
-            if unit.march().is_some_and(|m| m.to == unit.pos) {
-                // One assignment, and the insistence goes with the march it
-                // qualified because it was never anywhere else.
-                unit.orders = Some(PersonalOrder::Holding);
+            if let Some(march) = unit.march()
+                && march.to == unit.pos
+            {
+                // One assignment, and the insistence arrives with her: a
+                // binding march becomes a binding hold, or the drill would
+                // take her off the ground the tick after she reached it.
+                unit.orders = Some(PersonalOrder::Holding {
+                    latitude: march.latitude,
+                });
             }
         }
         // A goal that is over is cleared here rather than by whoever notices,

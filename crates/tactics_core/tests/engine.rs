@@ -58,7 +58,7 @@ use tactics_core::ai::{
 };
 use tactics_core::battle::{
     BattleState, Destruction, EndReason, Event as BattleEvent, Fate, FireIntent, FormationId,
-    Latitude, Mission, Order, SideState, SightGrid, UnitId, los_clear, reachable,
+    Latitude, Mission, Order, PersonalOrder, SideState, SightGrid, UnitId, los_clear, reachable,
 };
 use tactics_core::data::{DataRegistry, MovementClass, RoundPressure, ShotFelt};
 use tactics_core::map::{HexMap, UnitPlacement};
@@ -9901,6 +9901,81 @@ fn a_recall_forgets_that_she_was_pressed_on() {
 }
 
 #[test]
+fn an_arrival_keeps_the_insistence_she_arrived_under() {
+    // "Get there, I mean it" is not "get there and then use your judgment".
+    // The first draft of `PersonalOrder` dropped the latitude at the last
+    // hex — `Holding` carried none — so a binding crew who reached her
+    // ground was, one tick later, an ordinary crew under fire whom the
+    // reflex backed straight off it. The designer's ruling is that the same
+    // gate that keeps her on the road keeps her on the ground, and the
+    // shape that makes that true is the hold carrying the march's latitude.
+    //
+    // The delegated twin is the additivity half: a crew nobody insisted on
+    // arrives yielding, as every crew in this engine always has.
+    //
+    // Nobody on the stage can threaten her — a scout section's rifles are
+    // worth nothing against a medium tank in either currency — so neither
+    // drill has any reason to divert either twin, and what is being read is
+    // the arrival alone.
+    let reg = seen(registry_wireless());
+    let arrived = |latitude: Latitude| {
+        let row = "g".repeat(10);
+        let mut state = two_side_battle(
+            &reg,
+            &[&row, &row, &row],
+            vec![
+                unit_at([3, 1], 0, "medium_tank", "Ordered"),
+                unit_at([0, 1], 1, "scout_section", "Watching"),
+            ],
+            303,
+        );
+        let watcher = UnitId(0);
+        assert!(
+            !tactics_core::ai::threatened(&reg, &state, watcher),
+            "the stage must put nothing on her, or the drill is what is being tested"
+        );
+        let next_door = tactics_core::offset_to_hex(3, 0);
+        state
+            .apply(
+                &reg,
+                &Order::Radio {
+                    unit: watcher,
+                    to: Some(next_door),
+                    fire: None,
+                    latitude,
+                },
+            )
+            .expect("one hex is a march");
+        play_round(&reg, &mut state);
+        let unit = state
+            .unit(watcher)
+            .expect("she is a hex further on, not gone");
+        assert_eq!(unit.pos, next_door, "she got there");
+        (unit.orders, unit.yields_to_drill())
+    };
+    assert_eq!(
+        arrived(Latitude::Binding),
+        (
+            Some(PersonalOrder::Holding {
+                latitude: Latitude::Binding
+            }),
+            false
+        ),
+        "she holds the ground she was sent to, and still means it"
+    );
+    assert_eq!(
+        arrived(Latitude::Delegated),
+        (
+            Some(PersonalOrder::Holding {
+                latitude: Latitude::Delegated
+            }),
+            true
+        ),
+        "and a crew nobody insisted on arrives as every crew always has"
+    );
+}
+
+#[test]
 fn an_order_about_her_gun_says_nothing_about_her_march() {
     // The two halves of a radioed order are independent, and latitude rides
     // with the *route*. Telling a crew who is pressing on what to shoot at
@@ -16807,5 +16882,72 @@ fn a_frightened_crew_runs_from_the_gun_and_an_orderly_one_ducks_out_of_its_sight
         "and they are two reflexes rather than one with a different name: the rout opens \
          the range further than the drill does ({ran:?} against {ducked:?}), because \
          distance is the rout's first key and the drill has no distance term at all"
+    );
+}
+
+/// The mid-round reflex asks the same gate the planner's drill asks.
+///
+/// Latitude was read in exactly one place, the planner's, and the engine's
+/// own reflex in `run_crew_drill` read nothing — so a crew whose commander
+/// said "I mean it" pressed on through the planning phase and was pulled
+/// into the trees by the reflex on the first tick she noticed the gun. Both
+/// ask `Unit::yields_to_drill` now. Staged on the drill's own ground with
+/// the crew *holding* rather than marching, because that is the case the
+/// planner's gate could never have covered: an idle crew on the ground she
+/// was given, and the only thing between her and the wood is whether the
+/// hold carries the insistence the march did.
+///
+/// Mutation-checked by deleting the gate from `run_crew_drill`: the binding
+/// half then reports the same dash the delegated half does.
+#[test]
+fn a_crew_told_to_hold_her_ground_and_meaning_it_is_not_moved_by_the_reflex() {
+    let mut reg = seen(registry_wireless());
+    soften(&mut reg);
+    let (watcher, gun) = (UnitId(0), UnitId(1));
+    let dash = |latitude: Latitude| {
+        let mut state = wood_and_dead_ground(&reg, 304);
+        let parked = state.unit(watcher).unwrap().pos;
+        // Deliberate overwatch keeps the gun where it was put, as in every
+        // test on this stage.
+        state
+            .apply(
+                &reg,
+                &Order::SetFire {
+                    unit: gun,
+                    fire: FireIntent::Area {
+                        at: parked,
+                        weapon: 0,
+                    },
+                },
+            )
+            .expect("area fire on a hex needs no spot");
+        // Sent to the hex she is standing on: a march of no hexes, which is
+        // the shortest way to say "hold this ground" at a latitude.
+        state
+            .apply(
+                &reg,
+                &Order::Radio {
+                    unit: watcher,
+                    to: Some(parked),
+                    fire: None,
+                    latitude,
+                },
+            )
+            .expect("where she stands is ground she may be told to hold");
+        assert!(
+            state.unit(watcher).unwrap().intent.is_empty(),
+            "a march of no hexes leaves her idle, which is who the reflex looks at"
+        );
+        drill_destination(&reg, &mut state, watcher).map(|(at, _)| at)
+    };
+    let delegated = dash(Latitude::Delegated);
+    assert!(
+        delegated.is_some(),
+        "told to use her judgment, she ducks out of the gun's sight: {delegated:?}"
+    );
+    assert_eq!(
+        dash(Latitude::Binding),
+        None,
+        "told she is meant, she holds the ground through the same fire"
     );
 }
