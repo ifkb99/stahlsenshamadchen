@@ -350,7 +350,10 @@ fn enter_overworld(
         .map(|m| m.id.clone())
         .expect("base mod provides an overworld map");
     let state = OverworldState::from_map(registry, &map_id, 1337).expect("overworld builds");
-    log.push("Campaign started. LMB select army / move, Enter end turn, Q/E rotate.");
+    log.push(
+        "Campaign started. LMB select army / move, G advance, H hold, W fall back, \
+         Enter end turn, Q/E rotate.",
+    );
 
     // Dev tool: STAHL_AUTOPLAY=1 puts every side under AI control.
     let autoplay = std::env::var("STAHL_AUTOPLAY").is_ok();
@@ -804,6 +807,20 @@ fn pump_events(
         // An order taken but not yet sent. The player has to hear this or the
         // army looks like it is ignoring her; the assignment line follows on
         // the morning it actually goes out.
+        OverworldEvent::UnitTransferred { from, to, vehicle } => {
+            if ours(&overworld.state, *from) {
+                let chassis = mods
+                    .0
+                    .vehicle(vehicle)
+                    .map(|v| v.name.clone())
+                    .unwrap_or_else(|| vehicle.clone());
+                log.push(format!(
+                    "{chassis} transferred from {} to {}.",
+                    army_name(&overworld.state, *from),
+                    army_name(&overworld.state, *to)
+                ));
+            }
+        }
         OverworldEvent::ArmyOrdersWaiting { army } => {
             if ours(&overworld.state, *army) {
                 log.push(format!(
@@ -1702,6 +1719,64 @@ fn handle_input(
         }
         return;
     }
+    // Standing orders for the selected army, on the battle screen's keys:
+    // `G` advance on the hovered hex, `W` fall back on it, `H` hold. These
+    // go through `OverworldOrder::SetMission`, the same door the engine's
+    // relay and the sixty-day campaign test use, so an order given by hand
+    // waits at headquarters when the army is off the net exactly as one
+    // given by a script does. A move order is "go there today"; a mission
+    // is "keep going there until I say otherwise", which is the whole
+    // reason the campaign has end-turn delegation at all.
+    if let Some(army) = overworld.selected
+        && let Some(mission) = campaign_mission_key(&keys, view.hovered(&overworld.state.map))
+    {
+        let ow = &mut *overworld;
+        match mission {
+            Ok(mission) => match ow
+                .state
+                .apply(&mods.0, &OverworldOrder::SetMission { army, mission })
+            {
+                Ok(events) => {
+                    ow.anim.extend(events);
+                    ow.clear_selection();
+                }
+                Err(e) => log.push(format!("Can't order that: {e}")),
+            },
+            Err(why) => log.push(why),
+        }
+        return;
+    }
+
+    // Cross-loading: with one of her armies selected and another of hers
+    // under the cursor, a digit sends that vehicle of the selected army
+    // across. The engine says whether the two may (beside each other,
+    // neither marched today, not the last vehicle); the key only asks.
+    if let Some(from) = overworld.selected
+        && let Some(index) = digit_key(&keys)
+        && let Some(to) = view
+            .hovered(&overworld.state.map)
+            .and_then(|hex| overworld.state.army_at(hex))
+            .filter(|a| a.side == side && a.id != from)
+            .map(|a| a.id)
+    {
+        let ow = &mut *overworld;
+        match ow.state.apply(
+            &mods.0,
+            &OverworldOrder::TransferUnit {
+                from,
+                to,
+                unit: index,
+            },
+        ) {
+            Ok(events) => {
+                ow.anim.extend(events);
+                ow.refresh_range(&mods.0);
+            }
+            Err(e) => log.push(format!("Can't transfer that: {e}")),
+        }
+        return;
+    }
+
     if !buttons.just_pressed(MouseButton::Left) {
         return;
     }
@@ -1728,6 +1803,49 @@ fn handle_input(
             Err(e) => log.push(format!("Can't move there: {e}")),
         }
     }
+}
+
+/// Which standing order, if any, this frame's keys ask for. `Some(Err)` is a
+/// key that needs ground under the cursor and had none, worded for the log;
+/// the battle screen's `mission_key` is the model, and the letters are the
+/// same so a player who has learned one screen has learned the other.
+fn campaign_mission_key(
+    keys: &ButtonInput<KeyCode>,
+    hovered: Option<Hex>,
+) -> Option<Result<ArmyMission, String>> {
+    let needs_ground = |what: &str| Err(format!("Hover the ground first, then press {what}."));
+    if keys.just_pressed(KeyCode::KeyG) {
+        return Some(match hovered {
+            Some(to) => Ok(ArmyMission::Advance { to }),
+            None => needs_ground("G to advance"),
+        });
+    }
+    if keys.just_pressed(KeyCode::KeyW) {
+        return Some(match hovered {
+            Some(to) => Ok(ArmyMission::Withdraw { to }),
+            None => needs_ground("W to fall back"),
+        });
+    }
+    if keys.just_pressed(KeyCode::KeyH) {
+        return Some(Ok(ArmyMission::Hold));
+    }
+    None
+}
+
+/// `1`–`9` as a zero-based index, for picking a vehicle off a numbered list.
+fn digit_key(keys: &ButtonInput<KeyCode>) -> Option<usize> {
+    const DIGITS: [KeyCode; 9] = [
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::Digit5,
+        KeyCode::Digit6,
+        KeyCode::Digit7,
+        KeyCode::Digit8,
+        KeyCode::Digit9,
+    ];
+    DIGITS.iter().position(|code| keys.just_pressed(*code))
 }
 
 fn sync_armies(
@@ -2050,6 +2168,32 @@ fn update_ui(
                     format!("Waiting to transmit: fall back on {}", place(*to))
                 }
             });
+        }
+        // What the keys do to *this* army, said where the player is looking:
+        // only for her own, and only while it is the one she has picked, so
+        // an enemy's panel never offers to order it.
+        if overworld.selected == Some(army.id) && army.side == state.active_side {
+            lines.push("G advance on hovered, H hold, W fall back on hovered".into());
+        }
+        // Hovering another of her own companies beside the selected one:
+        // the digits send the selected company's vehicles here, so number
+        // the list the digits index rather than the one under the cursor.
+        let giver = overworld
+            .selected
+            .filter(|id| *id != army.id)
+            .and_then(|id| state.army(id))
+            .filter(|g| g.side == army.side && army.side == state.active_side)
+            .filter(|g| g.pos.distance_to(army.pos) <= 1);
+        if let Some(giver) = giver {
+            lines.push(format!("1-9 sends a vehicle of {} here:", giver.name));
+            for (i, u) in giver.units.iter().enumerate().take(9) {
+                let vehicle = mods
+                    .0
+                    .vehicle(&u.vehicle)
+                    .map(|v| v.name.clone())
+                    .unwrap_or_else(|| u.vehicle.clone());
+                lines.push(format!("  {}: {vehicle}", i + 1));
+            }
         }
         lines.push("Units:".into());
         for u in &army.units {

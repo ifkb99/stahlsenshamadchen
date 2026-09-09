@@ -39,9 +39,13 @@ can ask what any number does.
 - ~~**A campaign half to withdrawal.**~~ **Done 2026-09-09.** An army whose
   every surviving vehicle left by an exit arrives a hex back — along its
   orders, or away from the enemy — and the victor takes the vacated ground.
-- **Campaign orders from the map.** The engine takes
-  `OverworldOrder::SetMission` with relay; the player has no way to give one
-  (TODO, *Chain of Command*). Same for moving units between companies.
+- ~~**Campaign orders from the map.**~~ **Done 2026-09-09.** With an army
+  selected, `G` advances on the hovered hex, `H` holds, `W` falls back on
+  it — the battle screen's keys, through `OverworldOrder::SetMission` — and
+  a digit sends that vehicle of the selected army to one of her own
+  companies under the cursor (`OverworldOrder::TransferUnit`: beside each
+  other, neither marched today, never the last vehicle). Both in
+  `overworld-tour`.
 - **A wider mission vocabulary once the map has something to do** — raid,
   screen — is explicitly *after* the map has more to do, so not MVP.
 

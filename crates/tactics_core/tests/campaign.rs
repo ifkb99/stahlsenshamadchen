@@ -737,6 +737,128 @@ fn a_headquarters_with_nowhere_better_to_be_spends_its_turn_standing() {
     );
 }
 
+// --- cross-loading ---------------------------------------------------------
+
+/// A vehicle changes companies through the order stream, with the rules the
+/// campaign owns: beside each other, the giver's turn, neither marched
+/// today, never the giver's last vehicle.
+#[test]
+fn a_vehicle_moves_between_companies_standing_side_by_side() {
+    let reg = registry_wireless();
+    let mut state = frontier(&reg);
+    let (giver, taker) = (ArmyId(0), ArmyId(1));
+    let beside = state.army(giver).unwrap().pos.all_neighbors()[0];
+    assert!(state.map.get(beside).is_some());
+    state.army_mut(taker).unwrap().pos = beside;
+    let before = (
+        state.army(giver).unwrap().units.len(),
+        state.army(taker).unwrap().units.len(),
+    );
+    let sent = state.army(giver).unwrap().units[1].clone();
+
+    let events = state
+        .apply(
+            &reg,
+            &OverworldOrder::TransferUnit {
+                from: giver,
+                to: taker,
+                unit: 1,
+            },
+        )
+        .expect("side by side, fresh, and not her last");
+    assert_eq!(state.army(giver).unwrap().units.len(), before.0 - 1);
+    assert_eq!(state.army(taker).unwrap().units.len(), before.1 + 1);
+    assert_eq!(
+        state.army(taker).unwrap().units.last(),
+        Some(&sent),
+        "crew and all"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            OverworldEvent::UnitTransferred { from, to, vehicle }
+                if *from == giver && *to == taker && *vehicle == sent.vehicle
+        )),
+        "{events:?}"
+    );
+    assert!(
+        !state.army(giver).unwrap().moved && !state.army(taker).unwrap().moved,
+        "cross-loading is not a march; both can still move today"
+    );
+}
+
+#[test]
+fn a_transfer_is_refused_where_the_campaign_says_it_makes_no_sense() {
+    use tactics_core::overworld::OverworldError;
+    let reg = registry_wireless();
+    let mut state = frontier(&reg);
+    let (giver, taker) = (ArmyId(0), ArmyId(1));
+    let order = |unit: usize| OverworldOrder::TransferUnit {
+        from: giver,
+        to: taker,
+        unit,
+    };
+
+    // Not beside each other (the frontier starts them six hexes apart).
+    assert_eq!(
+        state.apply(&reg, &order(0)),
+        Err(OverworldError::NoTransfer)
+    );
+
+    // Beside each other, but one of them has marched today.
+    let beside = state.army(giver).unwrap().pos.all_neighbors()[0];
+    state.army_mut(taker).unwrap().pos = beside;
+    state.army_mut(taker).unwrap().moved = true;
+    assert_eq!(
+        state.apply(&reg, &order(0)),
+        Err(OverworldError::AlreadyMoved)
+    );
+    state.army_mut(taker).unwrap().moved = false;
+
+    // The enemy's company, or the enemy's turn.
+    let enemy = ArmyId(2);
+    state.army_mut(enemy).unwrap().pos = beside;
+    state.army_mut(taker).unwrap().pos = beside.all_neighbors()[3];
+    assert_eq!(
+        state.apply(
+            &reg,
+            &OverworldOrder::TransferUnit {
+                from: giver,
+                to: enemy,
+                unit: 0
+            }
+        ),
+        Err(OverworldError::NoTransfer)
+    );
+    assert_eq!(
+        state.apply(
+            &reg,
+            &OverworldOrder::TransferUnit {
+                from: enemy,
+                to: giver,
+                unit: 0
+            }
+        ),
+        Err(OverworldError::NotYourTurn)
+    );
+
+    // A vehicle she does not have, and her last one.
+    state.army_mut(taker).unwrap().pos = beside;
+    state.army_mut(enemy).unwrap().pos = tactics_core::offset_to_hex(12, 1);
+    assert_eq!(
+        state.apply(&reg, &order(99)),
+        Err(OverworldError::NoTransfer)
+    );
+    let keep = state.army(giver).unwrap().units[0].clone();
+    state.army_mut(giver).unwrap().units = vec![keep];
+    assert_eq!(
+        state.apply(&reg, &order(0)),
+        Err(OverworldError::NoTransfer),
+        "an empty army is a destroyed one, and nobody means that"
+    );
+    assert_eq!(state.army(giver).unwrap().units.len(), 1);
+}
+
 // --- validation ------------------------------------------------------------
 
 /// The two ways a `victory` block can be written so that it never fires are
