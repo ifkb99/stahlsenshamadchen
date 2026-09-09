@@ -2375,7 +2375,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("the campaign map stands on `{terrain}`"));
             let named = def.battlefield.clone().unwrap_or_else(|| {
                 panic!(
-                    "terrain `{terrain}` is on the campaign map and names no battlefield, so a                      clash there falls through to whichever battle map iterates first"
+                    "terrain `{terrain}` is on the campaign map and names no battlefield, so a clash there falls through to whichever battle map iterates first"
                 )
             });
             assert!(
