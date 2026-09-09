@@ -227,6 +227,13 @@ pub enum Event {
         attacker: UnitId,
         target: UnitId,
         damage: i32,
+        /// What the round could have spent — its datasheet budget, before
+        /// the partial-penetration band and the platoon's muster took their
+        /// shares. `damage` over this is what the morale ladder charges the
+        /// outcome price by, so a shell that scraped through frightens less
+        /// than one that came through clean, and the log can say "4 of 6".
+        #[serde(default)]
+        budget: i32,
         facing: ArmorFacing,
         /// The round that arrived, by [`crate::data::AmmoDef`] id. `None` on
         /// the legacy path, where a weapon with no ammunition list fires
@@ -2021,14 +2028,26 @@ impl BattleState {
 
         // Collected first: the borrow of `events` has to end before units are
         // touched, and iterating in event order keeps this deterministic.
-        let hits: Vec<(UnitId, crate::data::RoundPressure)> = events
+        let hits: Vec<(UnitId, ShotFelt, crate::data::RoundPressure)> = events
             .iter()
             .filter_map(|e| match e {
                 // `small_arms: false` is not read on this branch — a
                 // penetration is priced by `hit + penetrated` whatever came
                 // through — but it is stated rather than defaulted so that a
                 // future price list which does read it gets the truth.
-                Event::ShotHit { target, ammo, .. } => Some((*target, felt(ammo, false))),
+                Event::ShotHit {
+                    target,
+                    ammo,
+                    damage,
+                    budget,
+                    ..
+                } => Some((
+                    *target,
+                    ShotFelt::Penetrated {
+                        spent: super::combat::spent_share(*damage, *budget),
+                    },
+                    felt(ammo, false),
+                )),
                 _ => None,
             })
             .collect();
@@ -2082,15 +2101,22 @@ impl BattleState {
         // spends the same three lines to tell a planner what a shot is
         // expected to be worth. Two copies would be a gunner aiming at a
         // number no resolver honours.
-        for (id, round) in hits {
+        // Rounded here, once, at the ledger: the price list is a real
+        // number because the expectation is one, and a crew's pressure is
+        // whole points because the rungs are.
+        for (id, outcome, round) in hits {
             // Every hit in the stream is a penetration now — the bounces
             // file separately below — so the shell that came through costs
             // both the old price of being hit and the new price of knowing
-            // the armor did not hold.
-            add(self, id, rules.pressure_for(ShotFelt::Penetrated, round));
+            // the armor did not hold, by the share of itself it spent.
+            add(self, id, rules.pressure_for(outcome, round).round() as u32);
         }
         for (id, round) in clangs {
-            add(self, id, rules.pressure_for(ShotFelt::Bounced, round));
+            add(
+                self,
+                id,
+                rules.pressure_for(ShotFelt::Bounced, round).round() as u32,
+            );
         }
         for members in bereaved {
             // The whole formation, wherever it is standing: unlike watching a

@@ -12677,17 +12677,15 @@ fn a_remnant_platoon_is_a_story_not_a_gun() {
     // which is the same sentence this test is named for said in the other
     // currency.
     //
-    // The second is not, and is the lead's to rule on. The morale ladder
-    // charges `hit + penetrated` for any round that gets through, and a
-    // rifle bullet gets through a scout section's zero armour every time —
-    // so even a platoon whose damage has been mustered to nothing expects
-    // three points of pressure a shot, and at any non-zero `point_worth` she
-    // opens up. That is the *resolver* being mirrored honestly rather than a
-    // pricing error (`apply_pressure` really does charge it), but it means
-    // "a shot that accomplishes nothing" is not a thing that exists once
-    // fear is priced. Scaling the outcome price by the muster fraction would
-    // fix it and is a change to what a hit costs, which is not this chunk's
-    // to make.
+    // The second was the lead's to rule on, and was ruled on (2026-09-09):
+    // the ladder now charges a penetration by the share of its listed
+    // budget it spent, so a platoon whose damage has been mustered to
+    // nothing no longer expects the full `hit + penetrated` a shot. What she
+    // still expects is the price of the one point the resolver floors every
+    // penetration's spend at — a third of a rifle's — which is why this
+    // stage still says which currency it means, and why
+    // `a_remnant_platoon_frightens_by_the_one_point_her_bullet_still_spends`
+    // records the residue rather than hiding it.
     let reg = {
         let mut reg = registry_wireless();
         reg.morale.point_worth = 0.0;
@@ -12721,6 +12719,122 @@ fn a_remnant_platoon_is_a_story_not_a_gun() {
     assert!(
         state.units[platoon.index()].alive(),
         "and she is a story still on the field, not a deletion"
+    );
+}
+
+/// The ladder charges a shell for what it spent, not for the fact of its
+/// arrival.
+///
+/// The designer's ruling on Wave 1's open question, read straight off the
+/// price list: a clean penetration costs `hit + penetrated`, one that got a
+/// quarter of itself through costs a quarter of that, and one that spent
+/// nothing costs nothing beyond what the round declares as suppression. The
+/// bounce price is untouched — a bounce spends nothing by definition and is
+/// priced on the ring, not the spend. `spent_share` is the one reading of
+/// "how much of its budget", with the resolver's floor (a penetration always
+/// puts one point inside) and a clamp at the whole of it.
+#[test]
+fn the_ladder_charges_a_shell_for_what_it_spent() {
+    let reg = registry();
+    let rules = &reg.morale;
+    let felt = RoundPressure {
+        small_arms: false,
+        suppression: 2,
+    };
+    let outcome = (rules.hit + rules.penetrated) as f32;
+    assert_eq!(
+        rules.pressure_for(ShotFelt::Penetrated { spent: 1.0 }, felt),
+        outcome + 2.0,
+        "a clean penetration is the whole ladder price plus the round's own"
+    );
+    assert_eq!(
+        rules.pressure_for(ShotFelt::Penetrated { spent: 0.25 }, felt),
+        outcome * 0.25 + 2.0,
+        "a shell that scraped a quarter of itself through costs a quarter"
+    );
+    assert_eq!(
+        rules.pressure_for(ShotFelt::Penetrated { spent: 0.0 }, felt),
+        2.0,
+        "and one that spent nothing costs only what the round declares"
+    );
+    assert_eq!(
+        rules.pressure_for(ShotFelt::Bounced, felt),
+        rules.bounced as f32 + 2.0,
+        "a bounce is priced on the ring, and the spend does not enter into it"
+    );
+    use tactics_core::battle::spent_share;
+    assert_eq!(spent_share(6, 6), 1.0);
+    assert_eq!(spent_share(2, 8), 0.25);
+    assert_eq!(
+        spent_share(0, 3),
+        spent_share(1, 3),
+        "the resolver floors every penetration's spend at one point, and so does this"
+    );
+    assert_eq!(
+        spent_share(9, 3),
+        1.0,
+        "and nothing spends more than it has"
+    );
+}
+
+/// A remnant platoon frightens by the one point her bullet still spends.
+///
+/// The residue the ruling leaves, recorded rather than hidden. `mustered`
+/// scales a platoon's damage by the riflemen she has left, so a platoon
+/// with none rounds to a budget of zero; `resolve_impact` then floors every
+/// penetration's spend at one point, so her bullet still puts one inside,
+/// and the ladder — reading the same floor through `spent_share` — charges
+/// her a third of a rifle's price for it, exactly, where before the ruling
+/// it charged the whole. That is what "scale by damage spent" says when the
+/// resolver says a point was spent. Whether a platoon with no riflemen
+/// should be spending one at all is a question about the floor, and it is
+/// the designer's.
+///
+/// Mutation-checked by reading the muster fraction instead of the floored
+/// spend (zero rather than a third): the ratio then reads 0 and the
+/// equality fails.
+#[test]
+fn a_remnant_platoon_frightens_by_the_one_point_her_bullet_still_spends() {
+    let reg = seen(registry_wireless());
+    let row = "g".repeat(5);
+    let mut state = two_side_battle(
+        &reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([1, 1], 0, "rifle_platoon", "Platoon"),
+            unit_at([3, 1], 1, "scout_section", "Enemy"),
+        ],
+        506,
+    );
+    let (platoon, enemy) = (UnitId(0), UnitId(1));
+    let (from, at) = (
+        state.unit(platoon).unwrap().pos,
+        state.unit(enemy).unwrap().pos,
+    );
+    let rifles = reg.weapon("rifles").expect("the base mod ships rifles");
+    let expects = |state: &BattleState| {
+        tactics_core::battle::expected_pressure(
+            &reg, state, platoon, from, rifles, enemy, at, false,
+        )
+    };
+    let full = expects(&state);
+    assert!(
+        full > 0.0,
+        "a full platoon's rifles frighten a scout section"
+    );
+    state.units[platoon.index()]
+        .modules
+        .insert("rifle_sections".into(), 0);
+    let remnant = expects(&state);
+    let floor = tactics_core::battle::spent_share(0, rifles.damage);
+    assert!(
+        (remnant / full - floor).abs() < 1e-3,
+        "a remnant expects the floored point's share of a full platoon's fear, \
+         {floor:.3}, and reads {remnant:.3} against {full:.3}"
+    );
+    assert!(
+        remnant > 0.0,
+        "which is not nothing — the residue this test exists to record"
     );
 }
 
@@ -16298,15 +16412,25 @@ fn fear_is_priced_by_the_same_arithmetic_that_charges_it() {
             weapon: 0,
         },
     };
-    let mut charged = 0u32;
+    // Whole points, rounded the way the ledger rounds them, because what is
+    // being averaged is what the crew was actually charged.
+    let mut charged = 0.0f32;
     for _ in 0..40 {
         state.apply(&reg, &order).expect("she is ordered to shoot");
         for event in play_round(&reg, &mut state) {
             match &event {
-                BattleEvent::ShotHit { target, ammo, .. } if *target == plate => {
+                BattleEvent::ShotHit {
+                    target,
+                    ammo,
+                    damage,
+                    budget,
+                    ..
+                } if *target == plate => {
+                    let spent = tactics_core::battle::spent_share(*damage, *budget);
                     charged += reg
                         .morale
-                        .pressure_for(ShotFelt::Penetrated, felt(&reg, ammo, false));
+                        .pressure_for(ShotFelt::Penetrated { spent }, felt(&reg, ammo, false))
+                        .round();
                 }
                 BattleEvent::ShotBounced {
                     target,
@@ -16316,7 +16440,8 @@ fn fear_is_priced_by_the_same_arithmetic_that_charges_it() {
                 } if *target == plate => {
                     charged += reg
                         .morale
-                        .pressure_for(ShotFelt::Bounced, felt(&reg, ammo, !rattled));
+                        .pressure_for(ShotFelt::Bounced, felt(&reg, ammo, !rattled))
+                        .round();
                 }
                 _ => {}
             }
@@ -16336,13 +16461,168 @@ fn fear_is_priced_by_the_same_arithmetic_that_charges_it() {
         fired >= 100,
         "the sample has to be big enough to average, got {fired} shots"
     );
-    let mean = charged as f32 / fired as f32;
+    let mean = charged / fired as f32;
     let ratio = mean / promised;
     assert!(
         (0.8..=1.2).contains(&ratio),
         "the ladder charged {mean:.3} a shot over {fired} shots and the \
          arithmetic promised {promised:.3} — a factor of {ratio:.3}, which is \
          two price lists rather than one"
+    );
+}
+
+/// A shell that only scrapes through is priced by the same arithmetic too.
+///
+/// The belt-at-a-glacis twin above never penetrates, so it proves the two
+/// price lists agree on the bounce arm and says nothing about the arm the
+/// designer's ruling changed. This stage is an 88 at a plate exactly as
+/// thick as its penetration — the heavy tank's glacis thickened from 8 to
+/// 9 for the purpose, so the roll sits at parity, the shell gets through
+/// about half the time and spends about two thirds of itself when it does.
+/// Fought as four hundred single rounds from fresh stages rather than one
+/// long battle, because a tank an 88 can penetrate does not survive a long
+/// battle. What is compared is what the ladder charged per shot fired
+/// against what `expected_pressure` promised — to a tenth here rather than
+/// the glacis test's fifth, because the sample is twelve hundred shots and
+/// the fifth could not tell the arithmetic from its own mutation.
+///
+/// Measured: 1200 shots, 64.8% arriving against a promised 65%, 49.0%
+/// penetrating against 51.6%, a mean spend of 8.62 of the 13 listed, and a
+/// ratio of **0.954**. The residue is the twin rounding its expected spend
+/// before dividing (nine of thirteen where the shots average 8.6) and the
+/// ledger rounding each charge, both deliberate. The mutation — charge
+/// `hit + penetrated` whatever the shell spent, on the charging side of
+/// this test — reads **1.27** on the same sample. At sixty stages the real
+/// ratio wandered to 0.84 on a two-sigma draw of the hit roll, which is why
+/// the sample is what it is.
+///
+/// The stage is at parity rather than at the 120 per cent a shipped pairing
+/// offers because the first draft was, and it did not discriminate: at 120
+/// per cent the partial band spends seven eighths of the shell and charging
+/// the whole of it instead was inside the band. At parity the shell spends
+/// two thirds, which is the whole reason the plate is thickened.
+#[test]
+fn a_shell_that_only_scrapes_through_is_priced_by_the_same_arithmetic_too() {
+    let mut reg = seen(registry());
+    reg.vehicles
+        .get_mut("heavy_tank")
+        .expect("the base mod ships a heavy tank")
+        .armor
+        .front = 9;
+    let (gun, plate) = (UnitId(0), UnitId(1));
+    let eighty_eight = reg.weapon("gun_88").expect("the base mod ships an 88");
+    assert_eq!(
+        eighty_eight
+            .ammo
+            .first()
+            .and_then(|id| reg.ammo(id))
+            .map(|a| a.penetration[0]),
+        Some(9),
+        "the stage is built on the 88 meeting its own penetration in the plate"
+    );
+    let (mut charged, mut fired, mut promised, mut partials) = (0.0f32, 0u32, 0.0f32, 0u32);
+    for seed in 0..400 {
+        let mut state = two_side_battle(
+            &reg,
+            &["gggggggggg", "gggggggggg", "gggggggggg"],
+            vec![
+                unit_at([0, 1], 0, "heavy_tank", "Gun"),
+                unit_at([1, 1], 1, "heavy_tank", "Plate"),
+            ],
+            900 + seed,
+        );
+        let (gun_pos, plate_pos) = (state.unit(gun).unwrap().pos, state.unit(plate).unwrap().pos);
+        // The plate does not shoot back, as on the glacis stage: a gun crew
+        // under fire climbs the ladder and her rung's accuracy takes the hit
+        // chance below the one the promise was made at, which is a stage
+        // artefact and not a price list. Her fire order stands anyway — it is
+        // deliberate overwatch, and the drill leaves her where she is, so the
+        // shot the arithmetic priced is the shot that is fired.
+        if let Some(plate) = state.unit_mut(plate) {
+            for aboard in plate.ammo.values_mut() {
+                *aboard = 0;
+            }
+        }
+        for (unit, target) in [(gun, plate), (plate, gun)] {
+            state
+                .apply(
+                    &reg,
+                    &Order::SetFire {
+                        unit,
+                        fire: FireIntent::Target { target, weapon: 0 },
+                    },
+                )
+                .expect("both are in plain sight");
+        }
+        let expected = tactics_core::battle::expected_pressure(
+            &reg,
+            &state,
+            gun,
+            gun_pos,
+            eighty_eight,
+            plate,
+            plate_pos,
+            false,
+        );
+        let mut shots = 0u32;
+        // The 88 and nothing else: a heavy tank carries a coaxial belt too,
+        // and its bounces are charged the belt's suppression, which the
+        // promise above never priced — so the count and the charge are both
+        // filtered on the round, which is what the events carry it for.
+        let ap = |a: &Option<String>| a.as_deref() == Some("ap_88");
+        for event in play_round(&reg, &mut state) {
+            match &event {
+                // Off the events rather than off her racks, because on some
+                // seeds the plate's own 88 finishes her inside the round.
+                BattleEvent::ShotFired {
+                    attacker, weapon, ..
+                } if *attacker == gun && weapon == "gun_88" => shots += 1,
+                BattleEvent::ShotHit {
+                    target,
+                    ammo,
+                    damage,
+                    budget,
+                    ..
+                } if *target == plate && ap(ammo) => {
+                    if damage < budget {
+                        partials += 1;
+                    }
+                    let spent = tactics_core::battle::spent_share(*damage, *budget);
+                    charged += reg
+                        .morale
+                        .pressure_for(ShotFelt::Penetrated { spent }, felt(&reg, ammo, false))
+                        .round();
+                }
+                BattleEvent::ShotBounced {
+                    target,
+                    ammo,
+                    rattled,
+                    ..
+                } if *target == plate && ap(ammo) => {
+                    charged += reg
+                        .morale
+                        .pressure_for(ShotFelt::Bounced, felt(&reg, ammo, !rattled))
+                        .round();
+                }
+                _ => {}
+            }
+        }
+        fired += shots;
+        promised += expected * shots as f32;
+    }
+    assert!(
+        fired >= 100,
+        "the sample has to be big enough to average, got {fired} shots"
+    );
+    assert!(
+        partials >= 100,
+        "the stage has to produce partial penetrations, or it is the glacis test again: {partials}"
+    );
+    let ratio = charged / promised;
+    assert!(
+        (0.9..=1.1).contains(&ratio),
+        "the ladder charged {charged:.0} over {fired} shots where the arithmetic promised \
+         {promised:.0} — a factor of {ratio:.3}, which is two price lists rather than one"
     );
 }
 

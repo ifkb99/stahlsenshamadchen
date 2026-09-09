@@ -245,10 +245,22 @@ pub struct MoraleRules {
 /// [`RoundPressure`] beside the suppression the round carries. Keeping it out
 /// of here is what stops the price list growing a case every time a round
 /// gains a property.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ShotFelt {
-    /// The round came through.
-    Penetrated,
+    /// The round came through, and spent this share of the budget its
+    /// datasheet lists — 1.0 for a clean penetration by a full-strength
+    /// crew, less for a round that only scraped through the partial band or
+    /// a platoon firing with a third of her riflemen. The ladder's outcome
+    /// price scales with it (the designer's ruling, 2026-09-09): what
+    /// frightens a crew is what the shell did, not the fact of its arrival,
+    /// so a round that spends nothing frightens nobody beyond what the round
+    /// itself declares as suppression.
+    Penetrated {
+        /// [`crate::battle::Event::ShotHit`]'s `damage` over its `budget`,
+        /// clamped to one. The charge reads the event; the expectation reads
+        /// the profile's penetration share by the same arithmetic.
+        spent: f32,
+    },
     /// The round struck and the armour held.
     Bounced,
 }
@@ -361,21 +373,33 @@ impl MoraleRules {
     /// The shape: an outcome price from the ladder, plus whatever the round
     /// itself brings. A penetration costs [`Self::hit`] *and*
     /// [`Self::penetrated`], because the shell that came through is both a
-    /// hit and the news that the armour did not hold. A bounce costs
+    /// hit and the news that the armour did not hold — **scaled by the share
+    /// of its budget the round actually spent**, so a shell that broke up on
+    /// the plate and got a fifth of itself through costs a fifth, and a
+    /// remnant platoon's bullet costs what the one point it still puts
+    /// inside is worth. Before the scale every landing round cost the full
+    /// price, and once fear was priced at all "a shot that accomplishes
+    /// nothing" stopped existing: a platoon with no riflemen left still
+    /// expected eight points of pressure a hit and opened up. A bounce costs
     /// [`Self::bounced`] only when the round was heavy enough to ring the
     /// hull. Suppression is charged on top in every case, which is what makes
     /// a belt of machine-gun fire against a glacis worth firing.
-    pub fn pressure_for(&self, outcome: ShotFelt, round: RoundPressure) -> u32 {
+    ///
+    /// A real number rather than ladder points, because the expectation is
+    /// one; the charge rounds it at the ledger, once, in `apply_pressure`.
+    pub fn pressure_for(&self, outcome: ShotFelt, round: RoundPressure) -> f32 {
         let outcome_price = match outcome {
-            ShotFelt::Penetrated => self.hit + self.penetrated,
+            ShotFelt::Penetrated { spent } => {
+                (self.hit + self.penetrated) as f32 * spent.clamp(0.0, 1.0)
+            }
             // Bullets pattering on plate frighten nobody buttoned up behind
             // it — through *this* price. A belt that declares suppression
             // frightens them through that one, which is the designer saying
             // so per round rather than the engine deciding it per class.
-            ShotFelt::Bounced if round.small_arms => 0,
-            ShotFelt::Bounced => self.bounced,
+            ShotFelt::Bounced if round.small_arms => 0.0,
+            ShotFelt::Bounced => self.bounced as f32,
         };
-        outcome_price + round.suppression
+        outcome_price + round.suppression as f32
     }
 
     /// Pressure shed at the end of a round by a crew with this much of the

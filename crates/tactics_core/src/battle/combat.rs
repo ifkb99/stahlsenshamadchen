@@ -353,8 +353,15 @@ pub struct Round<'r> {
     /// What the hit-point ledger loses if this round gets through. The
     /// weapon's damage scaled by the round's behind-armor potency — a
     /// stand-in that the outcome chunk (B2) replaces with effect rolls
-    /// against the crew and modules.
+    /// against the crew and modules. Scaled again by [`mustered`] for a
+    /// platoon firing with fewer riflemen than she was raised with.
     pub damage: i32,
+    /// [`Self::damage`] as the datasheet lists it, before `mustered` has had
+    /// its say: the budget a penetration's spend is a share *of*, so the
+    /// morale ladder can charge a shell for what it did rather than for the
+    /// fact of its arrival. A round is worth its listed budget to the ladder
+    /// only when it spends all of it.
+    pub listed: i32,
     /// Bullets bouncing off plate frighten nobody buttoned up behind it.
     pub small_arms: bool,
     /// What arriving costs the crew's nerve whether or not it gets through:
@@ -375,10 +382,12 @@ impl<'r> Round<'r> {
     /// round already fired must arrive as exactly the round that left, and
     /// two constructors would be two chances for it not to.
     fn loaded(ammo: &'r AmmoDef, weapon: &WeaponDef) -> Self {
+        let damage = (weapon.damage as f32 * ammo.post_pen).round().max(0.0) as i32;
         Self {
             ammo: Some(ammo),
             legacy_pen: 0.0,
-            damage: (weapon.damage as f32 * ammo.post_pen).round().max(0.0) as i32,
+            damage,
+            listed: damage,
             small_arms: matches!(ammo.class, AmmoClass::SmallArms),
             suppression: ammo.suppression,
         }
@@ -446,6 +455,7 @@ pub fn chambered<'r>(
                 ammo: None,
                 legacy_pen,
                 damage: weapon.damage,
+                listed: weapon.damage,
                 small_arms: matches!(weapon.damage_type, DamageType::SmallArms),
                 suppression: 0,
             },
@@ -576,15 +586,35 @@ fn round_damage(
 /// whole point — a burst against a glacis is a certainty, not a gamble, and
 /// the arithmetic should say so.
 ///
-/// There is no `pen_share` here, deliberately. How much of its budget a
-/// penetration spends inside is a question about the ledger; the crew heard
-/// the same thing either way.
+/// `pen_share` reaches this through [`spent_share`], the same way the
+/// resolver's spend does: the expected spend of a penetration over the
+/// round's listed budget, floored at the one point the ledger always
+/// charges. A draft of this comment said the crew heard the same thing
+/// either way; the designer ruled otherwise, and the ruling is what lets a
+/// remnant platoon's fire expect nearly nothing (ARCH-TODO.md, Wave 4).
 fn round_pressure(registry: &DataRegistry, profile: &ShotProfile, round: &Round<'_>) -> f32 {
     let rules = &registry.morale;
     let felt = round.pressure();
-    profile.pen_chance * rules.pressure_for(crate::data::ShotFelt::Penetrated, felt) as f32
-        + (1.0 - profile.pen_chance)
-            * rules.pressure_for(crate::data::ShotFelt::Bounced, felt) as f32
+    let spent = spent_share(
+        (profile.damage as f32 * profile.pen_share).round() as i32,
+        round.listed,
+    );
+    profile.pen_chance * rules.pressure_for(crate::data::ShotFelt::Penetrated { spent }, felt)
+        + (1.0 - profile.pen_chance) * rules.pressure_for(crate::data::ShotFelt::Bounced, felt)
+}
+
+/// The share of a round's listed budget that a penetration spending `spent`
+/// points represents, as the morale ladder prices it.
+///
+/// One function for the three readers — the expectation above, the charge
+/// in `apply_pressure` and the bail-out's prospective rung — so that the
+/// floor `resolve_impact` puts under a spend (a penetration always puts at
+/// least one point inside) is applied to all three the same way. A remnant
+/// platoon therefore charges a third of a rifle's price rather than none of
+/// it: her bullet did spend a point. Whether it should is a question about
+/// the floor, not about this.
+pub fn spent_share(spent: i32, listed: i32) -> f32 {
+    (spent.max(1) as f32 / listed.max(1) as f32).min(1.0)
 }
 
 /// What a burst of `blast` against `plate` is expected to be worth, in the
@@ -1897,6 +1927,7 @@ fn resolve_impact(
         attacker,
         target,
         damage: spent,
+        budget: round.listed,
         facing: profile.facing,
         ammo: round.ammo.map(|a| a.id.clone()),
     });
@@ -2083,10 +2114,19 @@ fn behind_armor_effects(
         return;
     }
     let rules = &registry.morale;
-    let prospective = unit
-        .pressure
-        .saturating_add(rules.hit)
-        .saturating_add(rules.penetrated);
+    // The same price `apply_pressure` will charge for this shell when the
+    // tick's news is priced — the outcome scaled by what it spent, and the
+    // round's own suppression on top — rather than a second copy of the
+    // ladder's arithmetic that would drift from the first.
+    let charge = rules
+        .pressure_for(
+            crate::data::ShotFelt::Penetrated {
+                spent: spent_share(spent, round.listed),
+            },
+            round.pressure(),
+        )
+        .round() as u32;
+    let prospective = unit.pressure.saturating_add(charge);
     if rules.rung(prospective).obeys {
         return;
     }

@@ -28,7 +28,7 @@ pub use combat::{
     AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, ShellInFlight, ShotValue,
     best_weapon_from, blast_overmatches, expected_damage, expected_pressure, expected_shot,
     flight_ticks, hit_breakdown, hit_chance, penetration_chance, penetration_share, preview_attack,
-    round_worth, struck_facing, weapon_ready,
+    round_worth, spent_share, struck_facing, weapon_ready,
 };
 pub use command::{
     CommandState, Contact, CutOff, Formation, FormationId, Goal, Latitude, March, Mission,
