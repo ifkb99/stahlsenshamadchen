@@ -164,6 +164,22 @@ pub enum OverworldOrder {
         army: ArmyId,
         mission: ArmyMission,
     },
+    /// Move one vehicle, crew and all, from one of a side's armies to
+    /// another standing beside it. `unit` indexes `from`'s roster.
+    ///
+    /// Through the order stream like everything else that changes the order
+    /// of battle, because a transfer is a decision the log should carry and
+    /// a replay should reproduce. The rules are the campaign's, not the
+    /// screen's: same side, the giver's turn, the two armies on the same or
+    /// neighbouring hexes, neither having marched today, and never the
+    /// giver's last vehicle — an empty army is a destroyed one, and
+    /// destroying your own company by administrative transfer is not a
+    /// thing anybody means.
+    TransferUnit {
+        from: ArmyId,
+        to: ArmyId,
+        unit: usize,
+    },
     EndTurn,
 }
 
@@ -217,6 +233,13 @@ pub enum OverworldEvent {
     },
     ArmyContactRestored {
         army: ArmyId,
+    },
+    /// A vehicle changed companies. Named by chassis so the log can say what
+    /// moved without a second lookup.
+    UnitTransferred {
+        from: ArmyId,
+        to: ArmyId,
+        vehicle: String,
     },
     /// An order for this army could not be got to it and is waiting at
     /// headquarters until it can. It transmits at the first turn start that
@@ -321,6 +344,11 @@ pub enum OverworldError {
     /// it would be two things to learn.
     #[error("tile is not on the map")]
     NotOnMap,
+    /// A transfer between armies that are not beside each other, not the
+    /// same side, or would empty the giver. One variant for the three
+    /// because the fix is the same — pick another army or another day.
+    #[error("those armies cannot exchange vehicles today")]
+    NoTransfer,
     // There is deliberately no `OutOfContact` refusal any more. An order to an
     // army beyond the net used to be rejected; it now waits at headquarters
     // and transmits when the wire comes back, so being unreachable is a delay
@@ -895,6 +923,9 @@ impl OverworldState {
             OverworldOrder::SetMission { army, mission } => {
                 self.apply_set_mission(*army, mission.clone())?
             }
+            OverworldOrder::TransferUnit { from, to, unit } => {
+                self.apply_transfer(*from, *to, *unit)?
+            }
             OverworldOrder::EndTurn => self.apply_end_turn(registry),
         };
         self.check_victory(&mut events);
@@ -952,6 +983,51 @@ impl OverworldState {
     /// Park a mission for an army out of range, replacing anything already
     /// parked for her. Kept in army-id order so what transmits first cannot
     /// depend on the order the player happened to click in.
+    /// Move vehicle `unit` from `from` to `to`. See
+    /// [`OverworldOrder::TransferUnit`] for the rules.
+    fn apply_transfer(
+        &mut self,
+        from: ArmyId,
+        to: ArmyId,
+        unit: usize,
+    ) -> Result<Vec<OverworldEvent>, OverworldError> {
+        if from == to {
+            return Err(OverworldError::NoTransfer);
+        }
+        let giver = self.army(from).ok_or(OverworldError::NoSuchArmy)?;
+        let taker = self.army(to).ok_or(OverworldError::NoSuchArmy)?;
+        if giver.side != self.active_side {
+            return Err(OverworldError::NotYourTurn);
+        }
+        if giver.side != taker.side || giver.pos.distance_to(taker.pos) > 1 {
+            return Err(OverworldError::NoTransfer);
+        }
+        // A day's march is the day: a column that has driven cannot also
+        // have spent the morning cross-loading, and one that has taken a
+        // vehicle on has spent its morning too. Same guard as the move.
+        if giver.moved || taker.moved {
+            return Err(OverworldError::AlreadyMoved);
+        }
+        if giver.units.len() <= 1 || unit >= giver.units.len() {
+            return Err(OverworldError::NoTransfer);
+        }
+        let vehicle = self
+            .army_mut(from)
+            .expect("checked above")
+            .units
+            .remove(unit);
+        let name = vehicle.vehicle.clone();
+        self.army_mut(to)
+            .expect("checked above")
+            .units
+            .push(vehicle);
+        Ok(vec![OverworldEvent::UnitTransferred {
+            from,
+            to,
+            vehicle: name,
+        }])
+    }
+
     fn hold_mission(&mut self, id: ArmyId, mission: ArmyMission) {
         match self.waiting_missions.iter_mut().find(|(a, _)| *a == id) {
             Some(slot) => slot.1 = mission,

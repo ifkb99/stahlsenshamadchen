@@ -119,7 +119,7 @@ Things that shape everything below them. Deciding late means rework; ordered by 
   seats are positional (crew *i* fills `crew_slots[i]`), so a reassignment UI
   is also the thing that finally answers cadets.md's "seats are positional"
   limitation
-- ability to move units between companies on campaign map
+- ~~ability to move units between companies on campaign map~~ **built 2026-09-09**: `OverworldOrder::TransferUnit`, a digit with an army selected and another of hers hovered. Beside each other, the giver's turn, neither marched today, never the giver's last vehicle. What it does not do yet: a reserve with no vehicle to stand in, and moving *cadets* between seats (Menus, above)
 - overall start menu to pick gamemode, settings menu, choose campaign submenu, activate mods, etc
 ### Units
 - apc/ifv, can carry infantry that can dismount
@@ -218,7 +218,7 @@ stalemate, so there is finally a baseline to measure a rewrite against.
 - planners are held per side; command wants them per formation, with a commander planner owning subordinates that have their own doctrine
 - mission-type orders: a commander sets its subordinates' intents instead of a human doing it, and only within radio range
 - in battle, works similar to Combat Mission
-- on campaign map, can order units to conduct different types of missions. must be in radio range or have another unit relay instructions to modify their mission — engine side done (chunk 8: `OverworldOrder::SetMission`, advance/hold/withdraw, `overworld_radius` with relay, standing orders carried out on end-turn, withdrawal inherited into the battle). what is left is the campaign *UI* to give them, and a wider mission vocabulary (raid, screen) once the map has more to do
+- on campaign map, can order units to conduct different types of missions. must be in radio range or have another unit relay instructions to modify their mission — engine side done (chunk 8: `OverworldOrder::SetMission`, advance/hold/withdraw, `overworld_radius` with relay, standing orders carried out on end-turn, withdrawal inherited into the battle). ~~what is left is the campaign *UI* to give them~~ **UI landed 2026-09-09** (`G`/`H`/`W` with an army selected, the battle screen's letters); what is left is a wider mission vocabulary (raid, screen) once the map has more to do
 #### Units
 - command unit. if you lose this unit you lose the battle
   - **the army-scale half landed 2026-09-09**: `ArmyPlacement::headquarters` flags the army the net roots at, `victory.decapitation` on the overworld map makes losing it lose the campaign, and the campaign AI plays both ends of that. `frontier` flags 1st Company and the Valkyrie Vanguard. The *vehicle* inside that army — a chassis, a battle-layer loss condition, the battle AI weighting it — is what is left of this item, and `senior_army` is still the one function to change when it arrives

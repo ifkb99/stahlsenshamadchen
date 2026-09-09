@@ -204,6 +204,13 @@ was. Tests: `tests/campaign.rs`.
   defender burned or left. An attacker who withdrew has yielded her claim.
   Both steps go through `place_army`, which captures what it stands on, so
   a victor advancing onto a factory holds it (it did not, before).
+- **The player gives orders through the same door the AI does.** `G`/`H`/`W`
+  with an army selected are `OverworldOrder::SetMission` and a digit with
+  another of her companies hovered is `OverworldOrder::TransferUnit`; both
+  are refused by the engine, never by the screen, and `overworld-tour`
+  drives both. A transfer needs the two beside each other, neither marched
+  today (a march is the day, the same guard as the move), and never the
+  giver's last vehicle — an empty army is a destroyed one.
 - **The campaign planner reads the rule.** Under `decapitation` the enemy
   headquarters is worth `HEADQUARTERS_WORTH` (3.0) armies of its size and
   its own headquarters backs away from a **stronger** force within

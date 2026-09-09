@@ -1583,6 +1583,21 @@ factory did not hold it until she moved again. The game-crate test that
 fights a real withdrawal on `river_crossing` now asserts the `withdrew` list
 in both directions and the one-hex fallback.
 
+**Orders and cross-loading from the map (2026-09-09).** The engine had
+taken `OverworldOrder::SetMission` with relay and waiting trays since chunk
+8, and the only things that ever issued one were a test and a Lua hook; the
+player clicked a day's march and hoped. `G`/`H`/`W` with an army selected
+now give advance, hold and fall-back on the hovered hex, the battle screen's
+own letters, through the same `apply` the sixty-day campaign test drives.
+Moving vehicles between companies is `OverworldOrder::TransferUnit` — a
+digit with one of hers selected and another hovered — with four rules the
+campaign owns rather than the screen: same side, the giver's turn, the two
+beside each other, neither having marched (a column that has driven cannot
+also have spent the morning cross-loading), and never the giver's last
+vehicle, because an empty army is a destroyed one and nobody means that by
+an administrative transfer. Three tests; the tour puts the two companies
+side by side, sleeps on it and sends a tank across.
+
 ## Performance
 
 **`fog::recompute` no longer rebuilds every side's vision after every shot** —
