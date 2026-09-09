@@ -3360,6 +3360,100 @@ fn update_flashes(
     }
 }
 
+/// What a finished field battle owes the campaign: who walked away from it,
+/// and who did not.
+///
+/// Pure over the finished battle and the bookkeeping the clash was staged
+/// with, and free of Bevy on purpose. This is the seam where a battle becomes
+/// campaign state — everything on the far side of it, a cadet's wound, an
+/// army's destruction, a crew's battle count, is written from what this
+/// returns — and while it lived inside a system there was no way to call it
+/// without a running app, so the one piece of arithmetic that can silently
+/// corrupt a campaign was the one piece nothing tested.
+fn battle_outcome(state: &BattleState, field: &FieldBattle) -> BattleOutcome {
+    // Start every participating army at zero survivors so armies that
+    // were wiped out are still reported, then hand each living unit
+    // back to the army it marched in with.
+    let mut survivors: Vec<(ArmyId, Vec<ArmyUnit>)> = Vec::new();
+    let mut slot_of = HashMap::new();
+    for army in &field.origins {
+        slot_of.entry(*army).or_insert_with(|| {
+            survivors.push((*army, Vec::new()));
+            survivors.len() - 1
+        });
+    }
+    // `surviving_units`, not `alive_units`: a crew that drove off the map
+    // by an exit is off the board but came home, and reading `alive` here
+    // would hand the campaign a withdrawal as a burnt-out vehicle.
+    for unit in state.surviving_units() {
+        let Some(army) = field.origins.get(unit.id.index()) else {
+            continue;
+        };
+        let Some(&slot) = slot_of.get(army) else {
+            continue;
+        };
+        survivors[slot].1.push(ArmyUnit {
+            vehicle: unit.vehicle.clone(),
+            crew: unit.crew.clone(),
+            name: Some(unit.name.clone()),
+        });
+    }
+
+    // Everyone the battle hurt, in two kinds.
+    //
+    // First, everyone who was aboard something that burned. The battle
+    // reports who and what killed it; the campaign decides what that
+    // cost them, because whether this game kills its characters is a
+    // campaign rule.
+    let mut losses = Vec::new();
+    for unit in state.lost_units() {
+        for cadet in &unit.crew {
+            losses.push(CrewLoss {
+                cadet: *cadet,
+                vehicle: unit.vehicle.clone(),
+                killed_by: unit.last_hit_by,
+                found: None,
+            });
+        }
+    }
+    // ...and then everyone who was hurt at her station in a vehicle that
+    // came home. This half used to be thrown away at the door: the
+    // battle tracked each cadet's condition seat by seat all fight, and
+    // then the only casualties the campaign ever heard about were the
+    // crews of destroyed vehicles. A gunner knocked out on the first
+    // round of a battle her side won was fit again by the time the
+    // campaign screen drew, which is the wound system having no teeth in
+    // the most literal possible sense.
+    //
+    // `Absent` is skipped for the reason it exists: she was in the
+    // infirmary before this battle started and is not a casualty of it.
+    for unit in state.surviving_units() {
+        for (seat, cadet) in unit.crew.iter().enumerate() {
+            let found = unit.crew_state.get(seat).copied();
+            if !matches!(
+                found,
+                Some(CrewCondition::Wounded) | Some(CrewCondition::Out)
+            ) {
+                continue;
+            }
+            losses.push(CrewLoss {
+                cadet: *cadet,
+                vehicle: unit.vehicle.clone(),
+                killed_by: unit.last_hit_by,
+                found,
+            });
+        }
+    }
+    BattleOutcome {
+        attacker: field.attacker,
+        defender: field.defender,
+        winner: state.over.and_then(|r| r.winner),
+        stalemate: matches!(state.over.map(|r| r.reason), Some(EndReason::Stalemate)),
+        survivors,
+        losses,
+    }
+}
+
 fn finish_battle(
     mut commands: Commands,
     time: Res<Time>,
@@ -3376,90 +3470,7 @@ fn finish_battle(
     }
 
     if let Some(field) = &battle.field {
-        // Start every participating army at zero survivors so armies that
-        // were wiped out are still reported, then hand each living unit
-        // back to the army it marched in with.
-        let mut survivors: Vec<(ArmyId, Vec<ArmyUnit>)> = Vec::new();
-        let mut slot_of = HashMap::new();
-        for army in &field.origins {
-            slot_of.entry(*army).or_insert_with(|| {
-                survivors.push((*army, Vec::new()));
-                survivors.len() - 1
-            });
-        }
-        // `surviving_units`, not `alive_units`: a crew that drove off the map
-        // by an exit is off the board but came home, and reading `alive` here
-        // would hand the campaign a withdrawal as a burnt-out vehicle.
-        for unit in battle.state.surviving_units() {
-            let Some(army) = field.origins.get(unit.id.index()) else {
-                continue;
-            };
-            let Some(&slot) = slot_of.get(army) else {
-                continue;
-            };
-            survivors[slot].1.push(ArmyUnit {
-                vehicle: unit.vehicle.clone(),
-                crew: unit.crew.clone(),
-                name: Some(unit.name.clone()),
-            });
-        }
-
-        // Everyone the battle hurt, in two kinds.
-        //
-        // First, everyone who was aboard something that burned. The battle
-        // reports who and what killed it; the campaign decides what that
-        // cost them, because whether this game kills its characters is a
-        // campaign rule.
-        let mut losses = Vec::new();
-        for unit in battle.state.lost_units() {
-            for cadet in &unit.crew {
-                losses.push(CrewLoss {
-                    cadet: *cadet,
-                    vehicle: unit.vehicle.clone(),
-                    killed_by: unit.last_hit_by,
-                    found: None,
-                });
-            }
-        }
-        // ...and then everyone who was hurt at her station in a vehicle that
-        // came home. This half used to be thrown away at the door: the
-        // battle tracked each cadet's condition seat by seat all fight, and
-        // then the only casualties the campaign ever heard about were the
-        // crews of destroyed vehicles. A gunner knocked out on the first
-        // round of a battle her side won was fit again by the time the
-        // campaign screen drew, which is the wound system having no teeth in
-        // the most literal possible sense.
-        //
-        // `Absent` is skipped for the reason it exists: she was in the
-        // infirmary before this battle started and is not a casualty of it.
-        for unit in battle.state.surviving_units() {
-            for (seat, cadet) in unit.crew.iter().enumerate() {
-                let found = unit.crew_state.get(seat).copied();
-                if !matches!(
-                    found,
-                    Some(CrewCondition::Wounded) | Some(CrewCondition::Out)
-                ) {
-                    continue;
-                }
-                losses.push(CrewLoss {
-                    cadet: *cadet,
-                    vehicle: unit.vehicle.clone(),
-                    killed_by: unit.last_hit_by,
-                    found,
-                });
-            }
-        }
-        commands.insert_resource(BattleOutcome {
-            attacker: field.attacker,
-            defender: field.defender,
-            winner: battle.state.over.and_then(|r| r.winner),
-            stalemate: matches!(
-                battle.state.over.map(|r| r.reason),
-                Some(EndReason::Stalemate)
-            ),
-            survivors,
-            losses,
-        });
+        commands.insert_resource(battle_outcome(&battle.state, field));
     }
 
     for entity in &scoped {
@@ -3771,6 +3782,475 @@ mod tests {
         assert!(
             asked.contains("Ctrl"),
             "nothing on the page says how to insist:\n{asked}"
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // The campaign seam: a whole field battle, fought headlessly, and
+    // handed back to the roster it was crewed from.
+    //
+    // Everything below drives the real path — `field_battle_problem`,
+    // `stage_field_battle`, `inherit_army_missions`, `battle_outcome`,
+    // `OverworldState::apply_battle_result` — because a parallel staging
+    // would be a second answer to what an order of battle is, and the
+    // whole point of testing this seam is that the two halves agree.
+    // ---------------------------------------------------------------
+
+    use tactics_core::battle::Fate;
+    use tactics_core::overworld::{OverworldEvent, OverworldState};
+    use tactics_core::roster::CadetStatus;
+
+    /// The campaign the base mod ships, with all forty-nine named cadets
+    /// enlisted into the roster its armies are crewed from.
+    fn campaign(reg: &tactics_core::data::DataRegistry) -> OverworldState {
+        OverworldState::from_map(reg, "frontier", 11).expect("the shipped campaign map builds")
+    }
+
+    /// The armies committed to a clash, exactly as `launch_battle` commits
+    /// them: principals first, each one's live unit list and whatever it was
+    /// already trying to do.
+    fn committed(state: &OverworldState, armies: &[ArmyId]) -> Vec<BattleForce> {
+        armies
+            .iter()
+            .filter_map(|id| state.army(*id))
+            .map(|army| BattleForce {
+                army: army.id,
+                side: army.side,
+                units: army.units.clone(),
+                mission: army.mission.clone(),
+            })
+            .collect()
+    }
+
+    /// A battle that has been fought to a finish, with the bookkeeping that
+    /// says which army each hull marched in with.
+    struct Fought {
+        state: BattleState,
+        outcome: BattleOutcome,
+        forces: Vec<BattleForce>,
+        rounds: usize,
+    }
+
+    /// Stage the clash the campaign would stage, fight it out with nobody
+    /// watching, and do the accounting.
+    ///
+    /// Both sides are given a planner: the campaign hands side 0 to the
+    /// player and a headless test has no player, so her seat is filled the
+    /// same way `STAHL_AUTOPLAY` fills it.
+    fn fight(
+        reg: &tactics_core::data::DataRegistry,
+        campaign: &OverworldState,
+        map_id: &str,
+        attacker: ArmyId,
+        defender: ArmyId,
+        seed: u64,
+    ) -> Fought {
+        let sides: Vec<SideState> = campaign
+            .sides
+            .iter()
+            .map(|s| SideState {
+                name: s.name.clone(),
+                ai: s.ai.clone(),
+            })
+            .collect();
+        let attacker_side = campaign.army(attacker).expect("the attacker exists").side;
+        let forces = committed(campaign, &[attacker, defender]);
+        let roster = std::sync::Arc::new(campaign.roster.clone());
+
+        // The campaign asks before it commits; so does this.
+        assert!(
+            field_battle_problem(reg, map_id, &sides, attacker_side, &forces, &roster).is_none(),
+            "the shipped campaign cannot stage its own opening clash on {map_id}"
+        );
+        let (mut state, origins) =
+            stage_field_battle(reg, map_id, &sides, attacker_side, &forces, &roster, seed)
+                .expect("the clash the campaign just approved");
+        let field = FieldBattle {
+            attacker,
+            defender,
+            origins,
+        };
+        inherit_army_missions(reg, &mut state, &forces, attacker, defender);
+
+        let mut ai = AiDriver::new();
+        for side in 0..state.sides.len() as u8 {
+            let cfg = state.sides[side as usize].ai.clone().unwrap_or(AiConfig {
+                planner: "utility".into(),
+                difficulty: 3,
+                doctrine: Some("bounding_overwatch".into()),
+            });
+            ai.insert(side, make_battle_planner(&cfg, seed ^ side as u64, reg));
+        }
+
+        let mut rounds = 0;
+        while !state.is_over() && rounds < 60 {
+            ai.plan_round(reg, &mut state);
+            state.resolve_round(reg);
+            rounds += 1;
+        }
+        let outcome = battle_outcome(&state, &field);
+        Fought {
+            state,
+            outcome,
+            forces,
+            rounds,
+        }
+    }
+
+    /// Every cadet the battle was handed comes back out of it exactly once.
+    ///
+    /// The seam between a battle and a campaign is arithmetic nobody watches:
+    /// a survivor list built off unit indices, a loss list built off two
+    /// different questions ("did her vehicle come home" and "was she hurt in
+    /// the seat"), and a roster written from both. A cadet dropped here is a
+    /// person who quietly stops existing, and a cadet counted twice is one
+    /// whose wound is rolled for twice; neither shows up as a crash.
+    ///
+    /// The one deliberate overlap is a cadet hurt at her station in a vehicle
+    /// that came home: she is *both* aboard a survivor and reported, and
+    /// `CrewLoss::found` is what says so. A cadet pulled out of a wreck
+    /// (`found: None`) must never be both.
+    #[test]
+    fn every_cadet_who_marched_into_a_field_battle_is_accounted_for_when_it_ends() {
+        let reg = registry();
+        let mut base = campaign(&reg);
+        let (attacker, defender) = (ArmyId(0), ArmyId(2));
+        // One vehicle nobody was assigned to, which is ordinary campaign
+        // state — an army can hold a chassis it has no cadets for. The
+        // battle crews it anonymously out of its *own* copy of the roster,
+        // so this is what makes the "the campaign never enlisted her" check
+        // below ask a real question rather than an empty one.
+        base.army_mut(attacker)
+            .expect("the attacker exists")
+            .units
+            .push(ArmyUnit {
+                vehicle: "light_tank".into(),
+                crew: Vec::new(),
+                name: Some("Spare".into()),
+            });
+
+        let mut winners = Vec::new();
+        let mut station_wounds = 0;
+        let mut exits = 0;
+        for seed in [0u64, 6, 10, 11] {
+            let fought = fight(&reg, &base, "battle_plains", attacker, defender, seed);
+            assert!(
+                fought.state.is_over(),
+                "seed {seed} was still being fought after {} rounds",
+                fought.rounds
+            );
+            winners.push(fought.outcome.winner);
+
+            let marched: Vec<CadetId> = fought
+                .forces
+                .iter()
+                .flat_map(|f| f.units.iter().flat_map(|u| u.crew.iter().copied()))
+                .collect();
+            let hulls: usize = fought.forces.iter().map(|f| f.units.len()).sum();
+            assert_eq!(
+                fought.state.units.len(),
+                hulls,
+                "seed {seed}: somebody was left in the assembly area"
+            );
+
+            // The vehicle count is conserved: a hull is either a survivor or
+            // a wreck, and there is no third place for one to go.
+            let survivors: usize = fought.outcome.survivors.iter().map(|(_, u)| u.len()).sum();
+            let lost = fought.state.lost_units().count();
+            assert_eq!(
+                survivors + lost,
+                hulls,
+                "seed {seed}: {survivors} survivors + {lost} wrecks is not the {hulls} that marched in"
+            );
+
+            // A crew that drove off the map by an exit came home. This is the
+            // case that was wrong once — `alive_units` here would have handed
+            // the campaign a withdrawal as a burnt-out vehicle.
+            for unit in fought.state.units.iter() {
+                if !matches!(unit.fate, Fate::Exited) {
+                    continue;
+                }
+                exits += 1;
+                for cadet in &unit.crew {
+                    assert!(
+                        fought
+                            .outcome
+                            .survivors
+                            .iter()
+                            .any(|(_, units)| units.iter().any(|u| u.crew.contains(cadet))),
+                        "seed {seed}: {cadet:?} took an exit and was not reported home"
+                    );
+                    assert!(
+                        !fought
+                            .outcome
+                            .losses
+                            .iter()
+                            .any(|l| l.cadet == *cadet && l.found.is_none()),
+                        "seed {seed}: {cadet:?} drove off the map and was written off as a wreck"
+                    );
+                }
+            }
+
+            // Now hand it to the campaign, which is where it becomes state
+            // somebody has to live with.
+            let mut after = base.clone();
+            let before: HashMap<CadetId, u32> = after
+                .roster
+                .iter()
+                .map(|cadet| (cadet.id, cadet.battles))
+                .collect();
+            after.commit_to_battle(&[]);
+            let events = after.apply_battle_result(
+                &reg,
+                fought.outcome.attacker,
+                fought.outcome.defender,
+                &fought.outcome.survivors,
+                &fought.outcome.losses,
+            );
+
+            for cadet in &marched {
+                let aboard = after
+                    .armies
+                    .iter()
+                    .any(|a| a.units.iter().any(|u| u.crew.contains(cadet)));
+                let reported: Vec<&CrewLoss> = fought
+                    .outcome
+                    .losses
+                    .iter()
+                    .filter(|l| l.cadet == *cadet)
+                    .collect();
+                assert!(
+                    aboard || !reported.is_empty(),
+                    "{cadet:?} marched out at seed {seed} and is in nobody's account"
+                );
+                assert!(
+                    reported.len() <= 1,
+                    "{cadet:?} was reported {} times at seed {seed}",
+                    reported.len()
+                );
+                if let Some(loss) = reported.first() {
+                    if loss.found.is_none() {
+                        assert!(
+                            !aboard,
+                            "{cadet:?} was pulled out of a wreck and is still crewing at seed {seed}"
+                        );
+                    } else {
+                        // Hurt at her station in a vehicle that came home:
+                        // the one cadet who is legitimately in both lists,
+                        // and the wound has to outlive the battle.
+                        station_wounds += 1;
+                        assert!(
+                            aboard,
+                            "{cadet:?} came home in her own tank and left the army"
+                        );
+                        let status = after.roster.get(*cadet).expect("she is on the roll").status;
+                        assert!(
+                            !status.is_ready(),
+                            "{cadet:?} was found {:?} at her station and the campaign says she is fine",
+                            loss.found
+                        );
+                        assert!(
+                            matches!(status, CadetStatus::Wounded { .. } | CadetStatus::Dead),
+                            "a station casualty is treated, not adrift: {status:?}"
+                        );
+                    }
+                    assert!(
+                        events.iter().any(|e| matches!(
+                            e,
+                            OverworldEvent::CrewCasualty { cadet: c, .. } if c == cadet
+                        )),
+                        "{cadet:?} was a casualty at seed {seed} and nobody was told"
+                    );
+                }
+            }
+
+            // Every survivor has one more battle behind her, and nobody else
+            // does: a crew that did not fight cannot be credited with it.
+            for (_, units) in &fought.outcome.survivors {
+                for unit in units {
+                    for cadet in &unit.crew {
+                        if let Some(now) = after.roster.get(*cadet) {
+                            assert_eq!(
+                                now.battles,
+                                before[cadet] + 1,
+                                "{cadet:?} survived seed {seed} and was not credited with it"
+                            );
+                        }
+                    }
+                }
+            }
+            for unit in fought.state.lost_units() {
+                for cadet in &unit.crew {
+                    if let Some(now) = after.roster.get(*cadet) {
+                        assert_eq!(
+                            now.battles, before[cadet],
+                            "{cadet:?} did not come home from seed {seed} and was credited with it"
+                        );
+                    }
+                }
+            }
+            for cadet in after.roster.iter() {
+                if !marched.contains(&cadet.id) {
+                    assert_eq!(
+                        cadet.battles, before[&cadet.id],
+                        "{:?} stayed at the academy and was credited with a battle",
+                        cadet.id
+                    );
+                }
+            }
+
+            // The academy's rolls are the academy's: an anonymous crew
+            // enlisted into the battle's own copy of the roster must not come
+            // back holding a handle the campaign cannot resolve.
+            for army in &after.armies {
+                for unit in &army.units {
+                    for cadet in &unit.crew {
+                        assert!(
+                            after.roster.get(*cadet).is_some(),
+                            "{} holds {cadet:?}, whom the campaign never enlisted",
+                            army.name
+                        );
+                    }
+                }
+            }
+
+            // An army with nothing left is destroyed, and said to be.
+            for army in &after.armies {
+                if army.units.is_empty() && [attacker, defender].contains(&army.id) {
+                    assert!(
+                        !army.alive,
+                        "{} lost every vehicle and is still on the map",
+                        army.name
+                    );
+                    assert!(
+                        events
+                            .iter()
+                            .any(|e| matches!(e, OverworldEvent::ArmyDestroyed { army: a } if *a == army.id)),
+                        "{} was wiped out at seed {seed} and nobody was told",
+                        army.name
+                    );
+                }
+            }
+        }
+        // Not invariants of the seam but of this test being worth running.
+        // Four seeds on `battle_plains` are fought out because one battle is
+        // one shape of ending: these four are 5 wrecks / 7 / 9 / 6 with two
+        // won by each side, so the accounting is checked against a rout in
+        // both directions rather than against one lucky afternoon.
+        assert!(
+            winners.contains(&Some(0)) && winners.contains(&Some(1)),
+            "every seed was won by the same side, so a defeat's accounting went unchecked: {winners:?}"
+        );
+        assert!(
+            station_wounds >= 2,
+            "no cadet was hurt at her station and carried home; the half of the \
+             loss list that is not a wreck went untested (exits seen: {exits})"
+        );
+    }
+
+    /// A campaign that fights the same battle twice comes out of it in the
+    /// same place.
+    ///
+    /// The casualty rolls run on the campaign's own rng, and the seam sorts
+    /// the losses by cadet id before spending it for exactly this reason: the
+    /// battle reports them in whatever order its units happen to sit in, and
+    /// a replay that drew them in that order would diverge from the day it
+    /// replays.
+    #[test]
+    fn the_same_battle_leaves_the_campaign_in_the_same_state_twice() {
+        let reg = registry();
+        let base = campaign(&reg);
+        let apply = |seed: u64| -> String {
+            let fought = fight(&reg, &base, "battle_plains", ArmyId(0), ArmyId(2), seed);
+            let mut after = base.clone();
+            after.apply_battle_result(
+                &reg,
+                fought.outcome.attacker,
+                fought.outcome.defender,
+                &fought.outcome.survivors,
+                &fought.outcome.losses,
+            );
+            serde_json::to_string(&after).expect("a campaign serialises")
+        };
+        for seed in [0u64, 6] {
+            assert_eq!(
+                apply(seed),
+                apply(seed),
+                "seed {seed} left the campaign somewhere else the second time"
+            );
+        }
+    }
+
+    /// An army caught pulling back gets its crews home rather than losing
+    /// them: a vehicle that takes an exit it is entitled to is a survivor,
+    /// and the army that owns her is not destroyed for having left.
+    #[test]
+    fn a_crew_that_drives_off_the_map_comes_home_to_her_army() {
+        let reg = registry();
+        let mut base = campaign(&reg);
+        // Through the campaign's own order, so the mission is one an army
+        // could really be carrying when it is caught.
+        let falling_back = ArmyId(0);
+        base.apply(
+            &reg,
+            &tactics_core::overworld::OverworldOrder::SetMission {
+                army: falling_back,
+                mission: ArmyMission::Withdraw {
+                    to: tactics_core::offset_to_hex(0, 1),
+                },
+            },
+        )
+        .expect("her own headquarters can reach her on day one");
+
+        let mut exited = 0;
+        for seed in [5u64, 23, 44] {
+            let fought = fight(&reg, &base, "river_crossing", ArmyId(2), falling_back, seed);
+            for unit in fought.state.units.iter() {
+                if !matches!(unit.fate, Fate::Exited) {
+                    continue;
+                }
+                exited += 1;
+                let mut after = base.clone();
+                let home = fought
+                    .outcome
+                    .survivors
+                    .iter()
+                    .find(|(id, _)| *id == falling_back)
+                    .map(|(_, units)| units.len())
+                    .unwrap_or(0);
+                assert!(
+                    home > 0,
+                    "seed {seed}: a crew took the exit and her army came home empty"
+                );
+                let events = after.apply_battle_result(
+                    &reg,
+                    fought.outcome.attacker,
+                    fought.outcome.defender,
+                    &fought.outcome.survivors,
+                    &fought.outcome.losses,
+                );
+                assert!(
+                    !events.iter().any(
+                        |e| matches!(e, OverworldEvent::ArmyDestroyed { army } if *army == falling_back)
+                    ),
+                    "seed {seed}: an army that withdrew was written off as destroyed"
+                );
+                for cadet in &unit.crew {
+                    assert!(
+                        !fought
+                            .outcome
+                            .losses
+                            .iter()
+                            .any(|l| l.cadet == *cadet && l.found.is_none()),
+                        "seed {seed}: {cadet:?} left by the road and was counted as a casualty"
+                    );
+                }
+                break;
+            }
+        }
+        assert!(
+            exited > 0,
+            "no crew took an exit in three seeds; this test proved nothing"
         );
     }
 }
