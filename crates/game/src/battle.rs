@@ -19,12 +19,12 @@ use std::sync::Arc;
 use tactics_core::Hex;
 use tactics_core::ai::{AiConfig, AiDriver, SideCommand, make_battle_planner};
 use tactics_core::battle::{
-    BattleState, CrewCondition, EndReason, Event as BattleEvent, FireIntent, Formation,
+    BattleState, CrewCondition, EndReason, Event as BattleEvent, Fate, FireIntent, Formation,
     FormationId, Latitude, Mission, Order, SideState, Unit, UnitId, reachable,
 };
 use tactics_core::map::{ObjectiveKind, UnitPlacement};
 use tactics_core::overworld::ArmyId;
-use tactics_core::overworld::{ArmyMission, ArmyUnit, CrewLoss};
+use tactics_core::overworld::{ArmyMission, ArmyUnit, BattleReport, CrewLoss};
 use tactics_core::roster::{CadetId, Roster};
 
 /// One army committed to a field battle.
@@ -61,19 +61,19 @@ pub enum PendingBattle {
     },
 }
 
-/// Reported back to the overworld when a field battle ends. Survivors are
-/// listed per army so each one gets its own casualties back.
+/// Reported back to the overworld when a field battle ends: the engine's
+/// [`BattleReport`], parked as a resource for the campaign screen to find.
+/// The report itself lives in `tactics_core` because the campaign's
+/// arithmetic over it does, and a headless test has to be able to build one
+/// without Bevy.
 #[derive(Resource, Clone)]
-pub struct BattleOutcome {
-    pub attacker: ArmyId,
-    pub defender: ArmyId,
-    pub winner: Option<u8>,
-    /// Both sides withdrew intact rather than one being destroyed.
-    pub stalemate: bool,
-    pub survivors: Vec<(ArmyId, Vec<ArmyUnit>)>,
-    /// Cadets who were aboard a vehicle that was destroyed. What became of
-    /// them is the campaign's decision, not the battle's.
-    pub losses: Vec<CrewLoss>,
+pub struct BattleOutcome(pub BattleReport);
+
+impl std::ops::Deref for BattleOutcome {
+    type Target = BattleReport;
+    fn deref(&self) -> &BattleReport {
+        &self.0
+    }
 }
 
 /// Bookkeeping for a battle that resolves an overworld clash.
@@ -3444,14 +3444,38 @@ fn battle_outcome(state: &BattleState, field: &FieldBattle) -> BattleOutcome {
             });
         }
     }
-    BattleOutcome {
+    // An army whose every surviving vehicle drove off by an exit has
+    // withdrawn: it is not beaten, and it is not here. An army that lost
+    // everything has not withdrawn, whatever else it did, and neither has
+    // one with a single vehicle still on the field — that one is still
+    // standing on the ground.
+    let mut withdrew: Vec<ArmyId> = Vec::new();
+    for (army, units) in &survivors {
+        let mut exited = 0;
+        let mut on_field = 0;
+        for unit in state.units.iter() {
+            if field.origins.get(unit.id.index()) != Some(army) {
+                continue;
+            }
+            match unit.fate {
+                Fate::Exited => exited += 1,
+                Fate::Fighting { .. } => on_field += 1,
+                Fate::Destroyed(_) => {}
+            }
+        }
+        if !units.is_empty() && exited > 0 && on_field == 0 {
+            withdrew.push(*army);
+        }
+    }
+    BattleOutcome(BattleReport {
         attacker: field.attacker,
         defender: field.defender,
         winner: state.over.and_then(|r| r.winner),
         stalemate: matches!(state.over.map(|r| r.reason), Some(EndReason::Stalemate)),
         survivors,
         losses,
-    }
+        withdrew,
+    })
 }
 
 fn finish_battle(
@@ -3816,7 +3840,6 @@ mod tests {
     // whole point of testing this seam is that the two halves agree.
     // ---------------------------------------------------------------
 
-    use tactics_core::battle::Fate;
     use tactics_core::overworld::{OverworldEvent, OverworldState};
     use tactics_core::roster::CadetStatus;
 
@@ -3848,7 +3871,15 @@ mod tests {
         state: BattleState,
         outcome: BattleOutcome,
         forces: Vec<BattleForce>,
+        origins: Vec<ArmyId>,
         rounds: usize,
+    }
+
+    impl Fought {
+        /// The army a unit marched in with.
+        fn field_origin(&self, unit: tactics_core::battle::UnitId) -> Option<ArmyId> {
+            self.origins.get(unit.index()).copied()
+        }
     }
 
     /// Stage the clash the campaign would stage, fight it out with nobody
@@ -3913,6 +3944,7 @@ mod tests {
             state,
             outcome,
             forces,
+            origins: field.origins,
             rounds,
         }
     }
@@ -4020,13 +4052,7 @@ mod tests {
                 .map(|cadet| (cadet.id, cadet.battles))
                 .collect();
             after.commit_to_battle(&[]);
-            let events = after.apply_battle_result(
-                &reg,
-                fought.outcome.attacker,
-                fought.outcome.defender,
-                &fought.outcome.survivors,
-                &fought.outcome.losses,
-            );
+            let events = after.apply_battle_result(&reg, &fought.outcome);
 
             for cadet in &marched {
                 let aboard = after
@@ -4183,13 +4209,7 @@ mod tests {
         let apply = |seed: u64| -> String {
             let fought = fight(&reg, &base, "battle_plains", ArmyId(0), ArmyId(2), seed);
             let mut after = base.clone();
-            after.apply_battle_result(
-                &reg,
-                fought.outcome.attacker,
-                fought.outcome.defender,
-                &fought.outcome.survivors,
-                &fought.outcome.losses,
-            );
+            after.apply_battle_result(&reg, &fought.outcome);
             serde_json::to_string(&after).expect("a campaign serialises")
         };
         for seed in [0u64, 6] {
@@ -4242,19 +4262,40 @@ mod tests {
                     home > 0,
                     "seed {seed}: a crew took the exit and her army came home empty"
                 );
-                let events = after.apply_battle_result(
-                    &reg,
-                    fought.outcome.attacker,
-                    fought.outcome.defender,
-                    &fought.outcome.survivors,
-                    &fought.outcome.losses,
+                // The report says who withdrew, and it means the whole army:
+                // every vehicle she still has left by the road, none is on
+                // the field. That is the campaign's cue to move her a hex
+                // back, so it has to be right in both directions — an army
+                // with one tank still standing on the ground has not gone.
+                let on_field = fought
+                    .state
+                    .units
+                    .iter()
+                    .filter(|u| fought.field_origin(u.id) == Some(falling_back))
+                    .filter(|u| matches!(u.fate, Fate::Fighting { .. }))
+                    .count();
+                assert_eq!(
+                    fought.outcome.withdrew.contains(&falling_back),
+                    on_field == 0,
+                    "seed {seed}: withdrew {:?} with {on_field} vehicle(s) still on the field",
+                    fought.outcome.withdrew
                 );
+                let before = base.army(falling_back).unwrap().pos;
+                let events = after.apply_battle_result(&reg, &fought.outcome);
                 assert!(
                     !events.iter().any(
                         |e| matches!(e, OverworldEvent::ArmyDestroyed { army } if *army == falling_back)
                     ),
                     "seed {seed}: an army that withdrew was written off as destroyed"
                 );
+                if on_field == 0 {
+                    let after_pos = after.army(falling_back).unwrap().pos;
+                    assert_eq!(
+                        after_pos.distance_to(before),
+                        1,
+                        "seed {seed}: an army that withdrew arrives a hex back, not nowhere"
+                    );
+                }
                 for cadet in &unit.crew {
                     assert!(
                         !fought

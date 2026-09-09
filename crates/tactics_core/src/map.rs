@@ -305,6 +305,79 @@ pub struct ArmyPlacement {
     /// Overworld movement points per turn.
     #[serde(default = "default_army_movement")]
     pub movement: u32,
+    /// This army carries the side's headquarters.
+    ///
+    /// Two things read it. The signals net roots here — every other army is
+    /// in contact by being within radio reach of this one, or of somebody
+    /// who is — and under [`CampaignVictory::decapitation`] losing it loses
+    /// the campaign. One flag rather than two because they are one fact: the
+    /// army the orders come from is the army whose loss leaves nobody to
+    /// give them.
+    ///
+    /// A side that flags nobody gets its first-declared army, which is what
+    /// the net rooted at before the flag existed, so a map written earlier
+    /// behaves exactly as it did. Two flags on one side is a warning and the
+    /// first wins.
+    #[serde(default)]
+    pub headquarters: bool,
+}
+
+/// What ends a campaign, declared by the overworld map.
+///
+/// A map that declares none is fought until one side has no armies left,
+/// which is every campaign that predates the block, so both halves are
+/// additive: an empty `hold` list never fires and `decapitation: false` is
+/// the rule's absence. The two halves are independent — a raid campaign
+/// might be decapitation alone, a war of position the ground alone — and a
+/// map that wants both writes both.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CampaignVictory {
+    /// Terrain ids whose every tile one side must hold at dawn to win.
+    ///
+    /// Checked when the day turns over rather than the moment the last tile
+    /// is captured, so the side that just lost it always gets a turn to
+    /// take it back: "hold" means having kept it, not having reached it.
+    /// The terrains named must be `capturable` and must actually be on the
+    /// map, both of which `validate-mods` checks, because a hold rule over
+    /// ground that does not exist is one nobody can ever satisfy and nobody
+    /// would be told why.
+    #[serde(default)]
+    pub hold: Vec<String>,
+    /// How many dawns in a row the ground must be held before it counts.
+    /// One — the default, and the rule's plainest reading — ends the
+    /// campaign the first morning one side owns every tile; `frontier`
+    /// says three, because with two factories on a nine-row map the AI can
+    /// take both in four days while a player looks the other way, and a
+    /// campaign that ends before its first battle is not a campaign. A
+    /// broken streak starts again from nothing.
+    #[serde(default = "default_hold_days")]
+    pub hold_days: u32,
+    /// Losing the army flagged [`ArmyPlacement::headquarters`] loses the
+    /// campaign. A side that flagged none cannot be decapitated, and
+    /// `validate-mods` says so.
+    #[serde(default)]
+    pub decapitation: bool,
+}
+
+fn default_hold_days() -> u32 {
+    1
+}
+
+impl Default for CampaignVictory {
+    fn default() -> Self {
+        Self {
+            hold: Vec::new(),
+            hold_days: default_hold_days(),
+            decapitation: false,
+        }
+    }
+}
+
+impl CampaignVictory {
+    /// Whether the map declared any rule at all beyond elimination.
+    pub fn is_empty(&self) -> bool {
+        self.hold.is_empty() && !self.decapitation
+    }
 }
 
 fn default_army_movement() -> u32 {
@@ -355,6 +428,12 @@ pub struct MapFile {
     /// as every map was before commanders could be lost.
     #[serde(default)]
     pub loss_conditions: Vec<LossCondition>,
+    /// What ends the campaign fought on this map, for an overworld map. The
+    /// campaign's counterpart of `loss_conditions`, and absent for the same
+    /// reason those may be: a map that says nothing is fought to elimination,
+    /// exactly as every campaign was before there was anything else to say.
+    #[serde(default)]
+    pub victory: CampaignVictory,
 }
 
 /// One tile of a parsed map.
@@ -963,6 +1042,8 @@ impl MapFile {
             }
         }
 
+        self.validate_victory(&map, registry, report);
+
         // One cadet, one seat. A campaign map is written by hand and it is
         // very easy to spread ten characters over eighteen vehicles without
         // noticing; the campaign drops the second mention and crews that
@@ -992,6 +1073,87 @@ impl MapFile {
                  she can only be in one, so the rest deploy with an anonymous crew",
                 self.id
             ));
+        }
+    }
+}
+
+impl MapFile {
+    /// The campaign's ending, checked for the two ways it can be written so
+    /// that it can never come true.
+    ///
+    /// Both are errors rather than warnings. A `hold` rule over ground the
+    /// map does not have, or over ground nobody can capture, is a campaign
+    /// that cannot be won that way and never says so; a `decapitation` rule
+    /// on a side with no headquarters is a campaign that cannot be lost that
+    /// way, which is the same silence from the other end. Neither has a
+    /// reading under which the author got what she asked for.
+    fn validate_victory(
+        &self,
+        map: &HexMap,
+        registry: &DataRegistry,
+        report: &mut ValidationReport,
+    ) {
+        let victory = &self.victory;
+        if self.kind != MapKind::Overworld {
+            if !victory.is_empty() {
+                report.warnings.push(format!(
+                    "map `{}`: declares `victory`, which only a campaign map reads",
+                    self.id
+                ));
+            }
+            return;
+        }
+        if !victory.hold.is_empty() && victory.hold_days == 0 {
+            report.errors.push(format!(
+                "map `{}`: `victory.hold_days` is 0; the ground has to be held for at least one night",
+                self.id
+            ));
+        }
+        for terrain in &victory.hold {
+            match registry.terrain(terrain) {
+                None => report.errors.push(format!(
+                    "map `{}`: `victory.hold` names terrain `{terrain}`, which no mod ships",
+                    self.id
+                )),
+                Some(t) if !t.capturable => report.errors.push(format!(
+                    "map `{}`: `victory.hold` names `{terrain}`, which is not capturable, \
+                     so no side could ever hold it",
+                    self.id
+                )),
+                Some(_) if !map.iter().any(|(_, tile)| &tile.terrain == terrain) => {
+                    report.errors.push(format!(
+                        "map `{}`: `victory.hold` names `{terrain}`, and there is none on the map",
+                        self.id
+                    ))
+                }
+                Some(_) => {}
+            }
+        }
+        // Headquarters: at most one a side, and one on every side if losing
+        // it is meant to matter.
+        let mut sides: Vec<u8> = self.armies.iter().map(|a| a.side).collect();
+        sides.sort_unstable();
+        sides.dedup();
+        for side in sides {
+            let flagged = self
+                .armies
+                .iter()
+                .filter(|a| a.side == side && a.headquarters)
+                .count();
+            if flagged > 1 {
+                report.warnings.push(format!(
+                    "map `{}`: side {side} flags {flagged} armies as headquarters; the first \
+                     declared is the one the net roots at",
+                    self.id
+                ));
+            }
+            if victory.decapitation && flagged == 0 {
+                report.errors.push(format!(
+                    "map `{}`: `victory.decapitation` is set and side {side} flags no army as \
+                     headquarters, so it can never be decapitated",
+                    self.id
+                ));
+            }
         }
     }
 }

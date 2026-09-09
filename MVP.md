@@ -29,14 +29,16 @@ can ask what any number does.
 
 ### A campaign that can be finished
 
-- **A win and a loss the campaign can reach.** `frontier` is a sandbox with
-  a Lua wrapper that hands out funds; nothing declares what winning it is.
-  The design says a side loses its academy or its command unit
-  (TODO, *Units* and *Academy Mode*); the MVP needs one rule written and
-  shown, even if it is "hold the factories on day N".
-- **A campaign half to withdrawal.** An army whose battle half withdrew
-  arrives nowhere. It should arrive somewhere (TODO, *retreating*;
-  command.md chunk 8 built the engine side).
+- ~~**A win and a loss the campaign can reach.**~~ **Done 2026-09-09.**
+  The overworld map declares it: `frontier` is won by holding every factory
+  through a night or by destroying the army flagged `headquarters`, both
+  shown on the banner and named in the log when they fire, and the campaign
+  AI hunts the one and shelters the other (CLAUDE.md, *The campaign's
+  ending*; `tests/campaign.rs`). The command *vehicle* inside that army is
+  the next step (TODO, *Units*).
+- ~~**A campaign half to withdrawal.**~~ **Done 2026-09-09.** An army whose
+  every surviving vehicle left by an exit arrives a hex back — along its
+  orders, or away from the enemy — and the victor takes the vacated ground.
 - **Campaign orders from the map.** The engine takes
   `OverworldOrder::SetMission` with relay; the player has no way to give one
   (TODO, *Chain of Command*). Same for moving units between companies.

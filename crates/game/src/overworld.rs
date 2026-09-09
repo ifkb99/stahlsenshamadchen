@@ -16,7 +16,7 @@ use tactics_core::ai::AiPlanner;
 use tactics_core::battle::SideState;
 use tactics_core::map::MapKind;
 use tactics_core::overworld::{
-    ArmyId, ArmyMission, ArmyUnit, OverworldEvent, OverworldOrder, OverworldState,
+    ArmyId, ArmyMission, ArmyUnit, CampaignEnd, OverworldEvent, OverworldOrder, OverworldState,
     make_overworld_planner,
 };
 use tactics_core::roster::CadetId;
@@ -312,13 +312,7 @@ fn enter_overworld(
     if let Some(mut ow) = existing {
         // Returning from a battle: fold the outcome into the campaign.
         if let Some(outcome) = outcome {
-            let events = ow.state.apply_battle_result(
-                registry,
-                outcome.attacker,
-                outcome.defender,
-                &outcome.survivors,
-                &outcome.losses,
-            );
+            let events = ow.state.apply_battle_result(registry, &outcome);
             let headline = match (outcome.winner, outcome.stalemate) {
                 (Some(w), _) => format!("Battle won by {}.", ow.state.sides[w as usize].name),
                 (None, true) => "Neither side could find the other. Both withdrew.".to_string(),
@@ -818,13 +812,55 @@ fn pump_events(
                 ));
             }
         }
-        OverworldEvent::GameEnded { winner } => match winner {
-            Some(w) => log.push(format!(
-                "Campaign over. {} rules the frontier.",
-                overworld.state.sides[*w as usize].name
-            )),
-            None => log.push("Campaign over. Nobody is left standing."),
-        },
+        // Why as well as who: a campaign that ends is the one line the
+        // player most needs to be able to argue with, and "rules the
+        // frontier" says nothing about whether it was the factories or the
+        // headquarters that decided it.
+        OverworldEvent::GameEnded { winner, reason } => {
+            log.push(campaign_over_line(
+                &overworld.state,
+                &mods.0,
+                *winner,
+                *reason,
+            ));
+        }
+    }
+}
+
+/// The one line that ends a campaign, said by the rule that ended it.
+fn campaign_over_line(
+    state: &OverworldState,
+    registry: &tactics_core::data::DataRegistry,
+    winner: Option<u8>,
+    reason: CampaignEnd,
+) -> String {
+    let Some(w) = winner else {
+        return "Campaign over. Nobody is left standing.".into();
+    };
+    let name = &state.sides[w as usize].name;
+    match reason {
+        CampaignEnd::Elimination => format!("Campaign over. {name} rules the frontier."),
+        CampaignEnd::Decapitation => {
+            format!("Campaign over. The enemy headquarters is gone; {name} rules the frontier.")
+        }
+        CampaignEnd::Held => {
+            let nights = state.victory.hold_days;
+            let ground = state
+                .hold_objective(registry)
+                .map(|o| {
+                    o.trim_start_matches("hold ")
+                        .split(" for ")
+                        .next()
+                        .unwrap_or("ground")
+                        .to_string()
+                })
+                .unwrap_or_else(|| "ground".into());
+            if nights > 1 {
+                format!("Campaign over. {name} held {ground} for {nights} nights.")
+            } else {
+                format!("Campaign over. {name} held {ground} through the night.")
+            }
+        }
     }
 }
 
@@ -1868,6 +1904,40 @@ fn update_owner_dots(
     }
 }
 
+/// The campaign's objective as one line for `side`: "Objective: hold every
+/// Factory (1 of 2); losing headquarters loses". `None` on a map that
+/// declares nothing beyond elimination, so the banner on such a map is the
+/// banner it always was.
+fn objective_line(
+    state: &OverworldState,
+    registry: &tactics_core::data::DataRegistry,
+    side: u8,
+) -> Option<String> {
+    let mut parts = Vec::new();
+    if let (Some(objective), Some((held, total))) = (
+        state.hold_objective(registry),
+        state.hold_progress(registry, side),
+    ) {
+        let nights = state.victory.hold_days;
+        if nights > 1 {
+            parts.push(format!(
+                "{objective} ({held} of {total} held, night {} of {nights})",
+                state.nights_held(side)
+            ));
+        } else {
+            parts.push(format!("{objective} ({held} of {total})"));
+        }
+    }
+    if state.victory.decapitation {
+        parts.push("losing headquarters loses".into());
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(format!("Objective: {}", parts.join("; ")))
+    }
+}
+
 fn update_ui(
     overworld: Res<Overworld>,
     mods: Res<Mods>,
@@ -1882,10 +1952,27 @@ fn update_ui(
     if let Ok(mut text) = hud.banner.single_mut() {
         let side = &state.sides[state.active_side as usize];
         let controller = if side.ai.is_some() { "AI" } else { "You" };
-        text.0 = format!(
+        // What the campaign is *for*, under the day and the money, every
+        // turn: the map's hold rule with how much of it this side has, and
+        // whether the headquarters is at stake. A rule the player cannot see
+        // is a rule she cannot play toward, and a campaign that has ended
+        // says so here rather than only in a log line that scrolls away.
+        let mut banner = format!(
             "Day {} - {} ({controller}) - Funds {}",
             state.turn, side.name, side.funds
         );
+        if let Some(line) = objective_line(state, &mods.0, state.active_side) {
+            banner.push('\n');
+            banner.push_str(&line);
+        }
+        if let Some(winner) = state.over {
+            banner.push('\n');
+            banner.push_str(&match winner {
+                Some(w) => format!("CAMPAIGN OVER - {} wins", state.sides[w as usize].name),
+                None => "CAMPAIGN OVER - nobody wins".to_string(),
+            });
+        }
+        text.0 = banner;
     }
     if let Ok(mut text) = hud.log_text.single_mut() {
         text.0 = log.0.iter().cloned().collect::<Vec<_>>().join("\n");
@@ -1909,13 +1996,24 @@ fn update_ui(
         let mut lines = vec![
             army.name.clone(),
             format!("Side: {}", state.sides[army.side as usize].name),
-            format!(
-                "Movement: {} ({} hexes){}",
-                mods.0.scale.format_overworld_distance(army.movement),
-                army.movement,
-                if army.moved { " (spent)" } else { "" }
-            ),
         ];
+        // Said on the army, not only drawn over it: the chevron on the map
+        // marks where the net roots, and this says what that costs — under a
+        // decapitation rule the same army is the one whose loss ends the
+        // campaign, which is worth a sentence next to its roster.
+        if army.headquarters {
+            lines.push(if state.victory.decapitation {
+                "Headquarters - lose it and the campaign is lost".into()
+            } else {
+                "Headquarters".into()
+            });
+        }
+        lines.push(format!(
+            "Movement: {} ({} hexes){}",
+            mods.0.scale.format_overworld_distance(army.movement),
+            army.movement,
+            if army.moved { " (spent)" } else { "" }
+        ));
         // Standing orders and the wire, above the roster: what an army has
         // been told and whether it can be told anything else are the two
         // facts a player picks a move on.

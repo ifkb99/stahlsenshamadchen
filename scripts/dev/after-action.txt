@@ -9,16 +9,18 @@
 # campaign to come back to.
 #
 # frontier puts Kuhlmann's 1st Company at offset [1, 1] -> axial (1, 1) and
-# the Valkyrie Vanguard at [12, 1] -> axial (12, 1). Eleven hexes and four
-# hexes of movement a day, so this marches east three days and runs into
-# whatever the Valkyries have brought west.
+# the 2nd Company at [1, 7] -> axial (-2, 7). Day one moves the 1st Company
+# east; day two sends the 2nd Company down the southern highway, which is
+# the road the Valkyrie Reserve comes up for the western factory. What day
+# they meet on is the AI's business, so from there the tour waits on the
+# game: `press Enter until` somebody engages, until the battle screen is
+# listening, and until the campaign holds the screen with the report.
 #
-# The three Enters that end the marching days are spaced by `wait` rather
+# The Enters that end the two scripted days are spaced by `wait` rather
 # than `until idle`, which is the one place here a stopwatch is the right
 # tool: they are keystrokes being spaced, not a simulation being waited on,
 # and a campaign day settles in well under a second. Everything that is
-# actually waiting on the game — the rounds of the battle, and the report at
-# the end of it — uses `until`.
+# actually waiting on the game uses `until` or `press … until`.
 
 at 3.0
 shot /tmp/aa-01-campaign.png
@@ -36,93 +38,37 @@ key Enter
 wait 4.0
 
 # Day two, from where she stopped.
-hex 5,1
+# Day 2: 2nd Company down the southern highway toward the western factory.
+# The Valkyrie Reserve comes up that road for the same factory, so the two
+# meet on it within a few days. Everything about *when* is left to the
+# loops below: the tour waits for the engagement rather than for a day.
+hex -2,7
 wait 0.5
 click left
 wait 0.5
-hex 9,1
-wait 0.5
-click left
-wait 1.0
-key Enter
-wait 4.0
-
-# Day three: into contact. If the Valkyries have already come west this walks
-# straight onto them; if not, another day or two of Enters does it.
-hex 9,1
-wait 0.5
-click left
-wait 0.5
-hex 12,1
+hex 2,6
 wait 0.5
 click left
 wait 1.0
 key Enter
 wait 4.0
-key Enter
-wait 4.0
-key Enter
-wait 4.0
-
-# From here one keystroke does double duty, which is why the tour is written
-# this way rather than as two labelled halves: on the campaign map Enter ends
-# the day, and once the two columns have run into each other the same key
-# commits a round of the battle that started. So the tour presses Enter and
-# waits for the game to settle, over and over, and does not need to know which
-# screen it is on.
-#
-# There is deliberately no muster shot. Whether the prompt appears at all
-# depends on whether anybody was near enough to join, and on this map on this
-# day nobody was — the battle starts directly. A tour that insisted on
-# photographing it would fail for a reason that is not a defect.
-
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
-key Enter
-until idle 90
+# End turns until somebody engages somebody, then press through the muster
+# prompt and every round of the battle until the campaign reports it.
+press Enter until log "engages" 400
+# Contact puts the muster prompt up when a neighbour could join, and Enter
+# on it is "fight"; with nobody to ask the battle simply starts. Either way,
+# press until the battle screen is listening, then commit rounds until the
+# campaign holds the screen again, which is the after-action page — the
+# battle screen never holds it on Enter.
+press Enter until idle 60
+press Enter until waiting 400
 
 # ...and back to the campaign, where the bill is waiting. This is the shot
 # this tour exists for: named cadets, what happened to each, and a campaign
 # that has stopped to say so instead of narrating it past in among the tile
 # income at three lines a second.
-until waiting 180
-expect log "Battle"
+expect waiting
+expect log "Day"
 shot /tmp/aa-04-after-action.png
 
 # One key dismisses it and the campaign runs on.

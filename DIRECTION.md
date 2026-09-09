@@ -781,3 +781,18 @@ when somebody sweeps it, and a sweep needs an instrument.
   doctrine that actually orders a movement to contact — and it belongs beside
   the terrain-varied-arena item, which is the same finding arrived at from the
   map side rather than the roster side.
+
+- **2026-09-09** — MVP.md written at the close of the one-currency arc, and
+  the first campaign chunk landed the same day: the overworld map says what
+  winning it is (`victory`: every factory held through a night, or the
+  headquarters army destroyed), a withdrawn army arrives a hex back, and the
+  campaign AI hunts the enemy's headquarters and shelters its own. The
+  designer's ruling on the leader was *an army, then the vehicle inside it*,
+  chosen because it works under the gentle rules and because
+  `senior_army` was already the one function to change. Three delegated
+  chunks merged beside it: the headless field-battle-into-roster test, the
+  nightly headless tours job (207 s for eleven tours on this machine), and a
+  battlefield per campaign terrain with the link as `TerrainDef::battlefield`
+  data. Worth carrying forward from the last of those: `battle_forest` now
+  reads 28.5% west over 288 battles, −7.3 sd, where August had it at 45.8%;
+  the map did not change, the currency did, and nobody has yet asked why.
