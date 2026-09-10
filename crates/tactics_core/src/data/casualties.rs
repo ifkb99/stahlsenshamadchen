@@ -57,7 +57,31 @@ pub struct Casualties {
     /// Chance in 100 that a wound is bad enough to be fatal where the
     /// campaign allows it. With permadeath off this is the long-recovery
     /// case instead — the same roll, a gentler consequence.
+    ///
+    /// This one prices a cadet pulled out of a vehicle that did not come
+    /// home. What happens to one found hurt in a seat that did is
+    /// [`Self::carried_fatal_percent`], and they were the same number until
+    /// the attrition table could ask what each of them cost.
     pub severe_percent: i32,
+    /// Chance in 100 that a cadet carried home out of the fight — knocked
+    /// out at her station in a vehicle that survived — dies of it, where the
+    /// campaign allows anyone to.
+    ///
+    /// Its own number rather than [`Self::severe_percent`] because the two
+    /// price situations the rest of this file is at pains to keep apart. The
+    /// wreck case has to guess what became of her from what killed the
+    /// vehicle; this one is a cadet somebody carried to a doctor within the
+    /// hour, in a tank that drove home. Sharing one probability said those
+    /// were equally survivable, which nothing else in the model believes —
+    /// and, being one number, it could not be argued with: no sweep could
+    /// separate what a wreck costs from what a homecoming does.
+    ///
+    /// Defaults to the value it was sharing, so content that says nothing is
+    /// the game exactly as it was. Zero is the rule's absence: a cadet whose
+    /// vehicle came home is never killed by the campaign, whatever else it
+    /// allows.
+    #[serde(default = "default_carried_fatal")]
+    pub carried_fatal_percent: i32,
     /// Days out for a severe wound, inclusive.
     pub severe_days: [u32; 2],
     /// Days out for an ordinary one.
@@ -87,12 +111,19 @@ impl Default for Casualties {
             adrift_percent: 25,
             adrift_days: [1, 3],
             severe_percent: 25,
+            carried_fatal_percent: default_carried_fatal(),
             severe_days: [5, 10],
             light_days: [1, 4],
             carried_days: [3, 8],
             grazed_days: [1, 4],
         }
     }
+}
+
+/// What [`Casualties::carried_fatal_percent`] was worth before it was its own
+/// field: the same roll a wreck's wound is priced by.
+fn default_carried_fatal() -> i32 {
+    25
 }
 
 impl Casualties {

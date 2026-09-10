@@ -272,7 +272,10 @@ pub fn resolve_crew_fate(
 /// Deliberately much gentler than the destroyed case, and never fatal on its
 /// own without permadeath: her tank came home, so somebody got her to a
 /// doctor within the hour. There is no [`CrewFate::Lost`] here at all — she
-/// did not have to walk back.
+/// did not have to walk back. How much gentler is
+/// [`Casualties::carried_fatal_percent`], which is a separate number from the
+/// wreck case's [`Casualties::severe_percent`] precisely because "carried
+/// home" and "dragged out of a fire" are not one situation.
 pub fn resolve_station_fate(
     rules: CasualtyRules,
     table: &Casualties,
@@ -289,7 +292,11 @@ pub fn resolve_station_fate(
             days: rng.random_range(Casualties::days(table.grazed_days)),
         },
         CrewCondition::Out => {
-            let fatal = rules.permadeath && rng.random_range(0..100) < table.severe_percent;
+            // `carried_fatal_percent`, not `severe_percent`: what a wreck's
+            // wound costs is a different question from what a homecoming
+            // does, and until they were two numbers a fifth of everybody the
+            // shipped campaign buried was a cadet whose tank drove back.
+            let fatal = rules.permadeath && rng.random_range(0..100) < table.carried_fatal_percent;
             if fatal {
                 CrewFate::Killed
             } else {

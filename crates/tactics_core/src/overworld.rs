@@ -81,6 +81,73 @@ pub struct CrewLoss {
     pub found: Option<crate::battle::CrewCondition>,
 }
 
+impl CrewLoss {
+    /// Everyone a finished battle hurt, in the two kinds it hurts people.
+    ///
+    /// Pure over the battle, and in this crate rather than in the one that
+    /// runs the field battle because it is the *campaign's* question — who
+    /// does the academy have to account for — and because two callers now ask
+    /// it. The game crate builds a [`BattleReport`] with it when a field
+    /// battle ends; the balance harness asks it of battles nobody is playing,
+    /// to find out what the casualty table costs a school. A second reading
+    /// of "who is a casualty" written beside either one would be a second
+    /// game, and the harness would eventually be measuring it.
+    ///
+    /// The two kinds are genuinely different questions and only [`Self::found`]
+    /// tells them apart:
+    ///
+    /// - **Her vehicle did not come home.** Nobody looked in the seat, so
+    ///   what became of her has to be worked out from what killed it —
+    ///   `killed_by` and the chassis's `safety`, through
+    ///   [`crate::roster::resolve_crew_fate`].
+    /// - **She was hurt at her station in a vehicle that did.** The battle
+    ///   tracked her condition seat by seat all fight and has already
+    ///   answered whether she is hurt; all that is left is how long it keeps
+    ///   her out ([`crate::roster::resolve_station_fate`]). This half used to
+    ///   be thrown away at the door, so a gunner knocked out in the first
+    ///   round of a battle her side won was fit again by the time the
+    ///   campaign screen drew.
+    ///
+    /// [`crate::battle::CrewCondition::Absent`] is skipped for the reason it
+    /// exists: she was in the infirmary before this battle started and is not
+    /// a casualty of it.
+    pub fn in_battle(state: &crate::battle::BattleState) -> Vec<Self> {
+        use crate::battle::CrewCondition;
+        let mut losses = Vec::new();
+        for unit in state.lost_units() {
+            for cadet in &unit.crew {
+                losses.push(Self {
+                    cadet: *cadet,
+                    vehicle: unit.vehicle.clone(),
+                    killed_by: unit.last_hit_by,
+                    found: None,
+                });
+            }
+        }
+        // `surviving_units`, not `alive_units`: a crew that drove off the map
+        // by an exit came home too, and a cadet wounded aboard her is owed the
+        // same look in the seat.
+        for unit in state.surviving_units() {
+            for (seat, cadet) in unit.crew.iter().enumerate() {
+                let found = unit.crew_state.get(seat).copied();
+                if !matches!(
+                    found,
+                    Some(CrewCondition::Wounded) | Some(CrewCondition::Out)
+                ) {
+                    continue;
+                }
+                losses.push(Self {
+                    cadet: *cadet,
+                    vehicle: unit.vehicle.clone(),
+                    killed_by: unit.last_hit_by,
+                    found,
+                });
+            }
+        }
+        losses
+    }
+}
+
 /// What an army has been told to do, until it is told something else.
 ///
 /// The campaign half of the vocabulary [`crate::battle::Mission`] speaks on

@@ -19,8 +19,8 @@ use std::sync::Arc;
 use tactics_core::Hex;
 use tactics_core::ai::{AiConfig, AiDriver, SideCommand, make_battle_planner};
 use tactics_core::battle::{
-    BattleState, CrewCondition, EndReason, Event as BattleEvent, Fate, FireIntent, Formation,
-    FormationId, Latitude, Mission, Order, SideState, Unit, UnitId, reachable,
+    BattleState, EndReason, Event as BattleEvent, Fate, FireIntent, Formation, FormationId,
+    Latitude, Mission, Order, SideState, Unit, UnitId, reachable,
 };
 use tactics_core::map::{ObjectiveKind, UnitPlacement};
 use tactics_core::overworld::ArmyId;
@@ -3399,51 +3399,11 @@ fn battle_outcome(state: &BattleState, field: &FieldBattle) -> BattleOutcome {
         });
     }
 
-    // Everyone the battle hurt, in two kinds.
-    //
-    // First, everyone who was aboard something that burned. The battle
-    // reports who and what killed it; the campaign decides what that
-    // cost them, because whether this game kills its characters is a
-    // campaign rule.
-    let mut losses = Vec::new();
-    for unit in state.lost_units() {
-        for cadet in &unit.crew {
-            losses.push(CrewLoss {
-                cadet: *cadet,
-                vehicle: unit.vehicle.clone(),
-                killed_by: unit.last_hit_by,
-                found: None,
-            });
-        }
-    }
-    // ...and then everyone who was hurt at her station in a vehicle that
-    // came home. This half used to be thrown away at the door: the
-    // battle tracked each cadet's condition seat by seat all fight, and
-    // then the only casualties the campaign ever heard about were the
-    // crews of destroyed vehicles. A gunner knocked out on the first
-    // round of a battle her side won was fit again by the time the
-    // campaign screen drew, which is the wound system having no teeth in
-    // the most literal possible sense.
-    //
-    // `Absent` is skipped for the reason it exists: she was in the
-    // infirmary before this battle started and is not a casualty of it.
-    for unit in state.surviving_units() {
-        for (seat, cadet) in unit.crew.iter().enumerate() {
-            let found = unit.crew_state.get(seat).copied();
-            if !matches!(
-                found,
-                Some(CrewCondition::Wounded) | Some(CrewCondition::Out)
-            ) {
-                continue;
-            }
-            losses.push(CrewLoss {
-                cadet: *cadet,
-                vehicle: unit.vehicle.clone(),
-                killed_by: unit.last_hit_by,
-                found,
-            });
-        }
-    }
+    // Everyone the battle hurt, in two kinds: pulled out of a wreck, and
+    // found hurt in a seat that came home. The reading lives in the core
+    // crate beside the campaign that has to live with it, so the harness
+    // asks the same question this does.
+    let losses = CrewLoss::in_battle(state);
     // An army whose every surviving vehicle drove off by an exit has
     // withdrawn: it is not beaten, and it is not here. An army that lost
     // everything has not withdrawn, whatever else it did, and neither has

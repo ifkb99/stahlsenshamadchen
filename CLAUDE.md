@@ -82,7 +82,7 @@ the game. `--sim` fights whole battles. The rules for reading it:
   like noise.
 - **`--only <tables>`** prints just the ones named (`roster`, `detect`, `hit`,
   `pen`, `kills`, `flight`, `flags`, `sim`, `delegation`, `mustered`, `skill`,
-  `ground`). `--csv` emits everything long-form. Every table that fights
+  `ground`, `attrition`). `--csv` emits everything long-form. Every table that fights
   battles goes through `Grid` and `fought_grids`, one list called by both the
   single run and the sweep — a table added to only one would quietly stop
   being swept.
@@ -116,6 +116,20 @@ the game. `--sim` fights whole battles. The rules for reading it:
   from her, settled by the coordinate the invariants allow to go last — a
   coin, not a defect) or *different key* (a rule read the compass). Both
   arenas come back with nothing but the coin.
+- **`attrition` is the only table that reads the door rather than the
+  battlefield**: it fights the same battles and then hands the wrecks to
+  `CrewLoss::in_battle` and the campaign's own `resolve_crew_fate` /
+  `resolve_station_fate`, so the `casualties` block is finally a block
+  somebody can ask a question about. Its two rows are the same list of
+  casualties resolved under both settings of `CasualtyRules::permadeath` — a
+  campaign rule, not a mod number — so the difference between them is what
+  turning it on costs. Each casualty is resolved `FATE_DRAWS` (16) times,
+  because the death rate's own dice wander further than the difference
+  between two candidate values of `severe_percent`; the *sample of wrecks* is
+  one battle's and nothing is averaged about it. `buried` and `absent` are
+  cadets killed and cadet-days lost, per battle **per side**; the note's
+  per-hull figures are the ones that carry to a campaign, since these maps
+  field about twice the hulls a campaign army marches with.
 - **Mustered forces** is the one table that buys its own army per doctrine at
   a points budget (`tactics_core::force::muster`), recognising roles off the
   chassis. It pays the asking price rather than hunting value per point, on
@@ -785,7 +799,19 @@ on a mission key.
   `CrewCondition::aboard()` / `fighting()`, never by matching the variant.
 - **`CrewLoss::found`** distinguishes a vehicle that did not come home
   (`resolve_crew_fate`) from a cadet found wounded in one that did
-  (`resolve_station_fate`, gentler, never `Lost`).
+  (`resolve_station_fate`, gentler, never `Lost`). **`CrewLoss::in_battle` is
+  the one reading of who a battle hurt**, in core beside the campaign that
+  has to live with it; the game crate's `battle_outcome` and the `attrition`
+  table both call it, and a second reading written beside either would be a
+  second game.
+- **The two fatal chances are two numbers.** `severe_percent` prices a wound
+  taken in a vehicle that did not come home; `carried_fatal_percent` prices a
+  cadet carried out of one that did, and they were one field until the
+  `attrition` table could ask what each cost (one cadet in nine the shipped
+  numbers buried came home in her own tank). It defaults to the 25 it was
+  sharing, so content that says nothing is unchanged, and **zero is the
+  rule's absence** — a cadet whose vehicle came home is never killed,
+  whatever else the campaign allows.
 - **The casualty numbers are `casualties` in `mod.json`.** A harsh campaign
   is a mod.
 - **One cadet, one seat.** `OverworldState::from_map` enlists each character
