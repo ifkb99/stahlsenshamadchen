@@ -1147,11 +1147,11 @@ four seeds, after the ladder scaled by damage spent (2026-09-09):
 
 | | |
 | --- | --- |
-| round resolution | 1.96 ms (was 1.84 after Wave 1, 1.59 after Phase 2, 1.49 the same day on the same machine) |
-| `reachable()` per call | 15.4 µs |
-| `roads()` per call | 108.7 µs |
-| `unit_vision` per unit, cold | 90.8 µs (94.4 the run before: the machine is comparable) |
-| utility order | 0.08 ms |
+| round resolution | 1.47 ms (1.96 before `substitution_penalty` went to 6 — this row moves with how well the AI plays, and every partial crew on `river_crossing` now has a stand-in in a seat; 1.84 after Wave 1, 1.59 after Phase 2) |
+| `reachable()` per call | 16.3 µs |
+| `roads()` per call | 118.8 µs |
+| `unit_vision` per unit, cold | 89.2 µs (90.8 the run before: the machine is comparable) |
+| utility order | 0.09 ms |
 | mcts order, difficulty 3 / 4 | 1.84 s / 4.24 s (not re-measured since Wave 1) |
 
 `reachable` and `roads` measure work *in a particular game state*; they moved
