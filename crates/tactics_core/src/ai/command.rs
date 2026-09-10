@@ -336,6 +336,7 @@ impl SideCommand {
                     registry,
                     registry.vehicle(&u.vehicle),
                     &u.crew,
+                    &u.crew_state,
                     &rules.review.skill,
                     state.terrain_at(u.pos),
                 )

@@ -62,14 +62,27 @@ can ask what any number does.
   a vehicle that survived is never killed (`carried_fatal_percent: 0`, one
   grave in nine under the first draft). A binding order can now kill a crew
   who would have lived, so the player is authoring the loss.
-- **The wound system still has no teeth the player can see.** The table's
-  real finding: an academy pays far more in absence than in graves — 19
-  cadet-days a battle under the gentle rule — and a cadet who is not `Ready`
-  is silently left out of her seat, in a tank that then fights short and dies
-  about twice as fast. The muster choice below is what shows her that.
-- **A muster choice for the wounded.** A wounded or lost cadet is kept out
-  of her seat at spawn, but the player is never shown it or offered a
-  choice (TODO, same item).
+- ~~**The wound system has no teeth the player can see.**~~ **Done
+  2026-09-10**, and the tooth turned out to be somewhere else. The new
+  `balance --only seats` table fights the five battle maps with one side a
+  seat short, from both ends so the map cancels, and says an empty seat cost
+  *nothing a battlefield could see*: 49.0% against a control of 49.0 over 288
+  battles, with hulls lost and battle length flat. Nor was it the substance —
+  at a stand-in's penalty of 0 the rows are 50.0 and 50.0. The whole cost of
+  a short crew is `balance.substitution_penalty`, a first-draft 2 that
+  nothing had ever measured; the designer's ruling is **6**, where a seat
+  short is worth nine points of win rate and a crew missing somebody starts
+  losing more tanks. A wound is now charged at her station too — `Out` and
+  `Absent` stop working the seat, `Wounded` works it at that penalty — which
+  is what makes the number reach a battle nobody deployed hurt to.
+- ~~**A muster choice for the wounded.**~~ **Done 2026-09-10.** The muster
+  names who is standing down, the tank she is not climbing into and how long
+  she is out, and `A`-`H` calls her up to ride hurt. What the table could not
+  find is a battlefield reason to: standing her down and calling her up are
+  within noise of each other at every penalty swept, and what separates them
+  is the bill — 10.3 cadets pulled from wrecks against 15.3. It ships on
+  those terms, the designer's ruling: a decision about somebody you know
+  rather than about a win rate, with the page saying so in as many words.
 - **Allies boost morale** — the designer's ask of 2026-09-09, mechanism
   unwritten (TODO, *Combat Sim*).
 - **The three things the currency still cannot say**: the four bare

@@ -15371,6 +15371,17 @@ fn stage_with_a_wounded_girl(
     crew: &[&str],
     hurt: &[usize],
 ) -> (BattleState, UnitId) {
+    stage_with_the_hurt(reg, crew, hurt, &[])
+}
+
+/// ...and with `called` among them put on the roll anyway, which is the
+/// muster's answer.
+fn stage_with_the_hurt(
+    reg: &DataRegistry,
+    crew: &[&str],
+    hurt: &[usize],
+    called: &[usize],
+) -> (BattleState, UnitId) {
     let (state, ours) = crewed_stage(reg, crew);
     // Mark the roster, then rebuild: `who_deploys` reads the roster at spawn,
     // which is the only moment the question is asked.
@@ -15380,6 +15391,7 @@ fn stage_with_a_wounded_girl(
         roster.get_mut(ids[*seat]).unwrap().status =
             tactics_core::roster::CadetStatus::Wounded { days: 3 };
     }
+    let roster = roster.mustered(&called.iter().map(|seat| ids[*seat]).collect::<Vec<_>>());
     let rows = vec!["g".repeat(12), "g".repeat(12), "g".repeat(12)];
     let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
         "id": "crewed_stage",
@@ -15474,6 +15486,93 @@ fn a_girl_in_the_infirmary_does_not_climb_in() {
         whole + 2,
         full,
         "her seat leaves the reckoning entirely rather than counting as a loss"
+    );
+}
+
+/// ...unless her academy calls her up, and then she rides with her wound.
+///
+/// The muster's answer, and the only choice the campaign offers about a
+/// wound. Standing her down leaves the seat empty: her two points of
+/// substance leave the reckoning entirely, and somebody covers her station at
+/// the substitution penalty. Calling her up puts her back in it hurt — a
+/// point of substance instead of two, a crew that reads as already knocked
+/// about, and her own hands on her own instrument, worse than they were but
+/// better than the commander reaching over from a lower base.
+///
+/// Nobody called up is the game exactly as it was, which is the rule every
+/// harsh system in this project is built to satisfy: `called_up` is false on
+/// every cadet the campaign owns, and only the copy of the roster a muster
+/// hands one battle ever carries it.
+#[test]
+fn a_cadet_her_academy_calls_up_rides_with_her_wound() {
+    use tactics_core::battle::CrewCondition;
+
+    let reg = registry();
+    let crew = ["anka", "mina", "juno"];
+    let (stood_down, ours) = stage_with_the_hurt(&reg, &crew, &[1], &[]);
+    let (called, _) = stage_with_the_hurt(&reg, &crew, &[1], &[1]);
+
+    assert_eq!(
+        called.unit(ours).unwrap().crew_state.get(1).copied(),
+        Some(CrewCondition::Wounded),
+        "called up, she is at her station and hurt: {:?}",
+        called.unit(ours).unwrap().crew_state
+    );
+    assert_eq!(
+        called.fighting_crew(called.unit(ours).unwrap()),
+        3,
+        "three cadets in a three-seat tank, one of them hurt"
+    );
+
+    // She is worth half of herself in the reckoning, which is the price of
+    // riding: her tank is a point harder to finish than the short-handed one
+    // and starts the battle looking as though somebody has already been at it.
+    let (have, whole) = called.substance(&reg, called.unit(ours).unwrap());
+    let (short, empty) = stood_down.substance(&reg, stood_down.unit(ours).unwrap());
+    assert_eq!(have, short + 1, "a hurt cadet aboard is worth one point");
+    assert_eq!(whole, empty + 2, "and her seat is back in the denominator");
+    assert!(
+        called.condition(&reg, called.unit(ours).unwrap()) < 1.0,
+        "a crew with somebody hurt aboard is not a whole crew"
+    );
+    assert_eq!(
+        stood_down.condition(&reg, stood_down.unit(ours).unwrap()),
+        1.0,
+        "an empty seat is still not damage"
+    );
+}
+
+/// ...and nothing that happens to the tank she is not in happens to her.
+///
+/// The half of the rule that was asserted in prose and checked nowhere. A
+/// cadet left behind is still listed in `Unit::crew` — she has to be, or the
+/// campaign would take back a crew list she had been deleted from — and the
+/// wreck loop walked that list without asking who was actually aboard. So a
+/// gunner recovering in the infirmary could be pulled out of a burning tank
+/// four kilometres away, roll `resolve_crew_fate` against what killed it,
+/// and be buried by the same campaign that had her signed in sick that
+/// morning. The other direction was just as wrong: an `Unharmed` roll wrote
+/// `Ready` straight over her recovery and cured her.
+#[test]
+fn a_cadet_who_stayed_in_the_infirmary_is_no_casualty_of_the_battle_she_missed() {
+    use tactics_core::battle::{Destruction, Fate};
+    use tactics_core::overworld::CrewLoss;
+
+    let reg = registry();
+    let crew = ["anka", "mina", "juno"];
+    let (mut state, ours) = stage_with_a_wounded_girl(&reg, &crew, &[1]);
+    let missing = state.unit(ours).unwrap().crew[1];
+    state.unit_mut(ours).unwrap().fate = Fate::Destroyed(Destruction::BrewedUp);
+
+    let losses = CrewLoss::in_battle(&state);
+    assert_eq!(
+        losses.len(),
+        2,
+        "the two who were in the tank are the two the campaign has to account for: {losses:?}"
+    );
+    assert!(
+        !losses.iter().any(|loss| loss.cadet == missing),
+        "she was in the infirmary and the wreck loop pulled her out of it anyway"
     );
 }
 

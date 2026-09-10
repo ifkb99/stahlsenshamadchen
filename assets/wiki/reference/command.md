@@ -59,9 +59,9 @@ build on them rather than hedge:
   and a campaign takes its stakes from the content it was built out of. The
   gentle mod turning it off remains a first-class way to play, and is a
   `casualties` block rather than an edit to the engine — which is what made
-  the flip legal. What this asked for and has not got is the muster screen:
-  a wounded cadet is already left out of her seat, but nothing shows the
-  player the choice.
+  the flip legal. The muster screen this asked for arrived the same day: it
+  names who is standing down, the tank she is not climbing into and how long
+  she is out, and `A`-`H` calls her up to ride hurt.
 - **The enemy AI is a character.** Doctrine already makes two sides fight
   differently; the brain should go further and be *somebody* — the enemy
   commander is a cadet in the roster, and her doctrine, initiative and traits
@@ -1074,7 +1074,10 @@ Carried deliberately, none blocking chunks 1–2:
   additivity rule backwards. Half the teeth this asked for exist (`who_deploys`
   leaves a wounded cadet out of her seat, and her tank fights short); the
   muster screen that shows the player the choice is still owed, and the
-  designer ruled the flip should not wait for it.
+  designer ruled the flip should not wait for it. **It arrived later the same
+  day**, along with the discovery that the other half of the teeth was not
+  there either: a tank fighting short was worth 49.0% against a control of
+  49.0 until `balance.substitution_penalty` went from 2 to 6.
 
   The tuning pass happened first, on a new instrument: `balance --only
   attrition --sim` fights the battle maps and then resolves every casualty

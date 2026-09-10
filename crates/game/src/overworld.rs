@@ -743,9 +743,27 @@ fn pump_events(
                 }
             }
 
-            if choices.is_empty() {
-                if !joiners.is_empty() {
-                    log.push(format!("{} more armies join the fight.", joiners.len()));
+            let muster = Muster {
+                attacker: *attacker,
+                defender: *defender,
+                side: human.unwrap_or(attacker_side),
+                attacking: human == Some(attacker_side),
+                choices: choices.into_iter().map(|id| (id, true)).collect(),
+                called_up: Vec::new(),
+                ai_joiners: joiners,
+                map_id,
+            };
+            // Two things can be decided here and either is reason enough to
+            // stop: who joins, and who rides hurt. A fight nobody can
+            // reinforce and nobody is missing from is one the player has
+            // nothing to say about, and stopping for it would be a page she
+            // learns to dismiss without reading.
+            if muster.choices.is_empty() && standing_down(&overworld.state, &muster).is_empty() {
+                if !muster.ai_joiners.is_empty() {
+                    log.push(format!(
+                        "{} more armies join the fight.",
+                        muster.ai_joiners.len()
+                    ));
                 }
                 launch_battle(
                     &mut commands,
@@ -753,22 +771,15 @@ fn pump_events(
                     &mut next,
                     &mut log,
                     registry,
-                    *attacker,
-                    *defender,
-                    &joiners,
-                    map_id,
+                    muster.attacker,
+                    muster.defender,
+                    &muster.ai_joiners,
+                    &[],
+                    muster.map_id,
                 );
             } else {
                 // Hold the campaign here until the player has mustered.
-                overworld.muster = Some(Muster {
-                    attacker: *attacker,
-                    defender: *defender,
-                    side: human.unwrap_or(attacker_side),
-                    attacking: human == Some(attacker_side),
-                    choices: choices.into_iter().map(|id| (id, true)).collect(),
-                    ai_joiners: joiners,
-                    map_id,
-                });
+                overworld.muster = Some(muster);
             }
         }
         OverworldEvent::ArmyDestroyed { army } => {
@@ -1046,9 +1057,60 @@ struct Muster {
     attacking: bool,
     /// Candidate armies and whether each is currently marked to join.
     choices: Vec<(ArmyId, bool)>,
+    /// Cadets the player has put on the roll in spite of their condition.
+    ///
+    /// Kept as the answer rather than as a list of candidates, because who is
+    /// even *asked* depends on which armies are joining and that changes
+    /// under the player's hands. [`standing_down`] derives the question every
+    /// frame; this is only what she has said about it.
+    called_up: Vec<CadetId>,
     /// Reinforcements the other side already committed.
     ai_joiners: Vec<ArmyId>,
     map_id: String,
+}
+
+/// Who is on the roll for this fight and not fit to be, in cadet-id order.
+///
+/// Derived every frame rather than stored, for the reason the academy roll is:
+/// the answer depends on which armies the player has just decided to bring,
+/// and a cached list is stale exactly at the moment she looks at it. A free
+/// function over plain data so it can be tested without a window.
+///
+/// The dead are not here. A cadet the campaign has buried stays in her
+/// vehicle's crew list — nothing takes her out of it, which is the reserve
+/// screen's job and it does not exist yet — and offering to call her up would
+/// be the worst line this game could print.
+fn standing_down(state: &OverworldState, muster: &Muster) -> Vec<(CadetId, String)> {
+    let principal = if muster.attacking {
+        muster.attacker
+    } else {
+        muster.defender
+    };
+    let joining = muster
+        .choices
+        .iter()
+        .filter(|(_, on)| *on)
+        .map(|(id, _)| *id);
+    let mut out = Vec::new();
+    for id in std::iter::once(principal).chain(joining) {
+        let Some(army) = state.army(id) else {
+            continue;
+        };
+        for unit in &army.units {
+            for cadet in &unit.crew {
+                let Some(cadet) = state.roster.get(*cadet) else {
+                    continue;
+                };
+                if cadet.status.is_ready() || cadet.status.is_permanent() {
+                    continue;
+                }
+                out.push((cadet.id, unit.vehicle.clone()));
+            }
+        }
+    }
+    out.sort_by_key(|(cadet, _)| *cadet);
+    out.dedup_by_key(|(cadet, _)| *cadet);
+    out
 }
 
 /// Commit everyone to the fight and hand it to the battle screen.
@@ -1068,6 +1130,7 @@ fn launch_battle(
     attacker: ArmyId,
     defender: ArmyId,
     joiners: &[ArmyId],
+    called_up: &[CadetId],
     map_id: String,
 ) {
     let sides: Vec<SideState> = state
@@ -1097,9 +1160,12 @@ fn launch_battle(
         }
     }
 
-    // Snapshot of the campaign's cadets. The battle reads it; casualties come
-    // back as events and are applied to the campaign's own copy.
-    let roster = std::sync::Arc::new(state.roster.clone());
+    // Snapshot of the campaign's cadets, and the roll made on it. The battle
+    // reads the copy; casualties come back as events and are applied to the
+    // campaign's own. `mustered` is the only thing that ever writes
+    // `Cadet::called_up`, and it writes it here, so the player's answer for
+    // this fight cannot still be standing at the next one.
+    let roster = std::sync::Arc::new(state.roster.mustered(called_up));
     if let Some(problem) = crate::battle::field_battle_problem(
         registry,
         &map_id,
@@ -1134,7 +1200,10 @@ fn muster_input(
     mut log: ResMut<OwLogLines>,
     keys: Res<ButtonInput<KeyCode>>,
 ) {
-    let Some(muster) = overworld.muster.as_mut() else {
+    // The two fields are borrowed apart on purpose: the answer being edited
+    // lives in one and the question it is about is derived from the other.
+    let Overworld { state, muster, .. } = &mut *overworld;
+    let Some(muster) = muster.as_mut() else {
         return;
     };
 
@@ -1164,6 +1233,40 @@ fn muster_input(
             choice.1 = true;
         }
     }
+
+    // Letters, because the digits are spoken for by the armies and `M`/`N`
+    // by all-and-none. The list they index is derived from the armies now
+    // joining, so it is recomputed here rather than remembered — a key that
+    // meant Rosa before the player added a company must not mean Elsa after.
+    let roll = standing_down(state, muster);
+    const LETTERS: [KeyCode; CALL_UP_KEYS] = [
+        KeyCode::KeyA,
+        KeyCode::KeyB,
+        KeyCode::KeyC,
+        KeyCode::KeyD,
+        KeyCode::KeyE,
+        KeyCode::KeyF,
+        KeyCode::KeyG,
+        KeyCode::KeyH,
+    ];
+    for (i, key) in LETTERS.iter().enumerate().take(roll.len()) {
+        if keys.just_pressed(*key) {
+            let cadet = roll[i].0;
+            match muster.called_up.iter().position(|id| *id == cadet) {
+                Some(at) => {
+                    muster.called_up.remove(at);
+                }
+                None => muster.called_up.push(cadet),
+            }
+        }
+    }
+    // A cadet who was going to ride and whose company has just been left
+    // behind is not riding. Dropping her here rather than at the door keeps
+    // the panel and the answer the same thing.
+    muster
+        .called_up
+        .retain(|id| roll.iter().any(|(cadet, _)| cadet == id));
+
     if !keys.just_pressed(KeyCode::Enter) {
         return;
     }
@@ -1180,6 +1283,11 @@ fn muster_input(
     if !joiners.is_empty() {
         log.push(format!("{} more armies join the fight.", joiners.len()));
     }
+    for id in &muster.called_up {
+        if let Some(cadet) = overworld.state.roster.get(*id) {
+            log.push(format!("{} rides out hurt.", cadet.name));
+        }
+    }
     launch_battle(
         &mut commands,
         &mut overworld.state,
@@ -1189,12 +1297,21 @@ fn muster_input(
         muster.attacker,
         muster.defender,
         &joiners,
+        &muster.called_up,
         muster.map_id,
     );
 }
 
+/// How many of the walking wounded the muster can be asked about at once.
+///
+/// One per letter key. Anybody past the eighth stays behind, which is the
+/// answer that costs nothing, and a school with nine in the infirmary at once
+/// has a bigger problem than this page.
+const CALL_UP_KEYS: usize = 8;
+
 fn update_muster_ui(
     overworld: Res<Overworld>,
+    mods: Res<Mods>,
     mut panel: Query<(&mut Node, &mut Text), With<MusterPanel>>,
 ) {
     let Ok((mut node, mut text)) = panel.single_mut() else {
@@ -1205,8 +1322,20 @@ fn update_muster_ui(
         return;
     };
     node.display = Display::Flex;
+    text.0 = muster_page(&mods.0, &overworld.state, muster).join("\n");
+}
 
-    let state = &overworld.state;
+/// The muster page, as lines.
+///
+/// Pure over plain data, for the same reason `panel::format_danger` is: a
+/// page that can only be read by starting a window is a page nothing checks,
+/// and this one is now the only place in the game that says what a wound
+/// costs at the moment it costs it.
+fn muster_page(
+    registry: &tactics_core::data::DataRegistry,
+    state: &OverworldState,
+    muster: &Muster,
+) -> Vec<String> {
     let name = |id: ArmyId| {
         state
             .army(id)
@@ -1253,45 +1382,69 @@ fn update_muster_ui(
             }
         ));
     }
-    // Who is not coming, and why. The other end of the after-action report:
-    // the debrief says what a battle cost and this is where that cost is
-    // actually paid, which is the only place it can be *felt* — a name
-    // missing from a crew list is an abstraction until the moment you are
-    // about to fight without her.
-    let unavailable: Vec<&tactics_core::roster::Cadet> = state
-        .roster
-        .of_side(muster.side)
-        .filter(|cadet| !cadet.status.is_ready())
-        .collect();
-    if !unavailable.is_empty() {
+    // Who is not coming, and what the player may do about it. The other end
+    // of the after-action report: the debrief says what a battle cost and
+    // this is where that cost is actually paid, which is the only place it
+    // can be *felt* — a name missing from a crew list is an abstraction until
+    // the moment you are about to fight without her.
+    let roll = standing_down(state, muster);
+    if !roll.is_empty() {
         lines.push(String::new());
         lines.push(format!(
-            "{} not fit to deploy:",
-            if unavailable.len() == 1 {
+            "{} not fit, and standing down:",
+            if roll.len() == 1 {
                 "1 cadet".to_string()
             } else {
-                format!("{} cadets", unavailable.len())
+                format!("{} cadets", roll.len())
             }
         ));
-        // Named, and capped: a page that lists twenty names is one nobody
-        // reads, and the count above is the number that matters.
-        for cadet in unavailable.iter().take(4) {
+        // Named, and capped at the letters there are keys for: a page listing
+        // twenty names is one nobody reads, and anybody past the eighth stays
+        // in the infirmary, which is the answer that costs nothing.
+        for (i, (id, vehicle)) in roll.iter().enumerate().take(CALL_UP_KEYS) {
+            let Some(cadet) = state.roster.get(*id) else {
+                continue;
+            };
+            let mark = if muster.called_up.contains(id) {
+                "x"
+            } else {
+                " "
+            };
             lines.push(format!(
-                "  {}{}",
+                "  {}. [{mark}] {} - {}{}",
+                (b'a' + i as u8) as char,
                 cadet.name,
+                registry
+                    .vehicle(vehicle)
+                    .map(|v| v.name.as_str())
+                    .unwrap_or(vehicle.as_str()),
                 match cadet.status.days_out() {
                     Some(0) | None => String::new(),
-                    Some(days) => format!(" ({days} day(s))"),
+                    Some(days) => format!(", {days} day(s)"),
                 }
             ));
         }
-        if unavailable.len() > 4 {
-            lines.push(format!("  ...and {} more", unavailable.len() - 4));
+        if roll.len() > CALL_UP_KEYS {
+            lines.push(format!(
+                "  ...and {} more, staying behind",
+                roll.len() - CALL_UP_KEYS
+            ));
         }
+        lines.push(String::new());
+        // The whole of the trade, in one sentence, because the player cannot
+        // read the harness: her seat is covered either way, and the only
+        // thing calling her up reliably changes is whose name is in the
+        // casualty list afterwards.
+        lines.push("  Called up, she rides hurt: her own station at a".into());
+        lines.push("  penalty, and her name back in the casualty list.".into());
     }
     lines.push(String::new());
-    lines.push("1-9 toggle  M all  N none  Enter fight".into());
-    text.0 = lines.join("\n");
+    lines.push(if roll.is_empty() {
+        "1-9 toggle  M all  N none  Enter fight".into()
+    } else {
+        "1-9 armies  A-H call up  M all  N none  Enter fight".to_string()
+    });
+    lines
 }
 
 /// Enter (or Space) dismisses the after-action report and lets the campaign
@@ -2310,6 +2463,104 @@ mod tests {
         tactics_core::data::DataRegistry::load_dir(&root)
             .expect("mods load")
             .0
+    }
+
+    /// The muster asks about the cadets who are actually going, and about the
+    /// dead it asks nothing at all.
+    ///
+    /// Three promises. It is the *fight's* roll rather than the school's: a
+    /// cadet in the infirmary whose company is nowhere near this battle is
+    /// not a decision anybody is being asked to make, and offering her would
+    /// teach the player to stop reading the page. It follows the armies —
+    /// bring another company and its walking wounded join the question. And
+    /// the dead are never on it, because a cadet the campaign has buried
+    /// stays in her vehicle's crew list until a reserve screen takes her out
+    /// of it, and "call her up anyway" is the worst line this game could
+    /// print.
+    #[test]
+    fn the_muster_asks_about_the_cadets_who_are_going_and_never_about_the_dead() {
+        use tactics_core::roster::CadetStatus;
+
+        let reg = registry();
+        let mut state = OverworldState::from_map(&reg, "frontier", 5).expect("overworld");
+        let armies: Vec<ArmyId> = state.side_armies(0).map(|a| a.id).collect();
+        let (principal, other) = (armies[0], armies[1]);
+        let defender = state.side_armies(1).next().expect("so has he").id;
+
+        // One hurt in the company that is fighting, one in the company that
+        // is not, and one dead in the company that is fighting.
+        let seat = |state: &OverworldState, army, unit: usize, seat: usize| {
+            state.army(army).unwrap().units[unit].crew[seat]
+        };
+        let hurt = seat(&state, principal, 0, 0);
+        let elsewhere = seat(&state, other, 0, 0);
+        let buried = seat(&state, principal, 0, 1);
+        state.roster.get_mut(hurt).unwrap().status = CadetStatus::Wounded { days: 3 };
+        state.roster.get_mut(elsewhere).unwrap().status = CadetStatus::Lost { days: 2 };
+        state.roster.get_mut(buried).unwrap().status = CadetStatus::Dead;
+
+        let mut muster = Muster {
+            attacker: principal,
+            defender,
+            side: 0,
+            attacking: true,
+            choices: vec![(other, false)],
+            called_up: Vec::new(),
+            ai_joiners: Vec::new(),
+            map_id: "battle_plains".into(),
+        };
+
+        let named = |state: &OverworldState, muster: &Muster| -> Vec<String> {
+            standing_down(state, muster)
+                .iter()
+                .map(|(id, _)| state.roster.get(*id).unwrap().name.clone())
+                .collect()
+        };
+        let name = |id| state.roster.get(id).unwrap().name.clone();
+
+        assert_eq!(
+            named(&state, &muster),
+            vec![name(hurt)],
+            "the muster asks about this fight's walking wounded and nobody else"
+        );
+        assert!(
+            !named(&state, &muster).contains(&name(buried)),
+            "the muster offered to call up a cadet the campaign has buried"
+        );
+
+        // Bring the other company and her walking wounded are part of the
+        // question, which is why this is derived rather than remembered.
+        muster.choices[0].1 = true;
+        let with = named(&state, &muster);
+        assert!(
+            with.contains(&name(hurt)) && with.contains(&name(elsewhere)),
+            "a company that joins brings its infirmary with it: {with:?}"
+        );
+
+        // ...and the page says all of it, in the words a player has to act
+        // on: her name, the tank she is not climbing into, how long she is
+        // out, the key that changes her mind, and what it costs.
+        muster.choices[0].1 = false;
+        let page = muster_page(&reg, &state, &muster).join("\n");
+        assert!(
+            page.contains(&format!("a. [ ] {}", name(hurt))),
+            "the page does not offer her:\n{page}"
+        );
+        assert!(
+            page.contains("3 day(s)") && page.contains("A-H call up"),
+            "the page does not say how long or how:\n{page}"
+        );
+        assert!(
+            !page.contains(&name(buried)) && !page.contains(&name(elsewhere)),
+            "the page is asking about somebody it should not be:\n{page}"
+        );
+        muster.called_up.push(hurt);
+        assert!(
+            muster_page(&reg, &state, &muster)
+                .join("\n")
+                .contains(&format!("a. [x] {}", name(hurt))),
+            "calling her up does not show on the page"
+        );
     }
 
     /// The roll accounts for every cadet in the academy exactly once, says

@@ -100,6 +100,35 @@ impl CadetStatus {
             Self::Dead => None,
         }
     }
+
+    /// Which of two answers about the same cadet the campaign keeps: the one
+    /// that keeps her out of a seat longer, and a grave over everything.
+    ///
+    /// A battle's fate is applied by writing it over what she was, which was
+    /// harmless while everybody who could be a casualty of a battle was fit
+    /// when it started. A cadet who is called up rides out hurt, so she can
+    /// come back from one carrying a *shorter* recovery than she went in
+    /// with — the tank she is riding in is destroyed, the wreck roll says
+    /// `Unharmed`, and she is signed fit on the strength of having been shot
+    /// at. She cannot get better by being shot at.
+    ///
+    /// The kinder reading — adding the two together — is wrong for the
+    /// opposite reason: one wound would be charged twice, once by the battle
+    /// that gave it to her and once by the next one she is dragged through.
+    /// The worse of the two is the honest answer: her recovery is at least
+    /// as long as it already was.
+    ///
+    /// A tie between a wound and a walk home keeps `other`, the fresher fact:
+    /// she is on a road somewhere rather than in the infirmary, and that is
+    /// the more recent truth about where she is.
+    pub fn worse_of(self, other: Self) -> Self {
+        let rank = |s: Self| (s.is_permanent(), s.days_out().unwrap_or(0));
+        if rank(self) > rank(other) {
+            self
+        } else {
+            other
+        }
+    }
 }
 
 /// Whether a campaign is willing to kill its characters.
@@ -184,6 +213,28 @@ pub struct Cadet {
     /// others she will pick up from what happens to her.
     #[serde(default)]
     pub traits: Vec<String>,
+    /// Whether her academy has put her on the roll for the battle about to be
+    /// fought in spite of [`Self::status`].
+    ///
+    /// The muster's answer, and the only thing that ever writes it is a
+    /// muster: the campaign hands each battle a *copy* of its roster, and the
+    /// copy is where the roll is made. So this is false on the campaign's own
+    /// cadets between battles, false again the next time somebody is asked,
+    /// and a decision the player makes once does not quietly stand for the
+    /// rest of the war.
+    ///
+    /// It lives on her rather than in an argument to
+    /// [`crate::battle::BattleState::from_placements`] because the question
+    /// it answers — is she climbing in — is asked in exactly one place, which
+    /// reads the roster and nothing else. Threading a list of names through
+    /// five signatures to reach one `if` would have been the same fact in
+    /// five more places.
+    ///
+    /// **False is the game as it was**, which is the rule this whole
+    /// subsystem is built to satisfy: an academy that never calls anybody up
+    /// leaves every wounded cadet exactly where she was.
+    #[serde(default)]
+    pub called_up: bool,
 }
 
 impl Cadet {
@@ -203,7 +254,13 @@ impl Cadet {
             xp: 0,
             status: CadetStatus::Ready,
             battles: 0,
+            called_up: false,
         }
+    }
+
+    /// Whether she climbs into a vehicle at all: fit, or called up anyway.
+    pub fn deploys(&self) -> bool {
+        self.status.is_ready() || self.called_up
     }
 }
 
@@ -374,6 +431,22 @@ impl Roster {
         self.cadets.iter().filter(|g| g.status.is_ready())
     }
 
+    /// The roll for one battle: a copy of this roster with
+    /// [`Cadet::called_up`] set on everybody named and on nobody else.
+    ///
+    /// The campaign hands each battle a copy of its roster anyway, and this
+    /// is that copy. Going through here rather than reaching for `get_mut` is
+    /// what makes the field's promise true by construction: the muster's
+    /// answer never reaches the campaign's own cadets, so a decision made for
+    /// one fight is not quietly standing at the next one.
+    pub fn mustered(&self, called_up: &[CadetId]) -> Self {
+        let mut roster = self.clone();
+        for cadet in &mut roster.cadets {
+            cadet.called_up = called_up.contains(&cadet.id);
+        }
+        roster
+    }
+
     pub fn len(&self) -> usize {
         self.cadets.len()
     }
@@ -435,11 +508,18 @@ impl Roster {
     ///
     /// A skill no seat claims — discipline, athletics — is everybody's
     /// business, and takes the best aboard with no penalty.
+    ///
+    /// `conditions` is the unit's [`crate::battle::Unit::crew_state`], seat
+    /// for seat, and it is what decides who is working at all. A crew nobody
+    /// has hurt and nobody stayed behind from carries an empty one, which is
+    /// every battle written before either could happen; there the roster's
+    /// own [`CadetStatus`] answers, exactly as it always did.
     pub fn crew_skill(
         &self,
         registry: &DataRegistry,
         vehicle: Option<&crate::data::VehicleDef>,
         crew: &[CadetId],
+        conditions: &[crate::battle::CrewCondition],
         skill: &str,
         terrain: Option<&str>,
     ) -> i32 {
@@ -448,8 +528,29 @@ impl Roster {
             vehicle_class: vehicle.map(|v| v.class.as_str()),
             crew_size: crew.iter().filter(|id| self.get(**id).is_some()).count(),
         };
-        let ready = |id: &CadetId| self.get(*id).is_some_and(|g| g.status.is_ready());
-        let level = |id: &CadetId| self.skill_level(registry, *id, skill, &ctx);
+        // What one seat is worth to this check: nothing at all if nobody is
+        // working it, otherwise her level with what her condition costs her
+        // already taken off.
+        //
+        // A wounded cadet is charged `substitution_penalty`, which is
+        // deliberately the same number a stand-in pays rather than one of its
+        // own: being hurt at your station is like doing somebody else's job,
+        // and that sentence is the model. If the two ever need to differ they
+        // are two fields, the way the two fatal chances became two.
+        let working = |seat: usize, id: &CadetId| -> Option<i32> {
+            use crate::battle::CrewCondition;
+            let penalty = match conditions.get(seat) {
+                Some(CrewCondition::Fine) => 0,
+                Some(CrewCondition::Wounded) => registry.balance.substitution_penalty,
+                Some(CrewCondition::Out | CrewCondition::Absent) => return None,
+                // No condition list: the battle has not had to say anything
+                // about this crew, so whether she is aboard is the roster's
+                // question and the answer is the one it always gave.
+                None if !self.get(*id).is_some_and(|c| c.status.is_ready()) => return None,
+                None => 0,
+            };
+            Some(self.skill_level(registry, *id, skill, &ctx)? - penalty)
+        };
 
         // Which seats answer for this skill, as indices into the crew.
         let responsible: Vec<usize> = vehicle
@@ -471,17 +572,16 @@ impl Roster {
         if responsible.is_empty() {
             return crew
                 .iter()
-                .filter(|id| ready(id))
-                .filter_map(level)
+                .enumerate()
+                .filter_map(|(seat, id)| working(seat, id))
                 .max()
                 .unwrap_or_else(|| self.unspecified(registry, skill));
         }
 
         let specialist = responsible
             .iter()
-            .filter_map(|i| crew.get(*i))
-            .filter(|id| ready(id))
-            .filter_map(level)
+            .filter_map(|seat| crew.get(*seat).map(|id| (*seat, id)))
+            .filter_map(|(seat, id)| working(seat, id))
             .max();
         if let Some(level) = specialist {
             return level;
@@ -490,10 +590,8 @@ impl Roster {
         // Nobody in the seat: whoever else is aboard has a go at it.
         crew.iter()
             .enumerate()
-            .filter(|(i, _)| !responsible.contains(i))
-            .map(|(_, id)| id)
-            .filter(|id| ready(id))
-            .filter_map(level)
+            .filter(|(seat, _)| !responsible.contains(seat))
+            .filter_map(|(seat, id)| working(seat, id))
             .max()
             .map(|best| best - registry.balance.substitution_penalty)
             .unwrap_or_else(|| self.unspecified(registry, skill))
@@ -744,13 +842,13 @@ mod tests {
 
         // Ace commanding, novice on the gun.
         assert_eq!(
-            roster.crew_skill(&reg, Some(&tank), &[ace, novice], "gunnery", None),
+            roster.crew_skill(&reg, Some(&tank), &[ace, novice], &[], "gunnery", None),
             8
         );
         // The same two cadets, seats swapped, shoot far better — which is what
         // makes moving a cadet between jobs a decision worth making.
         assert_eq!(
-            roster.crew_skill(&reg, Some(&tank), &[novice, ace], "gunnery", None),
+            roster.crew_skill(&reg, Some(&tank), &[novice, ace], &[], "gunnery", None),
             15
         );
     }
@@ -763,7 +861,7 @@ mod tests {
         let mut roster = Roster::new();
         let alone = roster.enlist(0, &def("alone", 10, Some(13)), &reg);
         assert_eq!(
-            roster.crew_skill(&reg, Some(&tank), &[alone], "gunnery", None),
+            roster.crew_skill(&reg, Some(&tank), &[alone], &[], "gunnery", None),
             13 - reg.balance.substitution_penalty,
             "commanding with nobody on the gun, she reaches over and is worse at it"
         );
@@ -778,13 +876,13 @@ mod tests {
         let gunner = roster.enlist(0, &def("gunner", 10, Some(15)), &reg);
         let crew = [commander, gunner];
         assert_eq!(
-            roster.crew_skill(&reg, Some(&tank), &crew, "gunnery", None),
+            roster.crew_skill(&reg, Some(&tank), &crew, &[], "gunnery", None),
             15
         );
 
         roster.get_mut(gunner).unwrap().status = CadetStatus::Wounded { days: 2 };
         assert_eq!(
-            roster.crew_skill(&reg, Some(&tank), &crew, "gunnery", None),
+            roster.crew_skill(&reg, Some(&tank), &crew, &[], "gunnery", None),
             11 - reg.balance.substitution_penalty,
             "the commander takes the gun, and is worse at it"
         );
@@ -793,8 +891,48 @@ mod tests {
         roster.advance_day();
         assert!(roster.get(gunner).unwrap().status.is_ready());
         assert_eq!(
-            roster.crew_skill(&reg, Some(&tank), &crew, "gunnery", None),
+            roster.crew_skill(&reg, Some(&tank), &crew, &[], "gunnery", None),
             15
+        );
+    }
+
+    /// A cadet hurt at her station keeps working it, and is worse at it.
+    ///
+    /// The middle rung of `CrewCondition` promised this from the day it was
+    /// written — "hurt but working her station, at the substitution penalty's
+    /// worth of worse" — and for as long as `crew_skill` could only see the
+    /// roster, nothing charged it: a gunner could be carried out of her seat
+    /// in round two and still lay the gun perfectly in round ten. Being hurt
+    /// costs the same as doing somebody else's job, which is the whole
+    /// sentence the model is built out of, and it is deliberately the same
+    /// number.
+    #[test]
+    fn a_cadet_hurt_at_her_station_still_lays_the_gun_and_is_worse_at_it() {
+        use crate::battle::CrewCondition::{Fine, Out, Wounded};
+
+        let reg = registry();
+        let tank = tank();
+        let mut roster = Roster::new();
+        let commander = roster.enlist(0, &def("commander", 10, Some(11)), &reg);
+        let gunner = roster.enlist(0, &def("gunner", 10, Some(15)), &reg);
+        let crew = [commander, gunner];
+        let gunnery = |conditions: &[crate::battle::CrewCondition]| {
+            roster.crew_skill(&reg, Some(&tank), &crew, conditions, "gunnery", None)
+        };
+
+        assert_eq!(gunnery(&[Fine, Fine]), 15, "a whole crew is what it was");
+        assert_eq!(
+            gunnery(&[Fine, Wounded]),
+            15 - reg.balance.substitution_penalty,
+            "she is still the gunner, and worse at it than she was"
+        );
+        // ...and still better than handing the gun over, which is why she
+        // stays in the seat rather than being replaced by the arithmetic.
+        assert!(gunnery(&[Fine, Wounded]) > gunnery(&[Fine, Out]));
+        assert_eq!(
+            gunnery(&[Fine, Out]),
+            11 - reg.balance.substitution_penalty,
+            "carried out of the fight, she lays nothing; the commander reaches over"
         );
     }
 
@@ -808,7 +946,7 @@ mod tests {
         let a = roster.enlist(0, &def("a", 10, None), &reg);
         let b = roster.enlist(0, &def("b", 16, None), &reg);
         assert_eq!(
-            roster.crew_skill(&reg, Some(&tank), &[a, b], "unclaimed", None),
+            roster.crew_skill(&reg, Some(&tank), &[a, b], &[], "unclaimed", None),
             AVERAGE,
             "an unknown skill falls back to an ordinary showing rather than panicking"
         );
@@ -821,9 +959,12 @@ mod tests {
         // stats quietly lie.
         let reg = registry();
         let roster = Roster::new();
-        assert_eq!(roster.crew_skill(&reg, None, &[], "gunnery", None), AVERAGE);
         assert_eq!(
-            roster.crew_skill(&reg, None, &[CadetId(99)], "gunnery", None),
+            roster.crew_skill(&reg, None, &[], &[], "gunnery", None),
+            AVERAGE
+        );
+        assert_eq!(
+            roster.crew_skill(&reg, None, &[CadetId(99)], &[], "gunnery", None),
             AVERAGE
         );
     }

@@ -1671,6 +1671,97 @@ formulas, so the report cannot drift from the game. Its first run said two
 useful things: `mg kills heavy_tank in 3 rounds`, which is the `.max(1)` floor
 stated as a number rather than a worry, and the 67% stalemate rate above.
 
+**The `seats` table: what an empty seat is worth** (2026-09-10). The
+`attrition` table's finding was that an academy pays far more in absence than
+in graves — nineteen cadet-days a battle under the gentle rule against 0.7
+dead — and that the expensive half of a wound therefore happens where nobody
+had ever measured it: a cadet kept out of her seat, in a tank that then fights
+short. The claim being held to account is one these notes had been making
+since before there was an instrument to check it with, that a short-handed
+tank "dies about twice as fast", which was read off the substance arithmetic
+and never off a battlefield.
+
+`seats` fights the five battle maps twice per seed, handicapping each side in
+turn so the map's own lean cancels, and reports the handicapped side's battle.
+Three rows: every seat filled, the last filled seat of every crew of two or
+more left empty, and the same seat filled by the same cadet riding hurt. It
+empties a real mix — per battle gunner 2.0, driver 1.8, loader 1.8,
+section_leader 1.6, radio 0.2 — so it is not a table about loaders. `pulled`
+and `carried` are the handicapped side's cadets taken out of a wreck and out
+of a vehicle that came home, read through `CrewLoss::in_battle` and matched
+against the crews that side put on the field; a graze is in neither column,
+because the `hurt aboard` row starts with one in every crew and counting them
+would charge the handicap to itself.
+
+**The claim is false, and the reason is one number.** At the shipped
+`substitution_penalty` of 2, over 288 battles a row:
+
+    roll           win%  wrecks  kills  pulled  rounds
+    whole          49.0    5.44   5.44   14.74    14.4
+    a seat short   49.0    5.37   5.35    9.53    14.5
+    hurt aboard    47.6    5.34   5.37   14.39    14.5
+
+The control's own spread across the four seeds is 2.8 points, which is what
+makes the rest readable: an empty seat cost *nothing a battlefield could
+see*. Swept against its own price the mechanism is plain — at a penalty of 0
+the short row is 50.0 against a control of 50.0, at 2 it is 49.0 against 49.0,
+at 6 it is 41.0 against 49.7, at 14 it is 27.8. **The two substance points an
+empty seat takes with it are worth nothing at all**; the entire cost of a
+short crew is the stand-in's penalty, and 2 was a first-draft constant nothing
+had ever asked a question. The designer's ruling is **6**, where a seat short
+is worth about nine points of win rate and a crew missing somebody starts
+losing more tanks (5.69 hulls a battle against 5.42).
+
+Raising it reaches further than maps with partial crews, because a cadet
+knocked out mid-fight now leaves her seat to a stand-in too (see *a wound is
+charged at her station*, below): pooled over three seeds of 36 the `--sim`
+split moves 67-40 to 54-53, and `ground` says where — `river_crossing`'s
+order-of-battle imbalance narrows from 13-59 to 22-50, `battle_town` swings
+52-20 to 34-38, `battle_forest` 18-54 to 28-44, and `battle_hills` is
+bit-identical, nobody in its 72 battles ever having worked a station short.
+The determinism baseline was regenerated deliberately; the first difference is
+at line 6, a crew driving to a nearer hex because her stand-in driver is worse
+than she was.
+
+**What the table did not settle, and the muster ships on those terms.** The
+two handicapped rows are within noise of each other on every battlefield
+column at every value of the penalty swept — 2, 6 and 14. Calling a wounded
+cadet up buys her own hands back on her own instrument and pays for it with a
+crew that reads as already knocked about; the two cancel. What separates them
+is the bill: 10.3 cadets pulled from wrecks against 15.3 at the shipped
+numbers. The designer's ruling (2026-09-10) is that it ships anyway, because
+it is a decision about somebody you know rather than about a win rate, and the
+page says what it costs in as many words.
+
+**A wound is charged at her station** (2026-09-10). `CrewCondition::Wounded`
+had said since the day it was written that she is "hurt but working her
+station, at the substitution penalty's worth of worse", and nothing charged
+it: `crew_skill` could only see the roster, a cadet's roster status does not
+change during a battle, and so a gunner carried out of her seat in round two
+laid the gun perfectly in round ten. It now takes the unit's `crew_state`
+beside its crew — `Out` and `Absent` are nobody working the seat, `Wounded` is
+her own level minus `substitution_penalty`, and an *empty* `crew_state` still
+asks the roster exactly as before, which is every battle written before a
+wound could keep anyone out of a seat. Worth, at the old penalty, about 4% of
+the shots fired and 5% of the penetrations over 108 battles, with every win
+split inside the band a 36-battle pairing wanders in. The determinism snapshot
+did not move for it, and not by luck: in the one seed of four where a crew
+really does work a station hurt, the same 88 burst that put Mina's loader out
+destroyed her main gun and her tracks, so her gunnery is irrelevant and her
+observation does not move a vehicle that cannot drive.
+
+**Two things at the door were asserted in prose and checked nowhere**
+(2026-09-10), both found by reading the code the muster had to sit on top of.
+`CrewLoss::in_battle`'s doc comment had always said `Absent` is skipped "for
+the reason it exists"; the surviving-vehicle loop skipped her and the wreck
+loop never did, so a cadet signed in sick on Tuesday morning could be pulled
+out of a burning tank four kilometres away, rolled against its `safety` and
+buried on Tuesday afternoon — and the same line healed her when the roll came
+back `Unharmed`, because `apply_battle_result` wrote the fate straight over
+her recovery. One `continue` for the first; `CadetStatus::worse_of` for the
+second, which keeps whichever answer holds her out longer and a grave over
+everything. Adding them would have charged one wound twice.
+
 **The `attrition` table: what a battle costs after the shooting stops**
 (2026-09-10). The `casualties` block had been data and sweepable since it was
 written, and had never been asked a question, because nothing in the tree

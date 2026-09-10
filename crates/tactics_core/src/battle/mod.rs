@@ -1306,6 +1306,14 @@ impl BattleState {
     /// the substitution penalty — which is the same arithmetic a crew short
     /// of a gunner has always used.
     ///
+    /// Three answers, not two, since the muster existed: she is fit, she is
+    /// not fit and staying behind, or she is not fit and her academy has
+    /// called her up anyway — [`crate::roster::Cadet::called_up`], which only
+    /// a muster ever writes and only on the copy of the roster it hands the
+    /// battle. A cadet called up rides as [`CrewCondition::Wounded`]: at her
+    /// station, and worse at it, which is what that rung has always meant.
+    /// Nobody called up is the game as it was.
+    ///
     /// Two deliberate refusals:
     ///
     /// - **An all-empty vehicle is never produced.** If nobody named is fit,
@@ -1321,23 +1329,33 @@ impl BattleState {
     /// — every scenario battle, every save written before this — byte for
     /// byte what it was.
     fn who_deploys(&self, crew: &[CadetId]) -> Vec<CrewCondition> {
-        let fit = |id: &CadetId| {
-            self.roster
-                .get(*id)
-                .is_none_or(|cadet| cadet.status.is_ready())
+        let seat = |id: &CadetId| match self.roster.get(*id) {
+            // Nobody the campaign owns — an anonymous crew, a scenario
+            // battle — climbs in as she always did.
+            None => CrewCondition::Fine,
+            Some(cadet) if cadet.status.is_ready() => CrewCondition::Fine,
+            // Her academy put her on the roll anyway. She rides with her
+            // wound, which is the one thing `CrewCondition::Wounded` has
+            // always meant: at her station, and worse at it.
+            Some(cadet) if cadet.called_up => CrewCondition::Wounded,
+            Some(_) => CrewCondition::Absent,
         };
-        if crew.iter().all(fit) || !crew.iter().any(fit) {
+        let states: Vec<CrewCondition> = crew.iter().map(seat).collect();
+        // Nobody was kept out of a seat, so there is nothing to record and
+        // every battle written before wounds could keep anybody out is byte
+        // for byte what it was.
+        if states.iter().all(|c| *c == CrewCondition::Fine) {
             return Vec::new();
         }
-        crew.iter()
-            .map(|id| {
-                if fit(id) {
-                    CrewCondition::Fine
-                } else {
-                    CrewCondition::Absent
-                }
-            })
-            .collect()
+        // ...and if the answer is that nobody at all climbs in, the walking
+        // wounded go out anyway, exactly as they did before there was
+        // anything to call up: the engine refusing to produce an empty
+        // vehicle is not the academy deciding to send anybody, so nothing is
+        // charged for it.
+        if states.iter().all(|c| *c == CrewCondition::Absent) {
+            return Vec::new();
+        }
+        states
     }
 
     /// Change what one vehicle is carrying, before the battle starts.
@@ -1879,6 +1897,7 @@ pub mod stats {
             registry,
             registry.vehicle(&unit.vehicle),
             &unit.crew,
+            &unit.crew_state,
             "gunnery",
             terrain,
         )
@@ -1904,6 +1923,7 @@ pub mod stats {
                 registry,
                 registry.vehicle(&unit.vehicle),
                 &unit.crew,
+                &unit.crew_state,
                 "observation",
                 terrain,
             ),
@@ -1930,6 +1950,7 @@ pub mod stats {
             registry,
             registry.vehicle(&unit.vehicle),
             &unit.crew,
+            &unit.crew_state,
             &rules.skill,
             terrain,
         );
@@ -1947,6 +1968,7 @@ pub mod stats {
             registry,
             registry.vehicle(&unit.vehicle),
             &unit.crew,
+            &unit.crew_state,
             "driving",
             terrain,
         )

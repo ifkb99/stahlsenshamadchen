@@ -115,7 +115,14 @@ impl CrewLoss {
         use crate::battle::CrewCondition;
         let mut losses = Vec::new();
         for unit in state.lost_units() {
-            for cadet in &unit.crew {
+            for (seat, cadet) in unit.crew.iter().enumerate() {
+                // She was in the infirmary when this vehicle burned, so
+                // nothing that happened to it happened to her. An empty
+                // `crew_state` is a crew nobody stayed behind from, which is
+                // every battle written before wounds could keep anyone out.
+                if unit.crew_state.get(seat) == Some(&CrewCondition::Absent) {
+                    continue;
+                }
                 losses.push(Self {
                     cadet: *cadet,
                     vehicle: unit.vehicle.clone(),
@@ -1467,7 +1474,12 @@ impl OverworldState {
                 }
             };
             if let Some(cadet) = self.roster.get_mut(loss.cadet) {
-                cadet.status = fate.into();
+                // Never *shortens* a recovery already under way. A cadet the
+                // muster called up went out hurt, so a battle can hand back a
+                // gentler answer than the one she carried into it, and
+                // writing it straight over her would have her signed fit on
+                // the strength of having been shot at.
+                cadet.status = cadet.status.worse_of(fate.into());
             }
             events.push(OverworldEvent::CrewCasualty {
                 cadet: loss.cadet,

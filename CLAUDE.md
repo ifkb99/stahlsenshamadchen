@@ -116,6 +116,19 @@ the game. `--sim` fights whole battles. The rules for reading it:
   from her, settled by the coordinate the invariants allow to go last — a
   coin, not a defect) or *different key* (a rule read the compass). Both
   arenas come back with nothing but the coin.
+- **`seats` prices the muster's choice**: the five battle maps fought twice
+  per seed with each side handicapped in turn, so the map's own lean cancels
+  and a `win%` can be read against the `whole` control (whose spread over
+  four seeds is 2.8 points). Three rows — every seat filled, the last filled
+  seat of every crew of two or more left empty, and the same seat filled by
+  the same cadet riding hurt — and it empties a real mix of seats, gunner and
+  driver as often as loader. `pulled` and `carried` are her cadets taken out
+  of a wreck and out of a vehicle that came home; a graze is in neither,
+  because the `hurt aboard` row starts with one in every crew. **The two
+  handicapped rows are within noise of each other on every battlefield
+  column at every value of `substitution_penalty` swept**, which is the
+  finding: the muster's choice is about whose name is in the casualty list,
+  not about who wins.
 - **`attrition` is the only table that reads the door rather than the
   battlefield**: it fights the same battles and then hands the wrecks to
   `CrewLoss::in_battle` and the campaign's own `resolve_crew_fate` /
@@ -797,6 +810,27 @@ on a mission key.
   she stays in `Unit::crew`; a vehicle nobody fit can crew goes out with the
   walking wounded. Ask "is she aboard / fighting" through
   `CrewCondition::aboard()` / `fighting()`, never by matching the variant.
+- **A wound is charged at her station, and `crew_skill` is where.** It takes
+  the unit's `crew_state` beside the crew: `Out` and `Absent` are nobody
+  working the seat, and `Wounded` is her own level minus
+  `balance.substitution_penalty` — deliberately the same number a stand-in
+  pays, because being hurt at your station is like doing somebody else's job.
+  An **empty** `crew_state` is the one case that still asks the roster, which
+  is every battle written before a wound could keep anybody out. Until this
+  the middle rung cost substance and nothing else, so a gunner carried out in
+  round two laid the gun perfectly in round ten. Worth 4% of the shots fired
+  over 108 battles at the old penalty (DONE.md), and it is what makes
+  `substitution_penalty` reach a battle nobody deployed wounded to: a cadet
+  knocked out mid-fight leaves her seat to a stand-in too.
+- **`balance.substitution_penalty` is 6, and it is the whole price of a crew
+  that is not what it should be** (the designer's ruling, 2026-09-10, the
+  first time the number was asked a question). The `seats` table swept it: a
+  crew a seat short won 49.0% against a control of 49.0 at the first draft's
+  2, and 41.0 against 49.7 at 6, where she also starts losing more tanks
+  (5.42 hulls a battle against 5.69). **The substance an empty seat takes
+  with it is worth nothing measurable** — at a penalty of 0 the two rows are
+  50.0 and 50.0 — so this number is the entire mechanism by which a short
+  crew is worse, and below 6 the wound system has no teeth on a battlefield.
 - **`CrewLoss::found`** distinguishes a vehicle that did not come home
   (`resolve_crew_fate`) from a cadet found wounded in one that did
   (`resolve_station_fate`, gentler, never `Lost`). **`CrewLoss::in_battle` is
@@ -1113,11 +1147,11 @@ four seeds, after the ladder scaled by damage spent (2026-09-09):
 
 | | |
 | --- | --- |
-| round resolution | 1.96 ms (was 1.84 after Wave 1, 1.59 after Phase 2, 1.49 the same day on the same machine) |
-| `reachable()` per call | 15.4 µs |
-| `roads()` per call | 108.7 µs |
-| `unit_vision` per unit, cold | 90.8 µs (94.4 the run before: the machine is comparable) |
-| utility order | 0.08 ms |
+| round resolution | 1.47 ms (1.96 before `substitution_penalty` went to 6 — this row moves with how well the AI plays, and every partial crew on `river_crossing` now has a stand-in in a seat; 1.84 after Wave 1, 1.59 after Phase 2) |
+| `reachable()` per call | 16.3 µs |
+| `roads()` per call | 118.8 µs |
+| `unit_vision` per unit, cold | 89.2 µs (90.8 the run before: the machine is comparable) |
+| utility order | 0.09 ms |
 | mcts order, difficulty 3 / 4 | 1.84 s / 4.24 s (not re-measured since Wave 1) |
 
 `reachable` and `roads` measure work *in a particular game state*; they moved
@@ -1177,6 +1211,16 @@ says whether the machine is comparable.
   since 2026-09-09. `nobody_deploys_onto_their_own_way_off_the_map` now
   fights all five and asserts both halves: that each offers a way off it, and
   that `deploy` forms nobody up on her own lane home.
+- **Six of the base mod's thirteen skills are read by no rule.** The engine
+  asks for `gunnery`, `observation`, `driving` and `signals` by name and the
+  mod names `discipline`, `reactions` and `command` in its `morale`,
+  `reaction` and `command` blocks. That leaves `loading`, `maintenance`,
+  `first_aid`, `small_arms`, `fieldcraft` and `athletics` declared and never
+  consulted — the same dead weight `morale` and `leadership` were in the old
+  `CrewStats`, one level up. It has a consequence now that a seat costs
+  something: the **loader's** seat answers for `loading` and `first_aid`
+  alone, so leaving it empty is free, and a fifth of the seats the `seats`
+  table empties are free by construction.
 - **There is no cover without `vision_block`.** Forest (30) and town (40)
   are the only covering terrains and both block sight at 2, so everything
   commanding is bare and everything covered is blind: a crew in the middle

@@ -251,7 +251,7 @@ what to run
   --brains               which planner is better; --brain-games, --brain-difficulty
   --only A,B             print only these tables. One of: roster, detect, hit,
                          pen, kills, flight, flags, sim, delegation, mustered,
-                         skill, ground, attrition
+                         skill, ground, attrition, seats
 
 which game
   --arena NAME           battlefield the skill, brains and mustered tables fight
@@ -302,6 +302,7 @@ examples
 \n      --sweep planner.order_worth=0,0.25,1     # what is an order worth?
   --only attrition --sim --games 36 \
 \n      --sweep casualties.severe_percent=15,25,35   # what does a campaign bury?
+  --only seats --sim --games 36                     # what is an empty seat worth?
   --sim --sweep seed=0,1000,2000 --games 36         # what is the noise floor?
   --sim --only skill --absolute --sweep seed=0,1000,2000,3000   # ...for one table
   --sim --games 36 --arena ridge_arena --only skill,ground --absolute \\
@@ -2395,6 +2396,273 @@ fn attrition(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
     }
 }
 
+/// What one crew brought to the battle, as against what her academy has.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Roll {
+    /// Every seat filled: the control, and the game before wounds could keep
+    /// anybody out of one.
+    Whole,
+    /// The last filled seat of every vehicle left empty, which is what a
+    /// wounded cadet costs when her academy stands her down.
+    Short,
+    /// The same seat filled by the same cadet, riding hurt: what the muster
+    /// buys by calling her up.
+    Hurt,
+}
+
+impl Roll {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Whole => "whole",
+            Self::Short => "a seat short",
+            Self::Hurt => "hurt aboard",
+        }
+    }
+}
+
+const SEATS_SEED: u64 = 6000;
+
+/// What one handicapped side's battle contributed. Counts, so folding is
+/// addition and `--jobs` cannot move a printed number.
+#[derive(Default, Clone)]
+struct Seats {
+    battles: usize,
+    wins: usize,
+    draws: usize,
+    /// Seats the handicap actually emptied, by the role each answered for.
+    /// Not every chassis has one to spare, and which seat comes last is a
+    /// property of content rather than a decision made here: it is the loader
+    /// of a medium tank and the *gunner* of a light one, and on a map that
+    /// ships partial crews it is whoever was last aboard. Read as a
+    /// distribution, this is what the row is really about.
+    emptied: BTreeMap<String, usize>,
+    /// Hulls the handicapped side lost, and hulls she took off the other one.
+    wrecks: usize,
+    kills: usize,
+    /// Her cadets pulled out of a vehicle that did not come home, and carried
+    /// out of one that did.
+    pulled: usize,
+    carried: usize,
+    rounds: usize,
+}
+
+impl Seats {
+    fn merge(&mut self, o: &Self) {
+        self.battles += o.battles;
+        self.wins += o.wins;
+        self.draws += o.draws;
+        for (role, n) in &o.emptied {
+            *self.emptied.entry(role.clone()).or_default() += n;
+        }
+        self.wrecks += o.wrecks;
+        self.kills += o.kills;
+        self.pulled += o.pulled;
+        self.carried += o.carried;
+        self.rounds += o.rounds;
+    }
+}
+
+/// Fight one battle twice, handicapping each side in turn, and pool what the
+/// handicapped side did.
+///
+/// Both ends of the same seed, because these maps are not mirrors: four of
+/// the five ship identical orders of battle and `river_crossing` ships a 24/76
+/// massacre, and every one of them has some compass lean of its own. Exchanging
+/// the handicap between the ends is the same control the `ground` table uses,
+/// and it is the only reason a `win%` here can be read against 50 at all.
+fn seats_battle(reg: &DataRegistry, maps: &[&str], seed: u64, roll: Roll) -> Seats {
+    use tactics_core::battle::CrewCondition;
+
+    let mut t = Seats::default();
+    for side in [0u8, 1] {
+        let mut state = BattleState::from_map(reg, map_for(maps, seed), seed).expect("battle");
+        if roll != Roll::Whole {
+            let hurt = if roll == Roll::Short {
+                CrewCondition::Absent
+            } else {
+                CrewCondition::Wounded
+            };
+            for unit in state.units.iter_mut().filter(|u| u.side == side) {
+                // A crew of one has nobody to spare: standing her down is not
+                // a short crew, it is no crew, and `who_deploys` refuses to
+                // produce one. So a scout section is fought whole in every
+                // row and `touched` says how many seats the row really moved.
+                if unit.crew.len() < 2 {
+                    continue;
+                }
+                // Exactly the seat-aligned list `who_deploys` would have
+                // spawned her with, set here because the roll is made at the
+                // door and this table starts on the near side of it.
+                unit.crew_state.resize(unit.crew.len(), CrewCondition::Fine);
+                let last = unit.crew.len() - 1;
+                unit.crew_state[last] = hurt;
+                let role = reg
+                    .vehicle(&unit.vehicle)
+                    .and_then(|v| v.crew_slots.get(last))
+                    .cloned()
+                    .unwrap_or_else(|| "?".into());
+                *t.emptied.entry(role).or_default() += 1;
+            }
+        }
+
+        let mut ai = AiDriver::new();
+        ai.insert(0, planner(reg, seed, "massed_armor"));
+        ai.insert(1, planner(reg, seed + 1, "elastic_defense"));
+        let mut rounds = 0;
+        while !state.is_over() && rounds < 60 {
+            ai.plan_round(reg, &mut state);
+            state.resolve_round(reg);
+            rounds += 1;
+        }
+
+        t.battles += 1;
+        t.rounds += rounds;
+        match state.leader() {
+            Some(winner) if winner == side => t.wins += 1,
+            Some(_) => {}
+            None => t.draws += 1,
+        }
+        t.wrecks += state.lost_units().filter(|u| u.side == side).count();
+        t.kills += state.lost_units().filter(|u| u.side != side).count();
+
+        // The bill, read through the campaign's own door rather than counted
+        // again here. `CrewLoss` carries a cadet rather than a side, so it is
+        // matched against the crews this side put on the field.
+        let mine: HashSet<CadetId> = state
+            .units
+            .iter()
+            .filter(|u| u.side == side)
+            .flat_map(|u| u.crew.iter().copied())
+            .collect();
+        for loss in CrewLoss::in_battle(&state) {
+            if !mine.contains(&loss.cadet) {
+                continue;
+            }
+            match loss.found {
+                None => t.pulled += 1,
+                Some(CrewCondition::Out) => t.carried += 1,
+                // A graze is left out of both columns on purpose: the
+                // `hurt aboard` row starts with one already in every crew,
+                // and counting those would charge the handicap to itself.
+                _ => {}
+            }
+        }
+    }
+    t
+}
+
+/// What an empty seat costs, and what filling it with somebody hurt buys.
+///
+/// The muster's whole question. A wounded cadet is kept out of her seat, and
+/// the `attrition` table's finding was that an academy pays far more in
+/// absence than in graves — nineteen cadet-days a battle under the gentle
+/// rule — so the expensive half of a wound is this table's subject and it had
+/// never been measured. The claim it is holding to account is the one the
+/// design notes have been making for a year: that a tank fighting short "dies
+/// about twice as fast", which was read off the substance arithmetic and
+/// never off a battlefield.
+///
+/// Every vehicle on the handicapped side loses its most junior seat, which is
+/// far heavier than a campaign ever feels — a school of two dozen with one or
+/// two in the infirmary is short about one seat in eight, not one in three.
+/// That is deliberate: the row is meant to say what a seat is worth with the
+/// dice held still, and a handicap the size of a campaign's would be smaller
+/// than this sample's noise. Read the *ordering* of the rows and the size of
+/// the gap between them, not the win rate as a campaign's forecast.
+fn seats(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
+    let maps = battle_maps(reg);
+    let mut rows = Vec::new();
+    let mut totals = Vec::new();
+    for roll in [Roll::Whole, Roll::Short, Roll::Hurt] {
+        let fought = fight_all(reg, games, |reg, game| {
+            seats_battle(reg, &maps, SEATS_SEED + seed + game, roll)
+        });
+        let mut t = Seats::default();
+        for one in &fought {
+            t.merge(one);
+        }
+        let per = t.battles.max(1) as f64;
+        rows.push((
+            roll.name().to_string(),
+            vec![
+                100.0 * t.wins as f64 / per,
+                t.emptied.values().sum::<usize>() as f64 / per,
+                t.wrecks as f64 / per,
+                t.kills as f64 / per,
+                t.pulled as f64 / per,
+                t.carried as f64 / per,
+                t.rounds as f64 / per,
+            ],
+        ));
+        totals.push(t);
+    }
+
+    let battles = totals[0].battles;
+    let note = format!(
+        "\n  a row is the same battles fought twice, once with each side handicapped,\n  \
+         and what is reported is the *handicapped* side's: {battles} results a row across\n  \
+         {games} seeds. `whole` is the control and is the game as it was, so its win\n  \
+         rate is this sample's own lean and every other row is read against it,\n  \
+         not against 50.\n\n  \
+         `seats` is how many crews the row actually moved a seat in — a chassis\n  \
+         with one crew member has nobody to spare and is fought whole in every\n  \
+         row. `pulled` and `carried` are her cadets taken out of a wreck and out\n  \
+         of a vehicle that came home; a graze is in neither, because the\n  \
+         `hurt aboard` row begins with one in every crew and counting those\n  \
+         would charge the handicap to itself.\n\n  \
+         what the difference between the last two rows is: the same cadet, out\n  \
+         of the seat or in it hurt. Standing her down empties the seat — her two\n  \
+         points of substance leave the reckoning entirely and somebody covers\n  \
+         her station at `balance.substitution_penalty`. Calling her up puts her\n  \
+         back in it at one point of substance and her own hands on her own\n  \
+         instrument, worse than they were; her crew reads as already knocked\n  \
+         about, which is what every withdrawal threshold in the game is\n  \
+         measured against, and she is one hit from being carried out.\n\n  \
+         at {} battles a row a win rate wanders by about {:.0} points on the dice\n  \
+         alone. sweep the seed before believing a gap smaller than that.",
+        battles,
+        100.0 * coin_band(battles) / battles as f64,
+    );
+
+    Grid {
+        title: format!(
+            "what a seat is worth: {games} battles across {}, each fought from both ends",
+            maps.join(", ")
+        ),
+        preamble: vec![
+            format!(
+                "  the last filled seat of every crew of two or more; being hurt in one \
+                 costs `substitution_penalty` {}",
+                reg.balance.substitution_penalty,
+            ),
+            format!(
+                "  which seats that emptied, per battle: {}",
+                totals[1]
+                    .emptied
+                    .iter()
+                    .map(|(role, n)| format!(
+                        "{role} {:.1}",
+                        *n as f64 / totals[1].battles.max(1) as f64
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ],
+        row_head: "roll",
+        columns: vec![
+            col("win%", 1),
+            col("seats", 1),
+            col("wrecks", 2),
+            col("kills", 2),
+            col("pulled", 2),
+            col("carried", 2),
+            col("rounds", 1),
+        ],
+        rows,
+        note,
+    }
+}
+
 /// Does skill win cleanly? Identical forces, identical doctrine, and the only
 /// thing that differs is how well each side executes.
 ///
@@ -3908,6 +4176,9 @@ fn fought_grids(reg: &DataRegistry, cfg: &Run, seed: u64, budget: i32) -> Vec<Gr
     if cfg.only.wants("attrition") {
         out.push(attrition(reg, cfg.games, seed));
     }
+    if cfg.only.wants("seats") {
+        out.push(seats(reg, cfg.games, seed));
+    }
     out
 }
 
@@ -4230,6 +4501,7 @@ const TABLES: &[&str] = &[
     "skill",
     "ground",
     "attrition",
+    "seats",
 ];
 
 impl Only {
