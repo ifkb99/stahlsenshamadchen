@@ -1211,6 +1211,16 @@ says whether the machine is comparable.
   since 2026-09-09. `nobody_deploys_onto_their_own_way_off_the_map` now
   fights all five and asserts both halves: that each offers a way off it, and
   that `deploy` forms nobody up on her own lane home.
+- **Six of the base mod's thirteen skills are read by no rule.** The engine
+  asks for `gunnery`, `observation`, `driving` and `signals` by name and the
+  mod names `discipline`, `reactions` and `command` in its `morale`,
+  `reaction` and `command` blocks. That leaves `loading`, `maintenance`,
+  `first_aid`, `small_arms`, `fieldcraft` and `athletics` declared and never
+  consulted — the same dead weight `morale` and `leadership` were in the old
+  `CrewStats`, one level up. It has a consequence now that a seat costs
+  something: the **loader's** seat answers for `loading` and `first_aid`
+  alone, so leaving it empty is free, and a fifth of the seats the `seats`
+  table empties are free by construction.
 - **There is no cover without `vision_block`.** Forest (30) and town (40)
   are the only covering terrains and both block sight at 2, so everything
   commanding is bare and everything covered is blind: a crew in the middle
