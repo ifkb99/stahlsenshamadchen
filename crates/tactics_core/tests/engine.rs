@@ -15477,6 +15477,40 @@ fn a_girl_in_the_infirmary_does_not_climb_in() {
     );
 }
 
+/// ...and nothing that happens to the tank she is not in happens to her.
+///
+/// The half of the rule that was asserted in prose and checked nowhere. A
+/// cadet left behind is still listed in `Unit::crew` — she has to be, or the
+/// campaign would take back a crew list she had been deleted from — and the
+/// wreck loop walked that list without asking who was actually aboard. So a
+/// gunner recovering in the infirmary could be pulled out of a burning tank
+/// four kilometres away, roll `resolve_crew_fate` against what killed it,
+/// and be buried by the same campaign that had her signed in sick that
+/// morning. The other direction was just as wrong: an `Unharmed` roll wrote
+/// `Ready` straight over her recovery and cured her.
+#[test]
+fn a_cadet_who_stayed_in_the_infirmary_is_no_casualty_of_the_battle_she_missed() {
+    use tactics_core::battle::{Destruction, Fate};
+    use tactics_core::overworld::CrewLoss;
+
+    let reg = registry();
+    let crew = ["anka", "mina", "juno"];
+    let (mut state, ours) = stage_with_a_wounded_girl(&reg, &crew, &[1]);
+    let missing = state.unit(ours).unwrap().crew[1];
+    state.unit_mut(ours).unwrap().fate = Fate::Destroyed(Destruction::BrewedUp);
+
+    let losses = CrewLoss::in_battle(&state);
+    assert_eq!(
+        losses.len(),
+        2,
+        "the two who were in the tank are the two the campaign has to account for: {losses:?}"
+    );
+    assert!(
+        !losses.iter().any(|loss| loss.cadet == missing),
+        "she was in the infirmary and the wreck loop pulled her out of it anyway"
+    );
+}
+
 /// ...but a tank whose whole crew is in the infirmary drives out anyway.
 ///
 /// The campaign has no pool of replacements to draw on, and a vehicle with

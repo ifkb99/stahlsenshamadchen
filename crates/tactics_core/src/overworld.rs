@@ -115,7 +115,14 @@ impl CrewLoss {
         use crate::battle::CrewCondition;
         let mut losses = Vec::new();
         for unit in state.lost_units() {
-            for cadet in &unit.crew {
+            for (seat, cadet) in unit.crew.iter().enumerate() {
+                // She was in the infirmary when this vehicle burned, so
+                // nothing that happened to it happened to her. An empty
+                // `crew_state` is a crew nobody stayed behind from, which is
+                // every battle written before wounds could keep anyone out.
+                if unit.crew_state.get(seat) == Some(&CrewCondition::Absent) {
+                    continue;
+                }
                 losses.push(Self {
                     cadet: *cadet,
                     vehicle: unit.vehicle.clone(),
