@@ -1101,6 +1101,7 @@ impl BattleState {
                     registry,
                     registry.vehicle(&u.vehicle),
                     &u.crew,
+                    &u.crew_state,
                     &rules.latency.skill,
                     self.terrain_at(u.pos),
                 )
@@ -1314,6 +1315,7 @@ impl BattleState {
             registry,
             vehicle,
             &unit.crew,
+            &unit.crew_state,
             SIGNALS,
             self.terrain_at(unit.pos),
         );

@@ -319,9 +319,14 @@ fn a_platoon_lays_her_own_weapons_as_well_as_a_gunner_lays_hers() {
     let state = infantry_field(&reg);
     let platoon = &state.units[0];
     let chassis = reg.vehicle(&platoon.vehicle).expect("chassis");
-    let gunnery = state
-        .roster
-        .crew_skill(&reg, Some(chassis), &platoon.crew, "gunnery", None);
+    let gunnery = state.roster.crew_skill(
+        &reg,
+        Some(chassis),
+        &platoon.crew,
+        &platoon.crew_state,
+        "gunnery",
+        None,
+    );
     assert_eq!(
         gunnery,
         tactics_core::data::AVERAGE,

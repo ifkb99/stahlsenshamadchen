@@ -4202,8 +4202,14 @@ mod tests {
         )
         .expect("her own headquarters can reach her on day one");
 
+        // Seeds until one of them catches a crew leaving by the road, rather
+        // than three somebody once hunted down: which battle produces a
+        // withdrawal moves whenever a rule does, and a fixture that has to be
+        // re-hunted every time a crew fights differently is a fixture that
+        // ends up deleted. It stops at the first, so the usual cost is one
+        // battle.
         let mut exited = 0;
-        for seed in [5u64, 23, 44] {
+        for seed in 0u64..48 {
             let fought = fight(&reg, &base, "river_crossing", ArmyId(2), falling_back, seed);
             for unit in fought.state.units.iter() {
                 if !matches!(unit.fate, Fate::Exited) {
@@ -4268,10 +4274,13 @@ mod tests {
                 }
                 break;
             }
+            if exited > 0 {
+                break;
+            }
         }
         assert!(
             exited > 0,
-            "no crew took an exit in three seeds; this test proved nothing"
+            "no crew took an exit in forty-eight seeds; this test proved nothing"
         );
     }
 }

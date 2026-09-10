@@ -2134,6 +2134,7 @@ fn behind_armor_effects(
         registry,
         registry.vehicle(&unit.vehicle),
         &unit.crew,
+        &unit.crew_state,
         &rules.skill,
         state.terrain_at(unit.pos),
     );

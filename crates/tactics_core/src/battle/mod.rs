@@ -1879,6 +1879,7 @@ pub mod stats {
             registry,
             registry.vehicle(&unit.vehicle),
             &unit.crew,
+            &unit.crew_state,
             "gunnery",
             terrain,
         )
@@ -1904,6 +1905,7 @@ pub mod stats {
                 registry,
                 registry.vehicle(&unit.vehicle),
                 &unit.crew,
+                &unit.crew_state,
                 "observation",
                 terrain,
             ),
@@ -1930,6 +1932,7 @@ pub mod stats {
             registry,
             registry.vehicle(&unit.vehicle),
             &unit.crew,
+            &unit.crew_state,
             &rules.skill,
             terrain,
         );
@@ -1947,6 +1950,7 @@ pub mod stats {
             registry,
             registry.vehicle(&unit.vehicle),
             &unit.crew,
+            &unit.crew_state,
             "driving",
             terrain,
         )

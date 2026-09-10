@@ -1821,6 +1821,7 @@ impl BattleState {
                     registry,
                     registry.vehicle(&u.vehicle),
                     &u.crew,
+                    &u.crew_state,
                     &registry.morale.skill,
                     self.terrain_at(u.pos),
                 )
@@ -2172,6 +2173,7 @@ impl BattleState {
                     registry,
                     registry.vehicle(&u.vehicle),
                     &u.crew,
+                    &u.crew_state,
                     &registry.morale.skill,
                     self.terrain_at(u.pos),
                 )

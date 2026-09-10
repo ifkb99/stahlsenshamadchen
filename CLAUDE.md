@@ -797,6 +797,18 @@ on a mission key.
   she stays in `Unit::crew`; a vehicle nobody fit can crew goes out with the
   walking wounded. Ask "is she aboard / fighting" through
   `CrewCondition::aboard()` / `fighting()`, never by matching the variant.
+- **A wound is charged at her station, and `crew_skill` is where.** It takes
+  the unit's `crew_state` beside the crew: `Out` and `Absent` are nobody
+  working the seat, and `Wounded` is her own level minus
+  `balance.substitution_penalty` — deliberately the same number a stand-in
+  pays, because being hurt at your station is like doing somebody else's job.
+  An **empty** `crew_state` is the one case that still asks the roster, which
+  is every battle written before a wound could keep anybody out. Until this
+  the middle rung cost substance and nothing else, so a gunner carried out in
+  round two laid the gun perfectly in round ten. Worth 4% of the shots fired
+  over 108 battles (DONE.md); the determinism baseline is unmoved because the
+  one crew of its four seeds who works hurt lost her gun and her tracks in
+  the same burst.
 - **`CrewLoss::found`** distinguishes a vehicle that did not come home
   (`resolve_crew_fate`) from a cadet found wounded in one that did
   (`resolve_station_fate`, gentler, never `Lost`). **`CrewLoss::in_battle` is
