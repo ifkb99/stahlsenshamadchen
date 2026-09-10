@@ -1474,7 +1474,12 @@ impl OverworldState {
                 }
             };
             if let Some(cadet) = self.roster.get_mut(loss.cadet) {
-                cadet.status = fate.into();
+                // Never *shortens* a recovery already under way. A cadet the
+                // muster called up went out hurt, so a battle can hand back a
+                // gentler answer than the one she carried into it, and
+                // writing it straight over her would have her signed fit on
+                // the strength of having been shot at.
+                cadet.status = cadet.status.worse_of(fate.into());
             }
             events.push(OverworldEvent::CrewCasualty {
                 cadet: loss.cadet,

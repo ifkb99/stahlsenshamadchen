@@ -100,6 +100,35 @@ impl CadetStatus {
             Self::Dead => None,
         }
     }
+
+    /// Which of two answers about the same cadet the campaign keeps: the one
+    /// that keeps her out of a seat longer, and a grave over everything.
+    ///
+    /// A battle's fate is applied by writing it over what she was, which was
+    /// harmless while everybody who could be a casualty of a battle was fit
+    /// when it started. A cadet who is called up rides out hurt, so she can
+    /// come back from one carrying a *shorter* recovery than she went in
+    /// with — the tank she is riding in is destroyed, the wreck roll says
+    /// `Unharmed`, and she is signed fit on the strength of having been shot
+    /// at. She cannot get better by being shot at.
+    ///
+    /// The kinder reading — adding the two together — is wrong for the
+    /// opposite reason: one wound would be charged twice, once by the battle
+    /// that gave it to her and once by the next one she is dragged through.
+    /// The worse of the two is the honest answer: her recovery is at least
+    /// as long as it already was.
+    ///
+    /// A tie between a wound and a walk home keeps `other`, the fresher fact:
+    /// she is on a road somewhere rather than in the infirmary, and that is
+    /// the more recent truth about where she is.
+    pub fn worse_of(self, other: Self) -> Self {
+        let rank = |s: Self| (s.is_permanent(), s.days_out().unwrap_or(0));
+        if rank(self) > rank(other) {
+            self
+        } else {
+            other
+        }
+    }
 }
 
 /// Whether a campaign is willing to kill its characters.
@@ -400,6 +429,22 @@ impl Roster {
     /// Cadets fit to be assigned to a vehicle.
     pub fn ready(&self) -> impl Iterator<Item = &Cadet> {
         self.cadets.iter().filter(|g| g.status.is_ready())
+    }
+
+    /// The roll for one battle: a copy of this roster with
+    /// [`Cadet::called_up`] set on everybody named and on nobody else.
+    ///
+    /// The campaign hands each battle a copy of its roster anyway, and this
+    /// is that copy. Going through here rather than reaching for `get_mut` is
+    /// what makes the field's promise true by construction: the muster's
+    /// answer never reaches the campaign's own cadets, so a decision made for
+    /// one fight is not quietly standing at the next one.
+    pub fn mustered(&self, called_up: &[CadetId]) -> Self {
+        let mut roster = self.clone();
+        for cadet in &mut roster.cadets {
+            cadet.called_up = called_up.contains(&cadet.id);
+        }
+        roster
     }
 
     pub fn len(&self) -> usize {

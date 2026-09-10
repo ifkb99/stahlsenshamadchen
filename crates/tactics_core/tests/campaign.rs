@@ -959,6 +959,59 @@ fn a_victory_rule_nobody_could_ever_satisfy_fails_validation() {
     );
 }
 
+/// A cadet who rides out hurt does not come home healthier for it.
+///
+/// A battle's fate used to be written straight over what she was, which was
+/// harmless while nobody who could be a casualty was anything but fit when it
+/// started. The muster changed that: called up, she goes out carrying a
+/// recovery, and the wreck roll that says `Unharmed` — she got out and
+/// reached her own lines, which is a perfectly ordinary thing for it to
+/// say — would have signed her fit on the strength of having been shot at.
+/// `CadetStatus::worse_of` keeps whichever answer holds her out longer, and a
+/// grave over everything.
+#[test]
+fn a_cadet_who_rides_out_hurt_does_not_come_home_healthier() {
+    use tactics_core::overworld::CrewLoss;
+    use tactics_core::roster::{CadetStatus, CasualtyRules};
+
+    let reg = registry();
+    let mut state = OverworldState::from_map(&reg, "frontier", 3).expect("the shipped campaign");
+    // Gentle, so that nothing here can end in a grave and the test is about
+    // the arithmetic of days rather than about the stakes.
+    state.rules = CasualtyRules { permadeath: false };
+    let attacker = state.side_armies(0).next().expect("she has an army").id;
+    let defender = state.side_armies(1).next().expect("so has he").id;
+
+    // A long recovery, and then a whole battle's worth of wreck rolls over
+    // the same cadets: at safety 4 and no recorded cause most of them come
+    // back `Unharmed`, so this is the case the old line got wrong.
+    let called_up: Vec<_> = state.roster.of_side(0).map(|c| c.id).collect();
+    for id in &called_up {
+        state.roster.get_mut(*id).unwrap().status = CadetStatus::Wounded { days: 9 };
+    }
+    let losses: Vec<CrewLoss> = called_up
+        .iter()
+        .map(|cadet| CrewLoss {
+            cadet: *cadet,
+            vehicle: "recon_car".into(),
+            killed_by: None,
+            found: None,
+        })
+        .collect();
+    state.apply_battle_result(
+        &reg,
+        &BattleReport::of(attacker, defender, Vec::new(), losses),
+    );
+
+    for id in &called_up {
+        let status = state.roster.get(*id).unwrap().status;
+        assert!(
+            status.days_out().is_some_and(|days| days >= 9),
+            "she rode out with nine days to go and came back on {status:?}"
+        );
+    }
+}
+
 /// The shipped campaign is willing to kill its characters, and a mod that
 /// declines the rule is the game exactly as it was.
 ///
