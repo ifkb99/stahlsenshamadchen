@@ -1719,6 +1719,35 @@ Two things the table found that reading the code had not:
   sharing so nothing moved, with zero as the rule's absence. Setting it to 0
   takes 0.80 dead a battle to 0.71.
 
+**The designer's ruling, 2026-09-10, off those numbers.** `severe_percent`
+stays at **25** — the first draft was well judged, and at 0.13 dead per hull
+destroyed a campaign that costs an academy her whole order of battle buries
+about 1.3 of her 24, which is roughly one funeral a campaign. A cadet carried
+home hurt in a vehicle that survived is **never** killed
+(`carried_fatal_percent: 0`): her tank came home and somebody got her to a
+doctor within the hour, which is the whole reason the two cases are separate,
+and it gives withdrawing a damaged vehicle a consequence. And the stakes ship
+**on**.
+
+The flip is not where the older notes expected it. Flipping
+`CasualtyRules::default()` in Rust would have inverted the invariant this
+subsystem is built to satisfy — every harsh system is an additive rule whose
+*absence* is the gentle game — because from then on the gentle campaign would
+have been the one needing an edit. So the stakes are content:
+`casualties.permadeath` is a field of the block a gentle mod already replaces
+wholesale, the base mod declares it `true`, `OverworldState::from_map` copies
+it onto the live `CasualtyRules`, and the engine's own default stays off. A
+campaign still owns and saves its own answer, so the settings screen the menus
+item owes can change one run's mind without touching anybody's mod.
+`the_shipped_campaign_kills_and_a_mod_that_declines_the_rule_does_not` is both
+halves: eight academies burned in the shipped campaign bury somebody, and the
+same eight under a mod that declines the rule bury nobody.
+
+What the ruling does *not* settle is the finding above it. The muster screen
+is still owed, and until it exists the expensive half of a wound — a cadet
+left out of her seat in a tank that then fights short — happens where the
+player cannot see it.
+
 **Seeing the game without playing it.** `crates/game/src/devtools.rs` drives
 the real input path from a script of timed actions and captures the window
 along the way, which is what made rendering and UI changes reviewable by

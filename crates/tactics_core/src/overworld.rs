@@ -598,7 +598,14 @@ impl OverworldState {
             map: Arc::new(map),
             sides,
             roster,
-            rules: CasualtyRules::default(),
+            // The campaign takes the stakes its content declares and then
+            // owns them: `rules` is saved, so a settings screen can turn
+            // permadeath off for one campaign without touching a mod, and a
+            // mod that wants a gentle game says so once in its `casualties`
+            // block rather than asking anybody to edit Rust.
+            rules: CasualtyRules {
+                permadeath: registry.casualties.permadeath,
+            },
             armies,
             owners: HashMap::new(),
             turn: 1,

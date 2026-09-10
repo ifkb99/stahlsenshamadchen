@@ -25,6 +25,24 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Casualties {
+    /// Whether a campaign built from this content is willing to kill its
+    /// characters, which is what [`crate::roster::CadetStatus::Dead`] needs
+    /// before it is reachable at all.
+    ///
+    /// Here rather than only in [`crate::roster::CasualtyRules`] because of
+    /// the rule this whole file exists to keep: **every harsh system is an
+    /// additive rule whose absence is the gentle game**. The base mod ships
+    /// this `true` — the shipped campaign kills, which is the designer's
+    /// ruling of 2026-09-10 — and a mod that says nothing gets a campaign
+    /// where the worst a cadet suffers is a long recovery, exactly as before.
+    /// Turning the stakes off is therefore a `casualties` block and not a
+    /// line of Rust, which is the whole test.
+    ///
+    /// [`crate::overworld::OverworldState::from_map`] copies it onto the live
+    /// rule, which stays where it was: a campaign holds its own answer and
+    /// saves it, so a settings screen can override what the content proposed
+    /// without editing anybody's mod.
+    pub permadeath: bool,
     /// Chance in 100 that a cadet is hurt at all when her vehicle is
     /// destroyed by a kinetic penetration, before `safety` is applied. The
     /// worst of the three: a long rod through the fighting compartment
@@ -101,6 +119,7 @@ pub struct Casualties {
 impl Default for Casualties {
     fn default() -> Self {
         Self {
+            permadeath: false,
             harm_kinetic: 55,
             harm_explosive: 40,
             harm_small_arms: 20,

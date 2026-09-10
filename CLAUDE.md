@@ -812,8 +812,16 @@ on a mission key.
   sharing, so content that says nothing is unchanged, and **zero is the
   rule's absence** — a cadet whose vehicle came home is never killed,
   whatever else the campaign allows.
-- **The casualty numbers are `casualties` in `mod.json`.** A harsh campaign
-  is a mod.
+- **The casualty numbers are `casualties` in `mod.json`, and so are the
+  stakes.** `casualties.permadeath` is what a campaign built from that content
+  starts with; `OverworldState::from_map` copies it onto `CasualtyRules`,
+  which is the live rule and is saved, so a settings screen can change one
+  campaign's mind without editing a mod. **The engine still defaults to
+  nobody dying and the base mod declares `true`** — a gentle campaign is a
+  `casualties` block, never a line of Rust, which is the additivity rule this
+  whole subsystem is built to satisfy.
+  `the_shipped_campaign_kills_and_a_mod_that_declines_the_rule_does_not` is
+  both halves.
 - **One cadet, one seat.** `OverworldState::from_map` enlists each character
   once per academy; a repeated name crews anonymously and `validate_into`
   warns. Do not "fix" a future warning by letting one cadet crew three tanks.

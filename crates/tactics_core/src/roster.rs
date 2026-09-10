@@ -35,7 +35,8 @@
 //!
 //! [`CadetStatus::Dead`] is only reachable when [`CasualtyRules::permadeath`]
 //! is on, which is a per-campaign option rather than something the engine
-//! decides. With it off, the worst a crew suffers is a long recovery.
+//! decides. With it off, the worst a crew suffers is a long recovery. The
+//! base mod declares it on: the shipped campaign means it.
 //!
 //! Note that [`CadetStatus::Lost`] is *not* death and never was: it means she
 //! bailed out and could not reach friendly lines before the fighting stopped,
@@ -108,8 +109,16 @@ impl CadetStatus {
 /// specific cadets, so permadeath is a decision a player (or a mode) makes,
 /// not one the engine makes for them.
 ///
-/// Off by default: the softer rule is the one that matches the genre, and a
-/// player who wants the stakes can opt in.
+/// Off by default *here*, and on in the shipped campaign, which is not a
+/// contradiction: the engine's default is the benign one because every harsh
+/// system in this game is an additive rule whose absence is the gentle
+/// version, and the stakes are declared by content
+/// ([`crate::data::Casualties::permadeath`], `true` in the base mod since
+/// 2026-09-10). [`crate::overworld::OverworldState::from_map`] copies the
+/// declaration onto this, and this is what is saved — so a campaign owns its
+/// own answer and a settings screen can change it for one run without editing
+/// anybody's mod, while a mod that wants a gentle game says so once and needs
+/// no line of Rust.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct CasualtyRules {
     /// When off, [`CadetStatus::Dead`] is unreachable and what would have been

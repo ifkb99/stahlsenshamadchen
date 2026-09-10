@@ -2357,6 +2357,14 @@ fn attrition(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
             cause(3),
         ),
         format!(
+            "  this content ships the `{}` row (`casualties.permadeath`)",
+            if reg.casualties.permadeath {
+                "permadeath"
+            } else {
+                "gentle"
+            },
+        ),
+        format!(
             "  their vehicles averaged safety {:.1}, against `harm_per_safety` {}",
             t.safety as f64 / pulled as f64,
             reg.casualties.harm_per_safety,

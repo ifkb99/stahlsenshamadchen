@@ -39,6 +39,7 @@
     "target_height_cm": 200
   },
   "casualties": {
+    "permadeath": true,
     "harm_kinetic": 55,
     "harm_explosive": 40,
     "harm_small_arms": 20,
@@ -52,6 +53,7 @@
       3
     ],
     "severe_percent": 25,
+    "carried_fatal_percent": 0,
     "severe_days": [
       5,
       10
