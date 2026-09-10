@@ -91,6 +91,17 @@ pub struct Balance {
     /// covering an empty gunner's seat is the normal case, not an edge one.
     /// A penalty rather than nothing, because a commander can lay a gun; she
     /// is just not the gunner.
+    ///
+    /// **Six, the designer's ruling of 2026-09-10**, and the first time this
+    /// number was ever asked a question. It is also charged to a cadet
+    /// working her own station hurt, so it is the whole price of a crew that
+    /// is not what it should be. The `seats` table swept it: at 0 a crew a
+    /// seat short wins 50.0% against a control of 50.0, at 2 — the first
+    /// draft, which nothing had ever measured — 49.0 against 49.0, at 6
+    /// 41.0 against 49.7, at 14 27.8. The two substance points an empty seat
+    /// takes with it are worth nothing at all, so this is the *entire* cost
+    /// of a short crew, and below 6 the wound system has no teeth on a
+    /// battlefield.
     pub substitution_penalty: i32,
     /// How big a target one cadet is when a penetration rolls what it found
     /// inside, on the same scale as a module's `size`. At the default 2
@@ -356,7 +367,7 @@ impl Default for Balance {
             vision_per_observation: 5,
             speed_per_driving: 5,
             accuracy_per_gunnery: 3,
-            substitution_penalty: 2,
+            substitution_penalty: 6,
             crew_weight: 2,
             points_per_effect: 4,
             brewup_percent: 60,

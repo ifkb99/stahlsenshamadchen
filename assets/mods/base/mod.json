@@ -15,7 +15,7 @@
   "balance": {
     "speed_per_driving": 5,
     "accuracy_per_gunnery": 3,
-    "substitution_penalty": 2,
+    "substitution_penalty": 6,
     "vision_per_observation": 5,
     "stray_percent": 25,
     "pen_scatter": 15,

@@ -334,6 +334,20 @@ Two consequences worth stating in advance:
   covers the seat at `balance.substitution_penalty`, because a commander can
   lay a gun — she is simply not the gunner.
 
+  **That penalty is the whole price of a short crew, and it was 2 until
+  somebody measured it** (2026-09-10). The `seats` table fights the five
+  battle maps with the last filled seat of every crew on one side left empty,
+  from both ends so the map cancels: at a penalty of 2 the short side won
+  49.0% against a control of 49.0, which is to say an empty seat cost
+  *nothing a battlefield could see*. Nor is the substance the answer — at a
+  penalty of 0 the rows are 50.0 and 50.0. The designer's ruling is 6, where
+  a seat short is worth about nine points of win rate and a crew missing
+  somebody starts losing more tanks: 5.69 hulls a battle against 5.42.
+
+  A cadet who rides out hurt is charged the same number at her own station,
+  which is the sentence `CrewCondition::Wounded` was written from: being hurt
+  is like doing somebody else's job.
+
   This is also why filling the seats was worth doing as content rather than
   leaving it. Substance is counted per person aboard, so a medium tank crewed
   by two named cadets died about twice as fast as the same tank crewed by four
