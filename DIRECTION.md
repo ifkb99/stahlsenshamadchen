@@ -622,10 +622,11 @@ when somebody sweeps it, and a sweep needs an instrument.
 
 ## Open questions for the designer
 
-- **Should a binding order be able to kill a crew that would otherwise have
-  lived?** It must, or it means nothing — but that is the moment the game
-  needs permadeath decided (TODO's first item), because the player is now
-  authoring the loss.
+- ~~**Should a binding order be able to kill a crew that would otherwise have
+  lived?**~~ It must, or it means nothing — and since 2026-09-10 it can: the
+  base mod declares `casualties.permadeath: true`, so the player authoring a
+  loss is authoring a real one. What is still owed is the screen that shows
+  her the stakes before she signs for them.
 - **Is `delegation` still wanted at all once the player's own orders bypass
   it?** It would then only describe AI-to-AI command, which is a much smaller
   job than the knob currently implies.

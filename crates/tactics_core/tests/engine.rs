@@ -15587,6 +15587,80 @@ fn how_badly_she_was_hurt_decides_how_long_she_is_out() {
     );
 }
 
+/// Being carried home out of the fight is priced by its own number, not by
+/// the one that says how bad a wreck's wound was.
+///
+/// They shared `severe_percent` until the attrition table could fight a
+/// hundred battles and ask what each of them cost, and the answer was that
+/// one cadet in nine the shipped campaign would have buried was somebody
+/// whose tank drove back. That is not a tuning question — it is one
+/// probability standing in for two situations the rest of the model is at
+/// pains to keep apart — and the tell is this test: no value of
+/// `severe_percent` can spare her, and no value of `carried_fatal_percent`
+/// can spare the crew of a burnt-out hull.
+#[test]
+fn a_cadet_carried_home_is_priced_by_the_homecoming_and_not_by_the_wreck() {
+    use rand::SeedableRng;
+    use tactics_core::battle::CrewCondition;
+    use tactics_core::data::{Casualties, DamageType};
+    use tactics_core::roster::{CasualtyRules, CrewFate, resolve_crew_fate, resolve_station_fate};
+
+    let lethal = CasualtyRules { permadeath: true };
+    // A campaign that kills people, and a homecoming that is never fatal in
+    // it. Zero is the rule's absence and it has to be reachable, or "her tank
+    // came home" is a sentence the data cannot say.
+    let table = Casualties {
+        carried_fatal_percent: 0,
+        severe_percent: 100,
+        ..Casualties::default()
+    };
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(7);
+    for _ in 0..200 {
+        assert!(
+            !matches!(
+                resolve_station_fate(lethal, &table, CrewCondition::Out, &mut rng),
+                CrewFate::Killed
+            ),
+            "her tank came home and the wreck table killed her anyway"
+        );
+    }
+    // ...and the wreck case is untouched by the number that spared her: a
+    // safety-0 hull with every wound fatal buries whoever was inside it.
+    let mut buried = 0;
+    for _ in 0..200 {
+        if resolve_crew_fate(lethal, &table, 0, Some(DamageType::Kinetic), &mut rng)
+            == CrewFate::Killed
+        {
+            buried += 1;
+        }
+    }
+    assert!(
+        buried > 0,
+        "nobody died in two hundred burnt-out tanks with every wound fatal"
+    );
+
+    // The mirror of it: a campaign whose wrecks are survivable and whose
+    // homecomings are not. Neither number reads the other.
+    let cruel_ward = Casualties {
+        carried_fatal_percent: 100,
+        severe_percent: 0,
+        ..Casualties::default()
+    };
+    assert_eq!(
+        resolve_station_fate(lethal, &cruel_ward, CrewCondition::Out, &mut rng),
+        CrewFate::Killed
+    );
+    for _ in 0..200 {
+        assert!(
+            !matches!(
+                resolve_crew_fate(lethal, &cruel_ward, 0, Some(DamageType::Kinetic), &mut rng),
+                CrewFate::Killed
+            ),
+            "no wound in this campaign is severe, and one of them was fatal"
+        );
+    }
+}
+
 /// A campaign map that names the same character in two crews gets her in the
 /// first of them and an anonymous crew in the second.
 ///

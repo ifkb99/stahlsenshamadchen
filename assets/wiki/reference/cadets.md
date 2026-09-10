@@ -439,8 +439,10 @@ gentle game:**
 - reaction latency collapses to zero ticks when its coefficients are zero, and
   orders execute the instant they are given;
 - the morale ladder reduces to a single rung, and nobody ever wavers;
-- casualty resolution already reduces to "everyone walks away", which is what
-  `CasualtyRules::permadeath` being off does today.
+- casualty resolution reduces to "everyone walks away", which is what
+  `CasualtyRules::permadeath` being off does — and the base mod's
+  `casualties.permadeath: true` is the additive half, declared by content, so
+  the campaign without the rule is the campaign that says nothing.
 
 If switching one of them off needs an `if` in Rust, it was built wrong.
 

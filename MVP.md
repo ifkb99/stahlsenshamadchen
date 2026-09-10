@@ -51,11 +51,22 @@ can ask what any number does.
 
 ### Orders the player can trust
 
-- **Permadeath decided and the wound system given teeth.** Permadeath is
-  the intended campaign default and the code default is still off, waiting
-  on a tuning pass over `resolve_crew_fate`'s first-draft numbers; a binding
-  order can now kill a crew who would have lived, so the player is authoring
-  the loss (TODO, first design decision; DIRECTION, open questions).
+- ~~**Permadeath decided.**~~ **Done 2026-09-10.** The stakes ship on, as
+  content: the base mod declares `casualties.permadeath: true` and a campaign
+  takes it from `from_map`, while the engine's own default stays off so a
+  gentle campaign is a `casualties` block rather than an edit to Rust. The
+  numbers were measured first, on a new `balance --only attrition` table that
+  fights battles and then resolves every casualty through the campaign's own
+  rolls: `severe_percent` stays 25 (0.13 dead per hull destroyed — about one
+  funeral a campaign for a 24-cadet academy), and a cadet carried home hurt in
+  a vehicle that survived is never killed (`carried_fatal_percent: 0`, one
+  grave in nine under the first draft). A binding order can now kill a crew
+  who would have lived, so the player is authoring the loss.
+- **The wound system still has no teeth the player can see.** The table's
+  real finding: an academy pays far more in absence than in graves — 19
+  cadet-days a battle under the gentle rule — and a cadet who is not `Ready`
+  is silently left out of her seat, in a tank that then fights short and dies
+  about twice as fast. The muster choice below is what shows her that.
 - **A muster choice for the wounded.** A wounded or lost cadet is kept out
   of her seat at spawn, but the player is never shown it or offered a
   choice (TODO, same item).

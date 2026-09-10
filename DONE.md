@@ -1671,6 +1671,83 @@ formulas, so the report cannot drift from the game. Its first run said two
 useful things: `mg kills heavy_tank in 3 rounds`, which is the `.max(1)` floor
 stated as a number rather than a worry, and the 67% stalemate rate above.
 
+**The `attrition` table: what a battle costs after the shooting stops**
+(2026-09-10). The `casualties` block had been data and sweepable since it was
+written, and had never been asked a question, because nothing in the tree
+fought a battle and then resolved one: the first-draft probabilities were
+tuned against an imagined list of wrecks. `attrition` fights the same five
+battle maps every other fought-out table does, hands the finished battle to
+`CrewLoss::in_battle` — the campaign's own reading of who it has to account
+for, moved into core so the harness and the game crate ask one question — and
+then resolves every casualty through `resolve_crew_fate` and
+`resolve_station_fate` themselves. Two rows, the same casualties under both
+settings of `CasualtyRules::permadeath`, so the difference between them is
+exactly what the rule costs.
+
+Each casualty is resolved sixteen times. That is not smoothing for its own
+sake: at one roll each the death rate over 36 battles wandered by more than
+the gap between two candidate values of `severe_percent`, and a table whose
+gradient is inside its own noise cannot be tuned against. The *sample of
+wrecks* — which hulls burned, what killed them, how many seats they had — is
+one battle's and nothing is averaged about it. Swept over four seeds `buried`
+holds between 0.77 and 0.84; swept over `severe_percent` 0–40 it runs 0.00 to
+1.30, so the lever clears its own floor by a factor of eighteen.
+
+What the shipped first draft does, 36 battles, per side per battle: 5.5 hulls
+destroyed, 14.7 cadets pulled out of them, 0.6 found hurt at a station in a
+vehicle that came home. Of every casualty roll 58% walk away clean, 19–20%
+walk away but on the wrong side of the fighting, 22% are hurt — and under
+permadeath 5% of them are killed. That is **0.80 dead and 13.5 cadet-days a
+battle**, or per hull destroyed 0.14 dead and 2.4 cadet-days. Kuhlmann Academy
+fields 24 cadets in 9 vehicles, so burning her whole order of battle buries
+1.3 of them and empties 22 cadet-days out of a 24-cadet roll.
+
+Two things the table found that reading the code had not:
+
+- **A fifth of what an academy pays is not the dead, it is the absent.** Under
+  the gentle rule the same battle costs 19.1 cadet-days — nearly a day of the
+  whole school — and a cadet who is not `Ready` is `Absent` at the next spawn,
+  in a tank that then fights a seat short and dies about twice as fast. The
+  wound table has more say over a campaign than the death roll does, and until
+  there is a muster screen the player is never shown any of it.
+- **One cadet in nine the shipped numbers buried came home in her own tank.**
+  `resolve_station_fate` priced its fatal case at `severe_percent`, the wreck
+  table's own number, so a cadet carried to a doctor within the hour died as
+  often as one dragged out of a fire — which nothing else in the model
+  believes, and which no sweep could even separate while it was one field.
+  `carried_fatal_percent` is now its own number, defaulting to the 25 it was
+  sharing so nothing moved, with zero as the rule's absence. Setting it to 0
+  takes 0.80 dead a battle to 0.71.
+
+**The designer's ruling, 2026-09-10, off those numbers.** `severe_percent`
+stays at **25** — the first draft was well judged, and at 0.13 dead per hull
+destroyed a campaign that costs an academy her whole order of battle buries
+about 1.3 of her 24, which is roughly one funeral a campaign. A cadet carried
+home hurt in a vehicle that survived is **never** killed
+(`carried_fatal_percent: 0`): her tank came home and somebody got her to a
+doctor within the hour, which is the whole reason the two cases are separate,
+and it gives withdrawing a damaged vehicle a consequence. And the stakes ship
+**on**.
+
+The flip is not where the older notes expected it. Flipping
+`CasualtyRules::default()` in Rust would have inverted the invariant this
+subsystem is built to satisfy — every harsh system is an additive rule whose
+*absence* is the gentle game — because from then on the gentle campaign would
+have been the one needing an edit. So the stakes are content:
+`casualties.permadeath` is a field of the block a gentle mod already replaces
+wholesale, the base mod declares it `true`, `OverworldState::from_map` copies
+it onto the live `CasualtyRules`, and the engine's own default stays off. A
+campaign still owns and saves its own answer, so the settings screen the menus
+item owes can change one run's mind without touching anybody's mod.
+`the_shipped_campaign_kills_and_a_mod_that_declines_the_rule_does_not` is both
+halves: eight academies burned in the shipped campaign bury somebody, and the
+same eight under a mod that declines the rule bury nobody.
+
+What the ruling does *not* settle is the finding above it. The muster screen
+is still owed, and until it exists the expensive half of a wound — a cadet
+left out of her seat in a tank that then fights short — happens where the
+player cannot see it.
+
 **Seeing the game without playing it.** `crates/game/src/devtools.rs` drives
 the real input path from a script of timed actions and captures the window
 along the way, which is what made rendering and UI changes reviewable by

@@ -54,11 +54,14 @@ build on them rather than hedge:
   verify: a formation run by missions must fight nearly as well as one
   micromanaged per unit, or delegation is a tax and the player will rightly
   refuse to pay it.
-- **Permadeath is the default** (alongside delegation). `CasualtyRules`
-  already models it; the default flips once the wound system has teeth —
-  today nothing stops a wounded cadet deploying, and a default-on permadeath
-  before the muster screen shows the stakes would be silent cruelty. The
-  gentle mod turning it off remains a first-class way to play.
+- **Permadeath is the default** (alongside delegation), and since 2026-09-10
+  it is the shipped one: the base mod declares `casualties.permadeath: true`
+  and a campaign takes its stakes from the content it was built out of. The
+  gentle mod turning it off remains a first-class way to play, and is a
+  `casualties` block rather than an edit to the engine — which is what made
+  the flip legal. What this asked for and has not got is the muster screen:
+  a wounded cadet is already left out of her seat, but nothing shows the
+  player the choice.
 - **The enemy AI is a character.** Doctrine already makes two sides fight
   differently; the brain should go further and be *somebody* — the enemy
   commander is a cadet in the roster, and her doctrine, initiative and traits
@@ -1063,11 +1066,26 @@ Carried deliberately, none blocking chunks 1–2:
   now: gameplay gets solidified first and campaigns are sized to fit after.
   Delegation still exists to keep a day quick — the delegation-tax metric is
   how "quick without being worse" stays honest while the target floats.
-- **When to flip the permadeath default in code.** The decision is made
-  (default on); the flip waits for the wound system to have teeth — an army
-  that refuses to field a wounded cadet, or a muster screen that shows the
-  choice — plus a pass over `resolve_crew_fate`'s first-draft numbers, since
-  those probabilities were tuned for a game where death was opt-in.
+- ~~**When to flip the permadeath default in code.**~~ **Settled 2026-09-10**,
+  and not quite where this expected. The stakes ship on, but as *content*:
+  the base mod declares `casualties.permadeath: true` and the campaign copies
+  it, while the engine's own default stays off — because flipping it in Rust
+  would have made the gentle campaign the one needing an edit, which is the
+  additivity rule backwards. Half the teeth this asked for exist (`who_deploys`
+  leaves a wounded cadet out of her seat, and her tank fights short); the
+  muster screen that shows the player the choice is still owed, and the
+  designer ruled the flip should not wait for it.
+
+  The tuning pass happened first, on a new instrument: `balance --only
+  attrition --sim` fights the battle maps and then resolves every casualty
+  through the campaign's own rolls, so the `casualties` block could finally be
+  asked a question. `severe_percent` stays at 25 — 0.71 dead a battle per
+  side, 0.13 per hull destroyed, so a campaign that costs Kuhlmann Academy her
+  whole order of battle buries about 1.3 of her 24 cadets, which is roughly
+  one funeral a campaign. The first draft was well judged. What was *wrong*
+  was that a cadet carried home hurt in a vehicle that survived was priced by
+  the wreck table's own number, so one grave in nine belonged to somebody
+  whose tank drove back; that is now `carried_fatal_percent`, ruled to 0.
 - ~~**How a ghost contact renders.**~~ Settled in chunk 7, and cheaply: the
   unit's own sprite at the last reported hex, dimmed to 45% and stripped of
   its health bar, with the reporter and the report's age in the panel on

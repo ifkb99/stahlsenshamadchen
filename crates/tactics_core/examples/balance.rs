@@ -66,6 +66,8 @@
 //! seed order regardless of which core finished first, and that is checked by
 //! running the same batch at several widths, not hoped for.
 
+use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
 use tactics_core::Hex;
@@ -74,14 +76,19 @@ use tactics_core::battle::{
     AttackPreview, BattleState, Destruction, EndReason, Event, Order, SideState, UnitId,
     blast_overmatches, flight_ticks, hit_breakdown, preview_attack,
 };
-use tactics_core::data::{ArmorFacing, DataRegistry, ModuleEffect, TerrainDef, WeaponDef};
+use tactics_core::data::{
+    ArmorFacing, DamageType, DataRegistry, ModuleEffect, TerrainDef, WeaponDef,
+};
 use tactics_core::force;
 use tactics_core::harness::arena::{ARENAS, Arena, DEFAULT_ARENA, arena_named};
 use tactics_core::harness::overrides::{Override, configure};
 use tactics_core::harness::parallel::{JOBS, run_all, thread_budget};
 use tactics_core::harness::tally::Tally;
 use tactics_core::map::{Facing, HexMap, MapFile, MapKind, UnitPlacement};
-use tactics_core::roster::{CadetId, Roster};
+use tactics_core::overworld::CrewLoss;
+use tactics_core::roster::{
+    CadetId, CasualtyRules, CrewFate, Roster, resolve_crew_fate, resolve_station_fate,
+};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -244,7 +251,7 @@ what to run
   --brains               which planner is better; --brain-games, --brain-difficulty
   --only A,B             print only these tables. One of: roster, detect, hit,
                          pen, kills, flight, flags, sim, delegation, mustered,
-                         skill, ground
+                         skill, ground, attrition
 
 which game
   --arena NAME           battlefield the skill, brains and mustered tables fight
@@ -293,6 +300,8 @@ examples
   --sim --sweep planner.horizon_rounds=2,4,6 --games 36  # how the AI thinks
   --only delegation --sim --games 36 --set planner.devolved=1.1 \
 \n      --sweep planner.order_worth=0,0.25,1     # what is an order worth?
+  --only attrition --sim --games 36 \
+\n      --sweep casualties.severe_percent=15,25,35   # what does a campaign bury?
   --sim --sweep seed=0,1000,2000 --games 36         # what is the noise floor?
   --sim --only skill --absolute --sweep seed=0,1000,2000,3000   # ...for one table
   --sim --games 36 --arena ridge_arena --only skill,ground --absolute \\
@@ -1369,6 +1378,7 @@ const MUSTER_SEED: u64 = 4000;
 /// and moving that would change the planner seeds rather than only the ground.
 const ARENA_SEED: u64 = 0;
 const GROUND_SEED: u64 = 7000;
+const ATTRITION_SEED: u64 = 5000;
 
 /// Which ground this battle is fought on. Keyed on the seed rather than the
 /// game index so the pairing of map to battle survives changing `--games`.
@@ -2024,6 +2034,364 @@ fn delegation_tax(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
              {}",
             level_note(games)
         ),
+    }
+}
+
+/// How many times each casualty is resolved, so the table reads the *rule*
+/// rather than the dice.
+///
+/// The sample of casualties is one battle's and nothing is averaged about it:
+/// which vehicles burned, what killed them and how many seats they had is
+/// what the fighting produced. What is sampled harder is the roll afterwards,
+/// because a death rate near a tenth over four hundred cadets wanders by more
+/// than the difference between two candidate values of `severe_percent`, and
+/// a table whose gradient is smaller than its own noise cannot be tuned
+/// against. Sixteen draws costs microseconds beside the battle that produced
+/// the list.
+const FATE_DRAWS: u32 = 16;
+
+/// What the fate rolls said, tallied.
+#[derive(Default, Clone, Copy)]
+struct Fates {
+    unharmed: u64,
+    adrift: u64,
+    wounded: u64,
+    killed: u64,
+    /// Days out summed over everybody a roll kept out of a seat at all,
+    /// walking home included: what the order of battle actually feels is a
+    /// missing cadet, and it does not care whether she is in the infirmary or
+    /// on a road somewhere.
+    days: u64,
+    kept_out: u64,
+}
+
+impl Fates {
+    fn count(&mut self, fate: CrewFate) {
+        match fate {
+            CrewFate::Unharmed => self.unharmed += 1,
+            CrewFate::Wounded { days } => {
+                self.wounded += 1;
+                self.days += days as u64;
+                self.kept_out += 1;
+            }
+            CrewFate::Lost { days } => {
+                self.adrift += 1;
+                self.days += days as u64;
+                self.kept_out += 1;
+            }
+            CrewFate::Killed => self.killed += 1,
+        }
+    }
+
+    fn rolls(&self) -> u64 {
+        self.unharmed + self.adrift + self.wounded + self.killed
+    }
+
+    fn share(&self, n: u64) -> f64 {
+        if self.rolls() == 0 {
+            return f64::NAN;
+        }
+        100.0 * n as f64 / self.rolls() as f64
+    }
+
+    fn merge(&mut self, o: &Self) {
+        self.unharmed += o.unharmed;
+        self.adrift += o.adrift;
+        self.wounded += o.wounded;
+        self.killed += o.killed;
+        self.days += o.days;
+        self.kept_out += o.kept_out;
+    }
+}
+
+#[derive(Default, Clone)]
+struct Attrition {
+    battles: usize,
+    wrecks: usize,
+    /// Cadets pulled out of a vehicle that did not come home.
+    pulled: usize,
+    /// Cadets found hurt at their station in one that did.
+    carried: usize,
+    /// What last hit the vehicle each pulled cadet was in — kinetic,
+    /// explosive, small arms, nothing the battle recorded — counted per
+    /// cadet rather than per hull, because that is what the rolls are per.
+    /// The harm chances are quoted one per damage type and this is the only
+    /// thing that says which of the four the campaign actually pays.
+    by_cause: [usize; 4],
+    /// `safety` summed over the same cadets, for a mean.
+    safety: i64,
+    /// Indexed by [`CasualtyRules::permadeath`]: the gentle campaign first,
+    /// then the lethal one, over the same list of casualties. Two rows off
+    /// one battle rather than two runs, because the interesting number is the
+    /// *difference* the rule makes and a second run would sample a second
+    /// battle to find it.
+    fates: [Fates; 2],
+}
+
+impl Attrition {
+    fn merge(&mut self, o: &Self) {
+        self.battles += o.battles;
+        self.wrecks += o.wrecks;
+        self.pulled += o.pulled;
+        self.carried += o.carried;
+        for (mine, theirs) in self.by_cause.iter_mut().zip(o.by_cause) {
+            *mine += theirs;
+        }
+        self.safety += o.safety;
+        for (mine, theirs) in self.fates.iter_mut().zip(&o.fates) {
+            mine.merge(theirs);
+        }
+    }
+}
+
+/// Fight one battle and then take it to the door: what did it cost the school?
+fn attrition_battle(reg: &DataRegistry, maps: &[&str], seed: u64) -> Attrition {
+    let mut a = Attrition {
+        battles: 1,
+        ..Default::default()
+    };
+    let mut state = BattleState::from_map(reg, map_for(maps, seed), seed).expect("battle");
+    let mut ai = AiDriver::new();
+    ai.insert(0, planner(reg, seed, "massed_armor"));
+    ai.insert(1, planner(reg, seed + 1, "elastic_defense"));
+    let mut rounds = 0;
+    while !state.is_over() && rounds < 60 {
+        ai.plan_round(reg, &mut state);
+        state.resolve_round(reg);
+        rounds += 1;
+    }
+
+    a.wrecks = state.lost_units().count();
+    // The campaign's own reading of who it has to account for, not a second
+    // one written here — the whole point of this table is what the shipped
+    // rules do to the shipped cadets.
+    let losses = CrewLoss::in_battle(&state);
+    a.pulled = losses.iter().filter(|l| l.found.is_none()).count();
+    a.carried = losses.len() - a.pulled;
+
+    for (slot, permadeath) in [false, true].into_iter().enumerate() {
+        let rules = CasualtyRules { permadeath };
+        // Its own stream per row, so the gentle row and the lethal one are
+        // the same dice asked a different question rather than two samples.
+        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ (0xca5 << (slot * 8)));
+        for loss in &losses {
+            let safety = reg
+                .vehicle(&loss.vehicle)
+                .expect("a vehicle that just fought is in the registry")
+                .safety;
+            if slot == 0 && loss.found.is_none() {
+                a.by_cause[match loss.killed_by {
+                    Some(DamageType::Kinetic) => 0,
+                    Some(DamageType::Explosive) => 1,
+                    Some(DamageType::SmallArms) => 2,
+                    None => 3,
+                }] += 1;
+                a.safety += safety as i64;
+            }
+            for _ in 0..FATE_DRAWS {
+                let fate = match loss.found {
+                    None => {
+                        resolve_crew_fate(rules, &reg.casualties, safety, loss.killed_by, &mut rng)
+                    }
+                    Some(found) => resolve_station_fate(rules, &reg.casualties, found, &mut rng),
+                };
+                a.fates[slot].count(fate);
+            }
+        }
+    }
+    a
+}
+
+/// The smallest academy any campaign map fields, as (map, side, cadets,
+/// vehicles).
+///
+/// Read out of content rather than written here, because "how much of the
+/// school is that" is the whole question and the answer is a property of the
+/// campaign somebody is about to play. The smallest side is the one the
+/// numbers have to be survivable for.
+fn smallest_academy(reg: &DataRegistry) -> Option<(String, String, usize, usize)> {
+    let mut best: Option<(String, String, usize, usize)> = None;
+    let mut maps: Vec<&MapFile> = reg
+        .maps
+        .values()
+        .filter(|m| m.kind == MapKind::Overworld)
+        .collect();
+    maps.sort_by(|a, b| a.id.cmp(&b.id));
+    for map in maps {
+        let mut per_side: BTreeMap<u8, (HashSet<&str>, usize)> = BTreeMap::new();
+        for army in &map.armies {
+            let entry = per_side.entry(army.side).or_default();
+            for unit in &army.units {
+                entry.1 += 1;
+                for cadet in &unit.crew {
+                    entry.0.insert(cadet.as_str());
+                }
+            }
+        }
+        for (side, (cadets, vehicles)) in per_side {
+            if cadets.is_empty() {
+                continue;
+            }
+            let name = map
+                .sides
+                .get(side as usize)
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| format!("side {side}"));
+            if best.as_ref().is_none_or(|(_, _, n, _)| cadets.len() < *n) {
+                best = Some((map.id.clone(), name, cadets.len(), vehicles));
+            }
+        }
+    }
+    best
+}
+
+/// What a battle costs the academy after the shooting stops.
+///
+/// Every other fought-out table here reads the battlefield. This one reads the
+/// door the survivors come back through, because that is where the campaign's
+/// harshest rule lives and it was the last big table of numbers nobody could
+/// ask a question about: `casualties` is data and sweepable, but nothing ever
+/// fought a battle and then resolved it, so the first-draft probabilities had
+/// never been held against a real list of wrecks.
+///
+/// The two rows are the one thing here that is *not* a mod number.
+/// [`CasualtyRules::permadeath`] is a campaign rule, so the same casualties
+/// are resolved twice — once under the gentle campaign, where the worst a
+/// cadet suffers is a long recovery, and once under the lethal one — and the
+/// difference between the rows is exactly what turning it on costs.
+fn attrition(reg: &DataRegistry, games: usize, seed: u64) -> Grid {
+    let maps = battle_maps(reg);
+    let fought = fight_all(reg, games, |reg, game| {
+        attrition_battle(reg, &maps, ATTRITION_SEED + seed + game)
+    });
+    let mut t = Attrition::default();
+    for one in &fought {
+        t.merge(one);
+    }
+    // Per battle *per side*: an academy fights one side of a battle, and the
+    // number the designer has to live with is what one of them pays for one
+    // day's fighting.
+    let per = (t.battles.max(1) * 2) as f64;
+    let row = |name: &str, f: &Fates| {
+        (
+            name.to_string(),
+            vec![
+                t.wrecks as f64 / per,
+                t.pulled as f64 / per,
+                t.carried as f64 / per,
+                f.share(f.unharmed),
+                f.share(f.adrift),
+                f.share(f.wounded),
+                f.share(f.killed),
+                if f.kept_out == 0 {
+                    f64::NAN
+                } else {
+                    f.days as f64 / f.kept_out as f64
+                },
+                // Deaths per battle per side: the rolls are `FATE_DRAWS` deep,
+                // so divide that back out to get one campaign's worth.
+                f.killed as f64 / FATE_DRAWS as f64 / per,
+                // ...and the same for the days. This is the column an order
+                // of battle actually feels: a dead cadet is one empty seat
+                // for ever, and a school with a third of itself walking home
+                // is short a whole company on Tuesday.
+                f.days as f64 / FATE_DRAWS as f64 / per,
+            ],
+        )
+    };
+    let rows = vec![row("gentle", &t.fates[0]), row("permadeath", &t.fates[1])];
+    // Deaths per vehicle destroyed, which is the one figure here that does
+    // not depend on how big a battle is. These maps field about twice the
+    // hulls a frontier army marches with, so `buried` is this sample's
+    // battle rather than a campaign's, and this is what carries across.
+    let hulls = t.wrecks.max(1) as f64;
+    let per_hull = t.fates[1].killed as f64 / FATE_DRAWS as f64 / hulls;
+    let days_per_hull = t.fates[1].days as f64 / FATE_DRAWS as f64 / hulls;
+
+    let mut note = format!(
+        "\n  a row is the same list of casualties resolved under one campaign rule,\n  \
+         through `resolve_crew_fate` and `resolve_station_fate` themselves. the\n  \
+         shares are over every casualty of both kinds: `pulled` is a cadet taken\n  \
+         out of a vehicle that did not come home, priced by what killed it and by\n  \
+         the chassis's `safety`; `carried` is one found hurt at her station in a\n  \
+         vehicle that did, which is much gentler and, without permadeath, never\n  \
+         fatal at all.\n\n  \
+         `days` is the mean over everybody a roll kept out of a seat, the walk\n  \
+         home included. each casualty is resolved {FATE_DRAWS} times so the table reads\n  \
+         the rule and not the dice; `buried` and `absent` divide that back out,\n  \
+         so they are one campaign's worth: cadets killed, and cadet-days lost to\n  \
+         a wound or a walk home, for one side of one battle.\n"
+    );
+    if let Some((map, academy, cadets, vehicles)) = smallest_academy(reg) {
+        let graves = per_hull * vehicles as f64;
+        let absent = days_per_hull * vehicles as f64;
+        let share = 100.0 * absent / cadets as f64;
+        let campaigns = cadets as f64 / graves.max(f64::EPSILON);
+        note.push_str(&format!(
+            "\n  the smallest academy any campaign fields is {academy} on `{map}`: {cadets} cadets\n  \
+             in {vehicles} vehicles. per hull destroyed permadeath costs her {per_hull:.2} dead and\n  \
+             {days_per_hull:.1} cadet-days; burning her whole order of battle buries {graves:.1} of\n  \
+             her {cadets} and takes {absent:.0} cadet-days out of the roll — {share:.0}% of a day's\n  \
+             school. she can do that {campaigns:.0} times over before there is nobody left.\n\n  \
+             per hull is the figure that carries: these maps field about twice the\n  \
+             hulls a campaign army marches with, so `buried` and `absent` are this\n  \
+             sample's battle rather than a campaign's.\n"
+        ));
+    }
+    note.push_str(
+        "\n  what this table cannot see: these are the battle maps' own orders of\n  \
+         battle, and `river_crossing`'s are 24/76 to the side with the tank\n  \
+         destroyer, so a fifth of the sample is a massacre. read it for the shape\n  \
+         of the cost rather than for a campaign's exact bill.",
+    );
+
+    let pulled = t.by_cause.iter().sum::<usize>().max(1);
+    let cause = |n: usize| 100.0 * t.by_cause[n] as f64 / pulled as f64;
+    let preamble = vec![
+        format!(
+            "  what put them in the roll: kinetic {:.0}%, explosive {:.0}%, small arms {:.0}%, \
+             unrecorded {:.0}%",
+            cause(0),
+            cause(1),
+            cause(2),
+            cause(3),
+        ),
+        format!(
+            "  this content ships the `{}` row (`casualties.permadeath`)",
+            if reg.casualties.permadeath {
+                "permadeath"
+            } else {
+                "gentle"
+            },
+        ),
+        format!(
+            "  their vehicles averaged safety {:.1}, against `harm_per_safety` {}",
+            t.safety as f64 / pulled as f64,
+            reg.casualties.harm_per_safety,
+        ),
+    ];
+
+    Grid {
+        title: format!(
+            "what the door costs: {games} battles across {}, resolved twice",
+            maps.join(", ")
+        ),
+        preamble,
+        row_head: "campaign",
+        columns: vec![
+            col("wrecks", 1),
+            col("pulled", 1),
+            col("carried", 1),
+            col("unhurt%", 0),
+            col("adrift%", 0),
+            col("hurt%", 0),
+            col("dead%", 0),
+            col("days", 1),
+            col("buried", 2),
+            col("absent", 1),
+        ],
+        rows,
+        note,
     }
 }
 
@@ -3537,6 +3905,9 @@ fn fought_grids(reg: &DataRegistry, cfg: &Run, seed: u64, budget: i32) -> Vec<Gr
     if cfg.only.wants("ground") {
         out.push(ground_bias(reg, cfg.arena, cfg.games, seed));
     }
+    if cfg.only.wants("attrition") {
+        out.push(attrition(reg, cfg.games, seed));
+    }
     out
 }
 
@@ -3858,6 +4229,7 @@ const TABLES: &[&str] = &[
     "mustered",
     "skill",
     "ground",
+    "attrition",
 ];
 
 impl Only {

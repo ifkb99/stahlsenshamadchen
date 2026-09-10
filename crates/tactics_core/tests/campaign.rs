@@ -958,3 +958,75 @@ fn a_victory_rule_nobody_could_ever_satisfy_fails_validation() {
         report.warnings
     );
 }
+
+/// The shipped campaign is willing to kill its characters, and a mod that
+/// declines the rule is the game exactly as it was.
+///
+/// The stakes are content (`casualties.permadeath`), not a constant, and that
+/// is the whole point of where they live. Permadeath is the intended default
+/// and the base mod says so — the designer's ruling of 2026-09-10, taken off
+/// the `attrition` table's numbers: 0.71 dead a battle per side in the
+/// harness's sample, 0.13 per hull destroyed, so a campaign that costs
+/// Kuhlmann her whole order of battle buries about 1.3 of her 24. But the
+/// repo's rule is that every harsh system is an additive rule whose *absence*
+/// is the gentle game, and a default flipped in Rust would have made the
+/// gentle campaign the one that needed an edit. So the engine still defaults
+/// to nobody dying, the base mod declares the stakes, and this test is both
+/// halves of that.
+#[test]
+fn the_shipped_campaign_kills_and_a_mod_that_declines_the_rule_does_not() {
+    use tactics_core::overworld::CrewLoss;
+    use tactics_core::roster::CadetStatus;
+
+    let reg = registry();
+    assert!(
+        reg.casualties.permadeath,
+        "the base mod is the campaign that means it"
+    );
+    let mut gentle = registry();
+    gentle.casualties.permadeath = false;
+
+    // Everybody on side 0, pulled out of the least survivable chassis the
+    // mod ships, by the worst thing that can happen to it. Eight campaigns'
+    // worth, because one cadet's fate is a coin and the rule is about the
+    // shape of a hundred of them.
+    let buried = |reg: &DataRegistry| -> usize {
+        let mut dead = 0;
+        for seed in 0..8 {
+            let mut state =
+                OverworldState::from_map(reg, "frontier", seed).expect("the shipped campaign");
+            let attacker = state.side_armies(0).next().expect("she has an army").id;
+            let defender = state.side_armies(1).next().expect("so has he").id;
+            let losses: Vec<CrewLoss> = state
+                .roster
+                .of_side(0)
+                .map(|cadet| CrewLoss {
+                    cadet: cadet.id,
+                    vehicle: "heavy_tank".into(),
+                    killed_by: Some(tactics_core::data::DamageType::Kinetic),
+                    found: None,
+                })
+                .collect();
+            state.apply_battle_result(
+                reg,
+                &BattleReport::of(attacker, defender, Vec::new(), losses),
+            );
+            dead += state
+                .roster
+                .of_side(0)
+                .filter(|c| c.status == CadetStatus::Dead)
+                .count();
+        }
+        dead
+    };
+
+    assert!(
+        buried(&reg) > 0,
+        "the shipped campaign burned eight academies and buried nobody"
+    );
+    assert_eq!(
+        buried(&gentle),
+        0,
+        "a campaign that declines the rule killed somebody anyway"
+    );
+}
