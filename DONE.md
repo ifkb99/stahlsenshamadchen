@@ -1709,6 +1709,38 @@ clash with one log line, leaving the armies where they were, which is the
 difference between a bad mod and a lost run. `choose_battle_map` returns an
 `Option` instead of expecting that some mod ships a battle map.
 
+**Asking who is standing there was a third of `reachable`** (2026-09-11).
+The TODO had this as an occupancy-index item — `unit_at` is a linear scan,
+called from `passable` inside the Dijkstra inner loop and from
+`claimed_by_friend` once per candidate hex in the final retain, so the
+function is O(hexes × units) twice over. The measurement first, because the
+complaint is asymptotic and this game's armies are small: deleting both
+checks outright reads **11.4 µs against 16.6**, so 5.2 µs of the function was
+the occupancy question rather than the pathfinding. Worth doing.
+
+*The first index made it slower.* A `HashMap<Hex, _>` of the same facts,
+gathered once per call, read **17.7 µs** — worse than the scans it replaced,
+because hashing a coordinate per tile costs more than walking eight
+contiguous entries, and eight is what `river_crossing` fields. Flat
+`Vec<(Hex, u32)>` lists with a linear scan read 15.4. Then the real cost
+turned up: `destination_blocked` resolved *the moving crew's own chassis* out
+of the registry on every tile of her reach, and string-keyed registry lookups
+are about a fifth of a round. Hoisting that single lookup into the gather
+took it to **14.2 µs**, about 15% off the baseline, with `unit_vision` — the
+row that says whether the machine is comparable — inside 2% either way across
+six interleaved runs.
+
+*What it cost in structure, and what it did not.* The rules are
+`movement::fits` and `movement::claim_blocks`, free functions over counts
+with no opinion about how the counting was done; `Occupancy` looks the
+numbers up and `BattleState::room_for` walks the field for them, and both ask
+the same two functions. That is the arrangement `edge_cost` and
+`MoveGrid::cost` already have through `step_cost`, and it is the reason this
+is not a second reading of "is there room" waiting to drift. The single-hex
+`destination_blocked` gathers one hex's worth through the same function, so
+the order path costs exactly what it did. Determinism snapshot unmoved, every
+binary green.
+
 ## Tooling
 
 **The balance harness**, `examples/balance.rs`, and it is two harnesses on

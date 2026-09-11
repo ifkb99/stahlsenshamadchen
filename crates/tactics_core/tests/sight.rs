@@ -13,7 +13,9 @@
 //! - detection: looking is not seeing
 //! - line of sight, elevation and terrain
 
-use tactics_core::battle::{BattleState, Order, SightGrid, UnitId, los_clear, reachable};
+use tactics_core::battle::{
+    BattleState, Order, SightGrid, UnitId, destination_blocked, los_clear, reachable,
+};
 use tactics_core::data::{DataRegistry, MovementClass};
 use tactics_core::map::HexMap;
 
@@ -76,6 +78,119 @@ fn the_move_grid_answers_exactly_what_the_reference_does() {
         }
     }
     assert!(checked > 10_000, "sampled too little of the map: {checked}");
+}
+
+/// The occupancy walk gathered once answers exactly what the one-hex
+/// reference does.
+///
+/// The third cache with this bargain, and the one whose reference is a
+/// public function the order path still calls: `destination_blocked` walks
+/// every unit on the field for one hex, and `reachable` gathers the same
+/// facts once for a whole sweep. It is allowed to be faster; it is not
+/// allowed to bar her from ground the reference would let her stop on, or
+/// let her stop on ground the reference would refuse.
+///
+/// The two directions are both worth stating. A gather that forgot a
+/// passenger, or counted the moving crew as somebody she has to make room
+/// for, would over-block — invisible in a battle, because she would simply
+/// go somewhere else — so the neighbours of her own hex are checked the
+/// other way round.
+#[test]
+fn the_occupancy_index_answers_exactly_what_the_reference_does() {
+    let reg = seen(registry());
+    let rows: Vec<&str> = vec!["ggggg"; 3];
+    let mut state = two_side_battle(
+        &reg,
+        &rows,
+        vec![
+            // A light tank is two footprints and grass holds four, so the
+            // enemy's hex below is refused by the enemy rule alone rather than
+            // also by the room rule — which is what makes forgetting one of
+            // the three visible.
+            unit_at([0, 1], 0, "light_tank", "Sweeper"),
+            // A friend parked in her way. A medium tank is three footprints
+            // and grass holds four, so one of her own is enough to fill a
+            // hex — no contrivance needed to get a refusal out of the room
+            // rule.
+            unit_at([2, 1], 0, "medium_tank", "Parked"),
+            // And one who has been ordered somewhere, so a *claim* is in the
+            // sample as well as a vehicle.
+            unit_at([2, 0], 0, "medium_tank", "Marching"),
+            unit_at([4, 1], 1, "light_tank", "Enemy"),
+        ],
+        13,
+    );
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: UnitId(2),
+                to: tactics_core::offset_to_hex(3, 0),
+            },
+        )
+        .expect("a legal march of one hex");
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(3)),
+        "the stage needs the enemy found, or her hex is an ambush rather than a wall"
+    );
+    let marching = state.unit(UnitId(2)).expect("she is on the field");
+    assert_ne!(
+        marching.planned_destination(),
+        marching.pos,
+        "the stage needs a claim in it, not just parked vehicles"
+    );
+
+    let her = state.unit(UnitId(0)).expect("she is on the field");
+    let reach = reachable(&reg, &state, UnitId(0));
+
+    // Nothing she may stop on is ground the reference refuses.
+    for hex in reach.keys() {
+        assert!(
+            !destination_blocked(&reg, &state, her, *hex),
+            "the sweep let her stop on {hex:?}, which the reference refuses"
+        );
+    }
+
+    // Named ground, refused for each of the three reasons the gather has to
+    // get right, because "some hexes are refused" would pass with any two of
+    // them forgotten.
+    for (at, why) in [
+        (
+            [2, 1],
+            "a medium tank is parked on it and three plus two will not fit on grass",
+        ),
+        ([3, 0], "a friend's orders have already spoken for it"),
+        ([4, 1], "an enemy she has found is standing on it"),
+    ] {
+        let hex = tactics_core::offset_to_hex(at[0], at[1]);
+        assert!(
+            destination_blocked(&reg, &state, her, hex),
+            "she should be refused {at:?}: {why}"
+        );
+        assert!(
+            !reach.contains_key(&hex),
+            "the sweep offered her {at:?}, which {why}"
+        );
+    }
+    // And a bare hex next door is not refused, or the three above prove
+    // nothing except that everything is refused.
+    let bare = tactics_core::offset_to_hex(1, 1);
+    assert!(
+        !destination_blocked(&reg, &state, her, bare) && reach.contains_key(&bare),
+        "empty grass one hex from her tracks is ground she may stand on"
+    );
+
+    // The other direction, over hexes a step away, where her budget cannot be
+    // what excluded them: anything the reference allows, the sweep offers.
+    for next in her.pos.all_neighbors() {
+        if state.map.get(next).is_none() || destination_blocked(&reg, &state, her, next) {
+            continue;
+        }
+        assert!(
+            reach.contains_key(&next),
+            "the sweep kept her off {next:?}, which is next to her and the reference allows"
+        );
+    }
 }
 
 #[test]

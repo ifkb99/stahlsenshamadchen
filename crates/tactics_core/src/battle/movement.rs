@@ -245,15 +245,191 @@ pub fn edge_cost_for(
 /// Friendly units can be passed through; visible enemies block. Enemies the
 /// moving side has not spotted do NOT block here — bumping into one mid-path
 /// is the ambush case, resolved by [`super::BattleState::apply`].
-fn passable(state: &BattleState, unit: &Unit, hex: Hex) -> bool {
-    // Crowding is deliberately not consulted: a hex being full is a reason
-    // not to *stop* there, not a reason a tank cannot drive across it. That
-    // distinction is the whole difference between this and
-    // [`destination_blocked`], and collapsing them would make a wood holding
-    // three platoons into a wall.
-    !state.occupants(hex).any(|other| {
-        other.side != unit.side && state.fog.side(unit.side).spotted.contains(&other.id)
-    })
+/// Whether a crew of `mine` footprints fits on ground of this `capacity`
+/// beside `count` others taking up `taken` between them.
+///
+/// The room rule itself, with no opinion about how the numbers were counted.
+/// [`BattleState::room_for`] walks the field to get them and [`Occupancy`]
+/// looks them up in an index it gathered once; sharing the rule rather than
+/// the gathering is the arrangement [`edge_cost`] and [`MoveGrid::cost`]
+/// already have through `step_cost`, and for the same reason — two readings
+/// of "is there room" would drift, and the drift would look like a
+/// pathfinding bug rather than a bookkeeping one.
+///
+/// Terrain that declares no capacity keeps the rule this game had before
+/// stacking: one crew to a hex, whatever size she is. That is why the count
+/// is passed beside the footprint — a crew whose chassis the mod does not
+/// define still takes the hex.
+pub(crate) fn fits(count: u32, taken: u32, capacity: Option<u32>, mine: u32) -> bool {
+    let Some(capacity) = capacity else {
+        return count == 0;
+    };
+    taken + mine <= capacity.max(mine)
+}
+
+/// Whether friends' orders have already spoken for this ground.
+///
+/// [`fits`]'s twin, and the reason a claim is counted rather than refused on
+/// sight: counting is what lets a section be ordered into a wood together,
+/// where the old rule sent the second crew somewhere else however much room
+/// was left. `standing` is everybody on the hex, seen or not, because the
+/// crews already parked there are a fact rather than a report.
+pub(crate) fn claim_blocks(claimed: u32, standing: u32, capacity: Option<u32>, mine: u32) -> bool {
+    if claimed == 0 {
+        return false;
+    }
+    let Some(capacity) = capacity else {
+        // No declared capacity is the old rule: one crew to a hex, so any
+        // claim at all is somebody else's ground.
+        return true;
+    };
+    standing + claimed + mine > capacity.max(mine)
+}
+
+/// Who is standing and heading where, gathered once for one crew's sweep.
+///
+/// [`reachable`] asks the same questions — may she drive through this hex,
+/// may she stop on it — of every tile within her reach, and each answer used
+/// to walk every unit on the field. That is O(hexes × units) twice over, and
+/// it is **5.0 of `reachable`'s 16.4 µs** on `river_crossing` with eight
+/// units, measured by deleting both checks outright, which is the ceiling on
+/// what any index can buy. Gathering the same facts once is O(units + hexes).
+///
+/// The single-hex callers gather one hex's worth through the same function
+/// and ask the same methods, so this is not a second reading of the rules —
+/// the rules are [`fits`] and [`claim_blocks`], and everything here only
+/// counts.
+#[derive(Default)]
+struct Occupancy {
+    /// Where an enemy she has *found* is standing: a wall whatever the
+    /// capacity says, since two sides do not share a hex. An unspotted one is
+    /// deliberately absent — that order is accepted and resolves as an
+    /// ambush, because refusing it would announce her.
+    enemies: Vec<Hex>,
+    /// Everybody standing on the field with the footprint they take, which is
+    /// what [`BattleState::crowding`] counts. Her own crew is in it, because a
+    /// crew does not have to make room for herself.
+    standing: Vec<(Hex, u32)>,
+    /// The others she can see — her own side, and the enemies she has found —
+    /// with their footprints.
+    seen: Vec<(Hex, u32)>,
+    /// Where her friends' orders already send them this round, with what they
+    /// will take up when they arrive.
+    claimed: Vec<(Hex, u32)>,
+    /// What she takes up herself, resolved once.
+    ///
+    /// It is a string-keyed registry lookup, and those are about a fifth of a
+    /// round; asking for it per tile of her reach was most of what the old
+    /// per-hex check actually cost.
+    mine: u32,
+}
+
+impl Occupancy {
+    /// Walk the field once.
+    ///
+    /// `only`, when given, keeps just that hex, which is what the single-hex
+    /// callers want. It cannot change an answer — every read below matches on
+    /// the hex again — so it is a bound on what gets stored and nothing else:
+    /// the order path should not allocate a list the size of the army to ask
+    /// about one tile.
+    fn gather(
+        registry: &DataRegistry,
+        state: &BattleState,
+        unit: &Unit,
+        only: Option<Hex>,
+    ) -> Self {
+        let spotted = &state.fog.side(unit.side).spotted;
+        let mut occ = Self {
+            mine: registry
+                .vehicle(&unit.vehicle)
+                .map(|v| v.footprint())
+                .unwrap_or(1),
+            ..Self::default()
+        };
+        for other in &state.units {
+            if !other.alive() {
+                continue;
+            }
+            // A chassis the mod does not define takes up no room and still
+            // takes the hex, which is why a crew is an *entry* here and her
+            // footprint is only the number beside it.
+            let footprint = registry
+                .vehicle(&other.vehicle)
+                .map(|v| v.footprint())
+                .unwrap_or(0);
+            // A passenger is aboard rather than on the field, so she is on
+            // nobody's hex to stand on.
+            if other.aboard.is_none() && only.is_none_or(|hex| hex == other.pos) {
+                occ.standing.push((other.pos, footprint));
+                if other.id != unit.id && (other.side == unit.side || spotted.contains(&other.id)) {
+                    occ.seen.push((other.pos, footprint));
+                }
+                if other.side != unit.side && spotted.contains(&other.id) {
+                    occ.enemies.push(other.pos);
+                }
+            }
+            if other.id != unit.id && other.side == unit.side && !other.intent.path.is_empty() {
+                let heading = other.planned_destination();
+                if only.is_none_or(|hex| hex == heading) {
+                    occ.claimed.push((heading, footprint));
+                }
+            }
+        }
+        occ
+    }
+
+    /// How many of `list` are on `hex`, and what they take up between them.
+    ///
+    /// A linear scan, deliberately, and the measurement is the argument: a
+    /// `HashMap<Hex, _>` index of the same facts made `reachable` *slower*
+    /// (17.7 µs against 16.4), because hashing a coordinate per tile costs
+    /// more than walking a handful of contiguous entries. These lists are one
+    /// per crew on the field — eight on `river_crossing`, a few dozen in the
+    /// worst army this game fields — and the win was never the lookup. It is
+    /// that the vehicle is resolved out of the registry once per crew instead
+    /// of once per crew *per tile*, and string-keyed registry lookups are
+    /// about a fifth of a round.
+    fn count_on(list: &[(Hex, u32)], hex: Hex) -> (u32, u32) {
+        let mut count = 0;
+        let mut taken = 0;
+        for (at, footprint) in list {
+            if *at == hex {
+                count += 1;
+                taken += footprint;
+            }
+        }
+        (count, taken)
+    }
+
+    /// Whether she may drive *through* `hex`.
+    ///
+    /// Crowding is deliberately not consulted: a hex being full is a reason
+    /// not to *stop* there, not a reason a tank cannot drive across it. That
+    /// distinction is the whole difference between this and [`Self::blocked`],
+    /// and collapsing them would make a wood holding three platoons into a
+    /// wall.
+    fn passable(&self, hex: Hex) -> bool {
+        !self.enemies.contains(&hex)
+    }
+
+    /// Whether she is barred from *finishing* her move on `hex`. See
+    /// [`destination_blocked`].
+    fn blocked(&self, registry: &DataRegistry, state: &BattleState, hex: Hex) -> bool {
+        if self.enemies.contains(&hex) {
+            return true;
+        }
+        let capacity = state
+            .terrain_at(hex)
+            .and_then(|id| registry.terrain(id))
+            .and_then(|t| t.capacity);
+        let (count, taken) = Self::count_on(&self.seen, hex);
+        if !fits(count, taken, capacity, self.mine) {
+            return true;
+        }
+        let (_, claimed) = Self::count_on(&self.claimed, hex);
+        let (_, standing) = Self::count_on(&self.standing, hex);
+        claim_blocks(claimed, standing, capacity, self.mine)
+    }
 }
 
 /// Whether `unit` is barred from *finishing* its move on `hex`.
@@ -265,60 +441,16 @@ fn passable(state: &BattleState, unit: &Unit, hex: Hex) -> bool {
 /// — the order is accepted and resolves as an ambush. Refusing it instead
 /// would announce that someone is standing there, which is the fog leaking
 /// through the pathfinder.
+///
+/// One hex's worth of [`Occupancy`], which is the same walk over the units
+/// this function always did.
 pub fn destination_blocked(
     registry: &DataRegistry,
     state: &BattleState,
     unit: &Unit,
     hex: Hex,
 ) -> bool {
-    // A spotted enemy is a wall whatever the capacity says: two sides do not
-    // share a hex, and refusing here tells the moving side nothing it cannot
-    // already see. An unspotted one still does not block — that order is
-    // accepted and resolves as an ambush.
-    if state.occupants(hex).any(|other| {
-        other.side != unit.side && state.fog.side(unit.side).spotted.contains(&other.id)
-    }) {
-        return true;
-    }
-    // Friends are a question of room rather than of presence now. On terrain
-    // that declares no capacity `room_for` says "one crew, whatever size",
-    // which is the rule this line used to spell out itself.
-    !state.room_for(registry, unit, hex) || claimed_by_friend(registry, state, unit, hex)
-}
-
-/// Whether a friendly unit's orders already send it to `hex` this round.
-fn claimed_by_friend(registry: &DataRegistry, state: &BattleState, unit: &Unit, hex: Hex) -> bool {
-    // A claim takes up room exactly as a vehicle already parked there does,
-    // and for the same reason: by the time she arrives the other crew will be
-    // standing on it. Counting *claims* rather than refusing on the first one
-    // is what lets a section be ordered into a wood together — the old rule
-    // sent the second crew somewhere else no matter how much space was left.
-    let claimed: u32 = state
-        .units
-        .iter()
-        .filter(|other| other.alive() && other.id != unit.id && other.side == unit.side)
-        .filter(|other| !other.intent.path.is_empty() && other.planned_destination() == hex)
-        .filter_map(|other| registry.vehicle(&other.vehicle))
-        .map(|v| v.footprint())
-        .sum();
-    if claimed == 0 {
-        return false;
-    }
-    let capacity = state
-        .terrain_at(hex)
-        .and_then(|id| registry.terrain(id))
-        .and_then(|t| t.capacity);
-    let Some(capacity) = capacity else {
-        // No declared capacity is the old rule: one crew to a hex, so any
-        // claim at all is somebody else's ground.
-        return true;
-    };
-    let mine = registry
-        .vehicle(&unit.vehicle)
-        .map(|v| v.footprint())
-        .unwrap_or(1);
-    let standing = state.crowding(registry, hex);
-    standing + claimed + mine > capacity.max(mine)
+    Occupancy::gather(registry, state, unit, Some(hex)).blocked(registry, state, hex)
 }
 
 /// All tiles the unit can end its move on, with the cheapest cost to reach
@@ -332,6 +464,10 @@ pub fn reachable(registry: &DataRegistry, state: &BattleState, id: UnitId) -> Ha
     let (class, max_climb) = unit_movement(registry, unit);
     let budget = move_points(registry, &state.roster, unit, state.terrain_at(unit.pos));
 
+    // One walk over the units, then every question about every tile in her
+    // reach is a lookup. See [`Occupancy`] for what that is worth.
+    let occupancy = Occupancy::gather(registry, state, unit, None);
+
     let mut best: HashMap<Hex, u32> = HashMap::new();
     let mut heap = BinaryHeap::new();
     best.insert(unit.pos, 0);
@@ -343,7 +479,7 @@ pub fn reachable(registry: &DataRegistry, state: &BattleState, id: UnitId) -> Ha
             continue;
         }
         for next in hex.all_neighbors() {
-            if !passable(state, unit, next) {
+            if !occupancy.passable(next) {
                 continue;
             }
             let Some(step) = state.moves.cost(class, max_climb, hex, next) else {
@@ -360,7 +496,7 @@ pub fn reachable(registry: &DataRegistry, state: &BattleState, id: UnitId) -> Ha
         }
     }
 
-    best.retain(|hex, _| !destination_blocked(registry, state, unit, *hex));
+    best.retain(|hex, _| !occupancy.blocked(registry, state, *hex));
     best
 }
 
@@ -562,7 +698,8 @@ pub fn path_to(
     if to == unit.pos {
         return Some((vec![unit.pos], 0));
     }
-    if destination_blocked(registry, state, unit, to) {
+    let occupancy = Occupancy::gather(registry, state, unit, None);
+    if occupancy.blocked(registry, state, to) {
         return None;
     }
     let (class, max_climb) = unit_movement(registry, unit);
@@ -572,7 +709,7 @@ pub fn path_to(
         if from == next {
             return Some(0);
         }
-        if !passable(state, unit, next) {
+        if !occupancy.passable(next) {
             return None;
         }
         state.moves.cost(class, max_climb, from, next)

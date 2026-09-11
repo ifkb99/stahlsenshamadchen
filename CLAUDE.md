@@ -1168,7 +1168,7 @@ four seeds, after the ladder scaled by damage spent (2026-09-09):
 | | |
 | --- | --- |
 | round resolution | 1.47 ms (1.96 before `substitution_penalty` went to 6 — this row moves with how well the AI plays, and every partial crew on `river_crossing` now has a stand-in in a seat; 1.84 after Wave 1, 1.59 after Phase 2) |
-| `reachable()` per call | 16.3 µs |
+| `reachable()` per call | 14.2 µs (16.6 before the occupancy walk was gathered once) |
 | `roads()` per call | 118.8 µs |
 | `unit_vision` per unit, cold | 89.2 µs (90.8 the run before: the machine is comparable) |
 | utility order | 0.09 ms |
@@ -1194,17 +1194,32 @@ says whether the machine is comparable.
   `(unit, pos, range)` list is unchanged skips the union — keep the reference
   `los_clear` and `SightGrid::clear` sharing `sight_line_clear`, and keep
   `cached_vision_is_the_same_answer_as_computing_it_fresh` passing.
-- **Neither grid's inner loop reads occupancy**, and stripping the friend
-  check out of `destination_blocked` entirely moves `reachable` only 31 → 28
-  µs. Stacking is not a performance question.
+- **Neither grid's inner loop reads occupancy**, and stacking is still not a
+  performance question — but *asking who is standing there* was one.
+  `reachable` walked every unit on the field twice per tile, once to see
+  whether she could drive through and once to see whether she could stop.
+  Deleting both checks outright reads 11.4 µs against 16.6, so 5.2 µs, a
+  third of the function, was the answer to that question rather than the
+  pathfinding. `movement::Occupancy` gathers it once per call: 14.2 µs,
+  about 15% off, with the reference row inside 2% either way.
+- **The index is a flat list, and the measurement is the argument.** A
+  `HashMap<Hex, _>` of the same facts made `reachable` **slower** — 17.7 µs
+  against 16.6 — because hashing a coordinate per tile costs more than
+  walking eight contiguous entries. Most of what the old check cost was not
+  the scan at all: it was resolving the crew's chassis out of the registry
+  *per tile*, and string-keyed registry lookups are about a fifth of a round
+  (below). Hoisting that one lookup out of the loop was worth more than the
+  index it sits in. The rules themselves are `movement::fits` and
+  `movement::claim_blocks`, shared by the index and by
+  `BattleState::room_for`, which is the arrangement `edge_cost` and
+  `MoveGrid::cost` already have through `step_cost`: share the rule, not the
+  gathering.
 - **String-keyed registry lookups cost about 21% of a round**, 62% of it
   `module` lookups from `substance` and its neighbours. Full interning is not
   justified by the numbers; making `substance` stop hashing is (STRUCTURE.md
   item 8).
 - **MCTS is parked** at parity with the utility planner over 256 battles and
   ~30,000× the cost. No planner change owes it a budget (PARKED.md).
-- **`reachable()` is O(hexes × units) twice over** — TODO, the
-  occupancy-index item.
 
 ### Content gaps
 
