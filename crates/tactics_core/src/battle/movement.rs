@@ -35,10 +35,13 @@ pub fn move_points(
         Some(crate::data::MovementClass::Foot)
     );
     let skilled = if afoot {
-        registry.balance.pace(
-            base,
-            super::stats::athletics(registry, roster, unit, terrain),
-        )
+        // Her chassis's own, and nobody's skill. A percentage of a one-point
+        // allowance cannot say anything — one hex a round already is walking
+        // pace — and she is deliberately still not asked for `driving`, which
+        // charged a platoon a stand-in penalty for a seat her chassis has
+        // never had. `athletics` buys steep ground instead; see
+        // `balance.athletics_per_climb_level`.
+        base
     } else {
         registry
             .balance

@@ -866,6 +866,14 @@ impl DataRegistry {
                  mission_weight 2.0 used to pay)"
             ));
         }
+        if let Some(was) = self.balance.retired_speed_per_athletics {
+            report.warnings.push(format!(
+                "balance speed_per_athletics is {was} and is no longer read. A foot unit \
+                 has one movement point and one hex a round is already walking pace, so \
+                 no percentage of it can say anything; athletics buys steep ground \
+                 instead, through athletics_per_climb_level"
+            ));
+        }
         // Warned rather than errored because 1.0 is a coherent thing for a
         // mod to say — it just is not the thing it looks like. See the field.
         if !(0.0..1.0).contains(&p.pull_under_fire) {
