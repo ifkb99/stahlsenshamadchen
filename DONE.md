@@ -1610,6 +1610,37 @@ baseline — caught by the snapshot inside a minute. A test whose stage is
 anonymous is measuring `Roster::unspecified`, which is `AVERAGE` for every
 skill: all four tests failed that way first, and they name their cadets now.
 
+**The first ground a skill can be asked about** (2026-09-11). The climb rule
+`athletics_per_climb_level` shipped the day before with nowhere to act:
+tracked vehicles climb one level, foot climbs two, and no battle map had an
+adjacent step steeper than two — `battle_hills` had 24 steps of two and
+every other map topped out at one. So `battle_hills` grew **tors**: a rock
+knob far out on each spur, three levels above the shoulder it sits on, 32
+tiles with 80 approaches at a step of three and 96 cliffs of four. A platoon
+whose leader is athletic goes up; one whose leader is not walks round;
+nothing with tracks goes near it.
+
+*Where it is, is the design.* Out on the spur rather than on a hump top,
+because the crest objective has to stay a thing two armies can fight over
+rather than a thing one platoon is handed, and what the tor is worth is the
+sight line — the terrain prior's business rather than an objective's.
+Written as a function of `a` and `v` like everything else in
+`tools/make_battle_maps.py`, so it exists on both spurs and neither flank
+and the generator's symmetry assert still passes. It cost the map nothing
+measurable: 44–28 west before, 46–26 after, over 72 battles, with the orders
+of battle at 36–36 both times.
+
+*And it still cannot bite, for a reason one level further down.* Both
+`scout_section`s in the generated order of battle — "Spaeher" and "Vixen" —
+are **crewed by nobody**, so they answer `Roster::unspecified`, which is
+`AVERAGE` for every skill. The only crewed platoons are `ines`+`traudl` and
+`alma`+`cecile`, whose best athletics is 11 against an average of 10: one
+point of margin, which at the shipped threshold of two buys no level at all.
+The whole mod's best athletics is `marta` at 13. Crewing the sections from
+the three spare cadets (`erika`, `ruth`, `sanna`) does not cover four seats,
+so it wants either a crew reshuffle, two more characters, or a lower
+threshold — the designer's to choose, and the numbers are here to choose on.
+
 ## The campaign
 
 **What ends it is map data (2026-09-09).** `frontier` had a Lua wrapper

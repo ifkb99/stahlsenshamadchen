@@ -1238,7 +1238,8 @@ says whether the machine is comparable.
   `tools/make_battle_maps.py` — every feature is a function of the doubled
   lateral coordinate `a = |2·col − (40 − row % 2)|`, so a west/east tilt is
   inexpressible and the generator asserts it; edit the script and regenerate
-  rather than editing the json. Its first draft wrote the ridge as two wide
+  rather than editing the json. The tors are written the same way, which is
+  why there is one on each spur and none on either flank. Its first draft wrote the ridge as two wide
   bands and read 186–102 west over four seeds (+4.9 sd) — wide bands of
   identical ground are wide plateaus of identical *score*, and every tie left
   in this engine is a coin that falls the same compass way.
@@ -1263,10 +1264,16 @@ says whether the machine is comparable.
   percentage of it rounds to anything else until 80% a point; a rifle does
   **3** damage; chassis concealment is divided into whole hexes of a
   spotter's reach, so 5% a point moves nothing and 10 moves a wound tick;
-  and no shipped battle map has an adjacent elevation step steeper than
-  **2**, which foot units already climb, so the climb rule cannot bite on any
-  ground the game owns. Every one of the four was swept and came back
-  bit-identical at the house rate of 5. The tests stage their own relief and
+  and until 2026-09-11 no shipped battle map had an adjacent elevation step
+  steeper than **2**, which foot units already climb, so the climb rule could
+  not bite on any ground the game owned. Every one of the four was swept and
+  came back bit-identical at the house rate of 5. `battle_hills` now carries
+  **the tors** — a rock knob far out on each spur, three levels above its
+  shoulder, 32 tiles with 80 approaches at a step of three and the rest
+  cliffs — which is the first ground in this game a crew can reach and
+  another cannot for want of a skill. It cost the map nothing measurable:
+  44–28 west before and 46–26 after over 72 battles, orders of battle 36–36
+  both times. The tests stage their own relief and
   their own skill levels and are mutation-checked; the tables cannot see the
   rules at all. The designer's ruling is to raise the content's resolution
   rather than ship coarse rates — movement points and terrain costs together,
