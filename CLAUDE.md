@@ -426,7 +426,13 @@ converted at the mod's exchange rate.
   `morale`, not `planner`, because it reaches the loader's AP-or-HE choice
   and therefore a human's crew. At 0.0 fear is charged and invisible to
   every chooser, the game before.
-- **Cadence is `WeaponDef::shots_per_round(&scale)`**, ticks per round over
+- **Cadence is her loader's, through `combat::crewed_reload`** — the listed
+  `WeaponDef::shots_per_round(&scale)` is the datasheet and the analytic
+  tables' figure, and the battle asks the crew. One function, read by the
+  resolver setting a cooldown and by `expected_shot` pricing a round, because
+  a rate the evaluator and the danger overlay believe and the gun does not
+  achieve is the same drift `step_cost` exists to prevent. `balance.reload_per_loading` is the rate.
+  Cadence itself is, ticks per round over
   `reload(scale)`, fractional for a piece slower than a round. Ground is
   priced per round and a trigger pull per shot: `best_weapon_from`,
   `ai::best_weapon_against` and `danger::incoming` are per round;
@@ -1275,15 +1281,16 @@ says whether the machine is comparable.
   since 2026-09-09. `nobody_deploys_onto_their_own_way_off_the_map` now
   fights all five and asserts both halves: that each offers a way off it, and
   that `deploy` forms nobody up on her own lane home.
-- **One of the base mod's thirteen skills is still read by no rule**, down
-  from six on 2026-09-11. The engine asks for `gunnery`, `observation`,
+- **Every one of the base mod's thirteen skills is read by some rule**, as of
+  2026-09-11. Six of them were dead that morning. The engine asks for `gunnery`, `observation`,
   `driving`, `signals`, `athletics`, `fieldcraft`, `small_arms`,
-  `first_aid` and `maintenance` by name and the mod names `discipline`,
-  `reactions` and `command` in its `morale`, `reaction` and `command`
-  blocks. That leaves **`loading`** alone, declared and never consulted.
-  Neither the loader's seat nor the driver's is free any more: the loader
-  answers for `first_aid` through `casualties.severe_per_aid`, and the
-  driver for `maintenance` through the field-repair rule.
+  `first_aid`, `maintenance` and `loading` by name, and the mod names
+  `discipline`, `reactions` and `command` in its `morale`, `reaction` and
+  `command` blocks. No seat is free any more: the loader answers for
+  `first_aid` and `loading`, the driver for `driving` and `maintenance`, and
+  a `scout_section`'s leaders for `fieldcraft`, `small_arms` and
+  `athletics`. Whether each rule can *bite* on shipped content is a separate
+  question and the bullet below is the answer.
 - **Wiring a skill is necessary and not sufficient: the content has to have
   the resolution to say anything** (2026-09-11, and the reason the skills
   above were easy to leave dead). All four rules added that day are

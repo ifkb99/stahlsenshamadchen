@@ -188,15 +188,28 @@ fn a_binding_march_presses_on_where_an_ordinary_one_takes_cover() {
     // What the seed still decides is whether she lives through the opening
     // round, and if that has to move again, scan for another rather than
     // weakening what is asserted below.
-    const SEED: u64 = 4;
     let reg = seen(registry_wireless());
+    // Hunted rather than written down, for the reason the currency test's
+    // twin is: a `const 4` chosen because it bruised without killing stopped
+    // doing either the moment loaders started reaching their guns.
+    let survives = |seed: u64| {
+        let (mut state, crew) = marching_under_fire(&reg, Latitude::Delegated, seed);
+        executor_only_side(&reg, seed).plan_round(&reg, &mut state);
+        let _ = state.apply(&reg, &Order::Commit { side: 1 });
+        state.resolve_round(&reg);
+        state.unit(crew).is_some_and(|u| u.alive())
+            && state.unit(UnitId(1)).is_some_and(|e| e.alive())
+    };
+    let seed = (0u64..40)
+        .find(|seed| survives(*seed))
+        .expect("some seed leaves both of them on the field");
     let (delegated_from, delegated_to, delegated_took_cover) = {
-        let (state, crew) = marching_under_fire(&reg, Latitude::Delegated, SEED);
-        second_round_plan(&reg, state, crew, SEED)
+        let (state, crew) = marching_under_fire(&reg, Latitude::Delegated, seed);
+        second_round_plan(&reg, state, crew, seed)
     };
     let (binding_from, binding_to, _) = {
-        let (state, crew) = marching_under_fire(&reg, Latitude::Binding, SEED);
-        second_round_plan(&reg, state, crew, SEED)
+        let (state, crew) = marching_under_fire(&reg, Latitude::Binding, seed);
+        second_round_plan(&reg, state, crew, seed)
     };
 
     // Latitude is read when the *executor* plans, and on the opening round

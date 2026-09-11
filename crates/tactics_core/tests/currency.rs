@@ -547,15 +547,30 @@ fn the_ground_prior_stands_down_where_the_arithmetic_speaks() {
 /// one the player cannot countermand reads as the game arguing with her.
 #[test]
 fn a_crew_who_breaks_off_says_so_and_one_who_was_meant_does_not() {
-    const SEED: u64 = 4;
     let reg = seen(registry_wireless());
 
     // The march she was given, fought for a round so that there is a march
     // under way for the drill to preempt: `radio()` plans her herself on the
     // round the order lands, so nothing can deviate until the second one.
+    // The seed is hunted here rather than written down. It used to be a
+    // `const 4`, and the crew it was chosen to bruise was killed outright the
+    // moment loaders started reaching their guns — which is what a hand-picked
+    // seed always does, eventually, to whoever is next. Anything that leaves
+    // her alive under fire will do.
+    let survivable = |seed: u64| {
+        let (mut state, crew) = marching_under_fire(&reg, Latitude::Delegated, seed);
+        executor_only_side(&reg, seed).plan_round(&reg, &mut state);
+        let _ = state.apply(&reg, &Order::Commit { side: 1 });
+        state.resolve_round(&reg);
+        state.unit(crew).is_some_and(|u| u.alive())
+    };
+    let seed = (0u64..40)
+        .find(|seed| survivable(*seed))
+        .expect("some seed leaves her alive to use her judgment");
+
     let deviations = |latitude: Latitude| {
-        let (mut state, crew) = marching_under_fire(&reg, latitude, SEED);
-        executor_only_side(&reg, SEED).plan_round(&reg, &mut state);
+        let (mut state, crew) = marching_under_fire(&reg, latitude, seed);
+        executor_only_side(&reg, seed).plan_round(&reg, &mut state);
         let _ = state.apply(&reg, &Order::Commit { side: 1 });
         state.resolve_round(&reg);
         assert!(
@@ -563,7 +578,7 @@ fn a_crew_who_breaks_off_says_so_and_one_who_was_meant_does_not() {
             "the stage is meant to bruise, not to kill"
         );
         let mut hers = Vec::new();
-        executor_only_side(&reg, SEED).plan_round_with(&reg, &mut state, |decision| {
+        executor_only_side(&reg, seed).plan_round_with(&reg, &mut state, |decision| {
             let about = match &decision.order {
                 Order::SetMove { unit, .. } => Some(*unit),
                 _ => None,
@@ -1045,8 +1060,11 @@ fn a_gun_that_fires_six_times_a_round_is_priced_six_times() {
             .expect("the bearing names a gun she has");
         assert_eq!(
             bearing.shots,
-            weapon.shots_per_round(&reg.scale),
-            "{}'s cadence must be the weapon's own",
+            reg.scale.ticks_per_round as f32
+                / tactics_core::battle::crewed_reload(&reg, &state, bearing.enemy, weapon) as f32,
+            "{}'s cadence must be the rate her own loader achieves, not the \
+             datasheet's — the panel, the evaluator and the resolver all read \
+             one answer",
             enemy.name
         );
         assert!(
