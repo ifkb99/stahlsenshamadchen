@@ -104,6 +104,28 @@ pub struct Balance {
     /// to six; it stayed invisible because `river_crossing`, the determinism
     /// baseline, deliberately fields no infantry.
     pub speed_per_athletics: i32,
+    /// Chance in 100, per round, that a crew gets one broken module working
+    /// again, before `maintenance` is added to it.
+    ///
+    /// The designer's ruling of 2026-09-11 on what `maintenance` should
+    /// reach: there was no breakdown rule and no repair rule anywhere in the
+    /// engine, so wiring the skill meant inventing one, and a crew getting a
+    /// thrown track back on under fire is the version you can watch happen.
+    ///
+    /// **Zero is the rule's absence down to the rng stream** — no die is
+    /// thrown at all — which is the same contract
+    /// [`Self::detection_certain_percent`] keeps and what lets the
+    /// determinism baseline tell a mod that declines this rule from the game
+    /// before it existed.
+    pub field_repair_percent: i32,
+    /// Points added to [`Self::field_repair_percent`] per point of the
+    /// crew's `maintenance` above average.
+    ///
+    /// The seat that answers for `maintenance` is the driver's, so a tank
+    /// that has lost her driver is also a tank nobody can get the tracks back
+    /// on — and a stand-in pays [`Self::substitution_penalty`] for the
+    /// attempt, exactly as she does for laying the gun.
+    pub repair_per_maintenance: i32,
     /// Points of `athletics` above average that buy a foot unit one more
     /// level of climb.
     ///
@@ -428,6 +450,8 @@ impl Default for Balance {
             target_height_cm: target_height(),
             vision_per_observation: 5,
             speed_per_driving: 5,
+            field_repair_percent: 0,
+            repair_per_maintenance: 0,
             speed_per_athletics: 0,
             athletics_per_climb_level: 0,
             concealment_per_fieldcraft: 0,
@@ -509,6 +533,13 @@ impl Balance {
     /// rule reads.
     pub fn pace(&self, base: u32, athletics: i32) -> u32 {
         Self::scaled(base, self.speed_per_athletics, Self::margin(athletics))
+    }
+
+    /// The chance in 100 that a crew this good at `maintenance` gets one
+    /// broken thing working again this round, clamped to a real probability.
+    pub fn repair_chance(&self, maintenance: i32) -> i32 {
+        (self.field_repair_percent + self.repair_per_maintenance * Self::margin(maintenance))
+            .clamp(0, 100)
     }
 
     /// How steep a face a foot unit whose chassis allows `base` levels and

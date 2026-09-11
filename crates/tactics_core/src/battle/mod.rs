@@ -2016,6 +2016,24 @@ pub mod stats {
         )
     }
 
+    /// How well this crew mends what is broken, used by the field-repair
+    /// rule at the top of every round.
+    pub fn maintenance(
+        registry: &DataRegistry,
+        roster: &Roster,
+        unit: &Unit,
+        terrain: Option<&str>,
+    ) -> i32 {
+        roster.crew_skill(
+            registry,
+            registry.vehicle(&unit.vehicle),
+            &unit.crew,
+            &unit.crew_state,
+            "maintenance",
+            terrain,
+        )
+    }
+
     /// Driving skill used by [`super::move_points`].
     pub fn driving(
         registry: &DataRegistry,

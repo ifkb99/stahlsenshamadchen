@@ -297,6 +297,17 @@ pub enum Event {
         module: String,
         destroyed: bool,
     },
+    /// Somebody aboard got a broken module working again between rounds.
+    ///
+    /// The other half of `ModuleHit { destroyed: true }`, and the reason
+    /// `Unit::modules` has always distinguished a module at zero hits from
+    /// one that is absent: a crew who lost her wireless set and a crew who
+    /// never had one look the same until there is a rule that can give one
+    /// of them hers back.
+    ModuleRepaired {
+        unit: UnitId,
+        module: String,
+    },
     /// The ammunition went up. The vehicle is destroyed on the spot, and
     /// the crew's fate rolls carry the fire.
     BrewedUp {
@@ -606,6 +617,7 @@ impl Event {
             | Event::WeaponDry { unit, .. }
             | Event::CrewHit { unit, .. }
             | Event::ModuleHit { unit, .. }
+            | Event::ModuleRepaired { unit, .. }
             | Event::SetOut { unit, .. }
             | Event::OutOfContact { unit }
             | Event::OrdersWaiting { unit }
@@ -2161,8 +2173,66 @@ impl BattleState {
     }
 
     /// Open a new round: clear last round's orders and let sides plan again.
+    /// One broken thing per crew per round, if anybody aboard can fix it.
+    ///
+    /// `maintenance` was one of the skills no rule read, and the seat that
+    /// answers for it is the driver's — so a tank that has lost her driver is
+    /// also a tank nobody can get the tracks back on, which is the kind of
+    /// consequence the crew model is for.
+    ///
+    /// The shape is deliberately small. **One module**, the first in key
+    /// order, because a crew fixes one thing at a time and because the key
+    /// order is a `BTreeMap`'s and therefore the same on every machine. Back
+    /// to **one hit**, not to full: she is working again, not as new. And
+    /// only a crew who is *on the field* — a passenger has nothing of her own
+    /// to mend.
+    ///
+    /// **No die is thrown when `field_repair_percent` is zero**, which is the
+    /// rule's absence down to the rng stream, the same contract
+    /// `detection_certain_percent` keeps.
+    fn field_repairs(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
+        if registry.balance.field_repair_percent <= 0 {
+            return;
+        }
+        let ids: Vec<UnitId> = self
+            .units
+            .iter()
+            .filter(|u| u.alive() && u.aboard.is_none())
+            .map(|u| u.id)
+            .collect();
+        for id in ids {
+            let Some(unit) = self.units.get(id.index()) else {
+                continue;
+            };
+            let Some(module) = unit
+                .modules
+                .iter()
+                .find(|(_, hits)| **hits == 0)
+                .map(|(id, _)| id.clone())
+            else {
+                continue;
+            };
+            let level =
+                super::stats::maintenance(registry, &self.roster, unit, self.terrain_at(unit.pos));
+            let chance = registry.balance.repair_chance(level);
+            if chance <= 0 {
+                continue;
+            }
+            if rand::RngExt::random_range(&mut self.rng, 0..100) >= chance {
+                continue;
+            }
+            if let Some(unit) = self.units.get_mut(id.index())
+                && let Some(hits) = unit.modules.get_mut(&module)
+            {
+                *hits = 1;
+            }
+            events.push(Event::ModuleRepaired { unit: id, module });
+        }
+    }
+
     fn begin_round(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
         self.round += 1;
+        self.field_repairs(registry, events);
         // Crews settle between rounds. A disciplined one settles faster, which
         // is what makes discipline worth training rather than merely a saving
         // throw at the worst moment.

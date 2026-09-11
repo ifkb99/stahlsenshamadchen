@@ -2637,3 +2637,74 @@ fn a_crewmate_who_knows_what_to_do_buries_fewer_and_one_who_does_not_buries_no_m
          the rule was never switched on for"
     );
 }
+
+/// A crew with somebody who knows the vehicle gets a broken thing working
+/// again, and a mod that declines the rule throws no die at all.
+///
+/// `maintenance` had nothing to reach: there was no breakdown rule and no
+/// repair rule anywhere in the engine, so wiring the skill meant inventing
+/// one. The seat that answers for it is the driver's, which is the
+/// consequence worth having — a tank that has lost her driver is also a tank
+/// nobody can get the tracks back on.
+///
+/// The second half is the additivity contract and it is checked down to the
+/// rng stream: at `field_repair_percent` zero no die is thrown, so a mod that
+/// declines this rule is the game before it existed rather than a gentler
+/// version of it.
+#[test]
+fn a_crew_who_knows_the_vehicle_gets_a_broken_thing_working_again() {
+    let mut reg = registry_wireless();
+    let (mut state, ours) = crewed_stage(&reg, &["anka", "juno", "mina"]);
+    // Break something, and give her a round to get it back.
+    let broken = {
+        let her = state.unit_mut(ours).unwrap();
+        let id = her
+            .modules
+            .keys()
+            .next()
+            .expect("a medium tank carries something that can break")
+            .clone();
+        *her.modules.get_mut(&id).unwrap() = 0;
+        id
+    };
+
+    let played = |reg: &tactics_core::data::DataRegistry, state: &BattleState| {
+        let mut state = state.clone();
+        let events = play_round(reg, &mut state);
+        let repaired = events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::ModuleRepaired { .. }));
+        (repaired, state.rng.clone())
+    };
+
+    reg.balance.field_repair_percent = 0;
+    reg.balance.repair_per_maintenance = 0;
+    let (never, untouched) = played(&reg, &state);
+    assert!(!never, "a mod that declines the rule mends nothing");
+
+    // The rng stream is the real check: the absence must not cost a draw, or
+    // every battle in a mod that switched this off would resolve differently
+    // from the one that never had it.
+    reg.balance.field_repair_percent = 0;
+    reg.balance.repair_per_maintenance = 50;
+    let (_, still_untouched) = played(&reg, &state);
+    assert_eq!(
+        format!("{untouched:?}"),
+        format!("{still_untouched:?}"),
+        "with the chance at zero, no die is thrown however skilled the crew"
+    );
+
+    reg.balance.field_repair_percent = 100;
+    let (mended, _) = played(&reg, &state);
+    assert!(
+        mended,
+        "a certainty gets the {broken} working again inside a round"
+    );
+    let mut state = state;
+    play_round(&reg, &mut state);
+    assert_eq!(
+        state.unit(ours).unwrap().modules.get(&broken).copied(),
+        Some(1),
+        "and working again is working, not as new"
+    );
+}

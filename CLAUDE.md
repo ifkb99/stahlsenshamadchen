@@ -858,6 +858,18 @@ on a mission key.
   has to live with it; the game crate's `battle_outcome` and the `attrition`
   table both call it, and a second reading written beside either would be a
   second game.
+- **A broken module can be mended, once a round, by whoever is aboard.**
+  `balance.field_repair_percent` plus `repair_per_maintenance` against the
+  crew's `maintenance`, rolled at the top of `begin_round` in unit-id order:
+  the first broken module in `BTreeMap` key order goes back to **one hit**,
+  not to full. **At a chance of zero no die is thrown**, which is the rule's
+  absence down to the rng stream, the same contract
+  `detection_certain_percent` keeps and what
+  `a_crew_who_knows_the_vehicle_gets_a_broken_thing_working_again` checks by
+  comparing the rng itself. It is the first reader of `maintenance`, and the
+  seat that answers for it is the driver's — a tank that has lost her driver
+  is also a tank nobody can get the tracks back on. `Event::ModuleRepaired`
+  is a side's own business, like the `ModuleHit` that preceded it.
 - **A wound's severity is her crewmates' business, not her own.**
   `CrewLoss::aid` is the best `first_aid` still working aboard her vehicle
   **excluding her** — she is the one bleeding — and
@@ -1263,14 +1275,15 @@ says whether the machine is comparable.
   since 2026-09-09. `nobody_deploys_onto_their_own_way_off_the_map` now
   fights all five and asserts both halves: that each offers a way off it, and
   that `deploy` forms nobody up on her own lane home.
-- **Two of the base mod's thirteen skills are still read by no rule**, down
+- **One of the base mod's thirteen skills is still read by no rule**, down
   from six on 2026-09-11. The engine asks for `gunnery`, `observation`,
-  `driving`, `signals`, `athletics`, `fieldcraft`, `small_arms` and
-  `first_aid` by name and the mod names `discipline`, `reactions` and
-  `command` in its `morale`, `reaction` and `command` blocks. That leaves
-  `loading` and `maintenance` declared and never consulted. The **loader's**
-  seat is no longer free: it answers for `loading` and `first_aid`, and
-  `casualties.severe_per_aid` is what the second of those buys.
+  `driving`, `signals`, `athletics`, `fieldcraft`, `small_arms`,
+  `first_aid` and `maintenance` by name and the mod names `discipline`,
+  `reactions` and `command` in its `morale`, `reaction` and `command`
+  blocks. That leaves **`loading`** alone, declared and never consulted.
+  Neither the loader's seat nor the driver's is free any more: the loader
+  answers for `first_aid` through `casualties.severe_per_aid`, and the
+  driver for `maintenance` through the field-repair rule.
 - **Wiring a skill is necessary and not sufficient: the content has to have
   the resolution to say anything** (2026-09-11, and the reason the skills
   above were easy to leave dead). All four rules added that day are

@@ -1693,6 +1693,17 @@ fn pump_events(
                     ));
                 }
             }
+            BattleEvent::ModuleRepaired { unit, module } => {
+                // The inside of her hull is her own side's business, the same
+                // as the damage that put it there — `traffic` is the wording
+                // for a line only her academy hears.
+                let what = mods
+                    .0
+                    .module(module)
+                    .map(|m| m.name.clone())
+                    .unwrap_or_else(|| module.clone());
+                log.push(traffic(*unit, &format!("{what} working again.")));
+            }
             BattleEvent::BrewedUp { unit } => {
                 log.push(format!("{} is burning.", name(*unit)));
             }
@@ -3949,7 +3960,17 @@ mod tests {
         let mut winners = Vec::new();
         let mut station_wounds = 0;
         let mut exits = 0;
-        for seed in [0u64, 6, 10, 11] {
+        // Scanned rather than hand-picked. Four hunted seeds used to stand
+        // here and they stopped producing a station wound the moment the
+        // field-repair rule moved every battle downstream of it — which is
+        // what a re-hunted fixture always does, twice a year, silently. The
+        // loop asks for what the test is actually about (a win for each side
+        // and two cadets carried home hurt) and stops when it has it, so the
+        // next rule that moves a battle costs nobody an afternoon.
+        for seed in 0u64..24 {
+            if winners.contains(&Some(0)) && winners.contains(&Some(1)) && station_wounds >= 2 {
+                break;
+            }
             let fought = fight(&reg, &base, "battle_plains", attacker, defender, seed);
             assert!(
                 fought.state.is_over(),
