@@ -2024,6 +2024,33 @@ total was first labelled "a round" and is per shot; a 75 mm at a shot every
 15 s fires four times a round, so the label was wrong by the whole cadence of
 the fastest guns.
 
+**The engine tests became nine binaries** (2026-09-11). `engine.rs` had
+reached 17,568 lines and 305 tests in one file, sectioned by subject with a
+contents list — an index rather than a changelog, which was the previous
+round of this same tidying. The sections were already the seams, so the split
+followed them: the file keeps content and the scale contract, determinism,
+the overworld and gunnery previews, which are the substrate the rest stand
+on, and the other eight subjects became `sight.rs`, `planning.rs`,
+`missions.rs`, `net.rs`, `drill.rs`, `shots.rs`, `crews.rs` and
+`currency.rs`.
+
+*Helper placement was computed, not guessed.* A call graph seeded from each
+test's destination file decides reach: a stage builder more than one binary
+can reach moved to `tests/common/stage.rs` and became `pub`; one reachable
+from a single binary stayed in it, private and unmoved. Twenty-seven moved.
+Two (`goal_battle`, `goal_with_foresight`) were written inside the campaign
+missions section but are only ever called from the planning tests, so they
+followed their callers rather than their section — which is the rule doing
+its job.
+
+*The check is the name set.* The sorted list of every test name across all of
+`tactics_core`'s binaries — 417 of them — is byte-identical before and after,
+and the only textual change to any moved item is rustfmt rewrapping three
+signatures that grew a `pub`. That is what makes "no test was lost" a
+statement rather than a hope; summing `test result` lines would not have
+caught a binary that failed to compile, which is the trap the skill file
+already names.
+
 ## Bugs that turned out not to be ours
 
 **Intermittent `DeviceLost`.** `Caught DeviceLost error: Unknown Unexpected
