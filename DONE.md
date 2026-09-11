@@ -1514,6 +1514,55 @@ instrument's floor, so the value is the designer's, and said so.
 guard reads two of four destructions and that is now the rule rather than an
 open question.
 
+**The last eleven constants in the currency became data, and every one of
+them swept null** (2026-09-11). `score_tile` is the single place a rule
+becomes behaviour, and it had grown by an order of magnitude since the
+constants sitting in it were written — CLAUDE.md named four, the note named
+two more, and reading the function found five others of the same species.
+They are `planner` fields now: `kill_bonus` (4.0), `attack_worth` (2.0) and
+`attack_floor` (0.5), `withdrawn_attack` (0.0625), `exposure_cap` (4.0),
+`crowding_adjacent` (0.45), `crowding_near` (0.15), `support_range` (4.0),
+`out_of_support` (0.12), `advance_slope` (0.3) and `search_slope` (0.15).
+
+*Behaviour-neutral by construction, and checked rather than asserted.* Each
+defaults to exactly the constant it replaced and the determinism snapshot was
+not regenerated. One shape was deliberately **not** tidied: the attack term is
+still `attack_worth * (attack_floor + aggression)` rather than the
+algebraically equal `1.0 + 2.0 * aggression`, because f32 multiplication is
+not associative enough for that rewrite to be free — the two differ in the
+last bit for some values of `aggression`, and the baseline would have moved
+for a nicer line.
+
+*The sweep is the prize, and the prize was a negative result.* On `--sim` at
+36 battles the seed floor is ±5 on the win column (four seeds: −5/−4/−4), and
+no field moved a row out of it at zero, at the shipped value, or at four
+times it. On the ridge skill table — the instrument that caught the terrain
+prior's cost, where the per-row seed spread is 4 to 7 — the same: `kill_bonus`
+0/4/16 spreads 1, `advance_slope` 0/0.3/0.9 spreads 0, `crowding_adjacent`
+0/0.45/1.5 spreads 0, `attack_worth` 1/2/4 spreads 4 on the ends (42–30,
+40–31, 38–33: monotone, and the only thing in the set that looks like
+anything, but inside the floor). So the +4.0 kill bonus — a judgment about
+one decisive shot that has been in this evaluator since before there was a
+currency to quote it in — is worth nothing a battlefield can see, and neither
+is the mass band.
+
+*Two of the eleven came back bit-identical, which is a different answer.*
+`withdrawn_attack` and `search_slope` printed "the same game" at every value,
+and CLAUDE.md's rule is that an exact zero is a question rather than a result.
+Both are *never evaluated* on shipped content: `search_slope` is the fallback
+for a map that declares no objectives and all five battlefields declare some,
+and no shipped doctrine ever orders a withdrawal — `grep -ci withdraw` over
+the determinism baseline (four seeds × 12 rounds) returns 0. That is the
+"narrow slice of the command model" gap in the known issues showing up as a
+measurement. Each has a staged test instead, which is what a table cannot do.
+
+*What this does not mean.* None of the eleven is dead: every one moves rounds,
+shots or hulls by a fraction, and each has a test that it is read. It is the
+third species of null, the one `score_worth` named — a weight both commanders
+get at the same rate changes what a battle is *about* rather than who wins it,
+and no instrument in this harness can see that. The harness still wants a
+table whose question is what the battle was about.
+
 ## The campaign
 
 **What ends it is map data (2026-09-09).** `frontier` had a Lua wrapper

@@ -85,11 +85,14 @@ can ask what any number does.
   rather than about a win rate, with the page saying so in as many words.
 - **Allies boost morale** — the designer's ask of 2026-09-09, mechanism
   unwritten (TODO, *Combat Sim*).
-- **The three things the currency still cannot say**: the four bare
-  constants in `score_tile`, `morale.penetrated` undeclared in the base mod,
-  and the spend floor that lets a platoon with no riflemen still frighten
-  (TODO, *Combat Sim*; ARCH-TODO, Wave 4). Small, and each is a number the
-  designer has to own before a campaign is tuned around it.
+- **The two things the currency still cannot say**: `morale.penetrated`
+  undeclared in the base mod, and the spend floor that lets a platoon with
+  no riflemen still frighten (TODO, *Combat Sim*; ARCH-TODO, Wave 4). Small,
+  and each is a number the designer has to own before a campaign is tuned
+  around it. The bare constants in `score_tile` are off this list as of
+  2026-09-11: all eleven of them are `planner` fields now, and all eleven
+  swept null, which is a thing the designer can now be told rather than a
+  thing nobody could ask.
 - **Better control of a unit's route**: waypoints, reverse, a face command
   (TODO, *Misc*). The single-destination march is what makes orders feel
   like drift on a winding road.

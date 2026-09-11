@@ -166,6 +166,61 @@ fn elevation_prior() -> f32 {
     0.4
 }
 
+/// Serde's default for [`PlannerRules::kill_bonus`].
+fn kill_bonus() -> f32 {
+    4.0
+}
+
+/// Serde's default for [`PlannerRules::attack_worth`].
+fn attack_worth() -> f32 {
+    2.0
+}
+
+/// Serde's default for [`PlannerRules::attack_floor`].
+fn attack_floor() -> f32 {
+    0.5
+}
+
+/// Serde's default for [`PlannerRules::withdrawn_attack`].
+fn withdrawn_attack() -> f32 {
+    0.0625
+}
+
+/// Serde's default for [`PlannerRules::exposure_cap`].
+fn exposure_cap() -> f32 {
+    4.0
+}
+
+/// Serde's default for [`PlannerRules::crowding_adjacent`].
+fn crowding_adjacent() -> f32 {
+    0.45
+}
+
+/// Serde's default for [`PlannerRules::crowding_near`].
+fn crowding_near() -> f32 {
+    0.15
+}
+
+/// Serde's default for [`PlannerRules::support_range`].
+fn support_range() -> f32 {
+    4.0
+}
+
+/// Serde's default for [`PlannerRules::out_of_support`].
+fn out_of_support() -> f32 {
+    0.12
+}
+
+/// Serde's default for [`PlannerRules::advance_slope`].
+fn advance_slope() -> f32 {
+    0.3
+}
+
+/// Serde's default for [`PlannerRules::search_slope`].
+fn search_slope() -> f32 {
+    0.15
+}
+
 /// The numbers that govern how the AI thinks: what it is willing to drive
 /// for, how far ahead it looks, and when a commander stops assigning ground.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -569,6 +624,160 @@ pub struct PlannerRules {
     /// priced properly.
     #[serde(default = "elevation_prior")]
     pub elevation_prior: f32,
+    /// What a shot that would finish a crew is worth on top of what it does.
+    ///
+    /// The one judgment in the attack term: `best_weapon_against` already
+    /// prices the damage and the fear a round of fire does, and this says
+    /// that a round which *ends* the argument is worth more than the
+    /// substance it happens to take with it. Quoted in the same worth per
+    /// round the rest of the sum is, so at 4.0 a finishing shot carries
+    /// about a third of a medium tank over and above what it destroys.
+    ///
+    /// Zero is the arithmetic with no judgment in it. She still takes the
+    /// killing shot whenever it is the best round of fire on offer — it
+    /// nearly always is — but she will not cross a field for it.
+    #[serde(default = "kill_bonus")]
+    pub kill_bonus: f32,
+    /// What a round of fire from a tile is worth per point of the doctrine's
+    /// [`aggression`](super::DoctrineDef::aggression).
+    ///
+    /// The attack half of `score_tile` is multiplied by `attack_worth *
+    /// (attack_floor + aggression)`, which is the one place a doctrine's
+    /// appetite reaches the ground she picks rather than the orders she is
+    /// given — everything else `aggression` touches is posture and caution.
+    ///
+    /// It stays a product of two fields rather than being folded into the
+    /// slope-and-intercept it is algebraically equal to (`1.0 + 2.0 *
+    /// aggression`), because f32 multiplication is not associative enough
+    /// for that rewrite to be free: the two forms differ in the last bit for
+    /// some values of `aggression`, and the determinism baseline would move
+    /// for a tidier line. The arithmetic the numbers were measured in is the
+    /// arithmetic that ships.
+    #[serde(default = "attack_worth")]
+    pub attack_worth: f32,
+    /// The appetite a doctrine with no `aggression` at all still brings to a
+    /// round of fire, in the units `aggression` is quoted in.
+    ///
+    /// [`Self::attack_worth`]'s partner. At the shipped pair a commander at
+    /// `aggression: 0` prices a round of fire at 1.0 and one at
+    /// `aggression: 1` at 3.0, so the whole doctrine range spans a factor of
+    /// three. At zero the floor goes with it and a doctrine with no appetite
+    /// stops valuing fire at all, which is not a cautious commander but a
+    /// blind one: she would decline a free shot to stand on marginally
+    /// better grass.
+    #[serde(default = "attack_floor")]
+    pub attack_floor: f32,
+    /// What a round of fire is worth to a crew who has been ordered out, as a
+    /// share of what it is worth to everybody else.
+    ///
+    /// A scale on the attack term rather than a term of its own, because a
+    /// withdrawing crew still answers what is in front of her and simply
+    /// does not *seek*. The shipped number is a quarter of one **shot** —
+    /// 0.25 divided by the four times a medium tank fires in a round — and
+    /// the sentence is what is preserved rather than the digit: when cadence
+    /// arrived and the attack term became a round of fire, the flat quarter
+    /// put 4.6 points back in front of a withdrawing crew and
+    /// `an_ordered_withdrawal_needs_no_wounds` caught Anka Weiss planning
+    /// away from her lane, ten hexes off it to fifteen.
+    ///
+    /// Measured on that stage anything at or below 0.15 keeps the withdrawal
+    /// a withdrawal and 0.20 does not, so it is not a knife edge. **1.0 is
+    /// the rule's absence**: an ordered retreat weighed exactly like any
+    /// other march, which is the game before the term existed.
+    #[serde(default = "withdrawn_attack")]
+    pub withdrawn_attack: f32,
+    /// Most a crew may multiply the danger she reads by for being small,
+    /// worn down, or carrying somebody.
+    ///
+    /// Exposure is `typical_substance / left` times what her passengers add,
+    /// and both halves run away at the bottom: a remnant platoon with one
+    /// point left divides by one and a carrier full of infantry doubles it
+    /// again. Four is "refuses what a fresh crew accepts", which is as far as
+    /// the distinction still says anything; past it she reads every tile on
+    /// the map as certain death and the threat term stops discriminating.
+    ///
+    /// There is no neutral value — at 1.0 nobody is ever more careful than a
+    /// fresh crew, which is the same flattening from the other end.
+    #[serde(default = "exposure_cap")]
+    pub exposure_cap: f32,
+    /// What standing one hex from the nearest friend costs.
+    ///
+    /// The close half of the spacing band, and deliberately **not** scaled
+    /// by [`concentration`](super::DoctrineDef::concentration): one shell
+    /// killing two vehicles is survival rather than taste, and a doctrine
+    /// that wants to mass is not entitled to buy it off. Zero is the game
+    /// before the band, when mass was a monotonic pull toward the nearest
+    /// friend all the way to adjacency and massed armour clumped into
+    /// artillery bait.
+    #[serde(default = "crowding_adjacent")]
+    pub crowding_adjacent: f32,
+    /// The same, two hexes out: the far edge of the crowding penalty.
+    ///
+    /// [`Self::crowding_adjacent`]'s taper, and the band is two hexes wide
+    /// because a shell's splash is. Beyond it there is nothing to pay until
+    /// [`Self::support_range`] is exceeded, which is the interval drill
+    /// actually teaches: close enough for mutual support, far enough that
+    /// one round cannot take two vehicles.
+    #[serde(default = "crowding_near")]
+    pub crowding_near: f32,
+    /// Farthest a friend can stand and still be supporting, in hexes.
+    ///
+    /// Support also demands a *sight line* from the friend's planned
+    /// position — near but masked is not mutual support — so this is a
+    /// radius on a check rather than a radius on its own. Friends count from
+    /// where they are heading rather than where they stand, which is what
+    /// makes a formation converge instead of chase.
+    ///
+    /// Widening it is a cheaper way to disperse a doctrine than lowering
+    /// [`Self::out_of_support`], because it moves where the penalty starts
+    /// rather than how fast it grows.
+    #[serde(default = "support_range")]
+    pub support_range: f32,
+    /// What each hex beyond [`Self::support_range`] costs, before the
+    /// doctrine's `concentration` scales it.
+    ///
+    /// The old monotonic pull, kept as the outer half of the band. It is the
+    /// **only** thing on a battlefield that reads
+    /// [`concentration`](super::DoctrineDef::concentration) — `force::muster`
+    /// reads it when an army is bought, and nothing else does — so setting
+    /// this to zero does not merely remove a penalty, it silences that field
+    /// and makes two doctrines with opposite opinions about spacing
+    /// indistinguishable once the shooting starts. The same trap
+    /// [`Self::cover_prior`] carries for `cover_value`.
+    #[serde(default = "out_of_support")]
+    pub out_of_support: f32,
+    /// How hard a hex nearer the closest enemy pulls, per point of the
+    /// doctrine's `aggression`.
+    ///
+    /// With something to shoot, close on it. This is not the attack term —
+    /// that one prices a shot she can actually take from the tile, through
+    /// the resolver — it is the appetite for contact that survives having no
+    /// shot yet, and it is what walks a crew the last few hexes into range
+    /// of a gun she has found but cannot reach.
+    ///
+    /// Zero is a defensible game rather than a broken one: with objectives
+    /// on the map the score term already says which way to walk, and a
+    /// doctrine that never closes for its own sake is what elastic defence
+    /// is trying to be.
+    #[serde(default = "advance_slope")]
+    pub advance_slope: f32,
+    /// How hard the middle of the map pulls a crew who has found nobody, per
+    /// point of the doctrine's `scouting`.
+    ///
+    /// The fallback for a map that names no ground at all: "wander towards
+    /// the middle and find somebody", which is the whole of what this
+    /// evaluator could do before objectives existed. It is deliberately not
+    /// [`Self::distance_decay`] despite sharing its shipped magnitude — that
+    /// number is the slope of a gradient leading to a *named* piece of
+    /// ground, and folding the two together would mean a designer asking how
+    /// far an order reaches also changed how a lost crew searches an empty
+    /// map.
+    ///
+    /// Zero leaves a crew with no contact, no objectives and no orders
+    /// standing still, which is a legitimate answer to a map that has given
+    /// her nothing to do and a very dull one.
+    #[serde(default = "search_slope")]
+    pub search_slope: f32,
 }
 
 impl Default for PlannerRules {
@@ -589,6 +798,17 @@ impl Default for PlannerRules {
             plateau: plateau(),
             cover_prior: cover_prior(),
             elevation_prior: elevation_prior(),
+            kill_bonus: kill_bonus(),
+            attack_worth: attack_worth(),
+            attack_floor: attack_floor(),
+            withdrawn_attack: withdrawn_attack(),
+            exposure_cap: exposure_cap(),
+            crowding_adjacent: crowding_adjacent(),
+            crowding_near: crowding_near(),
+            support_range: support_range(),
+            out_of_support: out_of_support(),
+            advance_slope: advance_slope(),
+            search_slope: search_slope(),
         }
     }
 }

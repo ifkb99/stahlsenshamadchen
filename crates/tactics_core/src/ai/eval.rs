@@ -46,6 +46,7 @@ impl Evaluator {
             };
         };
         let doctrine = &self.doctrine;
+        let planner = &registry.planner;
         let enemies = visible_enemies(state, me.side);
 
         // Offense: the best round of fire available from this tile. Indirect
@@ -66,7 +67,7 @@ impl Evaluator {
             else {
                 continue;
             };
-            let mut value = worth + if kill { 4.0 } else { 0.0 };
+            let mut value = worth + if kill { planner.kill_bonus } else { 0.0 };
             if self.is_indirect(registry, state, unit, weapon) {
                 value *= doctrine.indirect_appetite;
             }
@@ -176,10 +177,6 @@ impl Evaluator {
             (have.max(1) as f32, total.max(1) as f32)
         };
         let exposure = {
-            /// Most a crew may multiply danger by for being small, worn down,
-            /// or loaded. Four is "refuses what a fresh crew accepts", which
-            /// is as far as the distinction still says anything.
-            const MAX_EXPOSURE: f32 = 4.0;
             let riding: u32 = state
                 .units
                 .iter()
@@ -189,7 +186,7 @@ impl Evaluator {
             let fragility = state.typical_substance(registry) / left;
 
             let stake = 1.0 + riding as f32 / left;
-            (fragility * stake).min(MAX_EXPOSURE)
+            (fragility * stake).min(planner.exposure_cap)
         };
         // Condition replaces the hit-point fraction: cadets and modules
         // remaining over the full complement. A crew that has taken wounds
@@ -252,10 +249,9 @@ impl Evaluator {
             && let Some(t) = state.map.get(tile)
         {
             terrain_value +=
-                t.elevation as f32 * registry.planner.elevation_prior * doctrine.elevation_value;
+                t.elevation as f32 * planner.elevation_prior * doctrine.elevation_value;
             if let Some(def) = registry.terrain(&t.terrain) {
-                terrain_value +=
-                    def.cover as f32 * registry.planner.cover_prior * doctrine.cover_value;
+                terrain_value += def.cover as f32 * planner.cover_prior * doctrine.cover_value;
             }
         }
 
@@ -275,8 +271,7 @@ impl Evaluator {
         // where they are heading, not where they stand, so a formation
         // converges instead of chasing.
         let mass = {
-            /// Farthest a friend can stand and still be supporting.
-            const SUPPORT: f32 = 4.0;
+            let support = planner.support_range;
             let nearest = state
                 .side_units(me.side)
                 .filter(|other| other.id != unit)
@@ -289,15 +284,17 @@ impl Evaluator {
                 None => 0.0,
                 Some((dist, at)) => {
                     let crowding = match dist {
-                        1 => -0.45,
-                        2 => -0.15,
+                        1 => -planner.crowding_adjacent,
+                        2 => -planner.crowding_near,
                         _ => 0.0,
                     };
-                    let supported = dist as f32 <= SUPPORT && state.sight.clear(at, tile);
+                    let supported = dist as f32 <= support && state.sight.clear(at, tile);
                     let apart = if supported {
                         0.0
                     } else {
-                        -((dist as f32 - SUPPORT).max(1.0)) * 0.12 * doctrine.concentration
+                        -((dist as f32 - support).max(1.0))
+                            * planner.out_of_support
+                            * doctrine.concentration
                     };
                     crowding + apart
                 }
@@ -369,7 +366,7 @@ impl Evaluator {
             Some((
                 crate::battle::Mission::Advance { .. } | crate::battle::Mission::Recon { .. },
                 _,
-            )) if super::threatened(registry, state, unit) => registry.planner.pull_under_fire,
+            )) if super::threatened(registry, state, unit) => planner.pull_under_fire,
             _ => 1.0,
         };
         let objective = match standing {
@@ -396,18 +393,10 @@ impl Evaluator {
         // not zero), but it does not *seek* — and the advance-toward-contact
         // term is actively arguing with the order, so it goes entirely.
         //
-        // The number is 0.25 divided by four, and the four is cadence. It was
-        // a flat quarter while the attack term was one trigger pull; the term
-        // is a *round* of fire now, and the medium tank the measurement above
-        // was taken on fires four times a round, so a flat quarter would put
-        // the same 4.6 points back in front of a withdrawing crew and
-        // reinstate the exact defect this line exists to remove — which it
-        // did: `an_ordered_withdrawal_needs_no_wounds` caught Anka Weiss
-        // planning *away* from her lane, ten hexes off it to fifteen. What is
-        // preserved is the sentence rather than the digit: a quarter of what
-        // one shot is worth to a crew who was not ordered out. Measured on
-        // that stage, anything at or below 0.15 keeps the withdrawal a
-        // withdrawal and 0.20 does not, so this is not a knife edge either.
+        // The share is `planner.withdrawn_attack`, and how it was arrived at
+        // — a quarter of one *shot* rather than a quarter of a round, which
+        // is cadence — is written on the field along with what it costs to
+        // get it wrong.
         //
         // The lane's own pull is `planner.exit_urgency` through
         // `score_worth`, which is the objective scale rather than the share
@@ -415,7 +404,11 @@ impl Evaluator {
         // `Withdraw` arm for why an ordered retreat is the one order that may
         // not shrink as she does.
         let withdrawing = matches!(standing, Some((crate::battle::Mission::Withdraw { .. }, _)));
-        let attack_scale = if withdrawing { 0.0625 } else { 1.0 };
+        let attack_scale = if withdrawing {
+            planner.withdrawn_attack
+        } else {
+            1.0
+        };
 
         // Advance: with something to shoot, close on it. With no contact and
         // no objectives, push toward the middle of the map to find some —
@@ -423,22 +416,20 @@ impl Evaluator {
         // what a map that names none gets.
         let advance = match enemies.iter().map(|e| e.pos.distance_to(tile)).min() {
             Some(_) if withdrawing => 0.0,
-            Some(nearest) => -(nearest as f32) * 0.3 * doctrine.aggression,
+            Some(nearest) => -(nearest as f32) * planner.advance_slope * doctrine.aggression,
             // Under a mission the slope already says which way to walk, and
             // "inwards" would argue with it on a map with nothing to hold.
             None if standing.is_some() => 0.0,
-            // The 0.15 here is deliberately *not* `planner.distance_decay`,
-            // despite sharing its magnitude. That number is the slope of a
-            // gradient leading to a named piece of ground, and the reason it
-            // is one number for objectives and missions alike is that
-            // `mission_weight` is quoted in objective-value units. This is
-            // the fallback for a map that names no ground at all: "wander
-            // towards the middle and find somebody". Folding the two together
-            // would mean a designer asking how far an order reaches also
-            // changed how a lost crew searches an empty map, which is a
-            // different question with a different right answer.
+            // `planner.search_slope` is deliberately *not*
+            // `planner.distance_decay`, despite the two shipping at the same
+            // magnitude: one is how far off a crew can still tell which way
+            // a named piece of ground lies, and this is how hard the middle
+            // of an empty map pulls a crew who has been given nothing. The
+            // field says why folding them together would be wrong.
             None if state.map.objectives().is_empty() => {
-                -(state.map.center().distance_to(tile) as f32) * 0.15 * doctrine.scouting
+                -(state.map.center().distance_to(tile) as f32)
+                    * planner.search_slope
+                    * doctrine.scouting
             }
             // The objective term is already saying which way to walk, and far
             // more specifically than "inwards" ever did.
@@ -446,7 +437,10 @@ impl Evaluator {
         };
 
         TileScore {
-            score: attack_value * attack_scale * 2.0 * (0.5 + doctrine.aggression)
+            score: attack_value
+                * attack_scale
+                * planner.attack_worth
+                * (planner.attack_floor + doctrine.aggression)
                 - threat * caution * exposure
                 + terrain_value
                 + mass
