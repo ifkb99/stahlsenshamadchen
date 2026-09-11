@@ -774,3 +774,52 @@ fn movement_respects_water_and_reaches_bridge() {
         assert_ne!(tile.terrain, "water", "tracked vehicles cannot enter water");
     }
 }
+
+/// Cover you can see out of.
+///
+/// Forest (30) and town (40) were the only covering terrains in the game and
+/// both block sight at 2, so everything commanding was bare and everything
+/// covered was blind: "cover" and "dead ground" were the same word to the
+/// evaluator, and a crew in the middle of the skill arena's hilltop village
+/// could barely see out of it. A hedgerow is 22 points of cover that blocks
+/// nothing — the tactical idea of a hull-down position written as terrain,
+/// and the first ground on which a crew can be hard to hit and still lay her
+/// gun.
+#[test]
+fn a_hedgerow_hides_a_hull_without_blinding_the_crew() {
+    let reg = seen(registry());
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "a_bank_and_a_wood",
+        "palette": { "g": "grass", "h": "hedgerow", "f": "forest" },
+        "rows": ["gggggggg", "ghhffggg", "gggggggg"],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let watcher = tactics_core::offset_to_hex(0, 1);
+    let through_bank = tactics_core::offset_to_hex(3, 1);
+    let through_wood = tactics_core::offset_to_hex(5, 1);
+
+    assert!(
+        los_clear(&reg, &map, watcher, through_bank),
+        "a bank is something to get behind, not something to hide the field \
+         behind"
+    );
+    assert!(
+        !los_clear(&reg, &map, watcher, through_wood),
+        "the stage needs a wood that really does block, or the line above \
+         proves nothing about hedgerows in particular"
+    );
+
+    let bank = reg.terrain("hedgerow").expect("the mod ships a hedgerow");
+    let grass = reg.terrain("grass").expect("the mod ships grass");
+    assert!(
+        bank.cover > grass.cover,
+        "and it is worth getting behind: {} against {}",
+        bank.cover,
+        grass.cover
+    );
+    assert_eq!(
+        bank.vision_block, 0,
+        "a bank a crew cannot see over is a wood with a different name"
+    );
+}
