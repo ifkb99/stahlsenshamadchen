@@ -73,6 +73,7 @@ fn drill_doctrine(data: &DataRegistry) -> DoctrineDef {
             // work out that the terms cannot bite.
             route_caution: 0.0,
             contest_aversion: 0.0,
+            screening: 0.0,
         })
 }
 
@@ -521,6 +522,42 @@ impl SideCommand {
             // Below the base-of-fire branch on purpose: a mortar section is
             // still a base of fire even though its crews are on their feet,
             // and shooting for the main effort is the more specific job.
+            // Eyes go and look. The chassis decides who could — a vehicle
+            // that sees `planner.eyes_ratio_percent` further than her longest
+            // direct weapon reaches is a scout, which is a fact about the
+            // hardware and not about the name on the formation — and the
+            // doctrine's `screening` decides whether this commander would.
+            //
+            // Above the foot branch on purpose, and it is the one place that
+            // argument is overruled: a section that sees three times as far
+            // as she shoots is a screen first and infantry second, and
+            // holding her in the nearest wood is exactly the use of her that
+            // wastes what she is for. A rifle platoon sits at twice her
+            // rifles and is *not* caught by this, which is the separation the
+            // shipped roster happens to give and the reason the threshold is
+            // data.
+            //
+            // Until this branch existed no doctrine could issue a `Recon` at
+            // all: the chooser had `Assault`, `Advance`, `Hold`, a base of
+            // fire and a withdrawal, and the executor's `Recon` arm,
+            // `planner.pull_under_fire`'s gate on it and
+            // `Formation::latitude_for`'s handling of it were code for a
+            // mission nobody produced.
+            let eyes = Self::eyes_share(registry, state, formation);
+            if doctrine.screening > 0.0 && eyes > 1.0 - doctrine.screening {
+                let desired = Mission::Recon {
+                    toward: ground[next % ground.len()].0.anchor(),
+                };
+                next += 1;
+                if ordered != Some(&desired) {
+                    orders.push(Order::SetMission {
+                        formation: FormationId(index as u32),
+                        mission: desired,
+                        latitude: crate::battle::Latitude::Delegated,
+                    });
+                }
+                continue;
+            }
             if Self::goes_on_foot(registry, state, formation) {
                 let covered = Self::best_cover(registry, state, &ground);
                 let desired = Mission::Hold {
@@ -636,6 +673,46 @@ impl SideCommand {
     /// taxi is anywhere, and a carrier whose element stops being infantry the
     /// moment the doors shut would be ordered to drive at a crossroads with
     /// the tanks — which is precisely the behaviour this exists to end.
+    /// What share of a formation's living vehicles are *eyes*: they see
+    /// further than they shoot by [`crate::data::PlannerRules::eyes_ratio_percent`].
+    ///
+    /// Read off the hardware, never off a name, the way
+    /// [`Self::lays_indirect`] and [`Self::goes_on_foot`] are. Indirect
+    /// weapons are not counted: a howitzer reaching forty hexes says nothing
+    /// about whether the crew firing it can see, and counting it would make
+    /// every artillery battery the least scout-like thing on the field for
+    /// the wrong reason.
+    fn eyes_share(registry: &DataRegistry, state: &BattleState, formation: &Formation) -> f32 {
+        let ratio = registry.planner.eyes_ratio_percent;
+        if ratio <= 0 {
+            return 0.0;
+        }
+        let mut seen = 0;
+        let mut eyes = 0;
+        for unit in formation.members.iter().filter_map(|id| state.unit(*id)) {
+            let Some(vehicle) = registry.vehicle(&unit.vehicle) else {
+                continue;
+            };
+            seen += 1;
+            let reach = vehicle
+                .weapons
+                .iter()
+                .filter_map(|w| registry.weapon(w))
+                .filter(|w| !w.indirect)
+                .map(|w| w.range[1])
+                .max()
+                .unwrap_or(0);
+            // A vehicle with no direct weapon at all is nothing but eyes.
+            if reach == 0 || vehicle.vision_range * 100 > reach * ratio as u32 {
+                eyes += 1;
+            }
+        }
+        if seen == 0 {
+            return 0.0;
+        }
+        eyes as f32 / seen as f32
+    }
+
     fn goes_on_foot(registry: &DataRegistry, state: &BattleState, formation: &Formation) -> bool {
         formation
             .members

@@ -166,6 +166,11 @@ fn elevation_prior() -> f32 {
     0.4
 }
 
+/// Serde's default for [`PlannerRules::eyes_ratio_percent`].
+fn eyes_ratio_percent() -> i32 {
+    250
+}
+
 /// Serde's default for [`PlannerRules::kill_bonus`].
 fn kill_bonus() -> f32 {
     4.0
@@ -636,6 +641,25 @@ pub struct PlannerRules {
     /// Zero is the arithmetic with no judgment in it. She still takes the
     /// killing shot whenever it is the best round of fire on offer — it
     /// nearly always is — but she will not cross a field for it.
+    /// How much further than she can shoot a vehicle must see before a
+    /// commander calls her *eyes*, as a percentage.
+    ///
+    /// Recognising a role off the hardware rather than off a name is this
+    /// file's standing rule — `lays_indirect` and `goes_on_foot` already do
+    /// it, and a chassis id in an `if` inside `ai/` is the smell. Sight over
+    /// the longest *direct* weapon is what separates a screen from a gun
+    /// line, and the shipped roster separates cleanly at 250: the recon car
+    /// sees 3.3 times as far as her machine gun reaches and the scout section
+    /// 3 times as far as her rifles, while a rifle platoon is at 2.0, a light
+    /// tank 1.75 and a medium tank exactly 1. The tank destroyer is the
+    /// inverse and always has been — she sees 10 and shoots 16, because
+    /// needing a spotter is her character.
+    ///
+    /// **Zero or less is the rule's absence**: nobody is eyes, so no
+    /// formation is ever sent to look, which is the game before
+    /// [`DoctrineDef::screening`](super::DoctrineDef::screening) existed.
+    #[serde(default = "eyes_ratio_percent")]
+    pub eyes_ratio_percent: i32,
     #[serde(default = "kill_bonus")]
     pub kill_bonus: f32,
     /// What a round of fire from a tile is worth per point of the doctrine's
@@ -798,6 +822,7 @@ impl Default for PlannerRules {
             plateau: plateau(),
             cover_prior: cover_prior(),
             elevation_prior: elevation_prior(),
+            eyes_ratio_percent: eyes_ratio_percent(),
             kill_bonus: kill_bonus(),
             attack_worth: attack_worth(),
             attack_floor: attack_floor(),

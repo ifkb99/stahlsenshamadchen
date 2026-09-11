@@ -297,6 +297,7 @@ fn risk_score(reg: &DataRegistry, state: &BattleState, unit: UnitId, tile: [i32;
         delegation: 0.5,
         route_caution: 0.0,
         contest_aversion: 0.0,
+        screening: 0.0,
     });
     evaluator
         .score_tile(

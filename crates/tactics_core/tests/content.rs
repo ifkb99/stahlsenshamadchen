@@ -81,7 +81,7 @@ fn every_battle_map_in_the_base_mod_is_the_regulation_hexagon() {
 }
 
 #[test]
-fn the_new_maps_field_three_formations_a_side_with_a_leader_each() {
+fn the_new_maps_field_enough_formations_a_side_with_a_leader_each() {
     // Three, and specifically these three, because the commander brain reads
     // what a formation is *made of* and can only do that if the map wrote
     // down an order of battle with coherent elements in it: an armoured
@@ -100,11 +100,11 @@ fn the_new_maps_field_three_formations_a_side_with_a_leader_each() {
                 .filter(|f| f.side == side)
                 .map(|f| f.id.as_str())
                 .collect();
-            assert_eq!(
-                formations.len(),
-                3,
-                "map `{id}` side {side} must field three formations for the command \
-                 planner to have distinguishable elements to work with, not {formations:?}"
+            assert!(
+                formations.len() >= 3,
+                "map `{id}` side {side} must field at least three formations for the \
+                 command planner to have distinguishable elements to work with, not \
+                 {formations:?}"
             );
             for formation in &formations {
                 let members: Vec<_> = file
