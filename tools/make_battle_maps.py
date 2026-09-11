@@ -197,7 +197,7 @@ WEST_ORDER = [
     ("kuhlmann_scouts", (2, 20), "artillery", "Fenn 3", ["petra", "emmi", "vera", "berit"], False, None),
     ("kuhlmann_grenadiers", (7, 21), "halftrack", "Grenadier 1", ["lotte", "wilma"], True, None),
     ("kuhlmann_grenadiers", (8, 21), "rifle_platoon", "Grenadier 2", ["ines", "traudl"], False, (7, 21)),
-    ("kuhlmann_scouts", (4, 18), "scout_section", "Spaeher", ["sigrun"], False, None),
+    ("kuhlmann_screen", (4, 18), "scout_section", "Spaeher", ["sigrun"], True, None),
 ]
 
 # The same nine, crewed from the other academy. Kept as a parallel list rather
@@ -236,16 +236,25 @@ EAST_CREWS = [
     ("valkyrie_scouts", "Raven 3", ["nadja", "hedda", "tamara", "carmen"]),
     ("valkyrie_grenadiers", "Sturm 1", ["odette", "sanna"]),
     ("valkyrie_grenadiers", "Sturm 2", ["alma", "cecile"]),
-    ("valkyrie_scouts", "Vixen", ["ludmila"]),
+    ("valkyrie_screen", "Vixen", ["ludmila"]),
 ]
 
 FORMATIONS = [
     {"id": "kuhlmann_line", "name": "1st Armored Platoon", "side": 0},
     {"id": "kuhlmann_grenadiers", "name": "1st Grenadier Section", "side": 0},
     {"id": "kuhlmann_scouts", "name": "Reconnaissance Section", "side": 0},
+    # The section rides in a formation of its own, and that is what makes it
+    # a screen rather than a straggler. A commander gives orders to
+    # formations, and the branch that sends eyes out to look is reached only
+    # after the base-of-fire branch has had its say — so a section sharing a
+    # formation with the battery is a section that never gets asked, because
+    # the battery's job is the more specific one. Two units that do different
+    # things want two formations.
+    {"id": "kuhlmann_screen", "name": "Screening Section", "side": 0},
     {"id": "valkyrie_line", "name": "Valkyrie Armor", "side": 1},
     {"id": "valkyrie_grenadiers", "name": "Valkyrie Grenadiers", "side": 1},
     {"id": "valkyrie_scouts", "name": "Valkyrie Screen", "side": 1},
+    {"id": "valkyrie_screen", "name": "Valkyrie Vedette", "side": 1},
 ]
 
 

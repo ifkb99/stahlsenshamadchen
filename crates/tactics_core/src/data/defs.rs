@@ -530,6 +530,23 @@ pub struct DoctrineDef {
     /// Defaulted like [`Self::route_caution`], and turned off by the same
     /// switch: a commander with no foresight never asks the question.
     pub contest_aversion: f32,
+    /// How readily this commander gives a formation a screen instead of a
+    /// place in the line.
+    ///
+    /// The chassis decides *who could* — a formation is eyes when its
+    /// vehicles see [`PlannerRules::eyes_ratio_percent`] further than they
+    /// shoot — and this decides *whether she would*. A formation is sent on
+    /// `Recon` when the share of it that is eyes exceeds `1 - screening`, so
+    /// a cautious number wants a formation that is nothing but scouts and a
+    /// generous one will screen with anything that has a pair of eyes in it.
+    ///
+    /// **Zero is the rule's absence**, and it was every doctrine's value
+    /// until 2026-09-11, which is why `Mission::Recon` was code the
+    /// commander could not issue: the executor drove it, `pull_under_fire`
+    /// gated on it and `Formation::latitude_for` handled it, and nothing
+    /// ever produced one.
+    #[serde(default)]
+    pub screening: f32,
 }
 
 fn default_objective_value() -> f32 {
@@ -564,6 +581,7 @@ impl Default for DoctrineDef {
             // before the enemy does.
             route_caution: 0.6,
             contest_aversion: 0.3,
+            screening: 0.0,
         }
     }
 }

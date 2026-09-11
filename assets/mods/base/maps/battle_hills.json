@@ -126,6 +126,11 @@
             "side": 0
         },
         {
+            "id": "kuhlmann_screen",
+            "name": "Screening Section",
+            "side": 0
+        },
+        {
             "id": "valkyrie_line",
             "name": "Valkyrie Armor",
             "side": 1
@@ -138,6 +143,11 @@
         {
             "id": "valkyrie_scouts",
             "name": "Valkyrie Screen",
+            "side": 1
+        },
+        {
+            "id": "valkyrie_screen",
+            "name": "Valkyrie Vedette",
             "side": 1
         }
     ],
@@ -279,7 +289,8 @@
             "crew": [
                 "sigrun"
             ],
-            "formation": "kuhlmann_scouts"
+            "formation": "kuhlmann_screen",
+            "leads": true
         },
         {
             "at": [
@@ -418,7 +429,8 @@
             "crew": [
                 "ludmila"
             ],
-            "formation": "valkyrie_scouts"
+            "formation": "valkyrie_screen",
+            "leads": true
         }
     ],
     "objectives": [

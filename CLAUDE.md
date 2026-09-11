@@ -1359,16 +1359,37 @@ says whether the machine is comparable.
   eastern end: a wide run of identical ground is a wide plateau of identical
   score, which is the same lesson the ridge is written as a slope for. The
   hand-drawn maps and the arenas do not have any yet.
-- **`Recon` and `Support` are unreachable from any doctrine, and that is an
-  engine gap rather than a content one** (established 2026-09-11). The AI's
-  mission chooser has exactly three arms, keyed on `aggression`: ≥0.7
-  `Assault`, ≥0.5 `Advance`, else `Hold`, plus `Withdraw` from `wants_out`.
-  No value of any doctrine field produces a `Recon` or a `Support` mission,
-  so no doctrine *can* be written that exercises them — the executor, the
-  evaluator's `pull_under_fire` arm and `Formation::latitude_for` all have
-  code for missions the commander never issues. Closing it wants a design
-  decision (a doctrine field that says "screen ahead", or an arm that reads
-  what a formation is made of) rather than content.
+- **Eyes get sent to look** (2026-09-11, the designer's ruling: the chassis
+  picks and the doctrine scales). A formation is *eyes* when its vehicles see
+  `planner.eyes_ratio_percent` (250) further than their longest **direct**
+  weapon reaches — read off the hardware like `lays_indirect` and
+  `goes_on_foot`, never off a name — and `DoctrineDef::screening` says how
+  readily this commander gives such a formation a screen instead of a place
+  in the line: `Recon` when the eyes share exceeds `1 - screening`. **Zero is
+  the absence and was every doctrine's value**, which is why `Mission::Recon`
+  had been code the commander could not issue while the executor,
+  `planner.pull_under_fire` and `Formation::latitude_for` all handled it.
+  The shipped roster separates cleanly at 250: recon car 3.3×, scout section
+  3×, rifle platoon 2.0×, light tank 1.75×, medium tank 1.0×, and the tank
+  destroyer is the inverse by design. `Support`, by contrast, was **never**
+  unreachable — the base-of-fire branch has always issued it; an earlier note
+  here said otherwise and was wrong.
+- **The eyes branch sits below the base of fire and above the foot branch**,
+  and both placements are arguments. A battery's job is the more specific
+  one, so a formation holding the guns is a base of fire even if a scout
+  rides with it — which is why `Spaeher` and `Vixen` have a formation of
+  their own now, and why `river_crossing`'s recon car, who rides with the
+  battery, never screens. And a section that sees three times as far as she
+  shoots is a screen first and infantry second, which is the one place the
+  "walking troops want cover" rule is overruled.
+- **Four of the five battle maps run the executor with no commander at all.**
+  Only `river_crossing` declares `"planner": "command"`; `battle_forest`,
+  `battle_hills`, `battle_plains` and `battle_town` all declare `"utility"`,
+  which is the executor and reviews no missions. So the whole command layer —
+  missions, the base of fire, withdrawal, and now screening — is exercised by
+  **one fifth** of the fought-out sample, and every sweep of a mission-related
+  number reads null for that reason before any other. Switching them is a
+  content change with a large behavioural cost and has not been made.
 - **A doctrine that breaks off now exists.** `delaying_action` draws the line
   at a fifth of itself — `beaten` asks whether a formation is under
   `1 - withdraw_threshold` of what it started with, and the shipped values

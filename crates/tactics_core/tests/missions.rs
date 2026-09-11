@@ -4451,3 +4451,68 @@ fn a_doctrine_that_trades_ground_for_time_orders_its_own_withdrawal() {
          percent is not, which is the content making the decision"
     );
 }
+
+/// Eyes get sent to look, and the chassis is what says who they are.
+///
+/// `Mission::Recon` was code the commander could not issue: the executor
+/// drove it, `planner.pull_under_fire` gated on it and
+/// `Formation::latitude_for` handled it, and the mission chooser had
+/// `Assault`, `Advance`, `Hold`, a base of fire and a withdrawal and nothing
+/// that produced one. The chassis decides who *could* — a vehicle that sees
+/// `planner.eyes_ratio_percent` further than her longest direct weapon
+/// reaches — and the doctrine's `screening` decides whether this commander
+/// *would*, which is the two-part answer the designer asked for.
+#[test]
+fn a_commander_who_screens_sends_her_eyes_to_look() {
+    let reg = registry_wireless();
+    let recons = |screening: f32| {
+        let mut reg = reg.clone();
+        for doctrine in reg.doctrines.values_mut() {
+            doctrine.screening = screening;
+            // Low enough that she issues ground missions at all: a doctrine
+            // that devolves hands the whole question to her subordinates and
+            // never reaches this branch, which is what hid the rule the first
+            // time it was measured.
+            doctrine.delegation = 0.2;
+        }
+        // `battle_hills`, because `river_crossing` has no formation whose
+        // vehicles are only eyes: its recon car rides with the battery, and
+        // the base-of-fire branch claims that formation first and rightly so.
+        let mut state = BattleState::from_map(&reg, "battle_hills", 13).unwrap();
+        let mut ai = AiDriver::new();
+        ai.insert(
+            0,
+            tactics_core::ai::make_battle_planner(
+                &AiConfig {
+                    planner: "command".into(),
+                    difficulty: 5,
+                    doctrine: Some("massed_armor".into()),
+                },
+                13,
+                &reg,
+            ),
+        );
+        let mut out = Vec::new();
+        ai.plan_round_with(&reg, &mut state, |d| {
+            if let Order::SetMission {
+                mission: Mission::Recon { .. },
+                formation,
+                ..
+            } = &d.order
+            {
+                out.push(*formation);
+            }
+        });
+        out
+    };
+
+    assert!(
+        recons(0.0).is_empty(),
+        "a commander who does not screen puts everybody in the line, which is \
+         the game before this branch existed"
+    );
+    assert!(
+        !recons(0.9).is_empty(),
+        "and one who does sends the formation with the eyes in it to look"
+    );
+}

@@ -1801,8 +1801,10 @@ nothing. It reads 3–9 against `recon_pull` and 6–6 against elastic defence
 at 60 points, buying the same seven-unit combined-arms list elastic defence
 does.
 
-*The half that is not.* `Recon` and `Support` are **unreachable from any
-doctrine**. The AI's mission chooser has three arms keyed on `aggression` —
+*The half that is not — and one word of it was wrong.* `Recon` is
+**unreachable from any doctrine** (`Support` is not: the base-of-fire branch
+has always issued it, and the note that said otherwise was corrected the same
+day). The AI's mission chooser has three arms keyed on `aggression` —
 ≥0.7 `Assault`, ≥0.5 `Advance`, else `Hold` — plus `Withdraw` from
 `wants_out`, and nothing else. So the executor's `Recon` arm,
 `planner.pull_under_fire`'s `Recon` gate and `Formation::latitude_for`'s
@@ -1859,6 +1861,38 @@ Retired rather than deleted, the way `planner.mission_weight` was: it
 deserialises under its old name, never serialises, and `validate-mods` warns
 a mod still declaring it, because serde ignoring an unrecognised key is the
 one mod error this project's data machinery cannot otherwise report.
+
+**Eyes get sent to look** (2026-09-11, the designer's ruling on the
+unreachable `Recon`: the chassis picks and the doctrine scales). A formation
+is *eyes* when its vehicles see `planner.eyes_ratio_percent` — 250 — further
+than their longest **direct** weapon reaches, read off the hardware the way
+`lays_indirect` and `goes_on_foot` are; `DoctrineDef::screening` says how
+readily a commander gives such a formation a screen instead of a place in the
+line, firing when the eyes share exceeds `1 - screening`. Zero is the absence
+and was every doctrine's value, which is exactly why the mission existed with
+nothing to produce it. The shipped roster separates cleanly: recon car 3.3×,
+scout section 3×, rifle platoon 2.0×, light tank 1.75×, medium tank 1.0×,
+tank destroyer the inverse by design. An indirect weapon is not counted — a
+howitzer reaching forty hexes says nothing about whether its crew can see.
+
+*Three placement arguments, each of which cost a measurement to find.* The
+branch sits **below** the base of fire, because a battery's job is the more
+specific one — and that is why no Recon was ever issued at first: every
+formation with a scout in it also held the guns, so the base-of-fire branch
+claimed it and rightly so. `Spaeher` and `Vixen` ride in a formation of their
+own now (`kuhlmann_screen`, `valkyrie_screen`), which is what makes a section
+a screen rather than a straggler. It sits **above** the foot branch, the one
+place "walking troops want cover" is overruled: a section that sees three
+times as far as she shoots is a screen first and infantry second.
+
+*And the reason every mission sweep reads null, which is bigger than this
+chunk.* **Four of the five battle maps run the executor with no commander.**
+Only `river_crossing` declares `"planner": "command"`; the rest declare
+`"utility"`, which reviews no missions at all. So missions, the base of fire,
+withdrawal and now screening are exercised by one fifth of the fought-out
+sample, and a sweep of any of them is null for that reason before it is null
+for any other. Switching the four is a content change with a large
+behavioural cost and is the designer's to make.
 
 ## The campaign
 
