@@ -423,6 +423,31 @@ def hills():
     ]:
         c.blob(seed, 1, terrain="f", keep=("M",))
 
+    # Hedgerows along the foot of the ridge: cover a crew can see out of.
+    #
+    # Until this terrain existed, `forest` (30) and `town` (40) were the only
+    # covering ground in the game and both block sight at 2, so everything
+    # commanding was bare and everything covered was blind — "cover" and
+    # "dead ground" were the same word to the evaluator. A bank at 22 that
+    # blocks nothing is the first ground on which a crew can be hard to hit
+    # and still lay her gun, which is the whole tactical idea of a hull-down
+    # position written as terrain.
+    #
+    # Along the *foot* of the slope rather than on the crest: the approach to
+    # the ridge was the widest run of bare ground on the map, and this is the
+    # ground a commander wants to be on while she is looking at the crest.
+    # Broken into banks with gaps between them, and the reason is the same
+    # one the ridge is written as a slope for: laid as two continuous bands
+    # this read 26-46 to the eastern end against 36-36 without it, because a
+    # wide run of identical ground is a wide plateau of identical *score* and
+    # every tie left in this engine is a coin that falls the same compass
+    # way. `(a // 4) % 2` cuts it into four-hex banks with four-hex gaps —
+    # which is also what a field boundary looks like.
+    c.paint(
+        lambda a, v: abs(abs(v) - 5) <= 1 and 7 <= a <= 25 and (a // 4) % 2 == 0,
+        terrain="h",
+    )
+
     # The road across, through the saddle: the one lane that crosses the
     # ridge without climbing it.
     c.paint(lambda a, v: v == 0, terrain="R")
@@ -455,7 +480,14 @@ def hills():
         "id": "battle_hills",
         "name": "The Rauhkamm",
         "kind": "battle",
-        "palette": {"g": "grass", "p": "plains", "f": "forest", "M": "mountains", "R": "road"},
+        "palette": {
+            "g": "grass",
+            "p": "plains",
+            "f": "forest",
+            "h": "hedgerow",
+            "M": "mountains",
+            "R": "road",
+        },
         "rows": c.rows(),
         "elevation": c.elevation_rows(),
         "sides": sides("bounding_overwatch"),

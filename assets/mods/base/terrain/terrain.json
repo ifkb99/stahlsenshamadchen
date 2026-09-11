@@ -1,117 +1,190 @@
 [
-    {
-        "id": "grass",
-        "capacity": 4,
-        "name": "Grassland",
-        "glyph": "g",
-        "color": "#7aa646",
-        "move_cost": { "foot": 1, "wheeled": 2, "tracked": 1, "air": 1 }
-    },
-    {
-        "id": "road",
-        "capacity": 3,
-        "name": "Road",
-        "glyph": "R",
-        "color": "#b3a284",
-        "move_cost": { "foot": 1, "wheeled": 1, "tracked": 1, "air": 1 }
-    },
-    {
-        "id": "forest",
-        "capacity": 5,
-        "name": "Forest",
-        "glyph": "f",
-        "color": "#3f6d33",
-        "move_cost": { "foot": 1, "wheeled": 4, "tracked": 2, "air": 1 },
-        "concealment": 25,
-        "cover": 30,
-        "vision_block": 2,
-        "concealing": true
-    },
-    {
-        "id": "water",
-        "name": "River",
-        "glyph": "w",
-        "color": "#4a7fbf",
-        "move_cost": { "boat": 1, "air": 1 }
-    },
-    {
-        "id": "mud",
-        "capacity": 3,
-        "name": "Mud Flats",
-        "glyph": "m",
-        "color": "#6e5b3f",
-        "move_cost": { "foot": 2, "wheeled": 4, "tracked": 2, "air": 1 }
-    },
-    {
-        "id": "town",
-        "capacity": 6,
-        "name": "Town",
-        "glyph": "t",
-        "color": "#8d7f70",
-        "move_cost": { "foot": 1, "wheeled": 1, "tracked": 1, "air": 1 },
-        "concealment": 25,
-        "cover": 40,
-        "vision_block": 2
-    },
-    {
-        "id": "plains",
-        "battlefield": "battle_plains",
-        "capacity": 4,
-        "name": "Plains",
-        "glyph": "p",
-        "color": "#86a95c",
-        "move_cost": { "foot": 1, "wheeled": 1, "tracked": 1, "air": 1 }
-    },
-    {
-        "id": "mountains",
-        "battlefield": "battle_hills",
-        "name": "Mountains",
-        "glyph": "M",
-        "color": "#7d7d85",
-        "move_cost": { "foot": 3, "air": 1 },
-        "concealment": 15,
-        "vision_block": 4
-    },
-    {
-        "id": "deep_forest",
-        "battlefield": "battle_forest",
-        "capacity": 5,
-        "name": "Deep Forest",
-        "glyph": "F",
-        "color": "#40653a",
-        "move_cost": { "foot": 1, "wheeled": 3, "tracked": 2, "air": 1 },
-        "concealment": 35,
-        "vision_block": 3,
-        "concealing": true
-    },
-    {
-        "id": "city",
-        "battlefield": "battle_town",
-        "name": "City",
-        "glyph": "C",
-        "color": "#a7a29a",
-        "move_cost": { "foot": 1, "wheeled": 1, "tracked": 1, "air": 1 },
-        "concealment": 25,
-        "capturable": true,
-        "income": 3
-    },
-    {
-        "id": "factory",
-        "battlefield": "battle_town",
-        "name": "Factory",
-        "glyph": "I",
-        "color": "#7d6b6b",
-        "move_cost": { "foot": 1, "wheeled": 1, "tracked": 1, "air": 1 },
-        "concealment": 25,
-        "capturable": true,
-        "income": 5
-    },
-    {
-        "id": "highway",
-        "battlefield": "battle_plains",
-        "name": "Highway",
-        "glyph": "r",
-        "color": "#b3a284",
-        "move_cost": { "foot": 1, "wheeled": 1, "tracked": 1, "air": 1 }
+  {
+    "id": "grass",
+    "capacity": 4,
+    "name": "Grassland",
+    "glyph": "g",
+    "color": "#7aa646",
+    "move_cost": {
+      "foot": 1,
+      "wheeled": 2,
+      "tracked": 1,
+      "air": 1
     }
+  },
+  {
+    "id": "road",
+    "capacity": 3,
+    "name": "Road",
+    "glyph": "R",
+    "color": "#b3a284",
+    "move_cost": {
+      "foot": 1,
+      "wheeled": 1,
+      "tracked": 1,
+      "air": 1
+    }
+  },
+  {
+    "id": "forest",
+    "capacity": 5,
+    "name": "Forest",
+    "glyph": "f",
+    "color": "#3f6d33",
+    "move_cost": {
+      "foot": 1,
+      "wheeled": 4,
+      "tracked": 2,
+      "air": 1
+    },
+    "concealment": 25,
+    "cover": 30,
+    "vision_block": 2,
+    "concealing": true
+  },
+  {
+    "id": "hedgerow",
+    "capacity": 3,
+    "name": "Hedgerow",
+    "glyph": "h",
+    "color": "#5c8a3e",
+    "move_cost": {
+      "foot": 1,
+      "wheeled": 3,
+      "tracked": 1,
+      "air": 1
+    },
+    "concealment": 15,
+    "cover": 22,
+    "vision_block": 0,
+    "concealing": true
+  },
+  {
+    "id": "water",
+    "name": "River",
+    "glyph": "w",
+    "color": "#4a7fbf",
+    "move_cost": {
+      "boat": 1,
+      "air": 1
+    }
+  },
+  {
+    "id": "mud",
+    "capacity": 3,
+    "name": "Mud Flats",
+    "glyph": "m",
+    "color": "#6e5b3f",
+    "move_cost": {
+      "foot": 2,
+      "wheeled": 4,
+      "tracked": 2,
+      "air": 1
+    }
+  },
+  {
+    "id": "town",
+    "capacity": 6,
+    "name": "Town",
+    "glyph": "t",
+    "color": "#8d7f70",
+    "move_cost": {
+      "foot": 1,
+      "wheeled": 1,
+      "tracked": 1,
+      "air": 1
+    },
+    "concealment": 25,
+    "cover": 40,
+    "vision_block": 2
+  },
+  {
+    "id": "plains",
+    "battlefield": "battle_plains",
+    "capacity": 4,
+    "name": "Plains",
+    "glyph": "p",
+    "color": "#86a95c",
+    "move_cost": {
+      "foot": 1,
+      "wheeled": 1,
+      "tracked": 1,
+      "air": 1
+    }
+  },
+  {
+    "id": "mountains",
+    "battlefield": "battle_hills",
+    "name": "Mountains",
+    "glyph": "M",
+    "color": "#7d7d85",
+    "move_cost": {
+      "foot": 3,
+      "air": 1
+    },
+    "concealment": 15,
+    "vision_block": 4
+  },
+  {
+    "id": "deep_forest",
+    "battlefield": "battle_forest",
+    "capacity": 5,
+    "name": "Deep Forest",
+    "glyph": "F",
+    "color": "#40653a",
+    "move_cost": {
+      "foot": 1,
+      "wheeled": 3,
+      "tracked": 2,
+      "air": 1
+    },
+    "concealment": 35,
+    "vision_block": 3,
+    "concealing": true
+  },
+  {
+    "id": "city",
+    "battlefield": "battle_town",
+    "name": "City",
+    "glyph": "C",
+    "color": "#a7a29a",
+    "move_cost": {
+      "foot": 1,
+      "wheeled": 1,
+      "tracked": 1,
+      "air": 1
+    },
+    "concealment": 25,
+    "capturable": true,
+    "income": 3
+  },
+  {
+    "id": "factory",
+    "battlefield": "battle_town",
+    "name": "Factory",
+    "glyph": "I",
+    "color": "#7d6b6b",
+    "move_cost": {
+      "foot": 1,
+      "wheeled": 1,
+      "tracked": 1,
+      "air": 1
+    },
+    "concealment": 25,
+    "capturable": true,
+    "income": 5
+  },
+  {
+    "id": "highway",
+    "battlefield": "battle_plains",
+    "name": "Highway",
+    "glyph": "r",
+    "color": "#b3a284",
+    "move_cost": {
+      "foot": 1,
+      "wheeled": 1,
+      "tracked": 1,
+      "air": 1
+    }
+  }
 ]

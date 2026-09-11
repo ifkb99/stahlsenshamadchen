@@ -1811,6 +1811,33 @@ doctrine can fix that; it wants a design decision — a doctrine field that
 says "screen ahead", or an arm that reads what a formation is made of the way
 `lays_indirect` and `goes_on_foot` already do.
 
+**Cover you can see out of** (2026-09-11, the last of the designer's list).
+`hedgerow`: 22 points of cover, 15 of concealment, **zero** vision block.
+Until it existed, forest (30) and town (40) were the only covering terrains
+in the game and both block sight at 2, so everything commanding was bare and
+everything covered was blind — "cover" and "dead ground" were the same word
+to the evaluator, and there was nowhere on any map to be hard to hit and
+still lay a gun. That is the whole tactical idea of a hull-down position, and
+it had no terrain.
+
+`battle_hills` carries 60 tiles of it along the foot of the ridge, which was
+the widest run of bare ground on the map and is the ground a commander wants
+while she is looking at the crest. **Broken into four-hex banks with four-hex
+gaps**: laid as two continuous bands the map read 26–46 to the eastern end
+against 36–36 without them, which is the generator's own lesson arriving
+again — a wide run of identical ground is a wide plateau of identical
+*score*, and every tie left in this engine is a coin that falls the same
+compass way.
+
+*And a correction to something measured badly the day before.* Broken up, the
+row read 48–24, which looked like a lean the other way until the seed was
+swept: **`battle_hills`'s `ground` row has a spread of 12 battles of 72 on
+its own**. So the hedgerows moved it by about one spread, which is not
+evidence of anything, and the scout reshuffle's "24 battles from two seats"
+was about two — worth heeding, and not the scandal it was written up as.
+These rows want sweeping before they are believed, exactly like every other
+number this harness prints.
+
 ## The campaign
 
 **What ends it is map data (2026-09-09).** `frontier` had a Lua wrapper

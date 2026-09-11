@@ -97,12 +97,13 @@ the game. `--sim` fights whole battles. The rules for reading it:
   every doctrine conclusion `--sim` prints is partly about that tank
   destroyer. **`battle_hills` and `battle_town` are exactly mirror-symmetric**
   (the hand-drawn maps are not), so their rows read the engine's residual
-  compass bias **and the crews**, which is less of a control than it sounds.
-  Reshuffling two scout sections on 2026-09-11 moved `battle_town` from
-  32–40 to 54–18 when it left one side's taxi a cadet short, and to 44–28
-  once the sizes were symmetric again. Twenty-four battles of swing from two
-  seats: read these rows as a *pair* with the orders-of-battle columns, and
-  re-measure them whenever a crew changes. Numbers and method: DONE.md, and
+  compass bias **and the crews**, which is less of a control than it sounds
+  — but rather less than it first looked, too. Seed-swept, `battle_hills`'s
+  row has a spread of **12 battles of 72** on its own, which is most of what
+  a change appears to move: reshuffling two scout sections read as 24
+  battles (about two spreads, and worth heeding) and adding hedgerows as 12
+  (one, and not evidence of anything). Read these rows beside the
+  orders-of-battle columns, seed-swept, or not at all. Numbers and method: DONE.md, and
   `assets/wiki/reference/battlefields.md`.
 - **`--arena <id>` picks the mirrored battlefield** the `skill`, `brains`,
   `mustered` and `ground` tables fight on: `skill_arena` (the default, byte for
@@ -1337,13 +1338,20 @@ says whether the machine is comparable.
   `marksmanship` ask `base == 0` first. Skipping that check made every tank on
   the field concealment 1, stopped `fog::search`'s fast path firing, and moved
   the determinism baseline — which is how it was caught.
-- **There is no cover without `vision_block`.** Forest (30) and town (40)
-  are the only covering terrains and both block sight at 2, so everything
-  commanding is bare and everything covered is blind: a crew in the middle
-  of the skill arena's hilltop village can barely see out of it. A hedge, a
-  wall or a treeline that hides a hull without blinding the crew is content
-  nobody has written, and until one exists "cover" and "dead ground" are the
-  same word to the evaluator.
+- **There is cover without `vision_block` now** (2026-09-11). `hedgerow` is
+  22 points of cover, 15 of concealment and **zero** vision block — the
+  tactical idea of a hull-down position written as terrain, and the first
+  ground on which a crew can be hard to hit and still lay her gun. Before it,
+  forest (30) and town (40) were the only covering terrains and both block
+  sight at 2, so everything commanding was bare and everything covered was
+  blind, and "cover" and "dead ground" were the same word to the evaluator.
+  `battle_hills` carries 60 tiles of it along the foot of the ridge — the
+  widest run of bare ground on the map, and the ground a commander wants to
+  be on while she is looking at the crest. **Broken into four-hex banks with
+  four-hex gaps**, because laid as two continuous bands it read 26–46 to the
+  eastern end: a wide run of identical ground is a wide plateau of identical
+  score, which is the same lesson the ridge is written as a slope for. The
+  hand-drawn maps and the arenas do not have any yet.
 - **`Recon` and `Support` are unreachable from any doctrine, and that is an
   engine gap rather than a content one** (established 2026-09-11). The AI's
   mission chooser has exactly three arms, keyed on `aggression`: ≥0.7
