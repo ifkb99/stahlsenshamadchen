@@ -287,6 +287,7 @@ pub fn resolve_crew_fate(
     table: &Casualties,
     safety: i32,
     killed_by: Option<DamageType>,
+    aid: i32,
     rng: &mut impl Rng,
 ) -> CrewFate {
     // Chance in 100 that this cadet is hurt at all, before safety is applied.
@@ -311,8 +312,10 @@ pub fn resolve_crew_fate(
     }
 
     // Hurt. Some of those are bad enough to be fatal if the campaign allows
-    // it; otherwise it is a long recovery instead.
-    let severe = rng.random_range(0..100) < table.severe_percent;
+    // it; otherwise it is a long recovery instead — and whether this one is
+    // depends on whether anybody beside her aboard knew what to do about it.
+    let severe =
+        rng.random_range(0..100) < aid_reduced(table.severe_percent, table.severe_per_aid, aid);
     match (severe, rules.permadeath) {
         (true, true) => CrewFate::Killed,
         (true, false) => CrewFate::Wounded {
@@ -342,10 +345,29 @@ pub fn resolve_crew_fate(
 /// [`Casualties::carried_fatal_percent`], which is a separate number from the
 /// wreck case's [`Casualties::severe_percent`] precisely because "carried
 /// home" and "dragged out of a fire" are not one situation.
+/// A fatal chance with her crewmates' first aid taken off it.
+///
+/// One function because both chances are reduced the same way and by
+/// different numbers, and because the clamp matters: no amount of skill makes
+/// a wound safe, it makes it less likely to be the other kind. A crew with
+/// nobody left to help passes [`crate::data::AVERAGE`] and changes nothing,
+/// which is the rule's absence.
+fn aid_reduced(percent: i32, per_aid: i32, aid: i32) -> i32 {
+    // Only ever downward, the same way `athletics` only ever adds a level of
+    // climb. Most of the roster is untrained in `first_aid` and an untrained
+    // skill sits five points under its core base, so a two-sided rule would
+    // make the shipped campaign *bury more cadets* the moment it was switched
+    // on — measured: `severe_per_aid` at 5 put `buried` up 0.30 a battle
+    // rather than down. That is `untrained_penalty` reaching a casualty
+    // table through a side door, which is a different knob and not this one.
+    (percent - per_aid * (aid - crate::data::AVERAGE).max(0)).max(0)
+}
+
 pub fn resolve_station_fate(
     rules: CasualtyRules,
     table: &Casualties,
     found: crate::battle::CrewCondition,
+    aid: i32,
     rng: &mut impl Rng,
 ) -> CrewFate {
     use crate::battle::CrewCondition;
@@ -362,7 +384,13 @@ pub fn resolve_station_fate(
             // wound costs is a different question from what a homecoming
             // does, and until they were two numbers a fifth of everybody the
             // shipped campaign buried was a cadet whose tank drove back.
-            let fatal = rules.permadeath && rng.random_range(0..100) < table.carried_fatal_percent;
+            let fatal = rules.permadeath
+                && rng.random_range(0..100)
+                    < aid_reduced(
+                        table.carried_fatal_percent,
+                        table.carried_fatal_per_aid,
+                        aid,
+                    );
             if fatal {
                 CrewFate::Killed
             } else {

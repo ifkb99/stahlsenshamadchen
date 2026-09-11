@@ -1055,6 +1055,7 @@ fn a_cadet_who_rides_out_hurt_does_not_come_home_healthier() {
             vehicle: "recon_car".into(),
             killed_by: None,
             found: None,
+            aid: tactics_core::data::AVERAGE,
         })
         .collect();
     state.apply_battle_result(
@@ -1117,6 +1118,7 @@ fn the_shipped_campaign_kills_and_a_mod_that_declines_the_rule_does_not() {
                     vehicle: "heavy_tank".into(),
                     killed_by: Some(tactics_core::data::DamageType::Kinetic),
                     found: None,
+                    aid: tactics_core::data::AVERAGE,
                 })
                 .collect();
             state.apply_battle_result(

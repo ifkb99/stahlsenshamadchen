@@ -79,6 +79,25 @@ pub struct CrewLoss {
     /// is what it was.
     #[serde(default)]
     pub found: Option<crate::battle::CrewCondition>,
+    /// The best `first_aid` still working aboard her vehicle, **not counting
+    /// her own** — she is the one bleeding.
+    ///
+    /// What it buys is severity, through
+    /// [`crate::data::Casualties::severe_per_aid`] and its homecoming twin.
+    /// [`crate::data::AVERAGE`] when there is nobody left to help her, which
+    /// is no reduction rather than a penalty: the rule's absence is the game
+    /// before it, and a crew of one is already being punished by every other
+    /// rule in the model.
+    ///
+    /// `#[serde(default)]` to average, so a campaign saved before anybody
+    /// could be patched up opens as one where everybody got ordinary care.
+    #[serde(default = "average_aid")]
+    pub aid: i32,
+}
+
+/// Serde's default for [`CrewLoss::aid`].
+fn average_aid() -> i32 {
+    crate::data::AVERAGE
 }
 
 impl CrewLoss {
@@ -111,9 +130,36 @@ impl CrewLoss {
     /// [`crate::battle::CrewCondition::Absent`] is skipped for the reason it
     /// exists: she was in the infirmary before this battle started and is not
     /// a casualty of it.
-    pub fn in_battle(state: &crate::battle::BattleState) -> Vec<Self> {
+    pub fn in_battle(
+        registry: &crate::data::DataRegistry,
+        state: &crate::battle::BattleState,
+    ) -> Vec<Self> {
         use crate::battle::CrewCondition;
         let mut losses = Vec::new();
+        // Who else aboard could do anything for her. Her own level is
+        // deliberately not in it, and a seat nobody is working or that is
+        // working hurt past use cannot help: `Out` and `Absent` are not
+        // there, `Wounded` still is, because a cadet with a field dressing
+        // can put one on somebody else.
+        let aid = |unit: &crate::battle::Unit, seat: usize| -> i32 {
+            let ctx = crate::data::CheckContext {
+                vehicle_class: registry.vehicle(&unit.vehicle).map(|v| v.class.as_str()),
+                ..Default::default()
+            };
+            unit.crew
+                .iter()
+                .enumerate()
+                .filter(|(other, _)| *other != seat)
+                .filter(|(other, _)| {
+                    !matches!(
+                        unit.crew_state.get(*other),
+                        Some(CrewCondition::Out) | Some(CrewCondition::Absent)
+                    )
+                })
+                .filter_map(|(_, id)| state.roster.skill_level(registry, *id, "first_aid", &ctx))
+                .max()
+                .unwrap_or(crate::data::AVERAGE)
+        };
         for unit in state.lost_units() {
             for (seat, cadet) in unit.crew.iter().enumerate() {
                 // She was in the infirmary when this vehicle burned, so
@@ -128,6 +174,7 @@ impl CrewLoss {
                     vehicle: unit.vehicle.clone(),
                     killed_by: unit.last_hit_by,
                     found: None,
+                    aid: aid(unit, seat),
                 });
             }
         }
@@ -148,6 +195,7 @@ impl CrewLoss {
                     vehicle: unit.vehicle.clone(),
                     killed_by: unit.last_hit_by,
                     found,
+                    aid: aid(unit, seat),
                 });
             }
         }
@@ -1467,11 +1515,16 @@ impl OverworldState {
                     &registry.casualties,
                     safety,
                     loss.killed_by,
+                    loss.aid,
                     &mut self.rng,
                 ),
-                Some(found) => {
-                    resolve_station_fate(self.rules, &registry.casualties, found, &mut self.rng)
-                }
+                Some(found) => resolve_station_fate(
+                    self.rules,
+                    &registry.casualties,
+                    found,
+                    loss.aid,
+                    &mut self.rng,
+                ),
             };
             if let Some(cadet) = self.roster.get_mut(loss.cadet) {
                 // Never *shortens* a recovery already under way. A cadet the

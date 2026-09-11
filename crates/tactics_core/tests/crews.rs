@@ -1497,6 +1497,7 @@ fn a_campaign_run_by_standing_orders_and_planners_plays_itself_out() {
                         vehicle: u.vehicle.clone(),
                         killed_by: None,
                         found: None,
+                        aid: tactics_core::data::AVERAGE,
                     })
             })
             .collect();
@@ -1866,7 +1867,7 @@ fn a_cadet_who_stayed_in_the_infirmary_is_no_casualty_of_the_battle_she_missed()
     let missing = state.unit(ours).unwrap().crew[1];
     state.unit_mut(ours).unwrap().fate = Fate::Destroyed(Destruction::BrewedUp);
 
-    let losses = CrewLoss::in_battle(&state);
+    let losses = CrewLoss::in_battle(&reg, &state);
     assert_eq!(
         losses.len(),
         2,
@@ -1927,6 +1928,7 @@ fn a_wound_taken_at_her_station_survives_the_battle() {
         vehicle: unit.vehicle.clone(),
         killed_by: None,
         found: Some(CrewCondition::Out),
+        aid: tactics_core::data::AVERAGE,
     };
     state.apply_battle_result(
         &reg,
@@ -1970,7 +1972,15 @@ fn how_badly_she_was_hurt_decides_how_long_she_is_out() {
     // proves nothing about the ordering.
     let mean = |found: CrewCondition, rng: &mut rand_chacha::ChaCha8Rng| {
         let total: u32 = (0..200)
-            .map(|_| days(resolve_station_fate(rules, &table, found, rng)))
+            .map(|_| {
+                days(resolve_station_fate(
+                    rules,
+                    &table,
+                    found,
+                    tactics_core::data::AVERAGE,
+                    rng,
+                ))
+            })
             .sum();
         total as f64 / 200.0
     };
@@ -1983,7 +1993,13 @@ fn how_badly_she_was_hurt_decides_how_long_she_is_out() {
     // And a cadet who was never in the vehicle takes nothing home from a
     // battle she did not fight.
     assert_eq!(
-        resolve_station_fate(rules, &table, CrewCondition::Absent, &mut rng),
+        resolve_station_fate(
+            rules,
+            &table,
+            CrewCondition::Absent,
+            tactics_core::data::AVERAGE,
+            &mut rng
+        ),
         CrewFate::Unharmed
     );
 }
@@ -2019,7 +2035,13 @@ fn a_cadet_carried_home_is_priced_by_the_homecoming_and_not_by_the_wreck() {
     for _ in 0..200 {
         assert!(
             !matches!(
-                resolve_station_fate(lethal, &table, CrewCondition::Out, &mut rng),
+                resolve_station_fate(
+                    lethal,
+                    &table,
+                    CrewCondition::Out,
+                    tactics_core::data::AVERAGE,
+                    &mut rng
+                ),
                 CrewFate::Killed
             ),
             "her tank came home and the wreck table killed her anyway"
@@ -2029,8 +2051,14 @@ fn a_cadet_carried_home_is_priced_by_the_homecoming_and_not_by_the_wreck() {
     // safety-0 hull with every wound fatal buries whoever was inside it.
     let mut buried = 0;
     for _ in 0..200 {
-        if resolve_crew_fate(lethal, &table, 0, Some(DamageType::Kinetic), &mut rng)
-            == CrewFate::Killed
+        if resolve_crew_fate(
+            lethal,
+            &table,
+            0,
+            Some(DamageType::Kinetic),
+            tactics_core::data::AVERAGE,
+            &mut rng,
+        ) == CrewFate::Killed
         {
             buried += 1;
         }
@@ -2048,13 +2076,26 @@ fn a_cadet_carried_home_is_priced_by_the_homecoming_and_not_by_the_wreck() {
         ..Casualties::default()
     };
     assert_eq!(
-        resolve_station_fate(lethal, &cruel_ward, CrewCondition::Out, &mut rng),
+        resolve_station_fate(
+            lethal,
+            &cruel_ward,
+            CrewCondition::Out,
+            tactics_core::data::AVERAGE,
+            &mut rng
+        ),
         CrewFate::Killed
     );
     for _ in 0..200 {
         assert!(
             !matches!(
-                resolve_crew_fate(lethal, &cruel_ward, 0, Some(DamageType::Kinetic), &mut rng),
+                resolve_crew_fate(
+                    lethal,
+                    &cruel_ward,
+                    0,
+                    Some(DamageType::Kinetic),
+                    tactics_core::data::AVERAGE,
+                    &mut rng
+                ),
                 CrewFate::Killed
             ),
             "no wound in this campaign is severe, and one of them was fatal"
@@ -2500,4 +2541,99 @@ fn registry_weapon(
     let vehicle = reg.vehicle(&unit.vehicle).expect("a chassis the mod ships");
     let id = vehicle.weapons.first().expect("a chassis that shoots");
     reg.weapon(id).expect("a weapon the mod ships").clone()
+}
+
+/// Somebody beside her has to know what to do about it.
+///
+/// `first_aid` was one of the skills no rule read, and the seat that answers
+/// for it is the loader's — which is why leaving a loader behind was free.
+/// What it buys is severity rather than days: a medic decides whether a cadet
+/// is buried or out for a fortnight, which is the stake the muster screen was
+/// given teeth for. Her *own* first aid is deliberately not in it. She is the
+/// one bleeding.
+#[test]
+fn what_saves_her_is_a_crewmate_who_knows_what_to_do_and_never_her_own_hands() {
+    let mut reg = registry_wireless();
+    // One cadet aboard who can do something about a wound, and she is not the
+    // one who is going to be hurt.
+    for def in reg.characters.values_mut() {
+        def.skills.insert("first_aid".to_string(), 4);
+    }
+    if let Some(medic) = reg.characters.get_mut("juno") {
+        medic.skills.insert("first_aid".to_string(), 20);
+    }
+    let (mut state, ours) = crewed_stage(&reg, &["anka", "juno", "mina"]);
+    let hurt = state.unit_mut(ours).unwrap();
+    hurt.crew_state = vec![
+        tactics_core::battle::CrewCondition::Out,
+        tactics_core::battle::CrewCondition::Fine,
+        tactics_core::battle::CrewCondition::Fine,
+    ];
+
+    let losses = tactics_core::overworld::CrewLoss::in_battle(&reg, &state);
+    let hers = losses
+        .iter()
+        .find(|loss| loss.cadet == state.unit(ours).unwrap().crew[0])
+        .expect("the cadet carried out of her seat is a casualty of this battle");
+    assert_eq!(
+        hers.aid, 20,
+        "the best first aid still working beside her is what she gets"
+    );
+
+    // And a crew with nobody but her in it gets ordinary care rather than a
+    // penalty: the rule's absence is the game before it.
+    let (alone, one) = crewed_stage(&reg, &["juno"]);
+    let mut alone = alone;
+    alone.unit_mut(one).unwrap().crew_state = vec![tactics_core::battle::CrewCondition::Out];
+    let lonely = tactics_core::overworld::CrewLoss::in_battle(&reg, &alone);
+    assert_eq!(
+        lonely.first().map(|loss| loss.aid),
+        Some(tactics_core::data::AVERAGE),
+        "a cadet with nobody left aboard is neither helped nor punished for it"
+    );
+}
+
+/// A medic aboard buries fewer cadets, and a bad one buries no more.
+///
+/// The one-sidedness is not tidiness. Most of the roster is untrained in
+/// `first_aid` and an untrained skill sits five points under its core base,
+/// so a two-sided rule would have made the shipped campaign bury *more*
+/// cadets the moment it was switched on — measured at `severe_per_aid` 5,
+/// `buried` went up 0.30 a battle instead of down. That is
+/// `untrained_penalty` reaching the casualty table through a side door.
+#[test]
+fn a_crewmate_who_knows_what_to_do_buries_fewer_and_one_who_does_not_buries_no_more() {
+    use tactics_core::roster::{CasualtyRules, CrewFate, resolve_crew_fate};
+    let mut reg = registry_wireless();
+    reg.casualties.severe_per_aid = 5;
+    let lethal = CasualtyRules { permadeath: true };
+    let buried = |aid: i32, seed: u64| {
+        let mut rng = <rand_chacha::ChaCha8Rng as rand::SeedableRng>::seed_from_u64(seed);
+        (0..2000)
+            .filter(|_| {
+                matches!(
+                    resolve_crew_fate(
+                        lethal,
+                        &reg.casualties,
+                        0,
+                        Some(tactics_core::data::DamageType::Kinetic),
+                        aid,
+                        &mut rng,
+                    ),
+                    CrewFate::Killed
+                )
+            })
+            .count()
+    };
+    let ordinary = buried(tactics_core::data::AVERAGE, 5);
+    assert!(
+        buried(tactics_core::data::AVERAGE + 4, 5) < ordinary,
+        "a crew with a medic aboard buries fewer of her own"
+    );
+    assert_eq!(
+        buried(tactics_core::data::AVERAGE - 6, 5),
+        ordinary,
+        "and a crew with nobody who knows what to do buries no more than one \
+         the rule was never switched on for"
+    );
 }

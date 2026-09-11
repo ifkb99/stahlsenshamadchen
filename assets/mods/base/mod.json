@@ -58,6 +58,8 @@
     ],
     "severe_percent": 25,
     "carried_fatal_percent": 0,
+    "severe_per_aid": 5,
+    "carried_fatal_per_aid": 5,
     "severe_days": [
       5,
       10

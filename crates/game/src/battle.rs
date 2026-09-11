@@ -3370,7 +3370,11 @@ fn update_flashes(
 /// returns — and while it lived inside a system there was no way to call it
 /// without a running app, so the one piece of arithmetic that can silently
 /// corrupt a campaign was the one piece nothing tested.
-fn battle_outcome(state: &BattleState, field: &FieldBattle) -> BattleOutcome {
+fn battle_outcome(
+    registry: &tactics_core::data::DataRegistry,
+    state: &BattleState,
+    field: &FieldBattle,
+) -> BattleOutcome {
     // Start every participating army at zero survivors so armies that
     // were wiped out are still reported, then hand each living unit
     // back to the army it marched in with.
@@ -3403,7 +3407,7 @@ fn battle_outcome(state: &BattleState, field: &FieldBattle) -> BattleOutcome {
     // found hurt in a seat that came home. The reading lives in the core
     // crate beside the campaign that has to live with it, so the harness
     // asks the same question this does.
-    let losses = CrewLoss::in_battle(state);
+    let losses = CrewLoss::in_battle(registry, state);
     // An army whose every surviving vehicle drove off by an exit has
     // withdrawn: it is not beaten, and it is not here. An army that lost
     // everything has not withdrawn, whatever else it did, and neither has
@@ -3441,6 +3445,7 @@ fn battle_outcome(state: &BattleState, field: &FieldBattle) -> BattleOutcome {
 fn finish_battle(
     mut commands: Commands,
     time: Res<Time>,
+    mods: Res<crate::mods::Mods>,
     mut battle: ResMut<Battle>,
     mut next: ResMut<NextState<AppState>>,
     scoped: Query<Entity, With<BattleScope>>,
@@ -3454,7 +3459,7 @@ fn finish_battle(
     }
 
     if let Some(field) = &battle.field {
-        commands.insert_resource(battle_outcome(&battle.state, field));
+        commands.insert_resource(battle_outcome(&mods.0, &battle.state, field));
     }
 
     for entity in &scoped {
@@ -3899,7 +3904,7 @@ mod tests {
             state.resolve_round(reg);
             rounds += 1;
         }
-        let outcome = battle_outcome(&state, &field);
+        let outcome = battle_outcome(reg, &state, &field);
         Fought {
             state,
             outcome,

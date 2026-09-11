@@ -100,6 +100,29 @@ pub struct Casualties {
     /// allows.
     #[serde(default = "default_carried_fatal")]
     pub carried_fatal_percent: i32,
+    /// Points off [`Self::severe_percent`] per point of the best `first_aid`
+    /// still working aboard her vehicle, above average.
+    ///
+    /// **Her crewmates', not her own** (the designer's ruling, 2026-09-11):
+    /// she is the one bleeding, so what decides whether a wound is the kind
+    /// that buries her is whether anybody beside her knows what to do about
+    /// it. It is what finally gives the loader's seat a reason to be filled —
+    /// `loading` and `first_aid` are the only two skills that seat answers
+    /// for, and until this neither was read by any rule, so leaving a loader
+    /// behind was free.
+    ///
+    /// Severity rather than days, also the designer's: a medic decides
+    /// whether a cadet is buried or out for a fortnight, which is the stake
+    /// the muster screen was given teeth for. Zero is the rule's absence.
+    pub severe_per_aid: i32,
+    /// The same, for [`Self::carried_fatal_percent`]: what her crewmates buy
+    /// a cadet carried home in a vehicle that came back.
+    ///
+    /// Two numbers rather than one for the reason the two chances they reduce
+    /// are two numbers — "dragged out of a fire" and "carried home" are not
+    /// one situation, and a mod should be able to say that a doctor within
+    /// the hour is worth more than a friend with a field dressing.
+    pub carried_fatal_per_aid: i32,
     /// Days out for a severe wound, inclusive.
     pub severe_days: [u32; 2],
     /// Days out for an ordinary one.
@@ -131,6 +154,8 @@ impl Default for Casualties {
             adrift_days: [1, 3],
             severe_percent: 25,
             carried_fatal_percent: default_carried_fatal(),
+            severe_per_aid: 0,
+            carried_fatal_per_aid: 0,
             severe_days: [5, 10],
             light_days: [1, 4],
             carried_days: [3, 8],
