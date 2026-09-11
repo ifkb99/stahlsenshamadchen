@@ -225,6 +225,9 @@ fn main() {
                         )
                     }
                 }
+                Event::ModuleRepaired { unit, module } => {
+                    println!("   {}'s {module} is working again", name(&state, *unit))
+                }
                 Event::ModuleHit {
                     unit,
                     module,

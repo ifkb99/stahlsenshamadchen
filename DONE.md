@@ -1712,6 +1712,41 @@ what anybody's `first_aid` is, so it takes one, and so does the game crate's
 callers still ask the one question; that was the point of moving it into core
 in the first place.
 
+**A crew who can fix it** (2026-09-11, the designer's ruling on what
+`maintenance` should reach). There was no breakdown rule and no repair rule
+anywhere in the engine, so wiring the last-but-one dead skill meant inventing
+one, and the designer chose the version you can watch happen: a crew gets a
+broken module working again between rounds.
+
+The shape is deliberately small. One module a round, the first in `BTreeMap`
+key order — a crew fixes one thing at a time, and the key order is the same
+on every machine. Back to **one hit**, not to full: she is working again, not
+as new. Only a crew on the field; a passenger has nothing of her own to mend.
+`Unit::modules` has always distinguished a module at zero hits from one that
+is absent, with a comment saying the two "will not behave the same under a
+repair or resupply rule" — this is that rule arriving.
+
+*The absence is checked down to the rng stream.* At `field_repair_percent`
+zero no die is thrown at all, so a mod that declines the rule is the game
+before it existed rather than a gentler version of it, and the test compares
+the rng itself rather than the outcome. The base mod declares 10 with 3 a
+point of `maintenance`, so the **determinism baseline moved deliberately** —
+241 lines changed of 1552, which is what one extra draw at the top of each
+round does to everything downstream, and exactly one `ModuleRepaired`
+survives into the four-seed snapshot.
+
+*What it is worth.* Swept 0 / 10 / 30: the win column moves +2 and +4,
+monotone, rounds +0.4 and +0.8, cadet-days out −0.6 and −0.8. Inside the ±5
+seed floor on its own, but monotone with the secondary columns agreeing,
+which is a rule doing work rather than noise.
+
+*And a fixture that had to stop being hand-picked.* `every_cadet_who_marched_
+into_a_field_battle_is_accounted_for_when_it_ends` ran on four hunted seeds
+and lost its station wounds the moment the repair rule moved every battle
+downstream. It scans `0..24` now and stops when it has what it is about — a
+win for each side and two cadets carried home hurt. Re-hunting the seeds
+would have bought silence until the next rule landed.
+
 ## The campaign
 
 **What ends it is map data (2026-09-09).** `frontier` had a Lua wrapper
