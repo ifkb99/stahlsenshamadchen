@@ -15,7 +15,7 @@
   "balance": {
     "speed_per_driving": 5,
     "speed_per_athletics": 5,
-    "athletics_per_climb_level": 4,
+    "athletics_per_climb_level": 2,
     "concealment_per_fieldcraft": 5,
     "troops_per_small_arms": 5,
     "accuracy_per_gunnery": 3,

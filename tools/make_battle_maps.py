@@ -358,6 +358,26 @@ def hills():
         if c.elevation[cell] >= 1:
             c.terrain[cell] = "p"
 
+    # The tors: a rock knob far out on each spur, standing three levels above
+    # the shoulder it sits on.
+    #
+    # Tracked vehicles climb one level and foot climbs two, so until
+    # `balance.athletics_per_climb_level` existed there was no ground in this
+    # game that any crew could reach and another could not for want of a
+    # skill — no shipped battle map had an adjacent step steeper than two,
+    # which is exactly the two infantry already had. This is the first. A
+    # platoon whose leader is athletic goes up it; one whose leader is not
+    # walks round; nothing with tracks goes near it. It is out on the spur
+    # rather than on a hump top on purpose — the crest objective must stay a
+    # thing two armies can fight over, not a thing one platoon is handed —
+    # and what it is worth is the sight line, which is the terrain prior's
+    # business rather than an objective's.
+    #
+    # Everything off the spur band falls to the flood plain here, so the tor
+    # is a step of three along the spur and a cliff everywhere else: there is
+    # one way up and it is the way the ridge already runs.
+    c.paint(lambda a, v: abs(abs(v) - 8) <= 1 and 15 <= a <= 19, elevation=4)
+
     # The crags: rock the humps break through in, foot-only and therefore a
     # genuine wall to everything with tracks. Broken into knots on the humps'
     # outer rims rather than laid as one straight bar — a wall with no way
