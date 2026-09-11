@@ -82,6 +82,58 @@ impl From<Facing> for hexx::EdgeDirection {
     }
 }
 
+/// A vehicle travelling with an army on a campaign map.
+///
+/// Deliberately **not** a [`UnitPlacement`]. A placement is scenario data: it
+/// says where on a battlefield a vehicle starts, which way it faces and whose
+/// formation it belongs to, and none of those are questions about a vehicle
+/// inside an army. An army stands on one overworld hex, its vehicles stand
+/// with it, and where each of them deploys is worked out from the battle map
+/// when a battle is actually fought.
+///
+/// It *was* a `UnitPlacement`, and every field the two do not share was dead:
+/// `frontier` carried eighteen `at` fields that named hexes the army was not
+/// on — some of them not even the same hex twice — and eighteen `side` fields
+/// that could have disagreed with the army's and would have been ignored if
+/// they had. The validator read them too, and passed the army's hex to the
+/// check instead of the unit's, which is how nobody noticed for a year. The
+/// two retired fields below survive only so that a map still declaring them
+/// is told, the same way `planner.mission_weight` does.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArmyUnitPlacement {
+    pub vehicle: String,
+    /// Who crews her, by character id. An empty list is an anonymous crew.
+    #[serde(default)]
+    pub crew: Vec<String>,
+    /// Display name override; defaults to the first crew member's name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Retired 2026-09-11, and kept only to be warned about: a vehicle
+    /// travelling with an army is at the army's hex.
+    #[serde(default, skip_serializing)]
+    pub at: Option<[i32; 2]>,
+    /// Retired 2026-09-11, and kept only to be warned about: a vehicle
+    /// travelling with an army is on the army's side. Nothing ever read this,
+    /// so a map that set it to the wrong side was fielding it for the right
+    /// one regardless.
+    #[serde(default, skip_serializing)]
+    pub side: Option<u8>,
+}
+
+impl ArmyUnitPlacement {
+    /// The retired fields this placement still declares, by name.
+    pub fn retired_fields(&self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if self.at.is_some() {
+            out.push("at");
+        }
+        if self.side.is_some() {
+            out.push("side");
+        }
+        out
+    }
+}
+
 /// A unit placed by a battle map (scenario-style).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UnitPlacement {
@@ -301,7 +353,7 @@ pub struct ArmyPlacement {
     pub side: u8,
     pub name: String,
     /// Units travelling with this army, spawned into battles it fights.
-    pub units: Vec<UnitPlacement>,
+    pub units: Vec<ArmyUnitPlacement>,
     /// Overworld movement points per turn.
     #[serde(default = "default_army_movement")]
     pub movement: u32,
@@ -861,13 +913,41 @@ impl MapFile {
                 .push(format!("map `{}` has no tiles", self.id));
         }
         self.validate_shape(&map, registry, report);
-        for (i, row) in self.elevation.iter().enumerate() {
-            match self.rows.get(i) {
-                Some(r) if r.chars().count() == row.chars().count() => {}
-                _ => report.warnings.push(format!(
-                    "map `{}`: elevation row {} does not match rows grid",
-                    self.id, i
-                )),
+        // A map that declares no elevation at all is flat, which is how most
+        // maps say it and must stay silent. A map that declares one has made
+        // a promise, and the promise is per *tile*: `from_map_file` reads a
+        // character per glyph and defaults anything it runs off the end of to
+        // zero, so a grid that stops short does not fail — it silently
+        // flattens whatever it did not reach, which is the one shape of this
+        // mistake an author cannot see. Checking tiles rather than string
+        // lengths is what makes this exact: a row of `rows` may be padded
+        // with spaces where there is no tile, and an elevation row that stops
+        // before them has promised nothing it did not keep.
+        if !self.elevation.is_empty() {
+            let mut missing = Vec::new();
+            for (row, line) in self.rows.iter().enumerate() {
+                let elevations: Vec<char> = self
+                    .elevation
+                    .get(row)
+                    .map(|e| e.chars().collect())
+                    .unwrap_or_default();
+                for (col, glyph) in line.chars().enumerate() {
+                    if glyph == ' ' {
+                        continue;
+                    }
+                    if elevations.get(col).is_none() {
+                        missing.push((row, col));
+                    }
+                }
+            }
+            if let Some((row, col)) = missing.first() {
+                report.errors.push(format!(
+                    "map `{}`: the elevation grid stops short of {} tile(s), the first at \
+                     [{col}, {row}]; a map that declares elevation must give every tile a \
+                     level, and one that is flat should declare none",
+                    self.id,
+                    missing.len(),
+                ));
             }
         }
         if self.elevation.len() > self.rows.len() {
@@ -1031,14 +1111,29 @@ impl MapFile {
         for a in &self.armies {
             check.check(a.at, None, &[], a.side);
             for u in &a.units {
-                // KNOWN BUG, preserved deliberately: this passes the army's
-                // own hex rather than `u.at`, so a unit's coordinates inside
-                // an `ArmyPlacement` are neither validated nor used. Fixing it
-                // is a behaviour change with a design question attached —
-                // either honour the field or drop it — and it is tracked as
-                // such in CLAUDE.md. `frontier.json` currently carries 14 `at`
-                // fields that mean nothing because of this.
-                check.check(a.at, Some(&u.vehicle), &u.crew, u.side);
+                // The army's hex and the army's side, which is not a
+                // shortcut: a vehicle travelling with an army is where the
+                // army is and fights for whom the army fights. This used to
+                // read `u.side` off a field of its own, beside a `u.at` that
+                // named some other hex entirely and that nothing checked or
+                // used; both are retired and warned about below.
+                check.check(a.at, Some(&u.vehicle), &u.crew, a.side);
+            }
+        }
+        for army in &self.armies {
+            for u in &army.units {
+                let retired = u.retired_fields();
+                if retired.is_empty() {
+                    continue;
+                }
+                report.warnings.push(format!(
+                    "map `{}`: army `{}`'s `{}` declares `{}`; a vehicle travelling with an \
+                     army is at the army's hex and on its side, and these are ignored",
+                    self.id,
+                    army.name,
+                    u.vehicle,
+                    retired.join("`/`"),
+                ));
             }
         }
 

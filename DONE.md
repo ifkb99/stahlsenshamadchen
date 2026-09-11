@@ -1671,6 +1671,48 @@ formulas, so the report cannot drift from the game. Its first run said two
 useful things: `mg kills heavy_tank in 3 rounds`, which is the `.max(1)` floor
 stated as a number rather than a worry, and the 67% stalemate rate above.
 
+**Two things the data declared and the code ignored** (2026-09-11), both
+found while building the muster and both the same shape as the two door bugs
+it fixed: something written down that nothing honoured.
+
+*A vehicle travelling with an army was a `UnitPlacement`* — scenario data,
+which carries a battlefield coordinate, a facing and a formation, none of
+which is a question about a vehicle inside an army. `frontier` shipped
+eighteen `at` fields naming hexes the army was not standing on, some of them
+not even the same hex twice, and eighteen `side` fields that could have
+contradicted the army's without anybody finding out. The validator compounded
+it by passing the *army's* hex when checking the unit, so the coordinates were
+neither used nor checked, and that comment sat in `map.rs` for a year marked
+KNOWN BUG with the design question attached: honour the field or drop it.
+
+Drop it. `ArmyPlacement::units` is now `ArmyUnitPlacement` — vehicle, crew,
+name — and the validator passes the army's hex and the army's side, which is
+not a shortcut but the truth: a vehicle travelling with an army is where the
+army is and fights for whom it fights. `at` and `side` survive as retired
+fields that nothing reads, purely so a map still declaring them is *told*
+rather than silently ignored; that is the courtesy `planner.mission_weight`
+already got, and it is the difference between a deprecation and a trapdoor.
+The eighteen dead fields are gone from `frontier.json`.
+
+*An elevation grid could stop short of its map in silence.* `from_map_file`
+reads one character per glyph and defaults anything past the end of a row — or
+past the end of the grid — to zero, so an author who added a row of terrain
+and forgot the matching row of digits got a map that worked, with a strip of
+it flattened: no error, no crash, just ground that is not the ground they
+drew. Validation warned when an elevation row's *length* did not match its
+terrain row, which caught the short row and never the missing one, and warned
+where it should have refused.
+
+`validate-mods` now errors, and checks per **tile** rather than per string.
+That precision is the point: a row of `rows` may be padded with spaces where
+there is no tile, and an elevation row that stops before them has promised
+nothing it failed to keep — a length check would reject a file with nothing
+wrong with it, and a rule that cries wolf is a rule authors learn to ignore. A
+map that declares no elevation at all is flat, which is how most of them say
+it, and stays silent. `from_map_file` is left tolerant on purpose: the
+validator is the gate CI runs, and refusing to build the map at run time would
+turn an author's typo into a campaign that cannot fight a battle.
+
 **The `seats` table: what an empty seat is worth** (2026-09-10). The
 `attrition` table's finding was that an academy pays far more in absence than
 in graves — nineteen cadet-days a battle under the gentle rule against 0.7

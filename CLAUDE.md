@@ -856,6 +856,15 @@ on a mission key.
   whole subsystem is built to satisfy.
   `the_shipped_campaign_kills_and_a_mod_that_declines_the_rule_does_not` is
   both halves.
+- **A vehicle travelling with an army is not a `UnitPlacement`.**
+  `ArmyPlacement::units` is `ArmyUnitPlacement` — vehicle, crew, name — and
+  nothing else, because an army stands on one overworld hex and its vehicles
+  stand with it; where each deploys is worked out from the battle map when
+  one is fought. It *was* a `UnitPlacement`, and every field the two did not
+  share was dead: eighteen `at` fields on `frontier` named hexes the army was
+  not on, and the validator read the army's hex anyway, which is how nobody
+  noticed. `at` and `side` survive as retired fields so a map still declaring
+  them gets a `validate-mods` warning, the way `planner.mission_weight` does.
 - **One cadet, one seat.** `OverworldState::from_map` enlists each character
   once per academy; a repeated name crews anonymously and `validate_into`
   warns. Do not "fix" a future warning by letting one cadet crew three tanks.
@@ -1005,6 +1014,14 @@ implies `MapShape::Tile` and validation rejects anything else. A scenario map
 sets `"shape": "free"`. `HexMap` is a sparse `HashMap<Hex, Tile>` and a space
 in a row means "no tile here".
 
+**A map that declares an `elevation` grid must give every tile a level**, and
+`validate-mods` errors on one that stops short — per *tile*, not per string
+length, so an elevation row may stop where the tiles do. Declaring none is how
+a flat map says so and stays silent. `from_map_file` still defaults anything
+it runs off the end of to zero, which is what made the mistake invisible: an
+author who added a row of terrain and forgot the row of digits got a working
+map with a strip of it silently flattened.
+
 There is deliberately no `TICKS_PER_ROUND` constant, which is why round
 resolution, cooldowns and validation take a registry. `WeaponDef::reload_ticks`
 is an `Option<u32>` because serde's default fn cannot see the mod; read it
@@ -1089,11 +1106,6 @@ instrument's numbers.
 
 ### Correctness
 
-- **Army-contained unit placements are never validated.** `map.rs` passes
-  `a.at` (the army's own hex) instead of `u.at` when checking each unit inside
-  an `ArmyPlacement`, so a unit's own coordinates are neither validated nor
-  used. `frontier.json` carries 14 `at` fields on army units that mean
-  nothing. Either drop the field or honour it.
 - **Overworld elevation is priced at the battle scale.** `Scale` has one
   `elevation_meters`, so `frontier`'s mountains at elevation 2 read as 20 m.
   Harmless today; a strategic map wants its own vertical scale.
@@ -1126,8 +1138,6 @@ instrument's numbers.
   returns `None` when no mod ships a battle map.
   `every_clash_the_campaign_map_can_produce_can_be_staged` is what makes the
   check worth having.
-- **Elevation grids fail soft in a confusing way.** A missing or short
-  `elevation` row silently defaults to 0 while a mismatched one only warns.
 - **"Where is she going" is still four fields** (`intent.path`, `orders`,
   `goal`, `boarding`) plus the formation mission. Phase 3b took one off the
   list; the four left are genuinely different time scales (this tick, this
