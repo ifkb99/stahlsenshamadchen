@@ -2262,19 +2262,19 @@ fn trained(reg: &DataRegistry, skill: &str, level: i32) -> DataRegistry {
     reg
 }
 
-/// What she walks at is her own skill, not a driver's.
+/// What a platoon walks at is her chassis's, and no skill of anybody's.
 ///
-/// `move_points` asked every chassis for `driving`, and a `rifle_platoon`
-/// fields a platoon leader and a section leader and nobody else — so
-/// `crew_skill` took its "nobody is in that seat" path and charged a platoon
-/// `substitution_penalty` for a stand-in driving a vehicle with no driver.
-/// It was wrong from the day infantry shipped and it got four points worse
-/// when that penalty went to six; it stayed invisible because
-/// `river_crossing`, the determinism baseline, deliberately fields no
-/// infantry. The rule now is that a chassis that walks is asked how well its
-/// crew walks.
+/// It was `driving` for years, and a `rifle_platoon` fields a platoon leader
+/// and a section leader and no driver — so `crew_skill` took its "nobody is
+/// in that seat" path and charged a platoon `substitution_penalty` for a seat
+/// her chassis has never had. The first fix pointed it at `athletics`
+/// instead, and that could not express anything either: a foot unit has one
+/// movement point, one hex a round already *is* walking pace, and no
+/// percentage of one rounds to anything else below 80 a point. So her pace is
+/// the chassis's listed allowance, `athletics` buys steep ground instead, and
+/// this test is the guard that neither skill creeps back into it.
 #[test]
-fn a_platoon_walks_at_her_own_skill_and_never_at_a_drivers() {
+fn what_a_platoon_walks_at_is_her_chassiss_and_nobodys_skill() {
     let reg = trained(&registry_wireless(), "athletics", 18);
     let row = "g".repeat(12);
     let mut reg = seen(reg);
@@ -2291,6 +2291,10 @@ fn a_platoon_walks_at_her_own_skill_and_never_at_a_drivers() {
         21,
     );
     let platoon = state.unit(UnitId(0)).expect("she is on the field");
+    let listed = reg
+        .vehicle(&platoon.vehicle)
+        .map(|v| v.movement.points)
+        .expect("a chassis the mod ships");
     let pace = |reg: &DataRegistry| {
         tactics_core::battle::move_points(
             reg,
@@ -2300,26 +2304,20 @@ fn a_platoon_walks_at_her_own_skill_and_never_at_a_drivers() {
         )
     };
 
-    reg.balance.speed_per_athletics = 0;
-    reg.balance.speed_per_driving = 5;
-    let listed = pace(&reg);
-
-    // A commander who could drive a tank round the world buys a platoon
-    // nothing, because nobody in a platoon is driving anything.
+    assert_eq!(pace(&reg), listed, "she walks at what her chassis lists");
     reg.balance.speed_per_driving = 200;
     assert_eq!(
         pace(&reg),
         listed,
-        "what a platoon walks at is not a question about driving"
+        "a commander who could drive a tank round the world buys a platoon \
+         nothing, because nobody in a platoon is driving anything"
     );
-
-    // Her own trade is.
-    reg.balance.speed_per_driving = 5;
-    reg.balance.speed_per_athletics = 60;
-    assert!(
-        pace(&reg) > listed,
-        "a platoon of fit cadets covers more ground than the chassis lists: {} against {listed}",
-        pace(&reg)
+    reg.balance.substitution_penalty = 40;
+    assert_eq!(
+        pace(&reg),
+        listed,
+        "and she is charged nothing for the driver's seat her chassis has \
+         never had"
     );
 }
 

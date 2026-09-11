@@ -84,26 +84,29 @@ pub struct Balance {
     /// has no base to be a fraction of — but it lived as a bare `* 3` in
     /// `combat.rs`, which is the same design smell.
     pub accuracy_per_gunnery: i32,
-    /// Percent of a foot unit's base movement allowance added per point of
-    /// the crew's `athletics`.
+    /// `speed_per_athletics`, retired the day it shipped and kept here only
+    /// so that a mod still declaring it can be told.
     ///
-    /// [`Self::speed_per_driving`]'s twin for a chassis that walks, and the
-    /// reason it is a second field rather than the same one reading a
-    /// different skill: a platoon's pace and a tank's are not the same
-    /// quantity, and a mod that wants one and not the other should not have
-    /// to choose.
+    /// It was meant to be `speed_per_driving`'s twin for a chassis that
+    /// walks, and it cannot express anything: a foot unit has **one**
+    /// movement point, and one hex a round already *is* six kilometres an
+    /// hour, which is walking pace and correct. No percentage of one rounds
+    /// to anything else below 80 a point, where it stops being a slope and
+    /// becomes a switch between one hex and two. Measured before it was
+    /// retired: bit-identical over 180 battles at 5, at 20 and at 40. The
+    /// scale is the constraint and no multiplier fixes it, so `athletics`
+    /// means [`Self::athletics_per_climb_level`] and nothing else — steep
+    /// ground, which is a thing infantry can have and no chassis can buy.
     ///
-    /// **Zero is the rule's absence, and absence is not what was here
-    /// before.** `move_points` asked every chassis for `driving`, including
-    /// the ones with no driver's seat in their crew list — `rifle_platoon`
-    /// and `scout_section` field a platoon leader and a section leader and
-    /// nobody else — so `crew_skill` took its "nobody in that seat" path and
-    /// charged a platoon [`Self::substitution_penalty`] for a stand-in
-    /// driving a vehicle that has no driver. It was wrong from the day
-    /// infantry shipped and it got four points worse when that penalty went
-    /// to six; it stayed invisible because `river_crossing`, the determinism
-    /// baseline, deliberately fields no infantry.
-    pub speed_per_athletics: i32,
+    /// What a foot unit walks at is now her chassis's listed allowance and
+    /// nobody's skill. She is still not asked for `driving`: that was the
+    /// defect this field was written to fix, and dropping the field does not
+    /// bring it back.
+    ///
+    /// Deserialised under its old name, never serialised, and warned about
+    /// rather than refused, exactly as `planner.mission_weight` is.
+    #[serde(default, rename = "speed_per_athletics", skip_serializing)]
+    pub retired_speed_per_athletics: Option<i32>,
     /// Percent of a weapon's listed reload taken off per point of the crew's
     /// `loading` above average.
     ///
@@ -469,7 +472,7 @@ impl Default for Balance {
             reload_per_loading: 0,
             field_repair_percent: 0,
             repair_per_maintenance: 0,
-            speed_per_athletics: 0,
+            retired_speed_per_athletics: None,
             athletics_per_climb_level: 0,
             concealment_per_fieldcraft: 0,
             troops_per_small_arms: 0,
@@ -541,15 +544,6 @@ impl Balance {
     /// `observation`.
     pub fn vision(&self, base: u32, observation: i32) -> u32 {
         Self::scaled(base, self.vision_per_observation, Self::margin(observation))
-    }
-
-    /// Movement allowance for a foot unit with `base` points and a crew whose
-    /// `athletics` is this good.
-    ///
-    /// [`Self::speed`]'s twin, and the whole of why `athletics` is a skill any
-    /// rule reads.
-    pub fn pace(&self, base: u32, athletics: i32) -> u32 {
-        Self::scaled(base, self.speed_per_athletics, Self::margin(athletics))
     }
 
     /// How long this crew takes to reload a weapon whose listed reload is

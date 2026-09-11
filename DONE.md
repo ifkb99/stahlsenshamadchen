@@ -1838,6 +1838,28 @@ was about two — worth heeding, and not the scandal it was written up as.
 These rows want sweeping before they are believed, exactly like every other
 number this harness prints.
 
+**A platoon's pace is her chassis's, and nobody's skill** (2026-09-11, the
+designer's ruling the day after `speed_per_athletics` shipped). The field was
+written as `speed_per_driving`'s twin for a chassis that walks, and it cannot
+express anything: a foot unit has **one** movement point, one hex a round
+already *is* six kilometres an hour, and no percentage of one rounds to
+anything else below 80 a point — where it stops being a slope and becomes a
+switch between one hex and two. Measured before it was retired: bit-identical
+over 180 battles at 5, at 20 and at 40.
+
+The half of it that was a real fix stays. `move_points` asked **every**
+chassis for `driving`, including the ones with no driver's seat, so a platoon
+paid `substitution_penalty` for a stand-in driving a vehicle that has no
+driver. She is not asked for `driving` now either; she simply walks at what
+her chassis lists. `athletics` means `athletics_per_climb_level` and nothing
+else — steep ground, which is a thing infantry can have and no chassis can
+buy, and the one shape that works at this scale.
+
+Retired rather than deleted, the way `planner.mission_weight` was: it
+deserialises under its old name, never serialises, and `validate-mods` warns
+a mod still declaring it, because serde ignoring an unrecognised key is the
+one mod error this project's data machinery cannot otherwise report.
+
 ## The campaign
 
 **What ends it is map data (2026-09-09).** `frontier` had a Lua wrapper

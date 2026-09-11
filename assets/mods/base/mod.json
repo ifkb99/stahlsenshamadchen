@@ -17,7 +17,6 @@
     "reload_per_loading": 5,
     "field_repair_percent": 10,
     "repair_per_maintenance": 3,
-    "speed_per_athletics": 5,
     "athletics_per_climb_level": 2,
     "concealment_per_fieldcraft": 5,
     "troops_per_small_arms": 5,

@@ -1297,7 +1297,14 @@ says whether the machine is comparable.
   above were easy to leave dead). All four rules added that day are
   *inert on shipped content*, each for the same reason — the quantity they
   scale is a small integer. A foot unit has **one** movement point, so no
-  percentage of it rounds to anything else until 80% a point; a rifle does
+  percentage of it rounds to anything else until 80% a point — which is why
+  `speed_per_athletics` was **retired the day after it shipped** (the
+  designer's ruling): the scale is the constraint and no multiplier fixes
+  it, so a foot unit's pace is her chassis's listed allowance and nobody's
+  skill, and `athletics` means steep ground alone. She is still not asked
+  for `driving`, which is the defect that field was written to fix, and it
+  deserialises under its old name so `validate-mods` can warn, exactly as
+  `planner.mission_weight` does. A rifle does
   **3** damage; chassis concealment is divided into whole hexes of a
   spotter's reach, so 5% a point moves nothing and 10 moves a wound tick;
   and until 2026-09-11 no shipped battle map had an adjacent elevation step
