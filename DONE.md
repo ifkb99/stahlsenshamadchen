@@ -1779,6 +1779,38 @@ a datasheet fact and is now exactly the thing this rule changes. It compares
 against `crewed_reload` instead, which is the same statement one level up:
 the panel, the evaluator and the resolver read one answer.
 
+**A doctrine that breaks off, and the discovery that `Recon` cannot be
+reached at all** (2026-09-11, the designer's ruling to write doctrines that
+use the command model rather than loosen the existing ones).
+
+*The half that was content.* `delaying_action` draws its line at a fifth of
+itself. `beaten` asks whether a formation is under `1 - withdraw_threshold`
+of the substance it started with, and the shipped values put that at 15% for
+massed armour and 40% for bounding overwatch — past the point where a battle
+has decided itself. So `grep -ci withdraw` over the four-seed determinism
+baseline returned **zero**, and that is why `planner.withdrawn_attack` swept
+bit-identical across 180 battles: the term existed and nothing ever read it.
+The new doctrine reaches it, and the test is a contrast rather than an
+assertion about a number — the same company at the same damage is ordered out
+under `delaying_action` and not under `massed_armor`, which is the content
+making the decision. Writing it turned up two things worth keeping: `wants_out`
+lives in `SideCommand`, so a test about it wants the `"command"` planner
+rather than `sharp_planner`'s utility executor; and the `mustered` table's
+doctrine list is curated, so a doctrine not added to it ships measured by
+nothing. It reads 3–9 against `recon_pull` and 6–6 against elastic defence
+at 60 points, buying the same seven-unit combined-arms list elastic defence
+does.
+
+*The half that is not.* `Recon` and `Support` are **unreachable from any
+doctrine**. The AI's mission chooser has three arms keyed on `aggression` —
+≥0.7 `Assault`, ≥0.5 `Advance`, else `Hold` — plus `Withdraw` from
+`wants_out`, and nothing else. So the executor's `Recon` arm,
+`planner.pull_under_fire`'s `Recon` gate and `Formation::latitude_for`'s
+handling of it are all code for a mission the commander cannot issue. No
+doctrine can fix that; it wants a design decision — a doctrine field that
+says "screen ahead", or an arm that reads what a formation is made of the way
+`lays_indirect` and `goes_on_foot` already do.
+
 ## The campaign
 
 **What ends it is map data (2026-09-09).** `frontier` had a Lua wrapper

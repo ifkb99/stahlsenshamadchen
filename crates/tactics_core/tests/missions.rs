@@ -31,7 +31,7 @@ use tactics_core::overworld::{
 mod common;
 use common::{
     always, breaking, crewed_stage, curtained_pair, duel, formation_named, maul, objective_battle,
-    play_round, registry, registry_wireless, seen, sharp_planner, soften, standoff,
+    play_round, registry, registry_wireless, seen, sharp_planner, soften, standoff, strike_down,
     two_side_battle, unit_at,
 };
 
@@ -4378,5 +4378,76 @@ fn a_devolved_commander_issues_no_ground_missions() {
     assert!(
         state.has_committed(1),
         "and the side still finishes planning"
+    );
+}
+
+/// A doctrine can decide to break off, and until one did the engine's
+/// withdrawal machinery was measured by nothing.
+///
+/// `wants_out` has been in `ai/command.rs` since chain-of-command shipped, and
+/// no doctrine the base mod ships ever reached it: `beaten` asks whether a
+/// formation is under `1 - withdraw_threshold` of the substance it started
+/// with, and the shipped values put that at 15% for massed armour and 40% for
+/// bounding overwatch — by which point the battle has usually decided itself.
+/// A `grep -ci withdraw` over the four-seed determinism baseline returned
+/// zero, which is why `planner.withdrawn_attack` swept bit-identical across
+/// 180 battles: the term exists and nothing ever reads it.
+///
+/// `delaying_action` is a doctrine that breaks off after losing a fifth of
+/// itself, which is what a delaying action is. The contrast with massed
+/// armour at the same damage is the whole test — this is a decision the
+/// content makes, not a threshold the engine imposes.
+#[test]
+fn a_doctrine_that_trades_ground_for_time_orders_its_own_withdrawal() {
+    let reg = registry_wireless();
+    let withdrawals = |doctrine: &str| {
+        let mut state = BattleState::from_map(&reg, "river_crossing", 13).unwrap();
+        let formation = formation_named(&state, "kuhlmann_armor");
+        // A fifth of herself is the line `delaying_action` draws. One vehicle
+        // of three is a third, which is past it and nowhere near massed
+        // armour's fifteen percent.
+        let first = state.formations()[formation.index()].members[0];
+        strike_down(&mut state, first);
+
+        let mut ai = AiDriver::new();
+        // The *commander*, not the executor: `wants_out` lives in
+        // `SideCommand`, which is the planner that reviews missions once a
+        // round. `sharp_planner` builds the utility executor, which is why
+        // every other withdrawal test in this file issues the mission by
+        // hand.
+        ai.insert(
+            0,
+            tactics_core::ai::make_battle_planner(
+                &AiConfig {
+                    planner: "command".into(),
+                    difficulty: 5,
+                    doctrine: Some(doctrine.into()),
+                },
+                13,
+                &reg,
+            ),
+        );
+        let mut out = Vec::new();
+        ai.plan_round_with(&reg, &mut state, |d| {
+            if let Order::SetMission {
+                mission: Mission::Withdraw { via },
+                ..
+            } = &d.order
+            {
+                out.push(via.clone());
+            }
+        });
+        out
+    };
+
+    assert!(
+        !withdrawals("delaying_action").is_empty(),
+        "a company that has lost a third of itself and was written to trade \
+         ground for time is ordered out"
+    );
+    assert!(
+        withdrawals("massed_armor").is_empty(),
+        "and the same company under a doctrine that breaks off at fifteen \
+         percent is not, which is the content making the decision"
     );
 }
