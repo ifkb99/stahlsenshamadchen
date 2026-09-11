@@ -1503,9 +1503,6 @@ impl BattleState {
             .terrain_at(hex)
             .and_then(|id| registry.terrain(id))
             .and_then(|t| t.capacity);
-        let Some(capacity) = capacity else {
-            return others.is_empty();
-        };
         let mine = registry
             .vehicle(&unit.vehicle)
             .map(|v| v.footprint())
@@ -1515,7 +1512,10 @@ impl BattleState {
             .filter_map(|o| registry.vehicle(&o.vehicle))
             .map(|v| v.footprint())
             .sum();
-        taken + mine <= capacity.max(mine)
+        // The rule itself lives in `movement`, shared with the index a
+        // whole-map sweep gathers, so there is one answer to "is there room"
+        // however the counting was done.
+        movement::fits(others.len() as u32, taken, capacity, mine)
     }
 
     /// Everyone riding in `carrier`, in id order.
