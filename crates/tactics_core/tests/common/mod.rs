@@ -19,9 +19,16 @@
 //! builds every top-level file in `tests/` as its own test binary, and a
 //! binary with no tests in it is a confusing empty line in the output.
 //!
-//! Helpers that are genuinely local to one binary — the stage builders in
-//! `engine.rs`, `save.rs`'s fork-through-a-file rig — stay where they are. The
-//! point is to make the *contract* importable, not to hollow out the files.
+//! Helpers that are genuinely local to one binary — `save.rs`'s
+//! fork-through-a-file rig — stay where they are. The point is to make the
+//! *contract* importable, not to hollow out the files.
+//!
+//! `engine.rs` used to be one of those files too, until it split into nine
+//! binaries by subject. A stage builder several of the nine still share — a
+//! two-side battle on a bare map, a formation under a doctrine, a duel
+//! staged to a particular round — became contract the same way `registry`
+//! did, and lives in [`stage`]; one still used by exactly one binary stayed
+//! there, private, unmoved.
 
 // Each test binary compiles this module separately and uses only the part of
 // it that binary needs, so anything not wanted by, say, `force.rs` is dead
@@ -31,6 +38,13 @@
 
 use std::path::PathBuf;
 use tactics_core::data::DataRegistry;
+
+pub mod stage;
+// Not every binary that does `mod common;` calls a stage builder directly —
+// several only need `registry`/`seen` from this file — so the re-export is
+// unused from some of them, the same reason `#![allow(dead_code)]` sits above.
+#[allow(unused_imports)]
+pub use stage::*;
 
 /// The mod tree the tests fight on: the shipped `assets/mods`, not a fixture.
 pub fn mods_root() -> PathBuf {

@@ -1266,6 +1266,16 @@ says whether the machine is comparable.
 - `crates/game/src/battle.rs` is ~3500 lines and `overworld.rs` ~2200.
   `battle/panel.rs` holds the pure formatters; **"does it hold a Bevy type" is
   the line to draw** for the next extraction (STRUCTURE.md).
-- `crates/tactics_core/tests/engine.rs` is ~14,500 lines in one binary,
-  sectioned by subject with a contents list in the module doc. Splitting it
-  is cheap now that `tests/common/` exists, and not yet done.
+- **The engine tests are nine binaries, split by subject** (2026-09-11).
+  `engine.rs` had reached 17,568 lines and 305 tests in one binary; it keeps
+  the four sections that are the substrate the rest stand on (content and the
+  scale contract, determinism, the overworld, gunnery previews) and the other
+  eight are `sight.rs`, `planning.rs`, `missions.rs`, `net.rs`, `drill.rs`,
+  `shots.rs`, `crews.rs` and `currency.rs`. Each keeps its `// --- section ---`
+  headers and carries a module doc saying what subject it covers. **A stage
+  builder more than one of them needs lives in `tests/common/stage.rs`** and
+  one still used by a single binary stayed there, private: the rule is reach,
+  not tidiness, and it was computed from a call graph rather than guessed. No
+  test was added, removed, renamed or edited — the check is that the sorted
+  set of 417 test names across every `tactics_core` binary is byte-identical
+  before and after.
