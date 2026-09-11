@@ -493,7 +493,14 @@ fn mustered<'r>(
     if let Some(u) = state.unit(unit)
         && let Some((have, total)) = u.troops(registry)
     {
-        round.damage = (round.damage as u32 * have / total.max(1)) as i32;
+        // How many are still standing, and then how well they shoot. The
+        // second is `small_arms` and reaches damage alone: what frightens a
+        // crew is volume of fire, and the volume is the first term.
+        let standing = round.damage as u32 * have / total.max(1);
+        round.damage = registry.balance.marksmanship(
+            standing,
+            crate::battle::stats::small_arms(registry, &state.roster, u, state.terrain_at(u.pos)),
+        ) as i32;
         round.suppression = round.suppression * have / total.max(1);
     }
     round

@@ -84,6 +84,68 @@ pub struct Balance {
     /// has no base to be a fraction of — but it lived as a bare `* 3` in
     /// `combat.rs`, which is the same design smell.
     pub accuracy_per_gunnery: i32,
+    /// Percent of a foot unit's base movement allowance added per point of
+    /// the crew's `athletics`.
+    ///
+    /// [`Self::speed_per_driving`]'s twin for a chassis that walks, and the
+    /// reason it is a second field rather than the same one reading a
+    /// different skill: a platoon's pace and a tank's are not the same
+    /// quantity, and a mod that wants one and not the other should not have
+    /// to choose.
+    ///
+    /// **Zero is the rule's absence, and absence is not what was here
+    /// before.** `move_points` asked every chassis for `driving`, including
+    /// the ones with no driver's seat in their crew list — `rifle_platoon`
+    /// and `scout_section` field a platoon leader and a section leader and
+    /// nobody else — so `crew_skill` took its "nobody in that seat" path and
+    /// charged a platoon [`Self::substitution_penalty`] for a stand-in
+    /// driving a vehicle that has no driver. It was wrong from the day
+    /// infantry shipped and it got four points worse when that penalty went
+    /// to six; it stayed invisible because `river_crossing`, the determinism
+    /// baseline, deliberately fields no infantry.
+    pub speed_per_athletics: i32,
+    /// Points of `athletics` above average that buy a foot unit one more
+    /// level of climb.
+    ///
+    /// The designer's ruling of 2026-09-11, and the reason it is a threshold
+    /// rather than a percentage: a level is a level, and a foot unit's
+    /// allowance is one movement point, so there is nothing here for a
+    /// percentage to land on. What it buys is the thing tanks can never have
+    /// — a fit platoon goes over the face the rest of the army drives round.
+    ///
+    /// Foot only, deliberately. What a tank can climb is a fact about her
+    /// suspension; what a platoon can climb is a fact about the platoon.
+    /// And it only ever *adds*: a clumsy section still gets whatever her
+    /// chassis allows, because ground that is passable is passable.
+    ///
+    /// Zero is the rule's absence.
+    pub athletics_per_climb_level: i32,
+    /// Percent of her chassis's `concealment` added per point of the crew's
+    /// `fieldcraft`.
+    ///
+    /// A percentage of somebody else's number, like
+    /// [`Self::cover_to_hit_percent`]: what hides a platoon is lying still in
+    /// the right ground, and the chassis says how much there is to be had.
+    /// A crew with no concealment to multiply — every armoured chassis in the
+    /// base mod declares zero — gets nothing for it, which is the honest
+    /// reading rather than an oversight: fieldcraft does not make a tank
+    /// smaller.
+    ///
+    /// Zero is the rule's absence. It also keeps `search`'s fast path exactly
+    /// as fast for a crew hiding behind nothing.
+    pub concealment_per_fieldcraft: i32,
+    /// Percent of a platoon's damage added per point of the crew's
+    /// `small_arms`.
+    ///
+    /// Charged where the platoon's own strength already is, in `mustered`, so
+    /// a section that has lost half its riflemen and a section that shoots
+    /// badly arrive at the fire she actually puts out by the same route.
+    /// Deliberately not applied to suppression: what frightens a crew is
+    /// volume of fire rather than marksmanship, and the volume is the
+    /// fraction still standing.
+    ///
+    /// Zero is the rule's absence.
+    pub troops_per_small_arms: i32,
     /// How much worse someone is at a job that is not hers.
     ///
     /// Crews are short-handed far more often than they are complete — the
@@ -366,6 +428,10 @@ impl Default for Balance {
             target_height_cm: target_height(),
             vision_per_observation: 5,
             speed_per_driving: 5,
+            speed_per_athletics: 0,
+            athletics_per_climb_level: 0,
+            concealment_per_fieldcraft: 0,
+            troops_per_small_arms: 0,
             accuracy_per_gunnery: 3,
             substitution_penalty: 6,
             crew_weight: 2,
@@ -434,6 +500,55 @@ impl Balance {
     /// `observation`.
     pub fn vision(&self, base: u32, observation: i32) -> u32 {
         Self::scaled(base, self.vision_per_observation, Self::margin(observation))
+    }
+
+    /// Movement allowance for a foot unit with `base` points and a crew whose
+    /// `athletics` is this good.
+    ///
+    /// [`Self::speed`]'s twin, and the whole of why `athletics` is a skill any
+    /// rule reads.
+    pub fn pace(&self, base: u32, athletics: i32) -> u32 {
+        Self::scaled(base, self.speed_per_athletics, Self::margin(athletics))
+    }
+
+    /// How steep a face a foot unit whose chassis allows `base` levels and
+    /// whose crew is this good at `athletics` can actually take.
+    pub fn climb(&self, base: i32, athletics: i32) -> i32 {
+        if self.athletics_per_climb_level <= 0 {
+            return base;
+        }
+        base + (Self::margin(athletics) / self.athletics_per_climb_level).max(0)
+    }
+
+    /// How much of her chassis's `concealment` a crew this good at
+    /// `fieldcraft` actually gets.
+    pub fn concealed(&self, base: u32, fieldcraft: i32) -> u32 {
+        // [`Self::scaled`] floors at one, because a vehicle with no movement
+        // points or no vision is a bug rather than a vehicle. Concealment is
+        // not like that: zero is what every armoured chassis declares, and it
+        // has to stay zero or `fog::search`'s fast path stops firing and
+        // every tank on the field starts rolling to be found. The floor is
+        // right where it is and wrong here, which is why this asks first.
+        if base == 0 {
+            return 0;
+        }
+        Self::scaled(
+            base,
+            self.concealment_per_fieldcraft,
+            Self::margin(fieldcraft),
+        )
+    }
+
+    /// What a platoon's listed damage becomes in the hands of riflemen this
+    /// good.
+    pub fn marksmanship(&self, base: u32, small_arms: i32) -> u32 {
+        // Nothing times anything is nothing: a remnant whose riflemen have
+        // rounded away puts out no fire, and [`Self::scaled`]'s floor of one
+        // would hand her a point back. Same reason [`Self::concealed`] asks.
+        if base == 0 {
+            return 0;
+        }
+        Self::scaled(base, self.troops_per_small_arms, Self::margin(small_arms))
     }
 
     /// Movement allowance for a vehicle with `base` points and a crew driving

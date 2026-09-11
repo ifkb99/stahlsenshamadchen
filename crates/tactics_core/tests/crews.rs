@@ -2197,3 +2197,307 @@ fn a_battle_does_not_enlist_anybody_into_the_academy() {
         }
     }
 }
+
+// --- the skills a crew is asked for ----------------------------------------
+//
+// Four of the base mod's thirteen skills were declared and consulted by
+// nothing at all, which is the same dead weight `morale` and `leadership`
+// were in the old `CrewStats`, one level up. These are the rules that ask
+// for them. Each test is a check that the *right* skill is read — the
+// failure they guard against is not a wrong coefficient but a rule quietly
+// asking for somebody else's trade, which is exactly what `move_points` was
+// doing to every platoon in the game.
+
+/// A platoon and a tank across a bare field, with every cadet in the mod
+/// trained to `level` at `skill`.
+///
+/// Skills are stamped onto a cadet when the roster is built, so a stage that
+/// wants to vary one has to say so before it stages, not after.
+fn trained(reg: &DataRegistry, skill: &str, level: i32) -> DataRegistry {
+    let mut reg = reg.clone();
+    for def in reg.characters.values_mut() {
+        def.skills.insert(skill.to_string(), level);
+    }
+    reg
+}
+
+/// What she walks at is her own skill, not a driver's.
+///
+/// `move_points` asked every chassis for `driving`, and a `rifle_platoon`
+/// fields a platoon leader and a section leader and nobody else — so
+/// `crew_skill` took its "nobody is in that seat" path and charged a platoon
+/// `substitution_penalty` for a stand-in driving a vehicle with no driver.
+/// It was wrong from the day infantry shipped and it got four points worse
+/// when that penalty went to six; it stayed invisible because
+/// `river_crossing`, the determinism baseline, deliberately fields no
+/// infantry. The rule now is that a chassis that walks is asked how well its
+/// crew walks.
+#[test]
+fn a_platoon_walks_at_her_own_skill_and_never_at_a_drivers() {
+    let reg = trained(&registry_wireless(), "athletics", 18);
+    let row = "g".repeat(12);
+    let mut reg = seen(reg);
+    let state = two_side_battle(
+        &reg,
+        &[&row, &row, &row],
+        vec![
+            crewed(
+                unit_at([1, 1], 0, "rifle_platoon", "Platoon"),
+                &["anka", "juno"],
+            ),
+            unit_at([10, 1], 1, "medium_tank", "Theirs"),
+        ],
+        21,
+    );
+    let platoon = state.unit(UnitId(0)).expect("she is on the field");
+    let pace = |reg: &DataRegistry| {
+        tactics_core::battle::move_points(
+            reg,
+            &state.roster,
+            platoon,
+            state.terrain_at(platoon.pos),
+        )
+    };
+
+    reg.balance.speed_per_athletics = 0;
+    reg.balance.speed_per_driving = 5;
+    let listed = pace(&reg);
+
+    // A commander who could drive a tank round the world buys a platoon
+    // nothing, because nobody in a platoon is driving anything.
+    reg.balance.speed_per_driving = 200;
+    assert_eq!(
+        pace(&reg),
+        listed,
+        "what a platoon walks at is not a question about driving"
+    );
+
+    // Her own trade is.
+    reg.balance.speed_per_driving = 5;
+    reg.balance.speed_per_athletics = 60;
+    assert!(
+        pace(&reg) > listed,
+        "a platoon of fit cadets covers more ground than the chassis lists: {} against {listed}",
+        pace(&reg)
+    );
+}
+
+/// A fit platoon goes over the face the rest of the army drives round.
+///
+/// The one thing infantry can have that no chassis can buy. It is a
+/// threshold rather than a percentage because a level is a level and a foot
+/// unit's whole allowance is one movement point, so there is nothing for a
+/// percentage to land on. Note what the stage has to build: no shipped
+/// battle map has an adjacent step steeper than two, and foot units already
+/// climb two, so this rule cannot bite on any ground the game currently
+/// ships — the relief here is the test's own.
+#[test]
+fn a_fit_platoon_climbs_a_face_that_turns_a_tank_back() {
+    let mut reg = trained(&registry_wireless(), "athletics", 18);
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "a_steep_face",
+        "palette": { "g": "grass" },
+        "rows": ["ggg", "ggg", "ggg"],
+        "elevation": ["000", "030", "000"],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let placements = vec![
+        crewed(
+            unit_at([0, 1], 0, "rifle_platoon", "Platoon"),
+            &["anka", "juno"],
+        ),
+        crewed(unit_at([2, 1], 0, "medium_tank", "Ours"), &["elsa", "ada"]),
+        unit_at([2, 2], 1, "medium_tank", "Theirs"),
+    ];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(&reg, &placements);
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let state = BattleState::from_placements(
+        &reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        23,
+    )
+    .expect("the staged placements are content the base mod ships");
+    let crest = tactics_core::offset_to_hex(1, 1);
+
+    reg.balance.athletics_per_climb_level = 0;
+    assert!(
+        !tactics_core::battle::reachable(&reg, &state, UnitId(0)).contains_key(&crest),
+        "three levels is past what her chassis allows, and with the rule off that is that"
+    );
+
+    // Eight points of athletics above average, four to a level: two levels
+    // more than the two her chassis lists, and the face is four.
+    reg.balance.athletics_per_climb_level = 4;
+    assert!(
+        tactics_core::battle::reachable(&reg, &state, UnitId(0)).contains_key(&crest),
+        "a platoon this fit takes the face on her feet"
+    );
+    assert!(
+        !tactics_core::battle::reachable(&reg, &state, UnitId(1)).contains_key(&crest),
+        "and what a tank can climb is a fact about her suspension, whoever is aboard"
+    );
+}
+
+/// Fieldcraft multiplies what her chassis gives her, and nothing is still
+/// nothing.
+///
+/// Concealment is the chassis's — how close somebody has to be to find her
+/// at all — and fieldcraft is how much of it she actually gets. Both halves
+/// are the rule: a platoon that lies still well is found later, and a tank,
+/// which declares no concealment at all in the base mod, gets nothing for
+/// it however good her crew is. That second half is not pedantry. It went in
+/// as a plain multiply and `Balance::scaled` floors at one, so every tank on
+/// the field came out with a concealment of 1, `fog::search`'s fast path
+/// stopped firing and the determinism baseline moved.
+#[test]
+fn fieldcraft_multiplies_what_her_chassis_gives_her_and_nothing_stays_nothing() {
+    let mut reg = seen(trained(&registry_wireless(), "fieldcraft", 18));
+    reg.balance.concealment_per_fieldcraft = 40;
+    assert_eq!(
+        reg.balance.concealed(0, 18),
+        0,
+        "a chassis with nothing to hide behind gets nothing for lying still well"
+    );
+    assert!(
+        reg.balance.concealed(40, 18) > 40,
+        "and a platoon who has something to hide behind gets more of it"
+    );
+
+    let row = "g".repeat(12);
+    let seat = |reg: &DataRegistry| {
+        let state = two_side_battle(
+            reg,
+            &[&row, &row, &row],
+            vec![
+                crewed(
+                    unit_at([1, 1], 0, "rifle_platoon", "Platoon"),
+                    &["anka", "juno"],
+                ),
+                unit_at([4, 1], 1, "medium_tank", "Theirs"),
+            ],
+            29,
+        );
+        state.fog.side(1).spotted.contains(&UnitId(0))
+    };
+
+    reg.balance.concealment_per_fieldcraft = 0;
+    assert!(
+        seat(&reg),
+        "at three hexes on bare grass, a platoon who is not trying is in plain sight"
+    );
+    reg.balance.concealment_per_fieldcraft = 40;
+    assert!(
+        !seat(&reg),
+        "the same platoon, lying still properly, is not found from there at all"
+    );
+}
+
+/// A platoon's marksmanship reaches her damage and deliberately not her
+/// suppression.
+///
+/// `mustered` already scales a round by the riflemen still standing; this is
+/// how well the ones still standing shoot, charged in the same place so both
+/// arrive by the same route. Volume of fire is what frightens a crew, and
+/// volume is the first term — a section that has lost half its riflemen puts
+/// out half of it whether the survivors are marksmen or not.
+#[test]
+fn a_platoons_marksmanship_reaches_her_damage_and_not_her_suppression() {
+    let mut reg = seen(trained(&registry_wireless(), "small_arms", 18));
+    let row = "g".repeat(12);
+    let state = two_side_battle(
+        &reg,
+        &[&row, &row, &row],
+        vec![
+            crewed(
+                unit_at([1, 1], 0, "rifle_platoon", "Platoon"),
+                &["anka", "juno"],
+            ),
+            crewed(
+                unit_at([3, 1], 1, "rifle_platoon", "Theirs"),
+                &["mina", "rosa"],
+            ),
+        ],
+        31,
+    );
+    let her = state.unit(UnitId(0)).expect("she is on the field");
+    let weapon = registry_weapon(&reg, her);
+    let target = state.unit(UnitId(1)).expect("he is on the field");
+
+    let damage = |reg: &DataRegistry| {
+        tactics_core::battle::expected_damage(
+            reg,
+            &state,
+            UnitId(0),
+            her.pos,
+            &weapon,
+            UnitId(1),
+            target.pos,
+            false,
+        )
+    };
+    let pressure = |reg: &DataRegistry| {
+        tactics_core::battle::expected_pressure(
+            reg,
+            &state,
+            UnitId(0),
+            her.pos,
+            &weapon,
+            UnitId(1),
+            target.pos,
+            false,
+        )
+    };
+
+    reg.balance.troops_per_small_arms = 0;
+    let (plain_damage, plain_pressure) = (damage(&reg), pressure(&reg));
+    assert!(
+        plain_damage > 0.0,
+        "the stage needs a shot that does something: {plain_damage}"
+    );
+
+    reg.balance.troops_per_small_arms = 40;
+    assert!(
+        damage(&reg) > plain_damage,
+        "riflemen who can shoot do more with the same rifles: {} against {plain_damage}",
+        damage(&reg)
+    );
+    assert_eq!(
+        pressure(&reg),
+        plain_pressure,
+        "and what frightens the crew they are shooting at is the volume, not the aim"
+    );
+}
+
+/// The same placement with named cadets in its seats.
+///
+/// An anonymous crew answers [`crate::common`]'s average for every skill, so
+/// a test about a skill has to put people in the seats or it is measuring the
+/// fallback.
+fn crewed(mut placement: UnitPlacement, crew: &[&str]) -> UnitPlacement {
+    placement.crew = crew.iter().map(|id| (*id).to_string()).collect();
+    placement
+}
+
+/// The weapon a crew's own chassis carries, by index zero.
+fn registry_weapon(
+    reg: &DataRegistry,
+    unit: &tactics_core::battle::Unit,
+) -> tactics_core::data::WeaponDef {
+    let vehicle = reg.vehicle(&unit.vehicle).expect("a chassis the mod ships");
+    let id = vehicle.weapons.first().expect("a chassis that shoots");
+    reg.weapon(id).expect("a weapon the mod ships").clone()
+}
