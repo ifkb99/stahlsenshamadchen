@@ -49,11 +49,11 @@
             "movement": 4,
             "headquarters": true,
             "units": [
-                { "at": [2, 3], "side": 0, "vehicle": "medium_tank", "crew": ["anka", "juno", "mina", "rosa"] },
-                { "at": [1, 2], "side": 0, "vehicle": "recon_car", "crew": ["elsa", "ada"] },
-                { "at": [2, 5], "side": 0, "vehicle": "light_tank", "crew": ["hanne", "yuki", "ilse"] },
-                { "at": [1, 1], "side": 0, "vehicle": "apc", "crew": ["lore", "nele"] },
-                { "at": [1, 1], "side": 0, "vehicle": "rifle_platoon", "crew": ["sigrun", "marlen"] }
+                { "vehicle": "medium_tank", "crew": ["anka", "juno", "mina", "rosa"] },
+                { "vehicle": "recon_car", "crew": ["elsa", "ada"] },
+                { "vehicle": "light_tank", "crew": ["hanne", "yuki", "ilse"] },
+                { "vehicle": "apc", "crew": ["lore", "nele"] },
+                { "vehicle": "rifle_platoon", "crew": ["sigrun", "marlen"] }
             ]
         },
         {
@@ -62,10 +62,10 @@
             "name": "2nd Company",
             "movement": 3,
             "units": [
-                { "at": [1, 4], "side": 0, "vehicle": "artillery", "crew": ["katrin", "doro", "petra", "emmi"] },
-                { "at": [2, 4], "side": 0, "vehicle": "light_tank", "crew": ["vera", "berit", "lotte"] },
-                { "at": [1, 7], "side": 0, "vehicle": "halftrack", "crew": ["wilma", "ines"] },
-                { "at": [1, 7], "side": 0, "vehicle": "rifle_platoon", "crew": ["traudl", "ruth"] }
+                { "vehicle": "artillery", "crew": ["katrin", "doro", "petra", "emmi"] },
+                { "vehicle": "light_tank", "crew": ["vera", "berit", "lotte"] },
+                { "vehicle": "halftrack", "crew": ["wilma", "ines"] },
+                { "vehicle": "rifle_platoon", "crew": ["traudl", "ruth"] }
             ]
         },
         {
@@ -75,11 +75,11 @@
             "movement": 4,
             "headquarters": true,
             "units": [
-                { "at": [11, 3], "side": 1, "vehicle": "medium_tank", "crew": ["irma", "astrid", "beatrix", "franka"] },
-                { "at": [12, 4], "side": 1, "vehicle": "light_tank", "crew": ["sofia", "kira", "rea"] },
-                { "at": [11, 5], "side": 1, "vehicle": "recon_car", "crew": ["greta", "runa"] },
-                { "at": [12, 1], "side": 1, "vehicle": "apc", "crew": ["britta", "malin"] },
-                { "at": [12, 1], "side": 1, "vehicle": "rifle_platoon", "crew": ["zofia", "marta"] }
+                { "vehicle": "medium_tank", "crew": ["irma", "astrid", "beatrix", "franka"] },
+                { "vehicle": "light_tank", "crew": ["sofia", "kira", "rea"] },
+                { "vehicle": "recon_car", "crew": ["greta", "runa"] },
+                { "vehicle": "apc", "crew": ["britta", "malin"] },
+                { "vehicle": "rifle_platoon", "crew": ["zofia", "marta"] }
             ]
         },
         {
@@ -88,10 +88,10 @@
             "name": "Valkyrie Reserve",
             "movement": 3,
             "units": [
-                { "at": [12, 4], "side": 1, "vehicle": "tank_destroyer", "crew": ["ingrid", "selin", "nadja"] },
-                { "at": [11, 4], "side": 1, "vehicle": "heavy_tank", "crew": ["hedda", "tamara", "carmen", "ludmila", "odette"] },
-                { "at": [12, 7], "side": 1, "vehicle": "halftrack", "crew": ["alma", "cecile"] },
-                { "at": [12, 7], "side": 1, "vehicle": "rifle_platoon", "crew": ["erika", "sanna"] }
+                { "vehicle": "tank_destroyer", "crew": ["ingrid", "selin", "nadja"] },
+                { "vehicle": "heavy_tank", "crew": ["hedda", "tamara", "carmen", "ludmila", "odette"] },
+                { "vehicle": "halftrack", "crew": ["alma", "cecile"] },
+                { "vehicle": "rifle_platoon", "crew": ["erika", "sanna"] }
             ]
         }
     ]

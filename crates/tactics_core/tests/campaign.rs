@@ -861,6 +861,65 @@ fn a_transfer_is_refused_where_the_campaign_says_it_makes_no_sense() {
 
 // --- validation ------------------------------------------------------------
 
+/// A vehicle travelling with an army has no hex and no side of its own, and a
+/// map that still gives it one is told so.
+///
+/// It used to be a `UnitPlacement` — scenario data, which carries a
+/// battlefield coordinate, a facing and a formation, none of which is a
+/// question about a vehicle inside an army. `frontier` shipped eighteen `at`
+/// fields naming hexes the army was not on, and eighteen `side` fields that
+/// could have contradicted the army's without anybody finding out, because
+/// the validator read the *army's* hex when checking the unit and nothing
+/// anywhere read either field. Both are retired rather than deleted outright,
+/// so a map written against the old shape is told what is being ignored
+/// instead of quietly having it ignored — the same courtesy
+/// `planner.mission_weight` gets.
+#[test]
+fn a_vehicle_travelling_with_an_army_has_no_hex_of_its_own() {
+    let reg = registry();
+    let base = reg.map("frontier").expect("shipped campaign map").clone();
+
+    let mut report = ValidationReport::default();
+    base.validate_into(&reg, &mut report);
+    assert!(
+        report.warnings.is_empty(),
+        "the shipped campaign declares nothing retired: {:?}",
+        report.warnings
+    );
+
+    let mut file = base.clone();
+    let unit = &mut file.armies[0].units[0];
+    unit.at = Some([99, 99]);
+    unit.side = Some(7);
+    let chassis = unit.vehicle.clone();
+    let army = file.armies[0].name.clone();
+    let mut report = ValidationReport::default();
+    file.validate_into(&reg, &mut report);
+
+    assert!(
+        report.is_ok(),
+        "a retired field is a warning, not a broken map: {:?}",
+        report.errors
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.contains(&army) && w.contains(&chassis) && w.contains("`at`/`side`")),
+        "nothing named the retired fields: {:?}",
+        report.warnings
+    );
+
+    // And the hex it named is nobody's business: an army off the map is an
+    // error, a *vehicle* claiming a hex off the map is not, because it is
+    // standing where its army stands.
+    assert!(
+        !report.errors.iter().any(|e| e.contains("outside the map")),
+        "a retired coordinate was validated as though it meant something: {:?}",
+        report.errors
+    );
+}
+
 /// The two ways a `victory` block can be written so that it never fires are
 /// errors, not silences.
 #[test]

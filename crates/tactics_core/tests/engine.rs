@@ -164,6 +164,67 @@ fn a_battle_map_is_one_overworld_tile() {
     }
 }
 
+/// A map that declares elevation must give every tile a level; one that is
+/// flat declares none.
+///
+/// The failure this closes is invisible by construction. `from_map_file`
+/// reads one character per glyph and defaults anything past the end of a row
+/// — or past the end of the grid — to zero, so an author who adds a row of
+/// terrain and forgets the matching row of digits gets a map that *works*,
+/// with a strip of it silently flattened: no error, no crash, just ground
+/// that is not the ground they drew. Validation used to warn when an
+/// elevation row's length did not match its terrain row, which caught the
+/// short row and never the missing one.
+///
+/// It is checked per tile rather than per string, and that is not
+/// fussiness. A row of `rows` may be padded with spaces where there is no
+/// tile, and an elevation row that stops before them has promised nothing it
+/// failed to keep — a length check would reject a file with nothing wrong
+/// with it, and a rule that cries wolf is a rule authors turn off.
+#[test]
+fn an_elevation_grid_that_stops_short_of_the_map_is_rejected() {
+    let reg = registry();
+    let map = |elevation: serde_json::Value| -> tactics_core::data::ValidationReport {
+        let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+            "id": "slope",
+            "shape": "free",
+            "palette": { "g": "grass" },
+            "rows": ["ggg", "gg ", "ggg"],
+            "elevation": elevation,
+        }))
+        .unwrap();
+        let mut report = tactics_core::data::ValidationReport::default();
+        file.validate_into(&reg, &mut report);
+        report
+    };
+
+    assert!(
+        map(serde_json::json!(["012", "34", "567"])).is_ok(),
+        "a row may stop where the tiles do: the third column of row 1 is not a tile"
+    );
+    assert!(
+        map(serde_json::json!([])).is_ok(),
+        "a map that declares no elevation is flat, and that is how most of them say it"
+    );
+
+    let missing_row = map(serde_json::json!(["012", "34"]));
+    assert!(
+        missing_row
+            .errors
+            .iter()
+            .any(|e| e.contains("stops short") && e.contains("[0, 2]")),
+        "a grid a row short flattened the bottom of the map in silence: {missing_row:?}"
+    );
+    let short_row = map(serde_json::json!(["01", "34", "567"]));
+    assert!(
+        short_row
+            .errors
+            .iter()
+            .any(|e| e.contains("stops short") && e.contains("[2, 0]")),
+        "a row that stops over a tile flattened it in silence: {short_row:?}"
+    );
+}
+
 #[test]
 fn a_battle_map_that_is_not_a_tile_is_rejected() {
     // The check has teeth, and opting out is one field — otherwise every
