@@ -1680,6 +1680,38 @@ reason, which is the same gap `concealment` has carried since detection
 shipped and the one thing that would close it is an evaluator that wants to
 see.
 
+**Somebody beside her has to know what to do about it** (2026-09-11, the
+designer's ruling). `first_aid` reaches a rule at last, and the seat that
+answers for it is the loader's — which is exactly why leaving a loader behind
+had been free. `CrewLoss` carries `aid`, the best `first_aid` still working
+aboard her vehicle **excluding her own**, and `casualties.severe_per_aid` and
+`carried_fatal_per_aid` take points off the two fatal chances with it.
+Severity rather than days, also the designer's: a medic decides whether a
+cadet is buried or out for a fortnight.
+
+*The sign was wrong first, and the instrument said so.* Written two-sided —
+aid above average helps, below average hurts — `severe_per_aid` at 5 put
+`buried` **up** 0.30 a battle instead of down, because most of the roster is
+untrained in `first_aid` and an untrained skill sits five points under its
+core base. That is `untrained_penalty` reaching a casualty table through a
+side door, which is a different knob. It is one-sided now, the same way
+`athletics` only ever adds a level of climb, and a crew with nobody left
+aboard passes `AVERAGE` and changes nothing.
+
+*What it is worth on shipped content.* `buried` 0.66 a battle per side at
+zero, 0.65 at 2 and at 5, 0.63 at 10 — small, because only three cadets in
+the mod have `first_aid` above average (`alma` 12, `franka` 11, `lore` 11)
+and the rest sit at ten or below. The ceiling is content: write medics and
+the rule bites harder. `carried_fatal_per_aid` ships at 5 with nothing to
+reduce, because the designer set `carried_fatal_percent` to 0 the day before
+— a coefficient waiting for a mod that wants a homecoming to be dangerous.
+
+*Plumbing worth knowing about.* `CrewLoss::in_battle` needs a registry to ask
+what anybody's `first_aid` is, so it takes one, and so does the game crate's
+`battle_outcome` — which meant `finish_battle` had to take `Res<Mods>`. Both
+callers still ask the one question; that was the point of moving it into core
+in the first place.
+
 ## The campaign
 
 **What ends it is map data (2026-09-09).** `frontier` had a Lua wrapper

@@ -858,6 +858,17 @@ on a mission key.
   has to live with it; the game crate's `battle_outcome` and the `attrition`
   table both call it, and a second reading written beside either would be a
   second game.
+- **A wound's severity is her crewmates' business, not her own.**
+  `CrewLoss::aid` is the best `first_aid` still working aboard her vehicle
+  **excluding her** — she is the one bleeding — and
+  `casualties.severe_per_aid` / `carried_fatal_per_aid` take points off the
+  two fatal chances with it. It is **one-sided**: aid only ever helps. Most
+  of the roster is untrained in `first_aid` and an untrained skill sits five
+  points under its core base, so a two-sided rule put `buried` *up* 0.30 a
+  battle when it was switched on, which is `untrained_penalty` reaching the
+  casualty table through a side door. A crew with nobody left aboard passes
+  `AVERAGE` and changes nothing. `CrewLoss::in_battle` takes a registry now,
+  and so does the game crate's `battle_outcome`.
 - **The two fatal chances are two numbers.** `severe_percent` prices a wound
   taken in a vehicle that did not come home; `carried_fatal_percent` prices a
   cadet carried out of one that did, and they were one field until the
@@ -1252,15 +1263,14 @@ says whether the machine is comparable.
   since 2026-09-09. `nobody_deploys_onto_their_own_way_off_the_map` now
   fights all five and asserts both halves: that each offers a way off it, and
   that `deploy` forms nobody up on her own lane home.
-- **Three of the base mod's thirteen skills are still read by no rule**, down
+- **Two of the base mod's thirteen skills are still read by no rule**, down
   from six on 2026-09-11. The engine asks for `gunnery`, `observation`,
-  `driving`, `signals`, `athletics`, `fieldcraft` and `small_arms` by name and
-  the mod names `discipline`, `reactions` and `command` in its `morale`,
-  `reaction` and `command` blocks. That leaves `loading`, `maintenance` and
-  `first_aid` declared and never consulted — the same dead weight `morale`
-  and `leadership` were in the old `CrewStats`, one level up — and it has a
-  consequence now that a seat costs something: the **loader's** seat answers
-  for `loading` and `first_aid` alone, so leaving it empty is still free.
+  `driving`, `signals`, `athletics`, `fieldcraft`, `small_arms` and
+  `first_aid` by name and the mod names `discipline`, `reactions` and
+  `command` in its `morale`, `reaction` and `command` blocks. That leaves
+  `loading` and `maintenance` declared and never consulted. The **loader's**
+  seat is no longer free: it answers for `loading` and `first_aid`, and
+  `casualties.severe_per_aid` is what the second of those buys.
 - **Wiring a skill is necessary and not sufficient: the content has to have
   the resolution to say anything** (2026-09-11, and the reason the skills
   above were easy to leave dead). All four rules added that day are

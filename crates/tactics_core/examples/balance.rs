@@ -2166,7 +2166,7 @@ fn attrition_battle(reg: &DataRegistry, maps: &[&str], seed: u64) -> Attrition {
     // The campaign's own reading of who it has to account for, not a second
     // one written here — the whole point of this table is what the shipped
     // rules do to the shipped cadets.
-    let losses = CrewLoss::in_battle(&state);
+    let losses = CrewLoss::in_battle(reg, &state);
     a.pulled = losses.iter().filter(|l| l.found.is_none()).count();
     a.carried = losses.len() - a.pulled;
 
@@ -2191,10 +2191,17 @@ fn attrition_battle(reg: &DataRegistry, maps: &[&str], seed: u64) -> Attrition {
             }
             for _ in 0..FATE_DRAWS {
                 let fate = match loss.found {
-                    None => {
-                        resolve_crew_fate(rules, &reg.casualties, safety, loss.killed_by, &mut rng)
+                    None => resolve_crew_fate(
+                        rules,
+                        &reg.casualties,
+                        safety,
+                        loss.killed_by,
+                        loss.aid,
+                        &mut rng,
+                    ),
+                    Some(found) => {
+                        resolve_station_fate(rules, &reg.casualties, found, loss.aid, &mut rng)
                     }
-                    Some(found) => resolve_station_fate(rules, &reg.casualties, found, &mut rng),
                 };
                 a.fates[slot].count(fate);
             }
@@ -2534,7 +2541,7 @@ fn seats_battle(reg: &DataRegistry, maps: &[&str], seed: u64, roll: Roll) -> Sea
             .filter(|u| u.side == side)
             .flat_map(|u| u.crew.iter().copied())
             .collect();
-        for loss in CrewLoss::in_battle(&state) {
+        for loss in CrewLoss::in_battle(reg, &state) {
             if !mine.contains(&loss.cadet) {
                 continue;
             }

@@ -2820,6 +2820,7 @@ fn girls_persist_across_battles_and_recover_over_days() {
         vehicle: state.army(attacker).unwrap().units[0].vehicle.clone(),
         killed_by: Some(tactics_core::data::DamageType::Kinetic),
         found: None,
+        aid: tactics_core::data::AVERAGE,
     };
     let events = state.apply_battle_result(
         &reg,
