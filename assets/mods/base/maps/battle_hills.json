@@ -198,7 +198,7 @@
             "name": "Fenn 1",
             "crew": [
                 "nele",
-                "sigrun"
+                "ruth"
             ],
             "formation": "kuhlmann_scouts",
             "leads": true
@@ -275,7 +275,9 @@
             "side": 0,
             "vehicle": "scout_section",
             "name": "Spaeher",
-            "crew": [],
+            "crew": [
+                "sigrun"
+            ],
             "formation": "kuhlmann_scouts"
         },
         {
@@ -380,8 +382,8 @@
             "vehicle": "halftrack",
             "name": "Sturm 1",
             "crew": [
-                "ludmila",
-                "odette"
+                "odette",
+                "sanna"
             ],
             "formation": "valkyrie_grenadiers",
             "leads": true
@@ -412,7 +414,9 @@
             "side": 1,
             "vehicle": "scout_section",
             "name": "Vixen",
-            "crew": [],
+            "crew": [
+                "ludmila"
+            ],
             "formation": "valkyrie_scouts"
         }
     ],
