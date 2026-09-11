@@ -192,17 +192,37 @@ WEST_ORDER = [
     ("kuhlmann_line", (4, 20), "medium_tank", "Anvil 1", ["anka", "juno", "mina", "rosa"], True, None),
     ("kuhlmann_line", (5, 16), "light_tank", "Anvil 2", ["elsa", "ada", "hanne"], False, None),
     ("kuhlmann_line", (5, 24), "tank_destroyer", "Anvil 3", ["yuki", "ilse", "lore"], False, None),
-    ("kuhlmann_scouts", (7, 13), "recon_car", "Fenn 1", ["nele", "sigrun"], True, None),
+    ("kuhlmann_scouts", (7, 13), "recon_car", "Fenn 1", ["nele", "ruth"], True, None),
     ("kuhlmann_scouts", (6, 27), "light_tank", "Fenn 2", ["marlen", "katrin", "doro"], False, None),
     ("kuhlmann_scouts", (2, 20), "artillery", "Fenn 3", ["petra", "emmi", "vera", "berit"], False, None),
     ("kuhlmann_grenadiers", (7, 21), "halftrack", "Grenadier 1", ["lotte", "wilma"], True, None),
     ("kuhlmann_grenadiers", (8, 21), "rifle_platoon", "Grenadier 2", ["ines", "traudl"], False, (7, 21)),
-    ("kuhlmann_scouts", (4, 18), "scout_section", "Spaeher", [], False, None),
+    ("kuhlmann_scouts", (4, 18), "scout_section", "Spaeher", ["sigrun"], False, None),
 ]
 
 # The same nine, crewed from the other academy. Kept as a parallel list rather
 # than generated so that the eastern names read as an order of battle somebody
 # wrote, and so a cadet appears at most once per map.
+#
+# Both `scout_section`s used to be crewed by nobody, which is not the same as
+# being crewed badly: an empty crew answers `Roster::unspecified`, which is
+# AVERAGE for every skill, so the two units whose whole job is to go and look
+# were exactly average at looking and at everything else. They carry the
+# roster's athletic cadets now — `sigrun` at 12 west and `ludmila` at 12 east
+# against an average of 10 — which is what a section is for and what makes
+# `battle_hills`'s tors reachable by the units that should want them.
+#
+# Each section rides with **one** cadet, and the arithmetic is why: nine units
+# a side at the sizes above is 25 seats, and the mod has 49 characters, so two
+# fully crewed orders of battle want 50. One side would always be a cadet
+# shorter than the other. The first attempt put two in each section and left
+# the eastern grenadiers' halftrack riding with one — and `battle_town`, a map
+# that is exactly mirror-symmetric and whose row is supposed to read nothing
+# but the engine's residual compass bias, went from 32-40 to **54-18**. That
+# is what one seat is worth on a map where the taxi matters, and it is the
+# `ground` control telling the truth. So both sections ride one up, which is
+# symmetric, fills the seat that answers for `athletics`, and leaves `erika`
+# on the roll without a vehicle.
 EAST_CREWS = [
     (
         "valkyrie_line",
@@ -214,9 +234,9 @@ EAST_CREWS = [
     ("valkyrie_scouts", "Raven 1", ["malin", "zofia"]),
     ("valkyrie_scouts", "Raven 2", ["marta", "ingrid", "selin"]),
     ("valkyrie_scouts", "Raven 3", ["nadja", "hedda", "tamara", "carmen"]),
-    ("valkyrie_grenadiers", "Sturm 1", ["ludmila", "odette"]),
+    ("valkyrie_grenadiers", "Sturm 1", ["odette", "sanna"]),
     ("valkyrie_grenadiers", "Sturm 2", ["alma", "cecile"]),
-    ("valkyrie_scouts", "Vixen", []),
+    ("valkyrie_scouts", "Vixen", ["ludmila"]),
 ]
 
 FORMATIONS = [
@@ -376,7 +396,10 @@ def hills():
     # Everything off the spur band falls to the flood plain here, so the tor
     # is a step of three along the spur and a cliff everywhere else: there is
     # one way up and it is the way the ridge already runs.
-    c.paint(lambda a, v: abs(abs(v) - 8) <= 1 and 15 <= a <= 19, elevation=4)
+    def is_tor(a, v):
+        return abs(abs(v) - 8) <= 1 and 15 <= a <= 19
+
+    c.paint(is_tor, elevation=4)
 
     # The crags: rock the humps break through in, foot-only and therefore a
     # genuine wall to everything with tracks. Broken into knots on the humps'
@@ -404,6 +427,29 @@ def hills():
     # ridge without climbing it.
     c.paint(lambda a, v: v == 0, terrain="R")
 
+    # The crown of each tor, named so that somebody wants it. High ground
+    # with nothing on it is scenery: the terrain prior pays for elevation
+    # only where no found gun reaches, `impatience` charges the walk, and a
+    # section at one movement point takes most of a battle to get out there
+    # — so measured with no objective on them the tors changed nothing at
+    # all. One point each, against three for the crest and two for the
+    # saddle: a reason to climb rather than a prize worth the battle. Taken
+    # from the same predicate the rock is painted from, and split by which
+    # side of the axis it falls on, so the two cannot drift apart.
+    # No objective sits on a tor, and that is the map contract rather than an
+    # oversight. Every objective here has to be symmetric about the axis —
+    # `check_symmetric` refuses one that is not, which is what makes a
+    # west/east tilt inexpressible on a generated map — and a tor stands on a
+    # flank. An objective covering both flanks' crowns at once would be one
+    # prize in two places neither side can hold whole, which contest rules
+    # would cancel to nothing. So what a tor is worth is the sight line, and
+    # the measured consequence is that nobody walks out to one: with the
+    # terrain prior paying for elevation only where no found gun reaches, and
+    # `impatience` charging a section at one movement point for most of a
+    # battle's walk, `athletics_per_climb_level` is still bit-identical across
+    # 180 battles. The rule works and the ground is real; what neither has
+    # yet is a reason, which is the same gap `concealment` has carried since
+    # detection shipped.
     c.check_symmetric("battle_hills")
     return {
         "id": "battle_hills",

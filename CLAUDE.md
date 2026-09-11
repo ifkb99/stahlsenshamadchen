@@ -97,7 +97,12 @@ the game. `--sim` fights whole battles. The rules for reading it:
   every doctrine conclusion `--sim` prints is partly about that tank
   destroyer. **`battle_hills` and `battle_town` are exactly mirror-symmetric**
   (the hand-drawn maps are not), so their rows read the engine's residual
-  compass bias rather than the ground. Numbers and method: DONE.md, and
+  compass bias **and the crews**, which is less of a control than it sounds.
+  Reshuffling two scout sections on 2026-09-11 moved `battle_town` from
+  32–40 to 54–18 when it left one side's taxi a cadet short, and to 44–28
+  once the sizes were symmetric again. Twenty-four battles of swing from two
+  seats: read these rows as a *pair* with the orders-of-battle columns, and
+  re-measure them whenever a crew changes. Numbers and method: DONE.md, and
   `assets/wiki/reference/battlefields.md`.
 - **`--arena <id>` picks the mirrored battlefield** the `skill`, `brains`,
   `mustered` and `ground` tables fight on: `skill_arena` (the default, byte for
@@ -1271,9 +1276,17 @@ says whether the machine is comparable.
   **the tors** — a rock knob far out on each spur, three levels above its
   shoulder, 32 tiles with 80 approaches at a step of three and the rest
   cliffs — which is the first ground in this game a crew can reach and
-  another cannot for want of a skill. It cost the map nothing measurable:
-  44–28 west before and 46–26 after over 72 battles, orders of battle 36–36
-  both times. The tests stage their own relief and
+  another cannot for want of a skill, and both `scout_section`s are crewed
+  now (they were crewed by *nobody*, which answers AVERAGE for every skill).
+  **It still changes nothing**, and the reason is the last one in the chain:
+  no objective can sit on a tor, because `check_symmetric` refuses an
+  objective that is not symmetric about the axis — that refusal is what makes
+  a compass tilt inexpressible on a generated map — and a tor stands on a
+  flank. So a tor is worth its sight line, the terrain prior pays for
+  elevation only where no found gun reaches, `impatience` charges a section
+  at one movement point for most of a battle's walk, and nobody goes. The
+  rule works and is unit-tested; what it has not got is a *reason*, the same
+  gap `concealment` has carried since detection shipped. The tests stage their own relief and
   their own skill levels and are mutation-checked; the tables cannot see the
   rules at all. The designer's ruling is to raise the content's resolution
   rather than ship coarse rates — movement points and terrain costs together,

@@ -1641,6 +1641,45 @@ the three spare cadets (`erika`, `ruth`, `sanna`) does not cover four seats,
 so it wants either a crew reshuffle, two more characters, or a lower
 threshold — the designer's to choose, and the numbers are here to choose on.
 
+**The scouts became the fit ones, and the last link in the chain is still
+missing** (2026-09-11, the designer's ruling). Both `scout_section`s in the
+generated order of battle were crewed by nobody — not crewed badly, crewed by
+*nobody*, so the two units whose whole job is to go and look answered
+`Roster::unspecified`, which is AVERAGE for every skill. They carry `sigrun`
+(athletics 12) and `ludmila` (12) now, against a roster average of 10, which
+is the margin the climb threshold of 2 needs.
+
+*Why each section rides with one cadet and not two.* Nine units a side at the
+shipped crew sizes is 25 seats, and the mod has 49 characters, so two fully
+crewed orders of battle want 50: one side is always a cadet shorter. The
+first attempt put two in each section and left the eastern grenadiers'
+halftrack riding with one, and `battle_town` — exactly mirror-symmetric, its
+row supposed to read nothing but the engine's residual compass bias — went
+from 32–40 to **54–18**. One seat on a map where the taxi matters. Both
+sections ride one up instead, which is symmetric, fills the seat that answers
+for `athletics`, and leaves `erika` on the roll without a vehicle. The row
+settles at 44–28, and `battle_hills` at 40–32 from 44–28.
+
+*That swing is itself the finding about the instrument.* Those two rows are
+described as reading the compass rather than the ground, and they do not:
+twenty-four battles moved on two seats. Read them beside the
+orders-of-battle columns and re-measure whenever a crew changes.
+
+*And the rule still does not bite.* `athletics_per_climb_level` is
+bit-identical across 180 battles with the ground built, the sections crewed
+and the threshold reachable. The last link is that **no objective can sit on
+a tor**: `check_symmetric` refuses an objective that is not symmetric about
+the axis, which is exactly the refusal that makes a compass tilt
+inexpressible on a generated map, and a tor stands on a flank. An objective
+covering both flanks' crowns would be one prize in two places neither side
+can hold whole. So a tor is worth its sight line; the terrain prior pays for
+elevation only where no found gun reaches; `impatience` charges a section at
+one movement point for most of a battle's walk; and nobody goes. The rule
+works, the ground is real, the crews can use it — what none of them has is a
+reason, which is the same gap `concealment` has carried since detection
+shipped and the one thing that would close it is an evaluator that wants to
+see.
+
 ## The campaign
 
 **What ends it is map data (2026-09-09).** `frontier` had a Lua wrapper
