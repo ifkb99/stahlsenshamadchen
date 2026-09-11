@@ -2708,3 +2708,68 @@ fn a_crew_who_knows_the_vehicle_gets_a_broken_thing_working_again() {
         "and working again is working, not as new"
     );
 }
+
+/// A quick loader fires more often, and everything that prices a round of
+/// fire believes the same thing about how often.
+///
+/// The trap this rule had in it: a reload reaches the game twice, once as the
+/// cooldown the resolver sets after a shot and once as the cadence every
+/// price in the currency is quoted per round of. Wiring only the cooldown
+/// would have left the evaluator, `danger::fire_on` and the player's danger
+/// overlay all quoting a rate nobody achieves — the same drift
+/// `edge_cost` and `MoveGrid::cost` avoid by sharing `step_cost`.
+#[test]
+fn a_quick_loader_fires_more_often_and_every_price_knows_it() {
+    let mut reg = seen(registry_wireless());
+    for def in reg.characters.values_mut() {
+        def.skills.insert("loading".to_string(), 18);
+    }
+    // Four, because a medium tank has four seats and the fourth is the
+    // loader's: crewing three of them leaves the seat that answers for
+    // `loading` empty, and a stand-in pays `substitution_penalty` for it —
+    // which is the rule working, and not what this test is about.
+    let (state, ours) = crewed_stage(&reg, &["anka", "juno", "mina", "rosa"]);
+    let her = state.unit(ours).expect("she is on the field");
+    let weapon = registry_weapon(&reg, her);
+
+    reg.balance.reload_per_loading = 0;
+    let listed = tactics_core::battle::crewed_reload(&reg, &state, ours, &weapon);
+    assert_eq!(
+        listed,
+        weapon.reload(&reg.scale),
+        "with the rule off, a reload is the datasheet's and nobody else's"
+    );
+
+    reg.balance.reload_per_loading = 5;
+    let quick = tactics_core::battle::crewed_reload(&reg, &state, ours, &weapon);
+    assert!(
+        quick < listed,
+        "a loader this good gets the next round in sooner: {quick} against {listed}"
+    );
+
+    // And the cadence the currency is quoted in follows it, which is the half
+    // that would have drifted.
+    let target = state.unit(UnitId(1)).expect("somebody to shoot at");
+    let cadence = |reg: &tactics_core::data::DataRegistry| {
+        tactics_core::battle::expected_shot(
+            reg,
+            &state,
+            ours,
+            her.pos,
+            &weapon,
+            UnitId(1),
+            target.pos,
+            false,
+        )
+        .shots
+    };
+    reg.balance.reload_per_loading = 0;
+    let slow = cadence(&reg);
+    reg.balance.reload_per_loading = 5;
+    assert!(
+        cadence(&reg) > slow,
+        "the price of a round of fire is quoted at the rate her loader \
+         actually achieves: {} against {slow}",
+        cadence(&reg)
+    );
+}

@@ -26,9 +26,9 @@ mod orders;
 
 pub use combat::{
     AttackPreview, CounterPreview, HitBreakdown, HitFactor, HitModifier, ShellInFlight, ShotValue,
-    best_weapon_from, blast_overmatches, expected_damage, expected_pressure, expected_shot,
-    flight_ticks, hit_breakdown, hit_chance, penetration_chance, penetration_share, preview_attack,
-    round_worth, spent_share, struck_facing, weapon_ready,
+    best_weapon_from, blast_overmatches, crewed_reload, expected_damage, expected_pressure,
+    expected_shot, flight_ticks, hit_breakdown, hit_chance, penetration_chance, penetration_share,
+    preview_attack, round_worth, spent_share, struck_facing, weapon_ready,
 };
 pub use command::{
     CommandState, Contact, CutOff, Formation, FormationId, Goal, Latitude, March, Mission,
@@ -2012,6 +2012,27 @@ pub mod stats {
             &unit.crew,
             &unit.crew_state,
             "small_arms",
+            terrain,
+        )
+    }
+
+    /// How quickly this crew gets the next round into the breech.
+    ///
+    /// Read in exactly one place — [`super::combat::crewed_reload`] — because
+    /// a reload reaches the game as a cooldown *and* as a cadence, and those
+    /// two must not be able to disagree.
+    pub fn loading(
+        registry: &DataRegistry,
+        roster: &Roster,
+        unit: &Unit,
+        terrain: Option<&str>,
+    ) -> i32 {
+        roster.crew_skill(
+            registry,
+            registry.vehicle(&unit.vehicle),
+            &unit.crew,
+            &unit.crew_state,
+            "loading",
             terrain,
         )
     }

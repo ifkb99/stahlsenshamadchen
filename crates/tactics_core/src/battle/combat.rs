@@ -1368,6 +1368,29 @@ impl ShotValue {
 /// through it would price a rack against a hex nobody has driven to yet.
 // Eight, for the reason given on [`hit_chance`]: two ends, each a crew and
 // a hex.
+/// How long this crew takes to reload this weapon, in ticks.
+///
+/// The one answer, asked by the resolver when it sets a cooldown and by
+/// [`expected_shot`] when it prices a round of fire. A crew that loads well
+/// fires more often, and both halves of the game have to believe the same
+/// thing about how often — otherwise the evaluator, `danger::fire_on` and the
+/// player's danger overlay would all be quoting a rate nobody achieves.
+pub fn crewed_reload(
+    registry: &DataRegistry,
+    state: &BattleState,
+    attacker: UnitId,
+    weapon: &WeaponDef,
+) -> u32 {
+    let listed = weapon.reload(&registry.scale);
+    let Some(unit) = state.unit(attacker) else {
+        return listed;
+    };
+    registry.balance.reload(
+        listed,
+        super::stats::loading(registry, &state.roster, unit, state.terrain_at(unit.pos)),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn expected_shot(
     registry: &DataRegistry,
@@ -1379,7 +1402,8 @@ pub fn expected_shot(
     at: Hex,
     blind: bool,
 ) -> ShotValue {
-    let shots = weapon.shots_per_round(&registry.scale);
+    let shots = registry.scale.ticks_per_round as f32
+        / crewed_reload(registry, state, attacker, weapon) as f32;
     let nothing = ShotValue {
         shots,
         ..ShotValue::default()
@@ -2556,12 +2580,15 @@ fn fire_at_unit(
     else {
         return;
     };
+    // Asked before the mutable borrow, and asked of the crew rather than the
+    // datasheet: how fast this gun comes back is the loader's business.
+    let reload = crewed_reload(registry, state, attacker, &weapon);
     if let Some(att) = state.unit_mut(attacker) {
         if att.pos != tgt_pos {
             att.facing = att.pos.main_direction_to(tgt_pos);
         }
         if let Some(cd) = att.cooldowns.get_mut(weapon_index) {
-            *cd = weapon.reload(&registry.scale);
+            *cd = reload;
         }
     }
     // An indirect gun ordered onto a *unit* still fires at the ground she is
@@ -2618,12 +2645,13 @@ fn fire_at_tile(
     let Some(round) = chamber_and_spend(registry, state, attacker, &weapon, None, events) else {
         return;
     };
+    let reload = crewed_reload(registry, state, attacker, &weapon);
     if let Some(att) = state.unit_mut(attacker) {
         if att.pos != at {
             att.facing = att.pos.main_direction_to(at);
         }
         if let Some(cd) = att.cooldowns.get_mut(weapon_index) {
-            *cd = weapon.reload(&registry.scale);
+            *cd = reload;
         }
     }
     // Shelling ground is what an indirect gun does natively, so this is the

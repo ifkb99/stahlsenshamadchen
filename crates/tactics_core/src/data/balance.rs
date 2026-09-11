@@ -104,6 +104,22 @@ pub struct Balance {
     /// to six; it stayed invisible because `river_crossing`, the determinism
     /// baseline, deliberately fields no infantry.
     pub speed_per_athletics: i32,
+    /// Percent of a weapon's listed reload taken off per point of the crew's
+    /// `loading` above average.
+    ///
+    /// The last of the six skills nothing read, and the one whose wiring had
+    /// a trap in it: a reload reaches the game twice, once as the cooldown
+    /// the resolver sets after a shot and once as the *cadence* every price
+    /// in the currency is quoted per round of. Wiring only the cooldown would
+    /// have left the evaluator, `danger::fire_on` and the player's danger
+    /// overlay all pricing a gun nobody fires at that rate. Both go through
+    /// one function for that reason, the way `edge_cost` and `MoveGrid::cost`
+    /// share `step_cost`.
+    ///
+    /// Zero is the rule's absence. A quick loader can never reach a reload of
+    /// nothing: [`Self::scaled`]'s floor of one tick is exactly right here,
+    /// because a gun that reloads in no time fires infinitely often.
+    pub reload_per_loading: i32,
     /// Chance in 100, per round, that a crew gets one broken module working
     /// again, before `maintenance` is added to it.
     ///
@@ -450,6 +466,7 @@ impl Default for Balance {
             target_height_cm: target_height(),
             vision_per_observation: 5,
             speed_per_driving: 5,
+            reload_per_loading: 0,
             field_repair_percent: 0,
             repair_per_maintenance: 0,
             speed_per_athletics: 0,
@@ -533,6 +550,16 @@ impl Balance {
     /// rule reads.
     pub fn pace(&self, base: u32, athletics: i32) -> u32 {
         Self::scaled(base, self.speed_per_athletics, Self::margin(athletics))
+    }
+
+    /// How long this crew takes to reload a weapon whose listed reload is
+    /// `base` ticks.
+    ///
+    /// The one place the loader reaches the gun, read by the resolver's
+    /// cooldown and by the cadence the currency is quoted in, so the two
+    /// cannot drift.
+    pub fn reload(&self, base: u32, loading: i32) -> u32 {
+        Self::scaled(base, -self.reload_per_loading, Self::margin(loading))
     }
 
     /// The chance in 100 that a crew this good at `maintenance` gets one

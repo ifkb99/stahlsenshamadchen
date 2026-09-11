@@ -1747,6 +1747,38 @@ downstream. It scans `0..24` now and stops when it has what it is about — a
 win for each side and two cadets carried home hurt. Re-hunting the seeds
 would have bought silence until the next rule landed.
 
+**The last dead skill, and the trap in it** (2026-09-11). `loading` reaches
+the gun through `balance.reload_per_loading`: a percentage of the listed
+reload taken off per point above average. What made it the widest of the six
+is that a reload reaches the game **twice** — once as the cooldown the
+resolver sets after a shot, and once as the *cadence* every price in the
+currency is quoted per round of. Wiring only the cooldown would have left the
+evaluator, `danger::fire_on` and the player's danger overlay all quoting a
+rate nobody achieves. `combat::crewed_reload` is the one answer both halves
+ask, the arrangement `edge_cost` and `MoveGrid::cost` already have through
+`step_cost`. It helped that `shots_per_round` had exactly one caller in the
+engine.
+
+Swept 0 / 5 / 15 the win column moves +2 and +5, monotone, with shots +5 and
+rounds +0.4 and +1.3. The baseline was regenerated deliberately: 756 lines of
+1514, because faster guns change every cooldown and therefore every tick
+downstream.
+
+*Two hand-picked seeds died of it, and both are now hunted.*
+`a_crew_who_breaks_off_says_so_and_one_who_was_meant_does_not` and
+`a_binding_march_presses_on_where_an_ordinary_one_takes_cover` both stood on
+a `const SEED: u64 = 4` chosen because it bruised a crew without killing
+her — and it killed her outright the moment loaders started reaching their
+guns. Both scan `0..40` for a seed that leaves her alive now. A re-hunted
+constant buys silence until the next rule lands; the second time a fixture
+does this is the time to stop hunting by hand.
+
+*And one assertion that was right to fail.* A cadence test asserted a
+bearing's rate **equals the weapon's own** — which was true when cadence was
+a datasheet fact and is now exactly the thing this rule changes. It compares
+against `crewed_reload` instead, which is the same statement one level up:
+the panel, the evaluator and the resolver read one answer.
+
 ## The campaign
 
 **What ends it is map data (2026-09-09).** `frontier` had a Lua wrapper
