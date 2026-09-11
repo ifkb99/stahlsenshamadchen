@@ -85,7 +85,18 @@
     "distance_decay": 0.15,
     "plateau": 0.3,
     "cover_prior": 0.03,
-    "elevation_prior": 0.4
+    "elevation_prior": 0.4,
+    "kill_bonus": 4.0,
+    "attack_worth": 2.0,
+    "attack_floor": 0.5,
+    "withdrawn_attack": 0.0625,
+    "exposure_cap": 4.0,
+    "crowding_adjacent": 0.45,
+    "crowding_near": 0.15,
+    "support_range": 4.0,
+    "out_of_support": 0.12,
+    "advance_slope": 0.3,
+    "search_slope": 0.15
   },
   "cores": [
     {

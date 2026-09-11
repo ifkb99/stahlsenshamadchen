@@ -1414,6 +1414,661 @@ fn how_badly_a_finished_crew_wants_the_lane_is_a_mod_decision() {
     );
 }
 
+/// A shot that would finish her is worth more than the substance it happens
+/// to take with it.
+///
+/// Without `kill_bonus` the attack term is pure arithmetic: a killing shot is
+/// priced exactly like any other round of the same damage and pressure, so a
+/// crew who could reach a decisive shot by driving somewhere is given no
+/// reason to bother — the ordinary shot she already has is just as good by
+/// the numbers. The bonus is the one judgment layered on the resolver's own
+/// arithmetic, and this is the check that it is actually read rather than
+/// computed and discarded.
+#[test]
+fn a_shot_that_finishes_her_is_worth_more_than_the_substance_it_takes() {
+    let mut reg = seen(registry_wireless());
+    let row: String = "g".repeat(20);
+    let mut state = two_side_battle(
+        &reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([0, 1], 0, "medium_tank", "Gunner"),
+            unit_at([6, 1], 1, "medium_tank", "Wreck"),
+        ],
+        29,
+    );
+    // Wounded at every station and stripped of everything but her tracks:
+    // as little substance as a hull that is still fighting can carry.
+    {
+        let her = state.unit_mut(UnitId(1)).unwrap();
+        her.crew_state = vec![tactics_core::battle::CrewCondition::Wounded; her.crew.len()];
+        for hits in her.modules.values_mut() {
+            *hits = 0;
+        }
+    }
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "the stage needs the wreck in plain sight"
+    );
+    let tile = state.unit(UnitId(0)).unwrap().pos;
+    let target_pos = state.unit(UnitId(1)).unwrap().pos;
+    let kill = tactics_core::ai::best_weapon_against(
+        &reg,
+        &state,
+        UnitId(0),
+        tile,
+        state.unit(UnitId(1)).unwrap(),
+        target_pos,
+    )
+    .expect("she still has a shot on a wreck this close")
+    .2;
+    assert!(
+        kill,
+        "the stage needs a shot that would actually finish her, or the bonus has nothing \
+         to price"
+    );
+
+    let eval = Evaluator::new(reg.doctrine("massed_armor").cloned().unwrap());
+    reg.planner.kill_bonus = 0.0;
+    let bare = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    reg.planner.kill_bonus = 4.0;
+    let shipped = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    assert!(
+        shipped > bare,
+        "a shot that ends the argument is worth more than the damage alone: \
+         {shipped} against {bare}"
+    );
+
+    reg.planner.kill_bonus = 12.0;
+    assert!(
+        eval.score_tile(&reg, &state, UnitId(0), tile).score > shipped,
+        "and a commander who prizes a decisive shot more still pays more for the ground \
+         it is taken from"
+    );
+}
+
+/// How much a round of fire from a tile is worth, independent of any
+/// doctrine's taste for a fight, is the mod's to choose.
+///
+/// `attack_worth` is the multiplier the whole attack half of the sum rides
+/// on. At zero it is not that fire becomes unattractive — it is that no
+/// doctrine, however aggressive, can price a shot from anywhere at all,
+/// which is a different and much worse failure than a doctrine merely
+/// declining to fire.
+#[test]
+fn what_a_round_of_fire_from_a_tile_is_worth_is_a_mod_decision() {
+    let mut reg = seen(registry_wireless());
+    let row: String = "g".repeat(20);
+    let state = two_side_battle(
+        &reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([0, 1], 0, "medium_tank", "Gunner"),
+            unit_at([6, 1], 1, "medium_tank", "Target"),
+        ],
+        31,
+    );
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "the stage needs the target in plain sight"
+    );
+    let tile = state.unit(UnitId(0)).unwrap().pos;
+    let eval = Evaluator::new(reg.doctrine("massed_armor").cloned().unwrap());
+    assert!(
+        eval.score_tile(&reg, &state, UnitId(0), tile)
+            .attack
+            .is_some(),
+        "the stage needs a shot on offer, or there is nothing for the field to price"
+    );
+
+    reg.planner.attack_worth = 0.0;
+    let priceless = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    reg.planner.attack_worth = 2.0;
+    let shipped = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    assert!(
+        shipped > priceless,
+        "a round of fire priced at nothing does not raise the value of the ground it is \
+         taken from: {shipped} against {priceless}"
+    );
+
+    reg.planner.attack_worth = 6.0;
+    assert!(
+        eval.score_tile(&reg, &state, UnitId(0), tile).score > shipped,
+        "and a commander who prizes fire more pays more for the ground that offers it"
+    );
+}
+
+/// A doctrine with no taste for a fight at all still has to value a free
+/// shot, or "cautious" and "blind" become the same word.
+///
+/// `attack_floor` is the appetite `attack_worth`'s partner leaves behind at
+/// `aggression: 0`: without it a commander who feels no aggression at all
+/// would decline a shot sitting right in front of her to gain a scrap of
+/// cover, which is not a cautious commander, it is one who has not noticed
+/// the gun in her hand.
+#[test]
+fn a_doctrine_with_no_aggression_still_values_a_free_shot_because_of_the_floor() {
+    let mut reg = seen(registry_wireless());
+    let row: String = "g".repeat(20);
+    let state = two_side_battle(
+        &reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([0, 1], 0, "medium_tank", "Gunner"),
+            unit_at([6, 1], 1, "medium_tank", "Target"),
+        ],
+        33,
+    );
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "the stage needs the target in plain sight"
+    );
+    let tile = state.unit(UnitId(0)).unwrap().pos;
+    let doctrine = doctrine_with(&reg, "massed_armor", |d| d.aggression = 0.0);
+    let eval = Evaluator::new(doctrine);
+    assert!(
+        eval.score_tile(&reg, &state, UnitId(0), tile)
+            .attack
+            .is_some(),
+        "the stage needs a shot on offer, or there is nothing for the floor to price"
+    );
+
+    reg.planner.attack_floor = 0.0;
+    let blind = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    reg.planner.attack_floor = 0.5;
+    let shipped = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    assert!(
+        shipped > blind,
+        "a commander with no aggression at all still values the shot she has, because of \
+         the floor: {shipped} against {blind}"
+    );
+}
+
+/// A crew who has been ordered out still answers what is in front of her,
+/// but does not go looking for a fight — and how much of the ordinary
+/// appetite for fire survives the order is the mod's to choose.
+///
+/// `withdrawn_attack` is a share of what a round of fire is worth to
+/// everybody else. At the shipped value it is worth a little: enough that a
+/// retreating crew still shoots what is in her way, not enough that she
+/// drives toward a better shot instead of her lane home. At 1.0 the rule is
+/// simply absent — a withdrawal weighs fire exactly as any other march does,
+/// which is the failure `an_ordered_withdrawal_needs_no_wounds` was written
+/// against.
+#[test]
+fn a_withdrawing_crew_still_answers_a_shot_but_does_not_seek_one() {
+    let mut reg = seen(registry_wireless());
+    let rows: Vec<&str> = vec!["gggggggggggggggggggg"; 3];
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "withdrawing",
+        "palette": { "g": "grass" },
+        "rows": rows,
+        "objectives": [
+            { "id": "east_exit", "name": "East Exit", "at": [[19, 1]], "value": 5,
+              "kind": "exit", "side": 0 },
+        ],
+        "formations": [{ "id": "platoon", "name": "Platoon", "side": 0 }],
+    }))
+    .unwrap();
+    let map = HexMap::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let mut hers = unit_at([1, 1], 0, "medium_tank", "Retreater");
+    hers.formation = Some("platoon".into());
+    hers.leads = true;
+    let placements = vec![hers, unit_at([7, 1], 1, "medium_tank", "Target")];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(&reg, &placements);
+    let mut state = BattleState::from_placements(
+        &reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        37,
+    )
+    .expect("the staged placements are content the base mod ships");
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "the stage needs a target in range, or withdrawn_attack has nothing to scale"
+    );
+    let tile = state.unit(UnitId(0)).unwrap().pos;
+    state
+        .apply(
+            &reg,
+            &Order::SetMission {
+                formation: formation_named(&state, "platoon"),
+                mission: Mission::Withdraw {
+                    via: "east_exit".into(),
+                },
+                latitude: Latitude::Delegated,
+            },
+        )
+        .expect("a legal mission");
+    let eval = Evaluator::new(reg.doctrine("massed_armor").cloned().unwrap());
+    assert!(
+        eval.score_tile(&reg, &state, UnitId(0), tile)
+            .attack
+            .is_some(),
+        "the stage needs a shot on offer to a crew who has been ordered out"
+    );
+
+    reg.planner.withdrawn_attack = 0.0;
+    let silent = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    reg.planner.withdrawn_attack = 0.0625;
+    let shipped = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    assert!(
+        shipped > silent,
+        "an ordered retreat still answers a shot in front of her, worth a little: \
+         {shipped} against {silent}"
+    );
+
+    reg.planner.withdrawn_attack = 1.0;
+    assert!(
+        eval.score_tile(&reg, &state, UnitId(0), tile).score > shipped,
+        "and at 1.0 the rule is simply absent: fire is worth exactly what it is to any \
+         other crew"
+    );
+}
+
+/// Most a crew may multiply the danger she reads by, for being small or worn
+/// down, has a ceiling — past it the term stops discriminating and only
+/// makes the arithmetic loud.
+///
+/// `exposure_cap` is a genuine ceiling rather than a scale: raising it lets a
+/// fragile crew read more danger into the same gun right up to what she
+/// actually is, and no further, so a mod that raises it far past a crew's
+/// real fragility gets exactly the same answer as one that raised it a
+/// little past it.
+#[test]
+fn how_careful_a_crew_may_become_for_being_small_or_worn_has_a_ceiling() {
+    let mut reg = seen(registry_wireless());
+    let row: String = "g".repeat(20);
+    let mut state = two_side_battle(
+        &reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([1, 1], 0, "recon_car", "Remnant"),
+            unit_at([10, 1], 1, "tank_destroyer", "Gun"),
+        ],
+        41,
+    );
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "the stage needs the gun in plain sight, or there is no threat to weigh"
+    );
+    // Both seats wounded and nothing left but her running gear: what she has
+    // left is small next to what a battlefield's hulls typically carry.
+    {
+        let her = state.unit_mut(UnitId(0)).unwrap();
+        her.crew_state = vec![tactics_core::battle::CrewCondition::Wounded; her.crew.len()];
+        for hits in her.modules.values_mut() {
+            *hits = 0;
+        }
+    }
+    let tile = state.unit(UnitId(0)).unwrap().pos;
+    assert!(
+        tactics_core::battle::incoming(&reg, &state, UnitId(0), tile).worth > 0.0,
+        "the stage needs a real threat at her own tile"
+    );
+    let eval = Evaluator::new(reg.doctrine("massed_armor").cloned().unwrap());
+
+    reg.planner.exposure_cap = 1.0;
+    let capped_low = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    reg.planner.exposure_cap = 4.0;
+    let shipped = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    assert!(
+        shipped < capped_low,
+        "raising the ceiling lets a worn crew read more danger into the same gun, which \
+         costs the tile more: {shipped} against {capped_low}"
+    );
+
+    reg.planner.exposure_cap = 400.0;
+    let uncapped = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    assert!(
+        uncapped < shipped,
+        "and past the shipped ceiling she still reads more danger into the same gun: \
+         {uncapped} against {shipped}"
+    );
+
+    reg.planner.exposure_cap = 4000.0;
+    assert!(
+        (eval.score_tile(&reg, &state, UnitId(0), tile).score - uncapped).abs() < 1e-3,
+        "but only up to what she actually is: raising the ceiling past her real fragility \
+         changes nothing, which is what makes this a ceiling and not merely another scale"
+    );
+}
+
+/// A crew to be scored, a friend already posted at a fixed hex, and a
+/// masking wood between two of the candidate columns — the spacing band's
+/// stage, shared by every field in the mass term because moving each of
+/// them wants the same friend and the same columns re-scored.
+fn spacing_stage(reg: &DataRegistry, seed: u64) -> BattleState {
+    let row = {
+        let mut r: Vec<char> = std::iter::repeat_n('g', 46).collect();
+        r[4] = 'f';
+        r.into_iter().collect::<String>()
+    };
+    let mut state = two_side_battle(
+        reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([15, 1], 0, "medium_tank", "Scored"),
+            unit_at([6, 1], 0, "medium_tank", "Friend"),
+            unit_at([45, 1], 1, "medium_tank", "Far Foe"),
+        ],
+        seed,
+    );
+    assert!(
+        state.fog.side(0).spotted.is_empty(),
+        "the spacing stage needs no enemy in sight — this is a test about a friend, not \
+         about fire"
+    );
+    // The friend is already under orders to stand where she stands, so the
+    // band reads her planned destination.
+    state.unit_mut(UnitId(1)).unwrap().intent.path = vec![tactics_core::offset_to_hex(6, 1)];
+    state
+}
+
+/// A doctrine with no opinions of its own, so a spacing test reads the mass
+/// term alone.
+fn spacing_doctrine() -> tactics_core::data::DoctrineDef {
+    tactics_core::data::DoctrineDef {
+        id: "spacing_probe".into(),
+        name: String::new(),
+        description: String::new(),
+        aggression: 0.0,
+        cover_value: 0.0,
+        elevation_value: 0.0,
+        concentration: 1.0,
+        scouting: 0.0,
+        objective_value: 0.0,
+        indirect_appetite: 1.0,
+        withdraw_threshold: 0.5,
+        initiative: 0.5,
+        delegation: 0.5,
+        route_caution: 0.0,
+        contest_aversion: 0.0,
+    }
+}
+
+/// What standing one hex from a friend costs is the mod's to choose, and it
+/// is the half of the spacing band no doctrine may buy off: one shell taking
+/// two vehicles is survival rather than taste.
+///
+/// Zero is the game before the band existed, when mass was a monotonic pull
+/// toward the nearest friend all the way to adjacency and massed armour
+/// clumped into artillery bait.
+#[test]
+fn standing_one_hex_from_a_friend_costs_what_the_mod_says() {
+    let mut reg = seen(registry_wireless());
+    let state = spacing_stage(&reg, 51);
+    let friend = tactics_core::offset_to_hex(6, 1);
+    let hugging = tactics_core::offset_to_hex(7, 1);
+    assert_eq!(
+        hugging.distance_to(friend),
+        1,
+        "the stage needs a tile one hex from the friend"
+    );
+    let eval = Evaluator::new(spacing_doctrine());
+
+    reg.planner.crowding_adjacent = 0.0;
+    let free = eval.score_tile(&reg, &state, UnitId(0), hugging).score;
+    reg.planner.crowding_adjacent = 0.45;
+    let shipped = eval.score_tile(&reg, &state, UnitId(0), hugging).score;
+    assert!(
+        shipped < free,
+        "hugging a friend costs something at the shipped price and nothing at zero: \
+         {shipped} against {free}"
+    );
+
+    reg.planner.crowding_adjacent = 1.5;
+    assert!(
+        eval.score_tile(&reg, &state, UnitId(0), hugging).score < shipped,
+        "and a steeper price costs her more for standing in the same place"
+    );
+}
+
+/// The same, two hexes out — the far edge of the crowding penalty, taken up
+/// separately because it is [`crowding_adjacent`]'s own taper rather than a
+/// second reading of the same number.
+///
+/// The band is two hexes wide because a shell's splash is: this is the field
+/// that decides how far the close-in penalty reaches before the supported
+/// interval takes over.
+#[test]
+fn standing_two_hexes_from_a_friend_costs_what_the_mod_says() {
+    let mut reg = seen(registry_wireless());
+    let state = spacing_stage(&reg, 52);
+    let friend = tactics_core::offset_to_hex(6, 1);
+    let near = tactics_core::offset_to_hex(8, 1);
+    assert_eq!(
+        near.distance_to(friend),
+        2,
+        "the stage needs a tile two hexes from the friend"
+    );
+    let eval = Evaluator::new(spacing_doctrine());
+
+    reg.planner.crowding_near = 0.0;
+    let free = eval.score_tile(&reg, &state, UnitId(0), near).score;
+    reg.planner.crowding_near = 0.15;
+    let shipped = eval.score_tile(&reg, &state, UnitId(0), near).score;
+    assert!(
+        shipped < free,
+        "standing two hexes off costs something at the shipped price and nothing at zero: \
+         {shipped} against {free}"
+    );
+
+    reg.planner.crowding_near = 0.6;
+    assert!(
+        eval.score_tile(&reg, &state, UnitId(0), near).score < shipped,
+        "and a steeper price costs her more for the same two hexes"
+    );
+}
+
+/// How far a friend can stand and still count as support is the mod's to
+/// choose, and it decides *whether* the penalty applies at all — widening it
+/// moves where straggling starts, which is a different thing from
+/// [`out_of_support`] deciding how hard it bites once it has.
+#[test]
+fn how_far_a_friend_still_counts_as_support_is_a_mod_decision() {
+    let mut reg = seen(registry_wireless());
+    let state = spacing_stage(&reg, 53);
+    let friend = tactics_core::offset_to_hex(6, 1);
+    let tile = tactics_core::offset_to_hex(11, 1);
+    assert_eq!(
+        tile.distance_to(friend),
+        5,
+        "the stage needs a tile just past the shipped support range"
+    );
+    let eval = Evaluator::new(spacing_doctrine());
+
+    reg.planner.support_range = 2.0;
+    let tight = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    reg.planner.support_range = 4.0;
+    let shipped = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    assert!(
+        shipped > tight,
+        "widening the range shrinks how far past it this tile has strayed: {shipped} \
+         against {tight}"
+    );
+
+    reg.planner.support_range = 8.0;
+    let wide = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    assert!(
+        wide > shipped,
+        "and past five hexes the friend is supporting again, which costs nothing at all: \
+         {wide} against {shipped}"
+    );
+}
+
+/// What each hex beyond the supported interval costs is the mod's to
+/// choose — the old monotonic pull toward the nearest friend, kept as the
+/// outer half of the band. At zero, straggling from a friend costs nothing
+/// at all, which is the game before the interval existed.
+#[test]
+fn straggling_beyond_support_costs_what_the_mod_says() {
+    let mut reg = seen(registry_wireless());
+    let state = spacing_stage(&reg, 55);
+    let friend = tactics_core::offset_to_hex(6, 1);
+    let tile = tactics_core::offset_to_hex(14, 1);
+    assert_eq!(
+        tile.distance_to(friend),
+        8,
+        "the stage needs a tile well outside the supported interval"
+    );
+    let eval = Evaluator::new(spacing_doctrine());
+
+    reg.planner.out_of_support = 0.0;
+    let free = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    reg.planner.out_of_support = 0.12;
+    let shipped = eval.score_tile(&reg, &state, UnitId(0), tile).score;
+    assert!(
+        shipped < free,
+        "straggling costs nothing at zero and something at the shipped price: {shipped} \
+         against {free}"
+    );
+
+    reg.planner.out_of_support = 0.5;
+    assert!(
+        eval.score_tile(&reg, &state, UnitId(0), tile).score < shipped,
+        "and it costs more the steeper the field is set"
+    );
+}
+
+/// With something to shoot at but nothing yet in range, closing on it is the
+/// mod's to choose how hard to pull.
+///
+/// Zero is a defensible doctrine on its own terms — elastic defence never
+/// closes for its own sake — but that has to be something the mod says
+/// about a doctrine, not a slope wired into `score_tile` that every doctrine
+/// pays whether it wants to or not.
+#[test]
+fn with_something_to_shoot_she_closes_on_it_by_a_slope_the_mod_sets() {
+    let mut reg = seen(registry_wireless());
+    let row: String = "g".repeat(20);
+    let state = two_side_battle(
+        &reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([1, 1], 0, "recon_car", "Scout"),
+            unit_at([16, 1], 1, "tank_destroyer", "Gun"),
+        ],
+        57,
+    );
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "the stage needs the gun in plain sight"
+    );
+    let near = tactics_core::offset_to_hex(8, 1);
+    let far = tactics_core::offset_to_hex(2, 1);
+    let eval = Evaluator::new(reg.doctrine("massed_armor").cloned().unwrap());
+    assert!(
+        eval.score_tile(&reg, &state, UnitId(0), near)
+            .attack
+            .is_none()
+            && eval
+                .score_tile(&reg, &state, UnitId(0), far)
+                .attack
+                .is_none(),
+        "the stage needs no shot of her own at either tile, or the attack term would \
+         swamp the slope being measured"
+    );
+    let gap = |reg: &DataRegistry| {
+        eval.score_tile(reg, &state, UnitId(0), near).score
+            - eval.score_tile(reg, &state, UnitId(0), far).score
+    };
+
+    reg.planner.advance_slope = 0.0;
+    let flat = gap(&reg);
+    reg.planner.advance_slope = 0.3;
+    let shipped = gap(&reg);
+    assert!(
+        shipped > flat,
+        "with the slope read, standing nearer the gun she has found is relatively more \
+         attractive than standing well back of it: {shipped} against {flat}"
+    );
+
+    reg.planner.advance_slope = 1.0;
+    assert!(
+        gap(&reg) > shipped,
+        "and a commander with more appetite for contact closes harder still"
+    );
+}
+
+/// With nobody found, no ground named and no orders given, a crew searches
+/// toward the middle of the map — and how hard the middle pulls her is the
+/// mod's to choose.
+///
+/// Deliberately not `distance_decay`'s slope despite shipping at the same
+/// magnitude: that one is how far a *named* piece of ground still reaches a
+/// crew who can see it, and this is what a lost crew does with an empty map
+/// that has named her nothing. At zero she simply stands still, which is a
+/// fair answer to a map that gave her nothing to do, if a dull one.
+#[test]
+fn with_nothing_found_she_searches_the_middle_by_a_slope_the_mod_sets() {
+    let mut reg = seen(registry_wireless());
+    let row: String = "g".repeat(21);
+    let state = two_side_battle(
+        &reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([1, 1], 0, "medium_tank", "Lost"),
+            unit_at([19, 1], 1, "medium_tank", "Far Side"),
+        ],
+        59,
+    );
+    assert!(
+        state.fog.side(0).spotted.is_empty(),
+        "the stage needs no contact, or advance would be reading the enemy rather than \
+         the empty map"
+    );
+    assert!(
+        state.map.objectives().is_empty(),
+        "the stage needs no objectives, or the objective term would be reading the map \
+         instead of this one"
+    );
+    let center = state.map.center();
+    let edge = state.unit(UnitId(0)).unwrap().pos;
+    assert_ne!(
+        center, edge,
+        "the stage needs the centre to be somewhere she is not already standing"
+    );
+    let eval = Evaluator::new(reg.doctrine("massed_armor").cloned().unwrap());
+    let gap = |reg: &DataRegistry| {
+        eval.score_tile(reg, &state, UnitId(0), center).score
+            - eval.score_tile(reg, &state, UnitId(0), edge).score
+    };
+
+    reg.planner.search_slope = 0.0;
+    let flat = gap(&reg);
+    assert!(
+        flat.abs() < 1e-6,
+        "with no slope the middle of an empty map is worth exactly what the edge is: {flat}"
+    );
+
+    reg.planner.search_slope = 0.15;
+    let shipped = gap(&reg);
+    assert!(
+        shipped > 0.0,
+        "and at the shipped slope a lost crew is pulled toward the middle"
+    );
+
+    reg.planner.search_slope = 0.5;
+    assert!(
+        gap(&reg) > shipped,
+        "a steeper slope pulls her there harder"
+    );
+}
+
 // --- what an order is worth against the terrain ----------------------------
 //
 // Four more numbers that were bare Rust until 2026-08-28, and unlike the five

@@ -501,10 +501,21 @@ converted at the mod's exchange rate.
   spends `incoming` on the ties. Neither reads terrain `cover` any more;
   they were the last "where to stand" rules outside the currency, and
   moving them was worth seven points on the ridge before any weight moved.
-- **What the currency does not carry**: the mass band, the +4.0 kill bonus,
-  the 0.3 advance slope and the 0.15 centre-seeking fallback are bare Rust
-  in `score_tile`, unsweepable and therefore unmeasured — now the largest
-  un-restated block in the sum.
+- **The currency carries all of itself now** (2026-09-11). The eleven
+  constants left in `score_tile` — the mass band, the kill bonus, the
+  advance slope, the centre-seeking fallback, the support radius, the
+  attack shape, the exposure cap and the withdrawing crew's share — are
+  `planner` fields, defaulting to exactly the values they replaced, so the
+  determinism snapshot did not move. **Every one was then swept and every
+  one came back null**: on `--sim` at 36 battles against a seed floor of ±5
+  win, and on the ridge skill table against a per-row seed spread of 4 to 7,
+  no value tried — zero, the shipped value, or four times it — moved a row
+  out of the noise. None is *dead*, though: each moves rounds, shots or
+  hulls by a fraction, and each has a test that it is read. This is the
+  third species of null (see `score_worth`): a weight both commanders get
+  at the same rate changes what a battle is like rather than who wins it,
+  and no instrument here can see that. The prize was never the answer, it
+  was being able to ask.
 - **The ladder charges a shell for what it spent** (the designer's ruling,
   2026-09-09). `pressure_for(ShotFelt::Penetrated { spent }, ..)` scales
   `hit + penetrated` by the share of the round's *listed* budget the
@@ -612,7 +623,11 @@ The evaluator's and chooser's numbers are the `planner` block of `mod.json`
 (`data::PlannerRules`): `impatience`, `horizon_rounds`, `boarding_rounds`,
 `deviation_cost`, `devolved`, `order_worth`, `order_complement`,
 `score_worth`, `pull_under_fire`, `distance_decay`, `plateau`,
-`exit_urgency`, `cover_prior`, `elevation_prior`.
+`exit_urgency`, `cover_prior`, `elevation_prior`, and since 2026-09-11 the
+eleven `score_tile` was still holding in Rust — `kill_bonus`,
+`attack_worth`, `attack_floor`, `withdrawn_attack`, `exposure_cap`,
+`crowding_adjacent`, `crowding_near`, `support_range`, `out_of_support`,
+`advance_slope`, `search_slope`.
 `mission_weight` is retired (2026-09-07): it deserialises into a field nothing
 reads so that `validate-mods` can warn a mod that still declares it.
 
@@ -1121,11 +1136,6 @@ instrument's numbers.
   nothing for a commander to be better at, and it stays the default only
   because every quoted number was measured on it. Read the skill table on
   the ridge, at `--games 36` or not at all, seed-swept.
-- **`score_tile` still holds four bare constants** — the mass band
-  (−0.45 / −0.15 / −0.12 × `concentration`), the +4.0 kill bonus, the 0.3
-  advance slope, the 0.15 centre-seeking fallback — in a currency that has
-  grown by an order of magnitude since they were written. Nobody has noticed
-  because nobody can ask; they want to be `planner` fields.
 
 ### Robustness
 
