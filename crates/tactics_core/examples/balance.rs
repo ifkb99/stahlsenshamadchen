@@ -2772,11 +2772,17 @@ fn mustered_forces(
     budget: i32,
     seed: u64,
 ) -> Grid {
+    // Curated rather than "every doctrine the mod declares", because `drill`
+    // is a test fixture with no appetite and no interest in ground and its
+    // rows would say nothing. A doctrine written to be played belongs here,
+    // or it ships measured by nothing — which is what happened to
+    // `delaying_action` for exactly as long as it took to notice.
     let doctrines = [
         "massed_armor",
         "elastic_defense",
         "recon_pull",
         "bounding_overwatch",
+        "delaying_action",
     ];
     let forces: Vec<(&str, Vec<String>)> = doctrines
         .iter()

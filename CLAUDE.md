@@ -1344,10 +1344,32 @@ says whether the machine is comparable.
   wall or a treeline that hides a hull without blinding the crew is content
   nobody has written, and until one exists "cover" and "dead ground" are the
   same word to the evaluator.
-- **The base mod's doctrines exercise a narrow slice of the command model.**
-  `Recon` is issued by nobody, elastic defence devolves and issues no ground
-  missions, and only `bounding_overwatch` ever orders an `Advance`. Every
-  instrument measures that slice (DONE.md, the order-terms entry).
+- **`Recon` and `Support` are unreachable from any doctrine, and that is an
+  engine gap rather than a content one** (established 2026-09-11). The AI's
+  mission chooser has exactly three arms, keyed on `aggression`: ≥0.7
+  `Assault`, ≥0.5 `Advance`, else `Hold`, plus `Withdraw` from `wants_out`.
+  No value of any doctrine field produces a `Recon` or a `Support` mission,
+  so no doctrine *can* be written that exercises them — the executor, the
+  evaluator's `pull_under_fire` arm and `Formation::latitude_for` all have
+  code for missions the commander never issues. Closing it wants a design
+  decision (a doctrine field that says "screen ahead", or an arm that reads
+  what a formation is made of) rather than content.
+- **A doctrine that breaks off now exists.** `delaying_action` draws the line
+  at a fifth of itself — `beaten` asks whether a formation is under
+  `1 - withdraw_threshold` of what it started with, and the shipped values
+  put that at 15% for massed armour and 40% for bounding overwatch, by which
+  point the battle has decided itself. Before it, `grep -ci withdraw` over
+  the four-seed determinism baseline returned **zero**, which is why
+  `planner.withdrawn_attack` swept bit-identical across 180 battles: the
+  term existed and nothing read it.
+  `a_doctrine_that_trades_ground_for_time_orders_its_own_withdrawal` is the
+  check, and note what it had to do — `wants_out` lives in `SideCommand`, so
+  a test about it wants the `"command"` planner, not `sharp_planner`'s
+  utility executor.
+- **The `mustered` table's doctrine list is curated, and a doctrine that is
+  not on it ships measured by nothing.** `drill` is off it because a fixture
+  with no appetite and no interest in ground says nothing; anything written
+  to be played belongs on it.
 - `deploy` sorts deployable tiles by depth from the map edge and is already
   scale-independent; on a hexagon a side deploys out of a vertex and fans
   inland, which is a shape change rather than a bug.

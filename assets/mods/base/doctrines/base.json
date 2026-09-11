@@ -70,7 +70,7 @@
   {
     "id": "drill",
     "name": "Battle Drill",
-    "description": "Not a way of fighting a battle but a way of surviving a moment: what a crew does under fire when nobody has told her anything. Return fire, seek cover, stay near friends, and want nothing else on the map \u2014 no objectives, no exits, no advancing to contact. The engine consults this posture for unordered units in danger; a mod that removes it gets a built-in equivalent.",
+    "description": "Not a way of fighting a battle but a way of surviving a moment: what a crew does under fire when nobody has told her anything. Return fire, seek cover, stay near friends, and want nothing else on the map — no objectives, no exits, no advancing to contact. The engine consults this posture for unordered units in danger; a mod that removes it gets a built-in equivalent.",
     "aggression": 0.0,
     "cover_value": 2.0,
     "elevation_value": 1.2,
@@ -83,5 +83,22 @@
     "delegation": 0.5,
     "route_caution": 0.0,
     "contest_aversion": 0.0
+  },
+  {
+    "id": "delaying_action",
+    "name": "Delaying Action",
+    "description": "Trade ground for time. Hold what you are given, make the enemy pay to come on, and break off before the price is your company rather than after.",
+    "aggression": 0.35,
+    "cover_value": 2.0,
+    "elevation_value": 1.6,
+    "concentration": 0.6,
+    "scouting": 0.9,
+    "objective_value": 0.8,
+    "indirect_appetite": 1.4,
+    "withdraw_threshold": 0.2,
+    "initiative": 0.6,
+    "delegation": 0.3,
+    "route_caution": 1.1,
+    "contest_aversion": 0.8
   }
 ]
