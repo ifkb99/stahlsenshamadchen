@@ -1563,6 +1563,53 @@ get at the same rate changes what a battle is *about* rather than who wins it,
 and no instrument in this harness can see that. The harness still wants a
 table whose question is what the battle was about.
 
+**Four of the six dead skills got rules, and every one of them is inert**
+(2026-09-11, the designer's ruling to wire them rather than delete them).
+`athletics` sets a foot unit's pace and how steep a face she can climb,
+`fieldcraft` multiplies her chassis's concealment, `small_arms` scales a
+platoon's damage. The machinery was already general — `Roster::crew_skill`
+resolves which seat answers off the `roles` block and charges
+`substitution_penalty` for an empty one — so each wiring is a `stats::`
+wrapper, a `balance` coefficient and a call site.
+
+*The defect found on the way.* `move_points` asked **every** chassis for
+`driving`, and `rifle_platoon` fields a platoon leader and a section leader
+and no driver, so `crew_skill` took its "nobody is in that seat" path and
+charged a platoon the stand-in penalty for a seat her chassis has never had.
+Wrong since infantry shipped, four points worse since `substitution_penalty`
+went to six, and invisible because `river_crossing`, the determinism
+baseline, deliberately fields no infantry.
+
+*And then the finding, which is bigger than the chunk.* All four rules are
+**inert on shipped content**, each for the same reason: the quantity they
+scale is a small integer. A foot unit has one movement point, so
+`speed_per_athletics` is bit-identical over 180 battles at 5, at 20 and at
+40, and only moves anything at 80 — where it is a switch between one hex and
+two rather than a slope. A rifle does 3 damage, so `troops_per_small_arms`
+is bit-identical at 5 and first moves a row at 10. Chassis concealment is
+divided into whole hexes of a spotter's reach (`range * (100 - hidden) /
+100`), so `concealment_per_fieldcraft` is bit-identical at 5 and wants 20 to
+40 to cross a hex. And no shipped battle map has an adjacent elevation step
+steeper than **2** — `battle_hills` has 24 such steps and nothing steeper,
+every other map tops out at 1 — while foot units already climb 2, so the
+climb rule cannot bite on any ground this game owns.
+
+So the six skills were not dead only because nothing read them. They were
+dead because there was nothing for them to read. The designer's ruling on
+being shown the numbers was to raise the content's resolution — movement
+points and terrain costs together, so that speeds in km/h are unchanged and
+the arithmetic has somewhere to land — rather than ship coarse rates that
+would make one point of fieldcraft worth four points of observation.
+
+*What is nonetheless real.* Each rule has a mutation-checked test that stages
+its own relief and its own skill levels, in `tests/crews.rs` under *the
+skills a crew is asked for*; `Balance::concealed` and `marksmanship` guard
+`base == 0` because `scaled` floors at one, and skipping that made every tank
+concealment 1, stopped `fog::search`'s fast path firing, and moved the
+baseline — caught by the snapshot inside a minute. A test whose stage is
+anonymous is measuring `Roster::unspecified`, which is `AVERAGE` for every
+skill: all four tests failed that way first, and they name their cadets now.
+
 ## The campaign
 
 **What ends it is map data (2026-09-09).** `frontier` had a Lua wrapper

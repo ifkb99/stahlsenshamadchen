@@ -1957,6 +1957,65 @@ pub mod stats {
         rules.delay(level)
     }
 
+    /// How well this crew moves on her own feet, used by
+    /// [`super::move_points`] for a chassis that walks.
+    ///
+    /// A separate question from [`driving`], and not a nicety: a
+    /// `rifle_platoon` fields a platoon leader and a section leader and no
+    /// driver at all, so asking her for `driving` took `crew_skill`'s
+    /// "nobody is in that seat" path and charged her the stand-in penalty for
+    /// a seat her chassis has never had.
+    pub fn athletics(
+        registry: &DataRegistry,
+        roster: &Roster,
+        unit: &Unit,
+        terrain: Option<&str>,
+    ) -> i32 {
+        roster.crew_skill(
+            registry,
+            registry.vehicle(&unit.vehicle),
+            &unit.crew,
+            &unit.crew_state,
+            "athletics",
+            terrain,
+        )
+    }
+
+    /// How well this crew hides, which scales her chassis's own
+    /// `concealment` rather than standing on its own.
+    pub fn fieldcraft(
+        registry: &DataRegistry,
+        roster: &Roster,
+        unit: &Unit,
+        terrain: Option<&str>,
+    ) -> i32 {
+        roster.crew_skill(
+            registry,
+            registry.vehicle(&unit.vehicle),
+            &unit.crew,
+            &unit.crew_state,
+            "fieldcraft",
+            terrain,
+        )
+    }
+
+    /// How well this platoon's riflemen shoot.
+    pub fn small_arms(
+        registry: &DataRegistry,
+        roster: &Roster,
+        unit: &Unit,
+        terrain: Option<&str>,
+    ) -> i32 {
+        roster.crew_skill(
+            registry,
+            registry.vehicle(&unit.vehicle),
+            &unit.crew,
+            &unit.crew_state,
+            "small_arms",
+            terrain,
+        )
+    }
+
     /// Driving skill used by [`super::move_points`].
     pub fn driving(
         registry: &DataRegistry,

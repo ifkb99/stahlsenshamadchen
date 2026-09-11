@@ -26,9 +26,24 @@ pub fn move_points(
         .vehicle(&unit.vehicle)
         .map(|v| v.movement.points)
         .unwrap_or(0);
-    let skilled = registry
-        .balance
-        .speed(base, super::stats::driving(registry, roster, unit, terrain));
+    // Which skill answers for getting her moving is a fact about the chassis,
+    // not about the crew: a platoon has no driver's seat, and asking her for
+    // `driving` charged her the stand-in penalty for a seat she has never
+    // had. `athletics` is her own, and `speed_per_athletics` is the rate.
+    let afoot = matches!(
+        registry.vehicle(&unit.vehicle).map(|v| v.movement.class),
+        Some(crate::data::MovementClass::Foot)
+    );
+    let skilled = if afoot {
+        registry.balance.pace(
+            base,
+            super::stats::athletics(registry, roster, unit, terrain),
+        )
+    } else {
+        registry
+            .balance
+            .speed(base, super::stats::driving(registry, roster, unit, terrain))
+    };
     // Thrown tracks outrank talented driving: half speed on damaged
     // running gear, none on destroyed. Integer halves so resolution stays
     // bit-for-bit reproducible.
@@ -220,11 +235,24 @@ impl MoveGrid {
     }
 }
 
-fn unit_movement(registry: &DataRegistry, unit: &Unit) -> (MovementClass, i32) {
-    registry
+fn unit_movement(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: &Unit,
+) -> (MovementClass, i32) {
+    let (class, listed) = registry
         .vehicle(&unit.vehicle)
         .map(|v| (v.movement.class, v.movement.max_climb))
-        .unwrap_or((MovementClass::Tracked, 1))
+        .unwrap_or((MovementClass::Tracked, 1));
+    // What a tank can climb is a fact about her suspension; what a platoon
+    // can climb is a fact about the platoon, so `athletics` reaches this and
+    // only on foot.
+    if class != MovementClass::Foot {
+        return (class, listed);
+    }
+    let climbing =
+        super::stats::athletics(registry, &state.roster, unit, state.terrain_at(unit.pos));
+    (class, registry.balance.climb(listed, climbing))
 }
 
 /// Cost for `unit` to step from `from` onto `to`, using its own movement
@@ -236,7 +264,7 @@ pub fn edge_cost_for(
     from: Hex,
     to: Hex,
 ) -> Option<u32> {
-    let (class, max_climb) = unit_movement(registry, unit);
+    let (class, max_climb) = unit_movement(registry, state, unit);
     state.moves.cost(class, max_climb, from, to)
 }
 
@@ -461,7 +489,7 @@ pub fn reachable(registry: &DataRegistry, state: &BattleState, id: UnitId) -> Ha
     let Some(unit) = state.unit(id) else {
         return HashMap::new();
     };
-    let (class, max_climb) = unit_movement(registry, unit);
+    let (class, max_climb) = unit_movement(registry, state, unit);
     let budget = move_points(registry, &state.roster, unit, state.terrain_at(unit.pos));
 
     // One walk over the units, then every question about every tile in her
@@ -651,7 +679,7 @@ pub fn roads(registry: &DataRegistry, state: &BattleState, id: UnitId, rounds: u
     let Some(unit) = state.unit(id) else {
         return Roads::default();
     };
-    let (class, max_climb) = unit_movement(registry, unit);
+    let (class, max_climb) = unit_movement(registry, state, unit);
     let horizon =
         move_points(registry, &state.roster, unit, state.terrain_at(unit.pos)).max(1) * rounds;
 
@@ -702,7 +730,7 @@ pub fn path_to(
     if occupancy.blocked(registry, state, to) {
         return None;
     }
-    let (class, max_climb) = unit_movement(registry, unit);
+    let (class, max_climb) = unit_movement(registry, state, unit);
     let budget = move_points(registry, &state.roster, unit, state.terrain_at(unit.pos));
 
     let path = hexx::algorithms::a_star(unit.pos, to, |from, next| {

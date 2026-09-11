@@ -591,10 +591,17 @@ fn search(
     key: &[(UnitId, Hex, u32)],
     unit: &Unit,
 ) -> Search {
-    let concealment = registry
-        .vehicle(&unit.vehicle)
-        .map(|v| v.concealment)
-        .unwrap_or(0);
+    // Her chassis says how much there is to be had and her `fieldcraft` says
+    // how much of it she gets. A chassis with none — every armoured one the
+    // base mod ships — multiplies to nothing, which is the honest reading:
+    // lying still well does not make a tank smaller.
+    let concealment = registry.balance.concealed(
+        registry
+            .vehicle(&unit.vehicle)
+            .map(|v| v.concealment)
+            .unwrap_or(0),
+        crate::battle::stats::fieldcraft(registry, &state.roster, unit, state.terrain_at(unit.pos)),
+    );
     let terrain = state
         .map
         .get(unit.pos)

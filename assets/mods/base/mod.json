@@ -14,6 +14,10 @@
   },
   "balance": {
     "speed_per_driving": 5,
+    "speed_per_athletics": 5,
+    "athletics_per_climb_level": 4,
+    "concealment_per_fieldcraft": 5,
+    "troops_per_small_arms": 5,
     "accuracy_per_gunnery": 3,
     "substitution_penalty": 6,
     "vision_per_observation": 5,
@@ -315,7 +319,8 @@
         "command",
         "fieldcraft",
         "small_arms",
-        "gunnery"
+        "gunnery",
+        "athletics"
       ]
     },
     {
@@ -325,7 +330,8 @@
         "fieldcraft",
         "small_arms",
         "observation",
-        "gunnery"
+        "gunnery",
+        "athletics"
       ]
     }
   ],

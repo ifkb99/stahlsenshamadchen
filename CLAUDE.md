@@ -1246,16 +1246,47 @@ says whether the machine is comparable.
   since 2026-09-09. `nobody_deploys_onto_their_own_way_off_the_map` now
   fights all five and asserts both halves: that each offers a way off it, and
   that `deploy` forms nobody up on her own lane home.
-- **Six of the base mod's thirteen skills are read by no rule.** The engine
-  asks for `gunnery`, `observation`, `driving` and `signals` by name and the
-  mod names `discipline`, `reactions` and `command` in its `morale`,
-  `reaction` and `command` blocks. That leaves `loading`, `maintenance`,
-  `first_aid`, `small_arms`, `fieldcraft` and `athletics` declared and never
-  consulted — the same dead weight `morale` and `leadership` were in the old
-  `CrewStats`, one level up. It has a consequence now that a seat costs
-  something: the **loader's** seat answers for `loading` and `first_aid`
-  alone, so leaving it empty is free, and a fifth of the seats the `seats`
-  table empties are free by construction.
+- **Three of the base mod's thirteen skills are still read by no rule**, down
+  from six on 2026-09-11. The engine asks for `gunnery`, `observation`,
+  `driving`, `signals`, `athletics`, `fieldcraft` and `small_arms` by name and
+  the mod names `discipline`, `reactions` and `command` in its `morale`,
+  `reaction` and `command` blocks. That leaves `loading`, `maintenance` and
+  `first_aid` declared and never consulted — the same dead weight `morale`
+  and `leadership` were in the old `CrewStats`, one level up — and it has a
+  consequence now that a seat costs something: the **loader's** seat answers
+  for `loading` and `first_aid` alone, so leaving it empty is still free.
+- **Wiring a skill is necessary and not sufficient: the content has to have
+  the resolution to say anything** (2026-09-11, and the reason the skills
+  above were easy to leave dead). All four rules added that day are
+  *inert on shipped content*, each for the same reason — the quantity they
+  scale is a small integer. A foot unit has **one** movement point, so no
+  percentage of it rounds to anything else until 80% a point; a rifle does
+  **3** damage; chassis concealment is divided into whole hexes of a
+  spotter's reach, so 5% a point moves nothing and 10 moves a wound tick;
+  and no shipped battle map has an adjacent elevation step steeper than
+  **2**, which foot units already climb, so the climb rule cannot bite on any
+  ground the game owns. Every one of the four was swept and came back
+  bit-identical at the house rate of 5. The tests stage their own relief and
+  their own skill levels and are mutation-checked; the tables cannot see the
+  rules at all. The designer's ruling is to raise the content's resolution
+  rather than ship coarse rates — movement points and terrain costs together,
+  so speeds are unchanged and the arithmetic has somewhere to land.
+- **The crew-percentage idiom has a floor, and it is the `Balance` doc's own
+  three-kinds rule read backwards.** `vision_per_observation` and
+  `speed_per_driving` work because their bases are 5 to 10; a percentage of a
+  1-to-3 point quantity is not a slope but a switch. When a new crew
+  coefficient is written, ask what it multiplies before choosing the kind:
+  `accuracy_per_gunnery` is percentage *points* of hit chance precisely
+  because hit chance is a 0..=100 quantity, and that is the shape to reach for
+  wherever the base is small.
+- **`Balance::scaled` floors at one and that floor is wrong for some
+  quantities.** A vehicle with no movement points or no vision is a bug rather
+  than a vehicle, which is why the floor is there; a chassis with no
+  concealment is every armoured chassis in the base mod, and a platoon whose
+  riflemen have rounded away really does put out nothing. `concealed` and
+  `marksmanship` ask `base == 0` first. Skipping that check made every tank on
+  the field concealment 1, stopped `fog::search`'s fast path firing, and moved
+  the determinism baseline — which is how it was caught.
 - **There is no cover without `vision_block`.** Forest (30) and town (40)
   are the only covering terrains and both block sight at 2, so everything
   commanding is bare and everything covered is blind: a crew in the middle
