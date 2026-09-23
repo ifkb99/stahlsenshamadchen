@@ -513,20 +513,40 @@ If either of those reads wrong in play, it is wrong for the AI too, and now it
 is one number to change. `the_player_lays_the_gun_the_ai_would`, mutation-
 checked; all eleven tours pass.
 
-## 10. The campaign↔battle bridge lives in the Bevy crate
+## 10. ~~The campaign↔battle bridge lives in the Bevy crate~~
 
-`deploy`, `inherit_army_missions`, `formation_exit`, `stage_field_battle`,
-`field_battle_problem` and `battle_outcome` (which carries the campaign's rule
-for when an army has *withdrawn*) are in `crates/game/src/battle.rs`, and
-`choose_battle_map` in `overworld.rs`. So no instrument can play a campaign:
-`balance` measures battles, and permadeath, the `hold_days` ending and the
-headquarters planner are measured by nothing. The harness also stages battles
-through its own deployment (`Arena::deployment`, `muster_deployment`), never
-the campaign's. And `deploy` prices every chassis as `Tracked`, foot included,
-and forms up by offset column.
+**Fixed 2026-09-23.** `tactics_core::field` holds the whole path:
+`battlefield_for` (was `choose_battle_map`), `Clash::muster` (the
+force-gathering half of `launch_battle`), `Clash::problem` / `stage` /
+`inherit_missions`, `FieldBattle::report` (was `battle_outcome`, with the
+*withdrew* rule), and `deploy`. `formation_exit` went to `battle::command`
+beside `nearest_exit`, and the refused-order fallback of the campaign screen's
+`drive_ai` became `overworld::step_planner`, so the one piece of judgment the
+AI loop had is shared rather than copied. `PendingBattle::Field` carries a
+`Clash`. The game crate's screens now only present it: `battle.rs` 4,438 →
+3,346 lines and `overworld.rs` 2,887 → 2,677, tests included.
 
-**Check:** `grep -n "^fn deploy\|^fn battle_outcome\|^fn stage_field_battle"
-crates/game/src/battle.rs`.
+Nine tests moved with it into `tests/field.rs` (the game crate 28 → 19),
+adapted to drive the new API and nothing else. Two hash-order shrugs went on
+the way past: `battlefield_for`'s last resort took whichever battle map the
+registry's `HashMap` yielded first, and so did the campaign screen choosing an
+overworld map. Both take the lowest id now.
+
+**The prize is `harness::campaign::play` and `examples/campaign`**: the whole
+`frontier` campaign, every side a machine; 32 wars take about a tenth of a
+second across every core. Its contract is two tests (it ends and stages every
+clash it causes; the same seed is the same war). Its first reading, at 32
+seeds, is a finding for the designer rather than a defect: **29 of 32 wars end
+on day two, by decapitation, after one battle.** Each side's headquarters army
+is also its vanguard (1st Company and Valkyrie Vanguard, five vehicles each),
+the campaign planner prices the enemy's at `HEADQUARTERS_WORTH` (3.0) and
+fights at parity, so the two headquarters meet on day two and that battle is
+the war. Kuhlmann wins 21 of 32. Against a human the Valkyries' headquarters
+will still come straight for hers.
+
+Still in `deploy` and not changed here, because they are rules rather than
+seams: every chassis is priced as `Tracked` when finding standing room, and a
+side forms up by offset column.
 
 ## 11. A side knows two things about the enemy, and each reader picks one
 

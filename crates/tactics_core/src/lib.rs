@@ -14,6 +14,8 @@
 //! - [`roster`]: cadets as mutable per-campaign instances, as opposed to the
 //!   immutable [`data`] definitions they are stamped from.
 //! - [`overworld`]: the strategic layer simulation.
+//! - [`field`]: the seam between them — a clash on the campaign map staged
+//!   as a battle, and the battle's result handed back.
 //! - [`save`]: serialising a game in progress, such that reloading it
 //!   produces the same future as not having saved.
 //! - [`ai`]: the swappable [`ai::AiPlanner`] trait and its implementations.
@@ -21,6 +23,7 @@
 pub mod ai;
 pub mod battle;
 pub mod data;
+pub mod field;
 pub mod force;
 pub mod harness;
 pub mod map;

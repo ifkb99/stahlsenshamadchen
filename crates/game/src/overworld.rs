@@ -1,7 +1,7 @@
 //! The overworld screen: strategic army movement, objective capture,
 //! income, soft fog, and handing off clashes to the battle screen.
 
-use crate::battle::{BattleForce, BattleOutcome, PendingBattle};
+use crate::battle::{BattleOutcome, PendingBattle};
 use crate::camera::CameraFocus;
 use crate::campaign::{self, Campaign, CampaignCommand};
 use crate::iso::{self, ArtCache, ViewCenter};
@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use tactics_core::Hex;
 use tactics_core::ai::AiPlanner;
-use tactics_core::battle::SideState;
+use tactics_core::field::{Clash, battlefield_for};
 use tactics_core::map::MapKind;
 use tactics_core::overworld::{
     ArmyId, ArmyMission, ArmyUnit, CampaignEnd, OverworldEvent, OverworldOrder, OverworldState,
@@ -342,12 +342,16 @@ fn enter_overworld(
         return;
     }
 
-    // Fresh campaign: pick the first overworld map from the mods.
+    // Fresh campaign: the first overworld map from the mods, by id. It used
+    // to be whichever one the registry's hash map yielded first, which is a
+    // different campaign from one launch to the next the day a mod ships a
+    // second one.
     let map_id = registry
         .maps
         .values()
-        .find(|m| m.kind == MapKind::Overworld)
+        .filter(|m| m.kind == MapKind::Overworld)
         .map(|m| m.id.clone())
+        .min()
         .expect("base mod provides an overworld map");
     let state = OverworldState::from_map(registry, &map_id, 1337).expect("overworld builds");
     log.push(
@@ -710,7 +714,7 @@ fn pump_events(
                 .get(*at)
                 .map(|t| t.terrain.clone())
                 .unwrap_or_default();
-            let Some(map_id) = choose_battle_map(registry, &terrain) else {
+            let Some(map_id) = battlefield_for(registry, &terrain) else {
                 log.push("No battle map is loaded, so the fight cannot be staged.");
                 return;
             };
@@ -1133,61 +1137,14 @@ fn launch_battle(
     called_up: &[CadetId],
     map_id: String,
 ) {
-    let sides: Vec<SideState> = state
-        .sides
-        .iter()
-        .map(|s| SideState {
-            name: s.name.clone(),
-            ai: s.ai.clone(),
-        })
-        .collect();
-    let attacker_side = state.army(attacker).map(|a| a.side).unwrap_or(0);
-
-    let mut forces = Vec::new();
-    for id in [attacker, defender].iter().chain(joiners) {
-        if let Some(army) = state.army(*id) {
-            // An army could be listed twice if it were both principal and
-            // joiner; keep the first entry so unit origins stay unique.
-            if forces.iter().any(|f: &BattleForce| f.army == *id) {
-                continue;
-            }
-            forces.push(BattleForce {
-                army: *id,
-                side: army.side,
-                units: army.units.clone(),
-                mission: army.mission.clone(),
-            });
-        }
-    }
-
-    // Snapshot of the campaign's cadets, and the roll made on it. The battle
-    // reads the copy; casualties come back as events and are applied to the
-    // campaign's own. `mustered` is the only thing that ever writes
-    // `Cadet::called_up`, and it writes it here, so the player's answer for
-    // this fight cannot still be standing at the next one.
-    let roster = std::sync::Arc::new(state.roster.mustered(called_up));
-    if let Some(problem) = crate::battle::field_battle_problem(
-        registry,
-        &map_id,
-        &sides,
-        attacker_side,
-        &forces,
-        &roster,
-    ) {
+    let clash = Clash::muster(state, attacker, defender, joiners, called_up, map_id);
+    if let Some(problem) = clash.problem(registry) {
         log.push(format!("This battle cannot be staged: {problem}"));
         return;
     }
 
     state.commit_to_battle(joiners);
-    commands.insert_resource(PendingBattle::Field {
-        map_id,
-        roster,
-        attacker,
-        defender,
-        sides,
-        attacker_side,
-        forces,
-    });
+    commands.insert_resource(PendingBattle::Field(clash));
     next.set(AppState::Battle);
 }
 
@@ -1729,31 +1686,6 @@ fn update_roster_ui(
 /// `expect`, on the reasoning that the base mod always provides one — which is
 /// true of the base mod and says nothing about the mod somebody loads on top
 /// of it. A campaign that cannot stage a fight should say so and carry on.
-fn choose_battle_map(registry: &tactics_core::data::DataRegistry, terrain: &str) -> Option<String> {
-    let is_battle = |id: &String| {
-        registry
-            .maps
-            .get(id)
-            .is_some_and(|m| m.kind == MapKind::Battle)
-    };
-    if let Some(named) = registry
-        .terrain(terrain)
-        .and_then(|t| t.battlefield.clone())
-        .filter(&is_battle)
-    {
-        return Some(named);
-    }
-    let preferred = format!("battle_{terrain}");
-    if is_battle(&preferred) {
-        return Some(preferred);
-    }
-    registry
-        .maps
-        .values()
-        .find(|m| m.kind == MapKind::Battle)
-        .map(|m| m.id.clone())
-}
-
 fn drive_ai(mods: Res<Mods>, mut overworld: ResMut<Overworld>) {
     if overworld.state.over.is_some()
         || !overworld.anim.is_empty()
@@ -1768,22 +1700,8 @@ fn drive_ai(mods: Res<Mods>, mut overworld: ResMut<Overworld>) {
     let Some(planner) = ow.planners.get_mut(&side) else {
         return;
     };
-    let order = planner.next_order(&mods.0, &ow.state, side);
-    match ow.state.apply(&mods.0, &order) {
-        Ok(events) => ow.anim.extend(events),
-        Err(_) => {
-            // Don't wedge on a stubborn army: mark it moved and continue.
-            if let OverworldOrder::MoveArmy { army, .. } = order
-                && let Some(a) = ow.state.army_mut(army)
-            {
-                a.moved = true;
-                return;
-            }
-            if let Ok(events) = ow.state.apply(&mods.0, &OverworldOrder::EndTurn) {
-                ow.anim.extend(events);
-            }
-        }
-    }
+    let events = tactics_core::overworld::step_planner(planner.as_mut(), &mods.0, &mut ow.state);
+    ow.anim.extend(events);
 }
 
 // Save and load need to respawn the world, which means commands, art and the
@@ -2755,133 +2673,5 @@ mod tests {
             !report.home.is_empty(),
             "everybody else in her army came home and the page should say so"
         );
-    }
-
-    /// The campaign can stage the fights its own armies would cause.
-    ///
-    /// `launch_battle` now asks before it commits anybody, so a campaign whose
-    /// content has gone missing declines one clash instead of taking the run
-    /// down inside `spawn_unit`. The check is only worth having if the shipped
-    /// content passes it, and this is where that is said: every pair of
-    /// hostile armies on the campaign map, on the map their ground would pick,
-    /// with the campaign's own roster.
-    #[test]
-    fn every_clash_the_campaign_map_can_produce_can_be_staged() {
-        let reg = registry();
-        let state = OverworldState::from_map(&reg, "frontier", 5).expect("overworld");
-        let sides: Vec<SideState> = state
-            .sides
-            .iter()
-            .map(|s| SideState {
-                name: s.name.clone(),
-                ai: s.ai.clone(),
-            })
-            .collect();
-        let roster = std::sync::Arc::new(state.roster.clone());
-        let terrain = state
-            .map
-            .get(state.armies[0].pos)
-            .map(|t| t.terrain.clone())
-            .unwrap_or_default();
-        let map_id = choose_battle_map(&reg, &terrain).expect("the base mod ships a battle map");
-
-        let mut clashes = 0;
-        for attacker in &state.armies {
-            for defender in state.armies.iter().filter(|d| d.side != attacker.side) {
-                let forces: Vec<BattleForce> = [attacker, defender]
-                    .iter()
-                    .map(|a| BattleForce {
-                        army: a.id,
-                        side: a.side,
-                        units: a.units.clone(),
-                        mission: a.mission.clone(),
-                    })
-                    .collect();
-                assert_eq!(
-                    crate::battle::field_battle_problem(
-                        &reg,
-                        &map_id,
-                        &sides,
-                        attacker.side,
-                        &forces,
-                        &roster,
-                    ),
-                    None,
-                    "{} attacking {} cannot be staged",
-                    attacker.name,
-                    defender.name
-                );
-                clashes += 1;
-            }
-        }
-        assert!(clashes > 0, "this test is meaningless without two sides");
-    }
-
-    /// A campaign with no battle map declines the fight rather than crashing.
-    ///
-    /// `choose_battle_map` used to `expect` its way past this on the reasoning
-    /// that the base mod always ships one — true of the base mod, and nothing
-    /// at all about the mod somebody loads on top of it.
-    #[test]
-    fn a_campaign_with_no_battlefield_to_fight_on_says_so_instead_of_panicking() {
-        let reg = registry();
-        assert!(
-            choose_battle_map(&reg, "grass").is_some(),
-            "the base mod ships battle maps, so this fixture is right way up"
-        );
-        let bare = tactics_core::data::DataRegistry::default();
-        assert_eq!(
-            choose_battle_map(&bare, "grass"),
-            None,
-            "with no maps loaded there is nowhere to fight"
-        );
-    }
-
-    /// Every terrain the campaign map is made of names the battlefield a
-    /// clash on it is fought over, and does so *itself*.
-    ///
-    /// The third arm of `choose_battle_map` — any battle map at all — is a
-    /// shrug, and until the `battlefield` field existed the shipped campaign
-    /// reached it constantly: `deep_forest`, `city`, `factory`, `highway` and
-    /// `mountains` all name no `battle_<terrain>` map, so a fight in the
-    /// mountains was resolved on whichever battlefield the map table happened
-    /// to iterate first. That is not a wrong answer anybody could see, which
-    /// is exactly why it wants a test rather than a glance.
-    ///
-    /// Written against the terrain the campaign map actually *uses* rather
-    /// than against the roster, because a terrain nobody has put on a map is
-    /// allowed to have no battlefield yet.
-    #[test]
-    fn every_terrain_the_campaign_fields_names_its_own_battlefield() {
-        let reg = registry();
-        let file = reg
-            .map("frontier")
-            .expect("the base mod ships a campaign map");
-        let map = tactics_core::map::HexMap::from_map_file(file).expect("campaign map parses");
-        let mut terrains: Vec<String> = map.iter().map(|(_, t)| t.terrain.clone()).collect();
-        terrains.sort();
-        terrains.dedup();
-        assert!(terrains.len() > 1, "a one-terrain campaign proves nothing");
-        for terrain in &terrains {
-            let def = reg
-                .terrain(terrain)
-                .unwrap_or_else(|| panic!("the campaign map stands on `{terrain}`"));
-            let named = def.battlefield.clone().unwrap_or_else(|| {
-                panic!(
-                    "terrain `{terrain}` is on the campaign map and names no battlefield, so a clash there falls through to whichever battle map iterates first"
-                )
-            });
-            assert!(
-                reg.maps
-                    .get(&named)
-                    .is_some_and(|m| m.kind == MapKind::Battle),
-                "terrain `{terrain}` is fought on `{named}`, which is not a battle map"
-            );
-            assert_eq!(
-                choose_battle_map(&reg, terrain).as_deref(),
-                Some(named.as_str()),
-                "a clash on `{terrain}` must be fought where the terrain says"
-            );
-        }
     }
 }

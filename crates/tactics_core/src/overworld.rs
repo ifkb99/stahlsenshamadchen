@@ -1878,6 +1878,37 @@ pub fn make_overworld_planner(
     ))
 }
 
+/// Ask the active side's planner for one order and apply it.
+///
+/// The one loop both callers walk: the campaign screen's `drive_ai` and the
+/// harness's headless campaign. It carries the one piece of judgment the
+/// loop has — an order the engine refuses must not wedge the day — and that
+/// piece was written in the game crate, where no headless run could reach
+/// it. A refused march spends the army's turn; anything else refused ends
+/// the side's turn.
+pub fn step_planner(
+    planner: &mut dyn AiPlanner<OverworldState, OverworldOrder>,
+    registry: &DataRegistry,
+    state: &mut OverworldState,
+) -> Vec<OverworldEvent> {
+    let side = state.active_side;
+    let order = planner.next_order(registry, state, side);
+    match state.apply(registry, &order) {
+        Ok(events) => events,
+        Err(_) => {
+            if let OverworldOrder::MoveArmy { army, .. } = order
+                && let Some(a) = state.army_mut(army)
+            {
+                a.moved = true;
+                return Vec::new();
+            }
+            state
+                .apply(registry, &OverworldOrder::EndTurn)
+                .unwrap_or_default()
+        }
+    }
+}
+
 impl AiPlanner<OverworldState, OverworldOrder> for SimpleOverworldPlanner {
     fn next_order(
         &mut self,

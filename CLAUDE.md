@@ -33,6 +33,7 @@ cargo run --release -p tactics_core --example balance -- --sim   # ...fought out
 cargo run --release -p tactics_core --example balance -- --sim --points 100  # richer armies
 cargo run --release -p tactics_core --example balance -- --brains --brain-games 64  # which planner
 cargo run --release -p tactics_core --example balance -- --help  # every flag, with examples
+cargo run --release -p tactics_core --example campaign [seed [to]]  # whole campaigns, every side a machine
 
 # what does this number do that the old one did not?
 cargo run --release -p tactics_core --example balance -- \
@@ -224,10 +225,17 @@ was. Tests: `tests/campaign.rs`.
   when at most one side passes it. `GameEnded` carries a `CampaignEnd`
   reason; elimination is reported ahead of decapitation when both hold.
 - **A battle hands back a `BattleReport`**, one struct across the crate
-  boundary (`survivors`, `losses`, `withdrew`, and the headline). The game
-  crate's `battle_outcome` fills it from a finished `BattleState` and is
-  pure over it, which is what lets `crates/game`'s headless tests fight a
-  whole field battle into the roster.
+  boundary (`survivors`, `losses`, `withdrew`, and the headline).
+  `FieldBattle::report` fills it from a finished `BattleState` and is pure
+  over it.
+- **The seam between them is `tactics_core::field`, not a screen.**
+  `battlefield_for` picks the map, `Clash::muster` gathers the armies,
+  `Clash::problem` asks before anybody is committed, `Clash::stage` and
+  `inherit_missions` build the battle, `FieldBattle::report` hands it back.
+  The campaign screen and `harness::campaign::play` walk the same path, and
+  the screen's AI loop and the harness share `overworld::step_planner`.
+  **Anything that decides what a clash is belongs there**, or the headless
+  campaign stops being the campaign. Tests: `tests/field.rs`.
 - **A withdrawn army arrives a hex back.** `withdrew` names every army whose
   every surviving vehicle left by an exit (`Fate::Exited`, none still
   `Fighting`); `apply_battle_result` moves each one hex — along its
@@ -862,7 +870,7 @@ on a mission key.
   (`resolve_crew_fate`) from a cadet found wounded in one that did
   (`resolve_station_fate`, gentler, never `Lost`). **`CrewLoss::in_battle` is
   the one reading of who a battle hurt**, in core beside the campaign that
-  has to live with it; the game crate's `battle_outcome` and the `attrition`
+  has to live with it; `FieldBattle::report` and the `attrition`
   table both call it, and a second reading written beside either would be a
   second game.
 - **A broken module can be mended, once a round, by whoever is aboard.**
@@ -887,7 +895,7 @@ on a mission key.
   battle when it was switched on, which is `untrained_penalty` reaching the
   casualty table through a side door. A crew with nobody left aboard passes
   `AVERAGE` and changes nothing. `CrewLoss::in_battle` takes a registry now,
-  and so does the game crate's `battle_outcome`.
+  and so does `FieldBattle::report`.
 - **The two fatal chances are two numbers.** `severe_percent` prices a wound
   taken in a vehicle that did not come home; `carried_fatal_percent` prices a
   cadet carried out of one that did, and they were one field until the
@@ -1172,14 +1180,24 @@ instrument's numbers.
   because every quoted number was measured on it. Read the skill table on
   the ridge, at `--games 36` or not at all, seed-swept.
 
+- **An AI-versus-AI campaign is decided on day two** (found 2026-09-23 by
+  the first instrument that could play one, `examples/campaign`). 29 of 32
+  seeds on `frontier` end by decapitation after a single battle: each side's
+  headquarters army is also its vanguard, the campaign planner prices the
+  enemy's at `HEADQUARTERS_WORTH` (3.0) and fights at parity, and the two
+  headquarters meet on the second day. Kuhlmann wins 21 of 32. Not a
+  defect in any rule — the map's order of battle and an unruled number
+  together — and a human commanding side 0 can decline the fight, but the
+  Valkyries' headquarters will come straight for hers.
+
 ### Robustness
 
 - **Both setup paths refuse bad content rather than panicking.**
   `from_placements` returns the same `BattleSetupError` as `from_map`,
   collecting every problem (a hex off the map, an unknown vehicle or side, a
   crew id the roster lacks), and `spawn_unit` is fallible. The campaign asks
-  first: `launch_battle` runs `battle::field_battle_problem` and declines the
-  clash with a log line *before* `commit_to_battle`; `choose_battle_map`
+  first: `launch_battle` runs `field::Clash::problem` and declines the
+  clash with a log line *before* `commit_to_battle`; `field::battlefield_for`
   returns `None` when no mod ships a battle map.
   `every_clash_the_campaign_map_can_produce_can_be_staged` is what makes the
   check worth having.
@@ -1260,8 +1278,8 @@ says whether the machine is comparable.
 
 - **Terrain coverage is declared, not guessed** (2026-09-09).
   `TerrainDef::battlefield` names the map a clash on that ground is fought
-  over; `choose_battle_map` reads it first, keeps the `battle_<terrain>`
-  convention as the fallback and only then shrugs at the first battle map,
+  over; `field::battlefield_for` reads it first, keeps the `battle_<terrain>`
+  convention as the fallback and only then shrugs at the first battle map by id,
   and `validate-mods` **errors** on a name that is not a battle map. Five
   battlefields ship — `battle_plains` (plains, highway), `battle_forest`
   (deep_forest), `battle_hills` (mountains), `battle_town` (city, factory)
