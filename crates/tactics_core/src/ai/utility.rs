@@ -182,7 +182,7 @@ impl UtilityPlanner {
         {
             return None;
         }
-        if super::threatened(registry, state, unit) {
+        if crate::battle::threatened(registry, state, unit) {
             return None;
         }
         let goal = journey_end(state, unit)?;
@@ -207,7 +207,7 @@ impl UtilityPlanner {
             if self.fare_waiting_on(state, carrier.id).is_some() {
                 continue;
             }
-            if super::threatened(registry, state, carrier.id) {
+            if crate::battle::threatened(registry, state, carrier.id) {
                 continue;
             }
             // The rendezvous closes from both ends, so the walk to the
@@ -292,7 +292,7 @@ impl UtilityPlanner {
         // question about where the carrier was sent, not about when the
         // passenger jumped; see TODO under Chain of Command.
         if let Some(carrier) = state.unit(unit).and_then(|u| u.aboard) {
-            let ride_threatened = super::threatened(registry, state, carrier);
+            let ride_threatened = crate::battle::threatened(registry, state, carrier);
             let at_the_objective = state.unit(carrier).is_some_and(|c| {
                 state
                     .map
@@ -325,7 +325,7 @@ impl UtilityPlanner {
         // without it a threatened taxi would sit for her fare while the
         // passenger aboard was being told to dismount.
         if let Some(fare) = self.fare_waiting_on(state, unit)
-            && !super::threatened(registry, state, unit)
+            && !crate::battle::threatened(registry, state, unit)
         {
             let Some(theirs) = state.unit(fare).map(|u| u.pos) else {
                 return Vec::new();

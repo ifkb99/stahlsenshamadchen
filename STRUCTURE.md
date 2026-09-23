@@ -586,15 +586,32 @@ matters is the human's: the AI no longer knows more than it has been told.
 and `the_commander_is_told_what_is_already_in_sight_when_the_battle_opens`,
 both mutation-checked.
 
-## 12. "Take cover" is two functions
+## 12. ~~"Take cover" is two functions~~
 
-At the planning table `SideCommand` runs a `UtilityPlanner` under a synthetic
-`drill` doctrine (`ai/command.rs::drill_doctrine`) — `score_tile`, triggered by
-`ai::threatened` with no reaction delay. Mid-round `run_crew_drill`
-(`battle/orders.rs`) takes the reachable hex with the least `incoming_from`
-worth against the guns she has *noticed*, strictly quieter only. The rout is
-rightly different; these two are the same orderly reaction on two models, and
-can send one crew to two hexes a tick apart.
+**Fixed 2026-09-23.** `battle::drill_destination` is the drill — the
+reachable hex with the least `incoming_from` worth, strictly quieter only —
+and both drills ask it: the engine's reflex against the guns she has noticed
+on her reaction clock (`battle::noticed_threats`), the planning table's drill
+against every gun bearing on her. The `drill` doctrine's evaluator only
+chooses her shot from there now. `threats` and `threatened` moved from `ai::`
+to `battle::danger`, because the engine's reflex and rout were calling into
+the AI module for them.
+
+**The first draft was wrong, and the probe said why.** It put the planning
+drill on the reaction clock too, for "one clock" — and a crew who had been
+looking at a tank since the battle opened sat under its gun for two ticks at
+the planning table, had her running gear shot out, and never reached the
+wood. Planning is a pause: nothing else planned there, the executors or the
+evaluator's threat term, reads the clock, so the drill does not either. The
+clock is for reacting while the round runs.
+
+The two models parted on open ground, which is why the old test (a forest in
+reach, where they happened to agree) could not have caught it: a scan of
+stage layouts found the gun at column 9 sending the old drill to (3,2) and the
+reflex's rule to (2,1). `the_planning_table_takes_cover_where_the_reflex_would`
+pins it, mutation-checked against the old model. Only a human side's unordered
+crews ever used the planning drill, so the determinism snapshot passed
+unregenerated and no `balance` table can see it.
 
 ## 13. The Lua campaign host is a second campaign-rule system
 

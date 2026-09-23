@@ -366,7 +366,7 @@ impl Evaluator {
             Some((
                 crate::battle::Mission::Advance { .. } | crate::battle::Mission::Recon { .. },
                 _,
-            )) if super::threatened(registry, state, unit) => planner.pull_under_fire,
+            )) if crate::battle::threatened(registry, state, unit) => planner.pull_under_fire,
             _ => 1.0,
         };
         let objective = match standing {

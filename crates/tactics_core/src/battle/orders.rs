@@ -1475,7 +1475,7 @@ impl BattleState {
     /// ninety.
     fn flight_destination(&self, registry: &DataRegistry, unit: UnitId) -> Option<Hex> {
         let me = self.unit(unit)?;
-        let threatening = crate::ai::threats(registry, self, unit);
+        let threatening = super::danger::threats(registry, self, unit);
         let threats: Vec<Hex> = threatening
             .iter()
             .filter_map(|id| self.unit(*id).map(|u| u.pos))
@@ -1500,7 +1500,7 @@ impl BattleState {
             .filter(|&(hex, _)| clearance(hex) == furthest)
             .max_by_key(|&(hex, cost)| {
                 (
-                    std::cmp::Reverse(worth_key(
+                    std::cmp::Reverse(super::danger::worth_key(
                         crate::battle::incoming_from(registry, self, unit, hex, &threatening).worth,
                     )),
                     std::cmp::Reverse(cost),
@@ -1557,8 +1557,6 @@ impl BattleState {
     /// dash is to strictly better ground, which is what makes the drill
     /// settle instead of oscillate.
     fn run_crew_drill(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
-        let now = self.round as u64 * registry.scale.ticks_per_round as u64
-            + self.resolving_tick().unwrap_or(0) as u64;
         let ids: Vec<UnitId> = self
             .units
             .iter()
@@ -1569,7 +1567,6 @@ impl BattleState {
             .collect();
         for id in ids {
             let Some(unit) = self.unit(id) else { continue };
-            let pos = unit.pos;
             // A crew who has stopped listening does not take the ordinary
             // drill's advice — she does what her nerve tells her. Flight is
             // the only one of the three that moves; fight and freeze are both
@@ -1612,60 +1609,16 @@ impl BattleState {
             if !unit.yields_to_drill() {
                 continue;
             }
-            let delay =
-                super::stats::reaction_delay(registry, &self.roster, unit, self.terrain_at(pos))
-                    as u64;
-            let fog = self.fog.side(unit.side);
-            // The threats she has caught up with, on the same per-enemy clock
-            // opportunity fire pays. Kept as a list rather than collapsed to
-            // a boolean because the ground she picks below is priced against
-            // these guns and no others.
-            let noticed: Vec<UnitId> = crate::ai::threats(registry, self, id)
-                .into_iter()
-                .filter(|enemy| {
-                    fog.spotted_since
-                        .get(enemy)
-                        .is_none_or(|since| now >= since + delay)
-                })
-                .collect();
+            // The orderly reaction, which the planning table's drill asks as
+            // well: the guns she has caught up with on her reaction clock,
+            // and the reachable ground where they can do least to her.
+            let noticed = super::danger::noticed_threats(registry, self, id);
             if noticed.is_empty() {
                 continue;
             }
-            // Where the guns she has noticed can do least to her — the
-            // currency, not the terrain table.
-            //
-            // This used to take the reachable tile with the highest terrain
-            // `cover`, which is a second model of what cover is for sitting
-            // beside a resolver that answers the same question exactly. The
-            // two disagree in the case the drill exists for: a wood the gun
-            // is looking straight into scores 30 and is a death trap, and the
-            // reverse slope twenty metres behind it scores 0 and cannot be
-            // shot at at all. She prices both through
-            // [`incoming_from`](crate::battle::incoming_from) now, so range,
-            // sight, elevation, facing, obliquity and the actual gun bearing
-            // on her all reach the decision — the same arithmetic the
-            // evaluator spends and the player's danger overlay draws.
-            //
-            // Restricted to the threats she has *noticed*, on the same
-            // per-enemy clock the trigger above uses: reacting to a gun she
-            // has not caught up with would be the reaction-latency defect
-            // rebuilt inside the reflex that latency is about.
-            //
-            // Strictly better ground only, as before, and for the same
-            // reason: equal danger never causes a pointless shuffle, and each
-            // dash is to ground the guns can do less on, which is what makes
-            // the drill settle instead of oscillate.
-            let danger_at = |hex: Hex| {
-                worth_key(crate::battle::incoming_from(registry, self, id, hex, &noticed).worth)
+            let Some(dest) = super::danger::drill_destination(registry, self, id, &noticed) else {
+                continue;
             };
-            let here = danger_at(pos);
-            let dest = movement::reachable(registry, self, id)
-                .into_iter()
-                .map(|(hex, cost)| (hex, cost, danger_at(hex)))
-                .filter(|&(hex, _, danger)| hex != pos && danger < here)
-                .min_by_key(|&(hex, cost, danger)| (danger, cost, hex.x, hex.y))
-                .map(|(hex, _, _)| hex);
-            let Some(dest) = dest else { continue };
             let Some((path, _)) = movement::path_to(registry, self, id, dest) else {
                 continue;
             };
@@ -2589,19 +2542,4 @@ impl BattleState {
         self.over = Some(BattleResult { winner, reason });
         events.push(Event::BattleEnded { winner, reason });
     }
-}
-
-/// A round of expected fire, as an integer key a tiebreak can be sorted on.
-///
-/// `f32` has no total order, and every "where should she stand" decision in
-/// this engine has to be settled the same way on every machine — the
-/// determinism snapshot is a byte comparison. Quantising to about a
-/// thousandth of a substance point is also the right *behaviour*: two hexes
-/// whose expected fire differs in the fourth decimal are ground the resolver
-/// cannot really tell apart, and treating them as equal lets the later keys
-/// (the cheapest drive, then the coordinate) settle it instead of a rounding
-/// artefact. Saturating on the cast handles a non-finite worth by pinning it
-/// at the ends rather than panicking.
-fn worth_key(worth: f32) -> i64 {
-    (worth * 1024.0) as i64
 }
