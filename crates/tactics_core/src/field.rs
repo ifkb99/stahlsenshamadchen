@@ -194,7 +194,13 @@ impl Clash {
             .ok_or_else(|| StagingError::MissingMap(self.map_id.clone()))?;
         let map =
             HexMap::from_map_file(file).map_err(|e| StagingError::Map(self.map_id.clone(), e))?;
-        let (placements, crews, origins) = deploy(registry, &map, &self.forces, self.attacker_side);
+        let (placements, crews, origins) = deploy(
+            registry,
+            &self.roster,
+            &map,
+            &self.forces,
+            self.attacker_side,
+        );
         let state = BattleState::from_placements(
             registry,
             map,
@@ -376,6 +382,7 @@ impl FieldBattle {
 #[allow(clippy::type_complexity)]
 pub fn deploy(
     registry: &DataRegistry,
+    roster: &Roster,
     map: &HexMap,
     forces: &[BattleForce],
     attacker_side: u8,
@@ -445,12 +452,35 @@ pub fn deploy(
                 *next += 1;
                 id
             });
-            for unit in &force.units {
+            // The army's senior cadet leads it: the vehicle carrying the
+            // highest rank, and among equals the first in the army's list —
+            // which, with no ranks declared, is the first vehicle, as it
+            // always was. Succession then works by rank the same way.
+            let senior = force
+                .units
+                .iter()
+                .enumerate()
+                .map(|(i, unit)| {
+                    let rank = unit
+                        .crew
+                        .iter()
+                        .filter_map(|c| roster.get(*c))
+                        .filter_map(|cadet| registry.rank_index(cadet.rank.as_deref()))
+                        .max();
+                    (i, rank)
+                })
+                .fold(
+                    None,
+                    |best: Option<(usize, Option<usize>)>, (i, rank)| match best {
+                        Some((_, b)) if rank <= b => best,
+                        _ => Some((i, rank)),
+                    },
+                )
+                .map(|(i, _)| i);
+            for (i, unit) in force.units.iter().enumerate() {
                 let Some(hex) = spots.next() else { break };
-                // Seniority is arrival order, exactly as it is for a map's own
-                // placements: the first vehicle into a formation leads it, and
-                // succession works down the list from there.
-                let leads = formation.as_ref().is_some_and(|id| !led.contains(id));
+                let leads =
+                    Some(i) == senior && formation.as_ref().is_some_and(|id| !led.contains(id));
                 if leads {
                     led.push(formation.clone().expect("leads implies a formation"));
                 }

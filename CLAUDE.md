@@ -337,6 +337,36 @@ enemies does this knower know of", and every brain and screen asks it —
   because a gun layer engages what her side has found, reported or not.
   `known_enemies` is about *deciding*, never about resolving.
 
+### Rank, and who commands
+
+The designer's ruling (2026-09-23): cadets hold explicit ranks, **rank
+governs orders flowing down, and information flows every way**. Tests:
+`tests/net.rs` under *rank, and who commands*.
+
+- **The ladder is data** (`ranks` in `mod.json`, lowest first, replaced
+  wholesale; `RankDef`), a character names her `rank`, and the campaign's
+  `Cadet` carries it so promotion is a campaign event. `validate-mods`
+  errors on a rank no ladder declares. **No ladder, or nobody ranked, is
+  everybody equal**, and every rule below falls back to arrival order —
+  the determinism snapshot passed unregenerated with the machinery in.
+- **`BattleState::unit_rank` is a hull's rank**: the highest of any cadet
+  aboard and still fighting (a lieutenant carried out commands nothing).
+- **Succession is by rank, then arrival order** (`pass_command`), and a
+  campaign army is led onto the field by its senior cadet (`field::deploy`,
+  first vehicle among equals).
+- **`BattleState::operational_commands(registry, side)` derives who commands
+  whom, every time it is asked.** Leaders are formation leaders and
+  unattached units; the most senior starts a command and takes every leader
+  her orders reach on the **command net** (leader to leader, any formation:
+  `informs` with `Net::Command`, the same sets, reach and masking as a
+  formation's own net, relayed if the block says so); the most senior left
+  over starts the next. A junior in contact never commands a cut-off
+  senior. No `command` block is one command under the senior leader.
+  **Nothing in the AI reads it yet** — it is PLANNING.md step 3, the seat
+  the planner's operational level will sit in.
+- **Reports are not orders.** Nothing here touches the picture; rank must
+  never gate who may share what she sees.
+
 ### Reading ground
 
 `tactics_core::ground` reads terrain the way a commander does — high

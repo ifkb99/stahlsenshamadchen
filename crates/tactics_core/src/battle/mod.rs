@@ -32,7 +32,7 @@ pub use combat::{
 };
 pub use command::{
     CommandState, Contact, CutOff, Formation, FormationId, Goal, Knower, Latitude, March, Mission,
-    MissionChange, PersonalOrder, WaitingOrders, formation_exit, nearest_exit,
+    MissionChange, OperationalCommand, PersonalOrder, WaitingOrders, formation_exit, nearest_exit,
 };
 pub use danger::{
     Bearing, Incoming, drill_destination, fire_on, fire_on_as, incoming, incoming_from,

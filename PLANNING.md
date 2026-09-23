@@ -188,9 +188,14 @@ true:
    maps side by side read as one piece of ground. Still to decide when a
    world exists: whether readings are owned per planner (today, simple, no
    save burden) or shared world-wide (cheaper once there are many planners).
-3. **Rank and dynamic operational command**: seniority on cadets, the
-   per-component senior, succession of the role. Behaviour-neutral with one
-   component and today's single plan.
+3. ~~**Rank and dynamic operational command**~~ (2026-09-23): a rank ladder
+   as mod data, rank on characters and cadets, succession and field-battle
+   leadership by rank, and `operational_commands` deriving each group's
+   senior from a new leader-to-leader command net. Behaviour-neutral: the
+   base mod declares no ladder yet, and nothing plans from the commands.
+   **The designer owes the content**: which ranks exist and who holds them.
+   Also open: `SideCommand` still speaks for the whole side; step 4 gives
+   each operational command its own planner.
 4. **One template, fix and flank**, end to end, with waypoint advances and
    one phase trigger; the plan object with assumptions and hysteresis.
    Measured on the ridge with *different* doctrines on each side — a mirror

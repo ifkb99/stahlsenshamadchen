@@ -45,6 +45,11 @@ pub struct ModManifest {
     /// existed.
     #[serde(default)]
     pub command: Option<super::CommandRules>,
+    /// The ladder of rank, lowest first. Replaced wholesale: a ladder
+    /// half-merged from two mods would put somebody's lieutenant between
+    /// somebody else's sergeants.
+    #[serde(default)]
+    pub ranks: Option<Vec<super::RankDef>>,
     /// What the engine's hexes, rounds and ticks mean in metres and seconds.
     ///
     /// Unlike a vehicle or a weapon, scale is a property of the game rather

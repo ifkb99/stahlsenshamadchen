@@ -235,6 +235,11 @@ pub struct Cadet {
     /// leaves every wounded cadet exactly where she was.
     #[serde(default)]
     pub called_up: bool,
+    /// Her rank, by [`crate::data::RankDef`] id: stamped from her definition
+    /// and kept here, on the instance, because promotion is something a
+    /// campaign does to a person and not an edit to a mod.
+    #[serde(default)]
+    pub rank: Option<String>,
 }
 
 impl Cadet {
@@ -255,6 +260,7 @@ impl Cadet {
             status: CadetStatus::Ready,
             battles: 0,
             called_up: false,
+            rank: def.rank.clone(),
         }
     }
 
@@ -770,6 +776,7 @@ mod tests {
                 .map(|g| HashMap::from([("gunnery".into(), g)]))
                 .unwrap_or_default(),
             traits: Vec::new(),
+            rank: None,
         }
     }
 
