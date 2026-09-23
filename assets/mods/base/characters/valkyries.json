@@ -1,6 +1,7 @@
 [
     {
         "id": "irma",
+        "rank": "captain",
         "name": "Irma Krieger",
         "bio": "Captain of the Iron Valkyries. Textbook doctrine, ruthlessly applied.",
         "cores": {
@@ -64,6 +65,7 @@
     },
     {
         "id": "sofia",
+        "rank": "sergeant",
         "name": "Sofia Ravenna",
         "bio": "Valkyrie flanker. Fights on instinct and espresso.",
         "cores": {
@@ -149,6 +151,7 @@
     },
     {
         "id": "britta",
+        "rank": "sergeant",
         "name": "Britta Ehlers",
         "bio": "Delivers her platoon on time, on the right hex, and not one metre further.",
         "cores": {
@@ -182,6 +185,7 @@
     },
     {
         "id": "zofia",
+        "rank": "lieutenant",
         "name": "Zofia Nowak",
         "bio": "Fights the platoon like a chess problem she has seen before.",
         "cores": {
@@ -217,6 +221,7 @@
     },
     {
         "id": "ingrid",
+        "rank": "lieutenant",
         "name": "Ingrid Stahl",
         "bio": "Picks the hedge, picks the range, and waits. The Valkyries' most patient cadet.",
         "cores": {
@@ -269,6 +274,7 @@
     },
     {
         "id": "hedda",
+        "rank": "lieutenant",
         "name": "Hedda Ziegler",
         "bio": "Commands sixty tonnes at walking pace and has never once been late.",
         "cores": {
@@ -351,6 +357,7 @@
     },
     {
         "id": "alma",
+        "rank": "sergeant",
         "name": "Alma Reiter",
         "bio": "Old for a cadet, calm for anyone.",
         "cores": {
@@ -382,6 +389,7 @@
     },
     {
         "id": "erika",
+        "rank": "sergeant",
         "name": "Erika Thal",
         "bio": "Doctrine first, and doctrine says get in among them.",
         "cores": {

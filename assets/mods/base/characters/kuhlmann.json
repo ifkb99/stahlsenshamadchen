@@ -1,6 +1,7 @@
 [
     {
         "id": "anka",
+        "rank": "captain",
         "name": "Anka Weiss",
         "bio": "Calm under fire. Commands the school's medium tank like she was born in it.",
         "cores": {
@@ -109,6 +110,7 @@
     },
     {
         "id": "hanne",
+        "rank": "lieutenant",
         "name": "Hanne Bergmann",
         "bio": "Third-year. Reads the ground before the briefing gets to it, and says so.",
         "cores": {
@@ -159,6 +161,7 @@
     },
     {
         "id": "lore",
+        "rank": "sergeant",
         "name": "Lore Hartmann",
         "bio": "Keeps the platoon's kit, its mail and its secrets, and loses none of them.",
         "cores": {
@@ -191,6 +194,7 @@
     },
     {
         "id": "sigrun",
+        "rank": "lieutenant",
         "name": "Sigrun Falk",
         "bio": "Runs the platoon the way she runs everything: at a walk, out in front.",
         "cores": {
@@ -226,6 +230,7 @@
     },
     {
         "id": "katrin",
+        "rank": "lieutenant",
         "name": "Katrin Zeller",
         "bio": "Second Company's senior cadet by three weeks, and has never once let it go.",
         "cores": {
@@ -288,6 +293,7 @@
     },
     {
         "id": "vera",
+        "rank": "sergeant",
         "name": "Vera Sandoval",
         "bio": "Argues with the plan, then carries it out exactly.",
         "cores": {
@@ -337,6 +343,7 @@
     },
     {
         "id": "wilma",
+        "rank": "sergeant",
         "name": "Wilma Sorge",
         "bio": "Worries professionally, which is most of what a commander does.",
         "cores": {
@@ -372,6 +379,7 @@
     },
     {
         "id": "traudl",
+        "rank": "sergeant",
         "name": "Traudl Kessler",
         "bio": "Loud, organised, and the reason Second Company arrives anywhere at all.",
         "cores": {
