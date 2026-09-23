@@ -131,6 +131,11 @@
             "side": 0
         },
         {
+            "id": "kuhlmann_reserve",
+            "name": "2nd Armored Platoon",
+            "side": 0
+        },
+        {
             "id": "valkyrie_line",
             "name": "Valkyrie Armor",
             "side": 1
@@ -148,6 +153,11 @@
         {
             "id": "valkyrie_screen",
             "name": "Valkyrie Vedette",
+            "side": 1
+        },
+        {
+            "id": "valkyrie_reserve",
+            "name": "Valkyrie Reserve",
             "side": 1
         }
     ],
@@ -294,6 +304,29 @@
         },
         {
             "at": [
+                6,
+                18
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Hammer 1",
+            "crew": [],
+            "formation": "kuhlmann_reserve",
+            "leads": true
+        },
+        {
+            "at": [
+                6,
+                22
+            ],
+            "side": 0,
+            "vehicle": "light_tank",
+            "name": "Hammer 2",
+            "crew": [],
+            "formation": "kuhlmann_reserve"
+        },
+        {
+            "at": [
                 36,
                 20
             ],
@@ -431,6 +464,29 @@
             ],
             "formation": "valkyrie_screen",
             "leads": true
+        },
+        {
+            "at": [
+                34,
+                18
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Donar 1",
+            "crew": [],
+            "formation": "valkyrie_reserve",
+            "leads": true
+        },
+        {
+            "at": [
+                34,
+                22
+            ],
+            "side": 1,
+            "vehicle": "light_tank",
+            "name": "Donar 2",
+            "crew": [],
+            "formation": "valkyrie_reserve"
         }
     ],
     "objectives": [

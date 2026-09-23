@@ -198,6 +198,16 @@ WEST_ORDER = [
     ("kuhlmann_grenadiers", (7, 21), "halftrack", "Grenadier 1", ["lotte", "wilma"], True, None),
     ("kuhlmann_grenadiers", (8, 21), "rifle_platoon", "Grenadier 2", ["ines", "traudl"], False, (7, 21)),
     ("kuhlmann_screen", (4, 18), "scout_section", "Spaeher", ["sigrun"], True, None),
+    # A second armoured group, behind the line's flanks: the element a
+    # commander can manoeuvre with while the line holds. Before it every side
+    # had one armoured formation — the grenadiers walk, the scouts carry the
+    # guns and so are a base of fire, the screen is eyes — and a play that
+    # needs two formations to move was never possible on a shipped map
+    # (PLANNING.md step 4). Crewed by nobody named: the roster's forty-nine
+    # already fill fifty seats less one, and an unnamed crew is an average one
+    # on both sides alike, which keeps the mirror a mirror.
+    ("kuhlmann_reserve", (6, 18), "medium_tank", "Hammer 1", [], True, None),
+    ("kuhlmann_reserve", (6, 22), "light_tank", "Hammer 2", [], False, None),
 ]
 
 # The same nine, crewed from the other academy. Kept as a parallel list rather
@@ -237,6 +247,8 @@ EAST_CREWS = [
     ("valkyrie_grenadiers", "Sturm 1", ["odette", "sanna"]),
     ("valkyrie_grenadiers", "Sturm 2", ["alma", "cecile"]),
     ("valkyrie_screen", "Vixen", ["ludmila"]),
+    ("valkyrie_reserve", "Donar 1", []),
+    ("valkyrie_reserve", "Donar 2", []),
 ]
 
 FORMATIONS = [
@@ -251,10 +263,12 @@ FORMATIONS = [
     # the battery's job is the more specific one. Two units that do different
     # things want two formations.
     {"id": "kuhlmann_screen", "name": "Screening Section", "side": 0},
+    {"id": "kuhlmann_reserve", "name": "2nd Armored Platoon", "side": 0},
     {"id": "valkyrie_line", "name": "Valkyrie Armor", "side": 1},
     {"id": "valkyrie_grenadiers", "name": "Valkyrie Grenadiers", "side": 1},
     {"id": "valkyrie_scouts", "name": "Valkyrie Screen", "side": 1},
     {"id": "valkyrie_screen", "name": "Valkyrie Vedette", "side": 1},
+    {"id": "valkyrie_reserve", "name": "Valkyrie Reserve", "side": 1},
 ]
 
 
