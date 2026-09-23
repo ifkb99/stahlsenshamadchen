@@ -298,6 +298,7 @@ fn risk_score(reg: &DataRegistry, state: &BattleState, unit: UnitId, tile: [i32;
         route_caution: 0.0,
         contest_aversion: 0.0,
         screening: 0.0,
+        teaches: Vec::new(),
     });
     evaluator
         .score_tile(

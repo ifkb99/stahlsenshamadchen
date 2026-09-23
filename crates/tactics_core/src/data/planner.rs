@@ -166,6 +166,22 @@ fn elevation_prior() -> f32 {
     0.4
 }
 
+fn plan_breadth_base() -> i32 {
+    8
+}
+fn plan_breadth_step() -> i32 {
+    3
+}
+fn plan_sure_level() -> i32 {
+    16
+}
+fn plan_misjudge_per_level() -> f32 {
+    1.0
+}
+fn plan_commitment() -> f32 {
+    10.0
+}
+
 /// Serde's default for [`PlannerRules::outlook_range`].
 fn outlook_range() -> u32 {
     12
@@ -670,6 +686,33 @@ pub struct PlannerRules {
     /// hexes. Twelve is 1.2 km, about what the shipped gun tanks see.
     #[serde(default = "outlook_range")]
     pub outlook_range: u32,
+    /// **Planning strength is the commander's stats, not the side's
+    /// difficulty** — the designer's ruling of 2026-09-23. Her `command`
+    /// skill decides how many options she weighs and how well she judges
+    /// them, and her `will` how stubbornly she holds a plan (the ids are the
+    /// engine's contract with the base mod, like `signals`; see
+    /// `crate::ai::plan`). This is the level at which she weighs one option
+    /// per role — one firing
+    /// position, one flank — and no more.
+    #[serde(default = "plan_breadth_base")]
+    pub plan_breadth_base: i32,
+    /// Levels above that for each further option she weighs.
+    #[serde(default = "plan_breadth_step")]
+    pub plan_breadth_step: i32,
+    /// The level at which she judges every option exactly as the ground
+    /// has it. Below it she misjudges each by up to
+    /// [`Self::plan_misjudge_per_level`] per level short, in plan-score
+    /// units (roughly movement points).
+    #[serde(default = "plan_sure_level")]
+    pub plan_sure_level: i32,
+    #[serde(default = "plan_misjudge_per_level")]
+    pub plan_misjudge_per_level: f32,
+    /// How much better, in plan-score units, a new plan has to look before a
+    /// commander of average `will` drops the one she has — scaled by her
+    /// `will` over average. Zero dithers; a great deal is the script plans
+    /// exist to replace.
+    #[serde(default = "plan_commitment")]
+    pub plan_commitment: f32,
 
     #[serde(default = "kill_bonus")]
     pub kill_bonus: f32,
@@ -835,6 +878,12 @@ impl Default for PlannerRules {
             elevation_prior: elevation_prior(),
             eyes_ratio_percent: eyes_ratio_percent(),
             outlook_range: outlook_range(),
+            plan_breadth_base: plan_breadth_base(),
+            plan_breadth_step: plan_breadth_step(),
+            plan_sure_level: plan_sure_level(),
+            plan_misjudge_per_level: plan_misjudge_per_level(),
+            plan_commitment: plan_commitment(),
+
             kill_bonus: kill_bonus(),
             attack_worth: attack_worth(),
             attack_floor: attack_floor(),

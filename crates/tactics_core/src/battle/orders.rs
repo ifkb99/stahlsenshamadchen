@@ -143,6 +143,15 @@ pub enum Order {
     /// Get off, onto the first free tile beside the carrier, at the next
     /// transport pass. Dismounting into an ambush is a thing that happens.
     Dismount { unit: UnitId },
+    /// Record, replace or drop a commander's plan ([`crate::battle::Plan`]).
+    /// Not an order to anybody: the plan's orders are ordinary missions,
+    /// given separately. This is the commander writing down what she means,
+    /// on the battle rather than in her head, so a saved battle remembers it.
+    SetPlan {
+        side: u8,
+        commander: UnitId,
+        plan: Option<crate::battle::Plan>,
+    },
     /// This side is done planning. When every side with units has committed,
     /// the round starts resolving.
     Commit { side: u8 },
@@ -427,6 +436,31 @@ pub enum Event {
         formation: String,
         mission: Mission,
     },
+    /// A commander chose a plan: `fix` holds the enemy, `manoeuvre` goes
+    /// round.
+    PlanAdopted {
+        commander: UnitId,
+        template: String,
+        fix: String,
+        manoeuvre: String,
+    },
+    /// The word is given: the manoeuvre element goes in.
+    PlanGoing {
+        commander: UnitId,
+        template: String,
+    },
+    /// A commander set her plan aside — it stopped being true, or a better
+    /// one replaced it.
+    PlanDropped {
+        commander: UnitId,
+        template: String,
+    },
+    /// A plan ran its course: the flankers are in, or the enemy it was aimed
+    /// at is gone. Her formations go back to the ground they were given.
+    PlanDone {
+        commander: UnitId,
+        template: String,
+    },
     /// A mission finished travelling and is now the formation's standing
     /// order. Only ever emitted when a mod prices latency — with no `command`
     /// block a mission arrives the instant it is given, and saying so twice
@@ -631,6 +665,11 @@ impl Event {
             | Event::OrdersWaiting { unit }
             | Event::OrdersDelivered { unit }
             | Event::ContactRestored { unit }
+            // What she means to do is her side's business, like her orders.
+            | Event::PlanAdopted { commander: unit, .. }
+            | Event::PlanGoing { commander: unit, .. }
+            | Event::PlanDropped { commander: unit, .. }
+            | Event::PlanDone { commander: unit, .. }
             // Her nerve is inside the hull with everything else. You can see
             // her tank reverse out of the line — `UnitMoved` is side-blind
             // and the sprite does it in front of you — and you may draw your
@@ -841,6 +880,11 @@ impl BattleState {
                 mission,
                 latitude,
             } => self.push_mission(registry, *formation, mission.clone(), *latitude),
+            Order::SetPlan {
+                side,
+                commander,
+                plan,
+            } => self.set_plan(*side, *commander, plan.clone()),
             Order::Commit { side } => self.commit(*side),
         }
     }

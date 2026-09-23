@@ -29,7 +29,7 @@
 //! events and to make AI decisions, and an iteration-order dependency in that
 //! walk is exactly the bug that hid in `fog::recompute` for months.
 
-use super::{BattleState, Event, FireIntent, Unit, UnitId};
+use super::{BattleState, Event, FireIntent, OrderError, Unit, UnitId};
 use crate::data::DataRegistry;
 use crate::map::{FormationDef, Objective, ObjectiveKind, UnitPlacement};
 use hexx::Hex;
@@ -887,6 +887,63 @@ pub struct CommandState {
     /// spot and there is nothing to hold.
     #[serde(default)]
     waiting: Vec<(UnitId, WaitingOrders)>,
+    /// The plans commanders have in flight, one per commander at most,
+    /// sorted by side and then commander.
+    ///
+    /// On the battle rather than in the planner that made them, for the
+    /// reason a `Goal` lives on the unit: a battle forked through a save file
+    /// has to have the same future, and a planner's private memory does not
+    /// survive that. `#[serde(default)]`: a save from before plans opens with
+    /// nobody planning anything, which is what was true of it.
+    #[serde(default)]
+    plans: Vec<Plan>,
+}
+
+/// A commander's plan in flight: a template matched onto ground, and how far
+/// through it she is. See `crate::ai::plan` for how one is chosen and
+/// PLANNING.md for why plans exist at all.
+///
+/// A record of intent, not a rule: nothing in the engine reads it to decide
+/// what happens. The orders a plan produces are ordinary missions, carried by
+/// the ordinary net at its ordinary speed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Plan {
+    pub side: u8,
+    /// Whose plan it is: the unit carrying the commanding cadet.
+    pub commander: UnitId,
+    /// The [`crate::data::TemplateDef`] id.
+    pub template: String,
+    /// The formation that takes the firing position and holds the enemy.
+    pub fix: FormationId,
+    /// The formation that goes round.
+    pub manoeuvre: FormationId,
+    /// The enemy being fixed and flanked.
+    pub target: UnitId,
+    pub fire_position: Hex,
+    /// Where the manoeuvre element waits, unseen if the ground allows, for
+    /// the word to go.
+    pub assembly: Hex,
+    /// The ground off the enemy's frontal arc it goes in to.
+    pub flank: Hex,
+    pub phase: PlanPhase,
+    /// What the plan scored when it was chosen, in hundredths — an integer so
+    /// that comparing it is exact on every machine.
+    pub score: i32,
+    /// The round by which the word to go is given whatever else has
+    /// happened: when the flankers should have arrived, and two rounds'
+    /// grace. A plan that waits for ever leaves half the force sitting at an
+    /// assembly point, which the first measurements showed it doing.
+    pub go_by: u32,
+}
+
+/// How far through a plan its commander is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanPhase {
+    /// The elements are moving to their positions.
+    Forming,
+    /// The word has been given: the manoeuvre element is going in.
+    Going,
 }
 
 impl CommandState {
@@ -941,6 +998,7 @@ impl CommandState {
             pictures: Vec::new(),
             waiting: Vec::new(),
             voiceless: Vec::new(),
+            plans: Vec::new(),
         }
     }
 
@@ -1756,6 +1814,94 @@ impl BattleState {
                 }
             }
         }
+    }
+
+    /// The plans in flight on `side`, by commander.
+    pub fn plans(&self, side: u8) -> impl Iterator<Item = &Plan> {
+        self.command.plans.iter().filter(move |p| p.side == side)
+    }
+
+    /// The plan `commander` has in flight, if any.
+    pub fn plan_of(&self, commander: UnitId) -> Option<&Plan> {
+        self.command.plans.iter().find(|p| p.commander == commander)
+    }
+
+    /// Record, replace or drop `commander`'s plan, and say so to her side.
+    pub(super) fn set_plan(
+        &mut self,
+        side: u8,
+        commander: UnitId,
+        plan: Option<Plan>,
+    ) -> Result<Vec<Event>, OrderError> {
+        let own = self.unit(commander).ok_or(OrderError::NoSuchUnit)?.side;
+        if own != side
+            || plan
+                .as_ref()
+                .is_some_and(|p| p.side != side || p.commander != commander)
+        {
+            return Err(OrderError::NoSuchSide);
+        }
+        if self.has_committed(side) {
+            return Err(OrderError::AlreadyCommitted);
+        }
+        let before = self
+            .command
+            .plans
+            .iter()
+            .position(|p| p.commander == commander);
+        let old = before.map(|i| self.command.plans.remove(i));
+        let mut events = Vec::new();
+        match (&old, &plan) {
+            (Some(was), None) => {
+                let done = was.phase == PlanPhase::Going
+                    && self
+                        .command
+                        .formations
+                        .get(was.manoeuvre.index())
+                        .and_then(|f| f.leader)
+                        .and_then(|id| self.unit(id))
+                        .is_some_and(|u| u.pos.distance_to(was.flank) <= 1)
+                    || self.unit(was.target).is_none();
+                events.push(if done {
+                    Event::PlanDone {
+                        commander,
+                        template: was.template.clone(),
+                    }
+                } else {
+                    Event::PlanDropped {
+                        commander,
+                        template: was.template.clone(),
+                    }
+                });
+            }
+            (Some(was), Some(now))
+                if was.template == now.template
+                    && was.fix == now.fix
+                    && was.manoeuvre == now.manoeuvre
+                    && was.phase == PlanPhase::Forming
+                    && now.phase == PlanPhase::Going =>
+            {
+                events.push(Event::PlanGoing {
+                    commander,
+                    template: now.template.clone(),
+                });
+            }
+            (Some(was), Some(now)) if was == now => {}
+            (_, Some(now)) => events.push(Event::PlanAdopted {
+                commander,
+                template: now.template.clone(),
+                fix: self.command.formations[now.fix.index()].id.clone(),
+                manoeuvre: self.command.formations[now.manoeuvre.index()].id.clone(),
+            }),
+            (None, None) => {}
+        }
+        if let Some(plan) = plan {
+            self.command.plans.push(plan);
+            self.command
+                .plans
+                .sort_by_key(|p| (p.side, p.commander.index()));
+        }
+        Ok(events)
     }
 
     /// The command picture: what `side`'s commander has been *told* is out

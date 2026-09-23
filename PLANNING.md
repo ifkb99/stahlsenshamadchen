@@ -196,10 +196,50 @@ true:
    **The designer owes the content**: which ranks exist and who holds them.
    Also open: `SideCommand` still speaks for the whole side; step 4 gives
    each operational command its own planner.
-4. **One template, fix and flank**, end to end, with waypoint advances and
-   one phase trigger; the plan object with assumptions and hysteresis.
-   Measured on the ridge with *different* doctrines on each side — a mirror
-   match hides everything (the symmetric null).
+4. **One template, fix and flank** — *built 2026-09-23, not yet winning.*
+   Everything the design called for exists and is tested: templates as data,
+   repertoires from academy and cadet, planning strength from the commander's
+   `command` and `will`, one planner per operational command, plans on the
+   battle with review, commitment, a deadline and completion, and the play
+   priced wholly in the currency. `examples/plans` measures it.
+
+   **What it measured** (96 battles a row, two seed offsets, ridge arena,
+   four mediums a side in two formations):
+
+   | row | vs mediums | vs heavies |
+   | --- | --- | --- |
+   | control (nobody taught) | 46, 44 | 17, 15 |
+   | A taught | 43, 35 | 7, 8 |
+   | A strong commander | 42, 40 | 14, 11 |
+
+   Plans form (about two a battle) and flank hits rise a few points, but the
+   side that knows the play does not win more, and the stronger commander
+   does not either. On the shipped battlefields plans are almost never
+   adopted: each side has one armoured line, and infantry and scouts are
+   given other jobs, so no commander has two formations to manoeuvre with.
+
+   **What the traces showed** and was fixed on the way: a flat worth per
+   flank face (fixed by pricing the flank in worth), no price for splitting
+   the force (fixed by charging the fire the fix takes alone), plans that
+   abandoned the objectives (fixed by making them serve the goal), flankers
+   idling at their assembly point (a deadline), and a commander recalling
+   her own assault in the review that ordered it (a going plan is carried
+   through). None of it turned the win column.
+
+   **What I think is still wrong, for the next session:**
+   - *The enemy is not fixed.* Two tanks on a firing position do not pin
+     four; he attacks them. The play needs the fix to be the stronger part
+     or the better ground, or the enemy to be committed elsewhere — a
+     question for the template's roles, not its weights.
+   - *The score is a model of a battle, and the battle is the engine.* A
+     plan could be scored by playing it out: a few rounds of the real
+     resolver on a fog-honest copy (`mcts::determinize`), the plan against
+     the ordinary allocation, for the top two or three candidates only.
+     That is search over *plans*, a handful of rollouts a review, and it
+     answers "does this beat not planning" with the game rather than a
+     guess. MCTS failed because it searched moves with a weak evaluator;
+     this would search plans with the strongest evaluator there is.
+   - *The content gives nobody two manoeuvre elements* on a shipped map.
 5. The library, doctrine preferences as data, and the player's orders in the
    same vocabulary.
 

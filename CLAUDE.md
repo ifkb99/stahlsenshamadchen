@@ -367,6 +367,41 @@ governs orders flowing down, and information flows every way**. Tests:
 - **Reports are not orders.** Nothing here touches the picture; rank must
   never gate who may share what she sees.
 
+### Plans
+
+PLANNING.md step 4, `ai/plan.rs`. **No shipped doctrine teaches a play
+yet**, because the one play built has not been shown to win (below), so
+shipped battles are unchanged and the determinism snapshot passed
+unregenerated. `examples/plans` teaches it to measure it; `tests/plans.rs`.
+
+- **Templates are data, their algorithm is Rust** (`TemplateDef`,
+  `TemplateKind::FixAndFlank` and its numbers; `templates/` in a mod).
+  A cadet knows what her academy teaches (`DoctrineDef::teaches`) plus her
+  own (`CharacterDef::templates`, carried on the `Cadet`); validate-mods
+  refuses a play nobody declares.
+- **One planner per operational command**, inside `SideCommand::review_plans`:
+  the commander's repertoire, matched onto the ground, before the
+  round-robin of objectives, which skips formations a plan speaks for.
+- **Planning strength is the commanding cadet's stats** (`plan::Strength`,
+  the designer's ruling): `command` sets how many options she weighs
+  (`planner.plan_breadth_*`) and how badly she misjudges them
+  (`plan_sure_level`, `plan_misjudge_per_level`); `will` scales her
+  commitment (`plan_commitment`). The skill and core ids are engine
+  constants, like `signals`. Difficulty stays the executor's.
+- **Everything is priced in the currency**: the flank's gain is the
+  manoeuvre element's worth per round from the flank less from beside the
+  fix (`best_weapon_from`); splitting the force costs the `incoming` the
+  fix takes alone for every round the flankers are away; a firing position
+  on scoring ground earns `planner.score_worth` a round. The first two
+  drafts priced a flank flatly and ignored the split, and lost battles.
+- **A plan lives on the battle** (`CommandState::plans`, `Order::SetPlan`,
+  `#[serde(default)]`), so a save remembers it. Its events are its own
+  side's business. It changes: reviewed on every pulse and interrupt,
+  re-scored, replaced only past the commitment margin — **but never once
+  the word is given**: a going plan is carried through while it stands
+  (the first measurement caught a commander recalling her own assault).
+  The trigger is checked every round and has a deadline (`go_by`).
+
 ### Reading ground
 
 `tactics_core::ground` reads terrain the way a commander does — high

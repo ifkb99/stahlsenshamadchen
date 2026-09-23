@@ -112,6 +112,8 @@ pub struct DataRegistry {
     pub radios: HashMap<String, RadioDef>,
     pub terrain: HashMap<String, TerrainDef>,
     pub doctrines: HashMap<String, DoctrineDef>,
+    /// Tactical templates by id ([`super::TemplateDef`]).
+    pub templates: HashMap<String, super::TemplateDef>,
     pub maps: HashMap<String, MapFile>,
 }
 
@@ -277,6 +279,10 @@ impl DataRegistry {
         self.doctrines.get(id)
     }
 
+    pub fn template(&self, id: &str) -> Option<&super::TemplateDef> {
+        self.templates.get(id)
+    }
+
     pub fn map(&self, id: &str) -> Option<&MapFile> {
         self.maps.get(id)
     }
@@ -306,6 +312,9 @@ impl DataRegistry {
         load_defs(&dir.join("doctrines"), report, |d: DoctrineDef| {
             self.doctrines.insert(d.id.clone(), d);
         })?;
+        load_defs(&dir.join("templates"), report, |d: super::TemplateDef| {
+            self.templates.insert(d.id.clone(), d);
+        })?;
         load_defs(&dir.join("maps"), report, |d: MapFile| {
             self.maps.insert(d.id.clone(), d);
         })?;
@@ -326,6 +335,30 @@ impl DataRegistry {
                 report.error(format!(
                     "character `{}` holds rank `{rank}`, which no mod's `ranks` ladder declares",
                     c.id
+                ));
+            }
+        }
+        // A template nobody declared is a play nobody can run: refused, like
+        // an undeclared rank, rather than quietly never chosen.
+        let mut taught: Vec<(String, String)> = self
+            .doctrines
+            .values()
+            .flat_map(|d| {
+                d.teaches
+                    .iter()
+                    .map(|t| (format!("doctrine `{}`", d.id), t.clone()))
+            })
+            .chain(self.characters.values().flat_map(|c| {
+                c.templates
+                    .iter()
+                    .map(|t| (format!("character `{}`", c.id), t.clone()))
+            }))
+            .collect();
+        taught.sort();
+        for (who, template) in taught {
+            if !self.templates.contains_key(&template) {
+                report.error(format!(
+                    "{who} knows template `{template}`, which no mod declares"
                 ));
             }
         }

@@ -79,6 +79,10 @@ pub struct CharacterDef {
     /// ladder — and, on a mod that declares no ladder, everybody's rank.
     #[serde(default)]
     pub rank: Option<String>,
+    /// Templates she knows beyond what her academy teaches, by
+    /// [`crate::data::TemplateDef`] id.
+    #[serde(default)]
+    pub templates: Vec<String>,
 }
 
 /// Directional armor. Which facing an incoming shot strikes is derived from
@@ -565,6 +569,12 @@ pub struct DoctrineDef {
     /// ever produced one.
     #[serde(default)]
     pub screening: f32,
+    /// The templates this academy teaches, by [`crate::data::TemplateDef`] id:
+    /// what every graduate knows before she has learned anything herself.
+    /// Empty is an academy that teaches no plays, whose commanders divide the
+    /// ground among their formations as commanders always have here.
+    #[serde(default)]
+    pub teaches: Vec<String>,
 }
 
 fn default_objective_value() -> f32 {
@@ -600,6 +610,7 @@ impl Default for DoctrineDef {
             route_caution: 0.6,
             contest_aversion: 0.3,
             screening: 0.0,
+            teaches: Vec::new(),
         }
     }
 }

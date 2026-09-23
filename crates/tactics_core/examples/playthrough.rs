@@ -319,6 +319,34 @@ fn main() {
                 Event::MissionAssigned { formation, mission } => {
                     println!("   >> {formation} ordered to {mission:?}")
                 }
+                Event::PlanAdopted {
+                    commander,
+                    template,
+                    fix,
+                    manoeuvre,
+                } => println!(
+                    "   >> {} plans {template}: {fix} fixes, {manoeuvre} goes round",
+                    name(&state, *commander)
+                ),
+                Event::PlanGoing {
+                    commander,
+                    template,
+                } => {
+                    println!(
+                        "   >> {} gives the word: {template}, go",
+                        name(&state, *commander)
+                    )
+                }
+                Event::PlanDone {
+                    commander,
+                    template,
+                } => println!("   >> {}: {template} done", name(&state, *commander)),
+                Event::PlanDropped {
+                    commander,
+                    template,
+                } => {
+                    println!("   >> {} sets {template} aside", name(&state, *commander))
+                }
                 // The two halves of an order travelling: sent above, arrived
                 // here. A narrator that printed only the first would make a
                 // formation look disobedient for the ticks in between, which

@@ -26,6 +26,7 @@ mod driver;
 mod eval;
 pub mod goal;
 mod mcts;
+pub mod plan;
 mod utility;
 
 pub use command::SideCommand;

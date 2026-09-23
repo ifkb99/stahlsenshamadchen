@@ -1464,6 +1464,44 @@ fn pump_events(
             // already read, not inferred afterwards. Both commanders speak
             // here — the enemy's brain and the player's own keystroke — which
             // is the point of routing missions through the order stream.
+            // A commander's plan, in her own words: what she means to do and
+            // with whom, so a formation that suddenly drives the long way round
+            // has a reason on the page.
+            BattleEvent::PlanAdopted {
+                commander,
+                template,
+                fix,
+                manoeuvre,
+            } => {
+                let play = mods_template_name(&mods.0, template);
+                log.push(format!(
+                    "{}: {play} — {} fixes, {} goes round.",
+                    name(*commander),
+                    formation_name(&battle.state, fix),
+                    formation_name(&battle.state, manoeuvre)
+                ));
+            }
+            BattleEvent::PlanGoing {
+                commander,
+                template,
+            } => {
+                let play = mods_template_name(&mods.0, template);
+                log.push(format!("{}: {play} — go.", name(*commander)));
+            }
+            BattleEvent::PlanDone {
+                commander,
+                template,
+            } => {
+                let play = mods_template_name(&mods.0, template);
+                log.push(format!("{}: {play} — done.", name(*commander)));
+            }
+            BattleEvent::PlanDropped {
+                commander,
+                template,
+            } => {
+                let play = mods_template_name(&mods.0, template);
+                log.push(format!("{} sets the {play} aside.", name(*commander)));
+            }
             BattleEvent::MissionAssigned { formation, mission } => {
                 let who = formation_name(&battle.state, formation);
                 log.push(format!(
@@ -3119,6 +3157,14 @@ fn finish_battle(
     commands.remove_resource::<Battle>();
     commands.remove_resource::<PendingBattle>();
     next.set(AppState::Overworld);
+}
+
+/// A template's display name, or its id where no mod names it.
+fn mods_template_name(registry: &tactics_core::data::DataRegistry, id: &str) -> String {
+    registry
+        .template(id)
+        .map(|t| t.name.clone())
+        .unwrap_or_else(|| id.to_string())
 }
 
 #[cfg(test)]
