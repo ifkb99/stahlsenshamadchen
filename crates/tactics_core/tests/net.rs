@@ -1126,6 +1126,11 @@ fn a_loss_condition_must_name_a_formation_of_its_own_side() {
 /// set's reach and a test can place leaders in or out of it by distance.
 fn ranked(radius: Option<u32>, holders: &[(&str, &str)]) -> DataRegistry {
     let mut reg = common::seen(registry());
+    // Only the holders this test names: the base mod ranks cadets of its own,
+    // and a test about who outranks whom must not inherit them.
+    for character in reg.characters.values_mut() {
+        character.rank = None;
+    }
     reg.ranks = ["sergeant", "lieutenant", "captain"]
         .iter()
         .map(|id| tactics_core::data::RankDef {
