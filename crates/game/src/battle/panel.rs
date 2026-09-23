@@ -516,7 +516,15 @@ pub(super) fn format_danger(
     let Some(me) = state.unit(unit) else {
         return String::new();
     };
-    let bearings = tactics_core::battle::fire_on(registry, state, unit, at);
+    // The commander's knowledge, not her crew's: the panel is the player's,
+    // and a gun it names has to be one the board draws for her.
+    let bearings = tactics_core::battle::fire_on_as(
+        registry,
+        state,
+        tactics_core::battle::Knower::Commander(me.side),
+        unit,
+        at,
+    );
     // Named as a place when it is one and as her own ground when it is not.
     // "Danger at (10,20)" for the hex she is already parked on reads as a
     // question about somewhere else, and the player would go looking for it.
@@ -890,7 +898,13 @@ mod tests {
         let reg = registry();
         let state = face_to_face(&reg);
         let me = state.units.iter().find(|u| u.side == 0).expect("ours");
-        let bearings = tactics_core::battle::fire_on(&reg, &state, me.id, me.pos);
+        let bearings = tactics_core::battle::fire_on_as(
+            &reg,
+            &state,
+            tactics_core::battle::Knower::Commander(me.side),
+            me.id,
+            me.pos,
+        );
         assert!(
             !bearings.is_empty(),
             "the stage is meaningless if nothing bears on her"

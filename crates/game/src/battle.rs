@@ -18,8 +18,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use tactics_core::Hex;
 use tactics_core::ai::{AiConfig, AiDriver, SideCommand, make_battle_planner};
 use tactics_core::battle::{
-    BattleState, EndReason, Event as BattleEvent, FireIntent, Formation, FormationId, Latitude,
-    Mission, Order, Unit, UnitId, formation_exit, reachable,
+    BattleState, EndReason, Event as BattleEvent, FireIntent, Formation, FormationId, Knower,
+    Latitude, Mission, Order, Unit, UnitId, formation_exit, reachable,
 };
 use tactics_core::field::{Clash, FieldBattle, StagingError};
 use tactics_core::map::ObjectiveKind;
@@ -2639,10 +2639,21 @@ fn update_highlights(
                 // different game from her opponent — and since cadence and
                 // pressure joined that number, a tint summing single shots of
                 // damage would be showing her a game nobody is playing.
-                let total: f32 = tactics_core::battle::fire_on(&mods.0, &battle.state, unit, hex)
-                    .iter()
-                    .map(|bearing| bearing.worth_per_round())
-                    .sum();
+                //
+                // Asked with the commander's knowledge, which is hers: the
+                // tint outlines only guns the board draws for her. Her crew's
+                // own unreported sightings stay her crew's, the same way the
+                // sprites do.
+                let total: f32 = tactics_core::battle::fire_on_as(
+                    &mods.0,
+                    &battle.state,
+                    Knower::Commander(view_side),
+                    unit,
+                    hex,
+                )
+                .iter()
+                .map(|bearing| bearing.worth_per_round())
+                .sum();
                 battle.danger.insert(hex, total);
             }
         }

@@ -29,7 +29,7 @@
 //! events and to make AI decisions, and an iteration-order dependency in that
 //! walk is exactly the bug that hid in `fog::recompute` for months.
 
-use super::{BattleState, Event, FireIntent, UnitId};
+use super::{BattleState, Event, FireIntent, Unit, UnitId};
 use crate::data::DataRegistry;
 use crate::map::{FormationDef, Objective, ObjectiveKind, UnitPlacement};
 use hexx::Hex;
@@ -87,6 +87,16 @@ pub fn formation_exit(state: &BattleState, formation: usize) -> Option<String> {
         .or_else(|| formation.members.iter().find_map(|id| state.unit(*id)))
         .map(|u| u.pos)?;
     nearest_exit(state, formation.side, from)
+}
+
+/// Whose knowledge a question about the enemy is asked with. See
+/// [`BattleState::known_enemies`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Knower {
+    /// A side's commander: what has been reported to her.
+    Commander(u8),
+    /// One crew: what she has been told, if she can hear, and what she sees.
+    Crew(UnitId),
 }
 
 /// The skill that decides how far a leader's orders carry.
@@ -1595,6 +1605,66 @@ impl BattleState {
             .unwrap_or(&[])
     }
 
+    /// The enemies `who` knows are out there, in unit-id order: the one
+    /// answer to that question for every brain and every screen.
+    ///
+    /// Two knowers, because the picture above exists to make them differ:
+    ///
+    /// - **A commander** — the player, or the AI's mission review — knows
+    ///   what has been *reported*: the fresh contacts in her picture. A ghost
+    ///   is where somebody was, not somebody to plan against.
+    /// - **A crew** — the executor planning her round, the drill, the rout,
+    ///   the danger she is priced against — knows that picture *if she can
+    ///   hear the net*, and whatever she has acquired with her own eyes
+    ///   whether or not she could report it — her eyes, and a muzzle flash,
+    ///   which the fog gives the whole side. A scout out of contact sees
+    ///   things her commander is never told, and she still acts on them.
+    ///
+    /// With no `command` block both are the side's fog, every crew's eyes
+    /// pooled — the game exactly as it was, with no switch in Rust to say so.
+    ///
+    /// This used to be `ai::visible_enemies`, which read the pooled fog
+    /// everywhere, command rules or not. So under a chain of command the
+    /// player was shown the picture while every AI crew planned against
+    /// everything any crew on her side had seen, reported or not — the radio
+    /// cost the human and nobody else — and the player's danger overlay,
+    /// which read the same pooled list, could name a gun her screen drew as
+    /// a ghost or not at all.
+    pub fn known_enemies(&self, registry: &DataRegistry, who: Knower) -> Vec<&Unit> {
+        let side = match who {
+            Knower::Commander(side) => side,
+            Knower::Crew(id) => match self.unit(id) {
+                Some(u) => u.side,
+                None => return Vec::new(),
+            },
+        };
+        let fog = self.fog.side(side);
+        let spotted = self
+            .alive_units()
+            .filter(move |u| u.side != side && fog.spotted.contains(&u.id));
+        if registry.command.is_none() {
+            return spotted.collect();
+        }
+        let reported = |enemy: UnitId| {
+            self.picture(side)
+                .iter()
+                .any(|c| c.unit == enemy && c.fresh)
+        };
+        match who {
+            Knower::Commander(_) => spotted.filter(|e| reported(e.id)).collect(),
+            Knower::Crew(id) => {
+                let hears = self.hears_orders(id);
+                spotted
+                    .filter(|e| {
+                        (hears && reported(e.id))
+                            || fog.revealed.contains(&e.id)
+                            || super::fog::sees(registry, self, id, e.pos)
+                    })
+                    .collect()
+            }
+        }
+    }
+
     /// Rebuild every side's command picture from what its in-contact units
     /// can see, and say when something new is reported.
     ///
@@ -1641,16 +1711,29 @@ impl BattleState {
                 // hardware — hearing is not speaking either: the report
                 // needs a route to command, which a receive-only set does
                 // not provide on its own.
-                let reporter = self
-                    .side_units(side)
-                    .filter(|u| {
+                //
+                // A gun that gave herself away by firing is the one exception
+                // to "somebody has to see her hex": the fog spots her for the
+                // whole side off the muzzle flash, and so any crew who can
+                // speak can say where it came from. Without this the picture
+                // was stricter than the fog it is built from — a howitzer
+                // shelling the line from beyond everybody's sight was
+                // spotted and never reported, even on a perfect net.
+                let flashed = self.fog.side(side).revealed.contains(&enemy);
+                let speaking = || {
+                    self.side_units(side).filter(|u| {
                         !self
                             .command
                             .voiceless
                             .get(side as usize)
                             .is_some_and(|v| v.contains(&u.id))
                     })
+                };
+                // An eyewitness files it when there is one; the flash is
+                // only the fallback, so a report still names who saw her.
+                let reporter = speaking()
                     .find(|u| super::fog::sees(registry, self, u.id, target.pos))
+                    .or_else(|| speaking().find(|_| flashed))
                     .map(|u| u.id);
                 if let Some(by) = reporter {
                     let known = prior.iter().find(|c| c.unit == enemy);

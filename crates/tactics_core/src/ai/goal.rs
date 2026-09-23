@@ -413,7 +413,8 @@ fn drive(
     // Crow flight for the enemy on purpose: what her terrain costs are is not
     // something this crew knows, and guessing precisely would be a worse lie
     // than guessing roughly.
-    let theirs = super::visible_enemies(state, me.side)
+    let theirs = state
+        .known_enemies(registry, crate::battle::Knower::Crew(me.id))
         .into_iter()
         .map(|enemy| {
             let speed = registry
@@ -530,7 +531,8 @@ impl GoalChooser for UtilityChooser<'_> {
         // Who could shoot at the march, and from how far. Fog-honest: a crew
         // cannot route around a gun nobody has seen, and letting her would
         // leak the enemy's whole order of battle into her pathfinding.
-        let guns: Vec<(Hex, i32)> = super::visible_enemies(state, me.side)
+        let guns: Vec<(Hex, i32)> = state
+            .known_enemies(registry, crate::battle::Knower::Crew(me.id))
             .into_iter()
             .map(|enemy| (enemy.pos, longest_shot(registry, enemy)))
             .collect();

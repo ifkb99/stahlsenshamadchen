@@ -31,10 +31,10 @@ pub use combat::{
     preview_attack, round_worth, spent_share, struck_facing, weapon_ready,
 };
 pub use command::{
-    CommandState, Contact, CutOff, Formation, FormationId, Goal, Latitude, March, Mission,
+    CommandState, Contact, CutOff, Formation, FormationId, Goal, Knower, Latitude, March, Mission,
     MissionChange, PersonalOrder, WaitingOrders, formation_exit, nearest_exit,
 };
-pub use danger::{Bearing, Incoming, fire_on, incoming, incoming_from};
+pub use danger::{Bearing, Incoming, fire_on, fire_on_as, incoming, incoming_from};
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
     MoveGrid, Roads, along_the_bearing, destination_blocked, edge_cost as movement_edge_cost,

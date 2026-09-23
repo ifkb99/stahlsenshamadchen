@@ -77,11 +77,12 @@ fn a_bearing_taken_at_her_own_hex_is_the_shot_the_resolver_would_take() {
     for me in state.units.iter() {
         let bearings = tactics_core::battle::fire_on(&reg, &state, me.id, me.pos);
 
-        // Who is on the list, and in what order. `visible_enemies` walks the
+        // Who is on the list, and in what order. `known_enemies` walks the
         // units in id order, so this pins the ordering contract at the same
         // time as the membership one.
         let listed: Vec<UnitId> = bearings.iter().map(|b| b.enemy).collect();
-        let armed: Vec<UnitId> = tactics_core::ai::visible_enemies(&state, me.side)
+        let armed: Vec<UnitId> = state
+            .known_enemies(&reg, tactics_core::battle::Knower::Crew(me.id))
             .iter()
             .filter(|e| {
                 tactics_core::ai::best_weapon_against(&reg, &state, e.id, e.pos, me, me.pos)

@@ -548,19 +548,43 @@ Still in `deploy` and not changed here, because they are rules rather than
 seams: every chassis is priced as `Tracked` when finding standing room, and a
 side forms up by offset column.
 
-## 11. A side knows two things about the enemy, and each reader picks one
+## 11. ~~A side knows two things about the enemy, and each reader picks one~~
 
-`fog.spotted` is every crew's eyes pooled across the side, instantly. The
-command `picture` (`battle/command.rs::recompute_picture`) is what has been
-*reported*, with ghosts where it is stale. The AI reads the first everywhere
-(`ai::visible_enemies`: `score_tile`, the goal chooser, `fire_on`, `incoming`,
-both drills); the player's renderer and aim read the second (`shown_to`,
-`aim_at`). Two consequences: the danger panel and overlay, which read
-`fire_on`, can name and outline a gun the player's screen shows as hidden or a
-ghost — a fog leak — and a mod's `command` block makes the player's game
-harder while the AI's executors never wait for a report.
+**Fixed 2026-09-23**, in two commits, because the first thing reading the
+picture found was that it did not exist yet.
 
-**Check:** `grep -rn "visible_enemies\|\.picture(" crates/*/src`.
+1. **The picture exists before round one.** Both setup paths computed the fog
+   and stopped, so under command rules the picture was empty for the whole
+   first planning phase and the player's board, which draws it, showed no
+   enemy however plainly one stood in view — on `river_crossing`, two
+   Valkyrie vehicles in the recon car's sight from the first frame
+   (screenshotted on the same seed before and after). `open_the_net` computes
+   who can speak and the picture at setup; contact still settles on the first
+   tick, because three `net` tests said a crew who *starts* cut off is news.
+   Snapshot: 16 opening `ContactReported` lines gone, nothing else.
+2. **One question, two knowers.** `BattleState::known_enemies(registry, who)`
+   replaced `ai::visible_enemies`. `Knower::Commander` is the fresh picture;
+   `Knower::Crew` is the picture if she hears the net, plus what she sees or
+   saw flash. The evaluator, goal chooser, both drills and `incoming` ask as
+   the crew; the player's panel and tint ask as the commander through
+   `fire_on_as`. With no `command` block both are the pooled fog.
+
+**What it found on the way:** the picture was stricter than the fog it is
+built from. The fog spots a gun off her muzzle flash with nobody looking at
+her hex; the picture wanted an eyewitness, so a howitzer shelling the line
+from out of sight was spotted and never reported, even on a perfect net.
+`a_zeroed_command_block_is_the_game_without_one_with_a_commander_at_both_ends`
+caught it the moment the brains read the picture.
+
+**Measured:** determinism diff all `ContactReported` (51 → 70, the flash
+reports) and no deed moved; `--sim --games 36` seed-swept, Iron Valkyries 75
+→ 77 of 144 against a per-seed spread of 14–23, so inside the noise — both
+commanders lost the same free radio, the symmetric null. The change that
+matters is the human's: the AI no longer knows more than it has been told.
+`perf` unmoved (utility order 0.09 ms); `mirror` clean.
+`a_cut_off_scout_acts_on_what_she_sees_and_her_commander_never_hears_of_it`
+and `the_commander_is_told_what_is_already_in_sight_when_the_battle_opens`,
+both mutation-checked.
 
 ## 12. "Take cover" is two functions
 

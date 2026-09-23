@@ -21,8 +21,8 @@ use tactics_core::ai::{
     AiConfig, AiDriver, AiPlanner, Evaluator, UtilityPlanner, make_battle_planner,
 };
 use tactics_core::battle::{
-    BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Latitude, Mission,
-    Order, SideState, UnitId,
+    BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Knower, Latitude,
+    Mission, Order, SideState, UnitId,
 };
 use tactics_core::data::DataRegistry;
 use tactics_core::map::{HexMap, UnitPlacement};
@@ -616,6 +616,67 @@ fn a_scout_out_of_contact_reports_nothing() {
         .find(|c| c.unit == enemy)
         .expect("the picture now carries him");
     assert!(contact.fresh, "freshly, because somebody can see him now");
+}
+
+/// What the side knows is two questions, and every brain and screen asks one
+/// of them through `BattleState::known_enemies`.
+///
+/// The cut-off scout of [`a_scout_out_of_contact_reports_nothing`] has found
+/// a recon car her commander has never heard of. The commander — the player's
+/// seat, and the AI's mission review — does not know he is there. The scout
+/// does, because she is looking at him, and her own planning, drill and
+/// danger read him. Her leader, who hears the net but cannot see that far,
+/// does not. Before this, every AI crew planned against the side's pooled
+/// fog, so a chain of command cost the human and nobody else, and the danger
+/// panel could name a gun the board did not draw.
+///
+/// With no `command` block both questions have the old answer: the pooled
+/// fog, everybody's eyes.
+#[test]
+fn a_cut_off_scout_acts_on_what_she_sees_and_her_commander_never_hears_of_it() {
+    let mut reg = registry();
+    reg.command = Some(command_rules(8, false, 0));
+    strip_radios(&mut reg);
+    let mut state = picture_stage(&reg, 3);
+    let (leader, scout, enemy) = (UnitId(0), UnitId(1), UnitId(2));
+    commit_all(&reg, &mut state);
+    state.step_tick(&reg);
+    assert!(
+        state.fog.side(0).spotted.contains(&enemy) && !state.hears_orders(scout),
+        "the stage is a scout off the net who has found somebody"
+    );
+    let ids = |who: Knower, state: &BattleState, reg: &DataRegistry| -> Vec<UnitId> {
+        state.known_enemies(reg, who).iter().map(|u| u.id).collect()
+    };
+    assert_eq!(
+        ids(Knower::Commander(0), &state, &reg),
+        Vec::<UnitId>::new(),
+        "nobody has told the commander"
+    );
+    assert_eq!(
+        ids(Knower::Crew(scout), &state, &reg),
+        vec![enemy],
+        "the scout is looking at him"
+    );
+    assert_eq!(
+        ids(Knower::Crew(leader), &state, &reg),
+        Vec::<UnitId>::new(),
+        "her leader can neither see him nor hear about him"
+    );
+
+    let mut bare = reg.clone();
+    bare.command = None;
+    for who in [
+        Knower::Commander(0),
+        Knower::Crew(scout),
+        Knower::Crew(leader),
+    ] {
+        assert_eq!(
+            ids(who, &state, &bare),
+            vec![enemy],
+            "{who:?}: with no chain of command, what anybody sees everybody knows"
+        );
+    }
 }
 
 #[test]

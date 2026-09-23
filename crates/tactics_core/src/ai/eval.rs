@@ -5,7 +5,7 @@
 //! utility planner's per-unit choice and MCTS's search heuristic can never
 //! drift apart, and so a doctrine file changes both at once.
 
-use super::{best_weapon_against, visible_enemies};
+use super::best_weapon_against;
 use crate::battle::{BattleState, UnitId};
 use crate::data::{DataRegistry, DoctrineDef};
 use crate::map::ObjectiveKind;
@@ -47,7 +47,7 @@ impl Evaluator {
         };
         let doctrine = &self.doctrine;
         let planner = &registry.planner;
-        let enemies = visible_enemies(state, me.side);
+        let enemies = state.known_enemies(registry, crate::battle::Knower::Crew(unit));
 
         // Offense: the best round of fire available from this tile. Indirect
         // appetite scales what artillery is worth, so a doctrine that hoards
