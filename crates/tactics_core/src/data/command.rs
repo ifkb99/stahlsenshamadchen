@@ -36,6 +36,25 @@
 use super::ReactionRules;
 use serde::{Deserialize, Serialize};
 
+/// One step on the ladder of rank, which a mod declares lowest first.
+///
+/// Rank governs **orders**, which flow downward: who commands whom when two
+/// leaders can reach each other, and who takes over when a commander falls.
+/// It governs nothing about **reports**, which flow every way — a cadet of
+/// any rank shares what she sees with anybody she can talk to. That is the
+/// designer's ruling (2026-09-23) and the reason rank is read by succession
+/// and by [`crate::battle::BattleState::operational_commands`] and by nothing
+/// that builds the picture.
+///
+/// A mod that declares no ladder, or characters that name no rank, have
+/// every cadet at the same rank, and command falls exactly as it did before
+/// ranks existed: by arrival order in the formation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RankDef {
+    pub id: String,
+    pub name: String,
+}
+
 /// The `command` block: what a chain of command costs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

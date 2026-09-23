@@ -75,6 +75,10 @@ pub struct CharacterDef {
     pub portrait: Option<String>,
     #[serde(default)]
     pub bio: String,
+    /// Her rank, by [`crate::data::RankDef`] id. `None` is the bottom of the
+    /// ladder — and, on a mod that declares no ladder, everybody's rank.
+    #[serde(default)]
+    pub rank: Option<String>,
 }
 
 /// Directional armor. Which facing an incoming shot strikes is derived from

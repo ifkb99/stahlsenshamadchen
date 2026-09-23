@@ -1352,7 +1352,7 @@ impl BattleState {
         // takes over in the same step anchors the net immediately, which is
         // the difference between a leader's death costing her platoon a tick
         // and costing it the rest of the battle.
-        self.pass_command(&mut events);
+        self.pass_command(registry, &mut events);
         // Contact is read after everyone has moved and before anyone shoots,
         // so a vehicle that drove out of its leader's radius is out of contact
         // in the same tick it left rather than the next one.

@@ -87,6 +87,9 @@ pub struct DataRegistry {
     /// coefficients must produce the same battle, and does; that is a pinned
     /// test rather than a hope.
     pub command: Option<CommandRules>,
+    /// The ladder of rank, lowest first ([`RankDef`]). Empty is no ranks at
+    /// all: everybody is equal and command passes by arrival order.
+    pub ranks: Vec<super::RankDef>,
     /// The axes of temperament this game has, in the order a cadet's values are
     /// stored. Declared by mod data, not by Rust.
     pub cores: Vec<CoreDef>,
@@ -167,6 +170,9 @@ impl DataRegistry {
             if let Some(command) = &manifest.command {
                 registry.command = Some(command.clone());
             }
+            if let Some(ranks) = &manifest.ranks {
+                registry.ranks = ranks.clone();
+            }
             if let Some(cores) = &manifest.cores {
                 registry.cores = cores.clone();
                 registry.core_index = CoreIndex::build(cores);
@@ -204,6 +210,14 @@ impl DataRegistry {
 
     pub fn vehicle(&self, id: &str) -> Option<&VehicleDef> {
         self.vehicles.get(id)
+    }
+
+    /// Where a rank stands on the ladder: 0 is the lowest declared. `None`
+    /// for no rank, or one the ladder does not have — both of which are the
+    /// bottom, below every declared rank.
+    pub fn rank_index(&self, id: Option<&str>) -> Option<usize> {
+        let id = id?;
+        self.ranks.iter().position(|r| r.id == id)
     }
 
     pub fn radio(&self, id: &str) -> Option<&RadioDef> {
@@ -301,6 +315,25 @@ impl DataRegistry {
     /// Cross-reference every definition and record problems in `report`.
     pub fn validate_into(&self, report: &mut ValidationReport) {
         self.validate_scale(report);
+        // A rank the ladder does not have would put her at the bottom without
+        // a word, which is a demotion nobody wrote.
+        let mut ranked: Vec<&CharacterDef> = self.characters.values().collect();
+        ranked.sort_by(|a, b| a.id.cmp(&b.id));
+        for c in ranked {
+            if let Some(rank) = &c.rank
+                && !self.ranks.iter().any(|r| &r.id == rank)
+            {
+                report.error(format!(
+                    "character `{}` holds rank `{rank}`, which no mod's `ranks` ladder declares",
+                    c.id
+                ));
+            }
+        }
+        let mut ids: Vec<&str> = self.ranks.iter().map(|r| r.id.as_str()).collect();
+        ids.sort_unstable();
+        if ids.windows(2).any(|w| w[0] == w[1]) {
+            report.error("the `ranks` ladder names the same rank twice".to_string());
+        }
         for v in self.vehicles.values() {
             if v.weapons.is_empty() {
                 report.warn(format!("vehicle `{}` has no weapons", v.id));
@@ -1056,6 +1089,7 @@ mod tests {
                     reaction: None,
                     morale: None,
                     command: None,
+                    ranks: None,
                     dependencies: deps.iter().map(|s| s.to_string()).collect(),
                     scale: None,
                     balance: None,

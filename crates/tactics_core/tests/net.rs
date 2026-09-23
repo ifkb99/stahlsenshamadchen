@@ -1119,6 +1119,187 @@ fn a_loss_condition_must_name_a_formation_of_its_own_side() {
     );
 }
 
+// --- rank, and who commands ----------------------------------------------
+
+/// A registry with a ladder of rank and these characters holding these
+/// ranks. Radios stripped, so the command block's symmetric radius is every
+/// set's reach and a test can place leaders in or out of it by distance.
+fn ranked(radius: Option<u32>, holders: &[(&str, &str)]) -> DataRegistry {
+    let mut reg = common::seen(registry());
+    reg.ranks = ["sergeant", "lieutenant", "captain"]
+        .iter()
+        .map(|id| tactics_core::data::RankDef {
+            id: id.to_string(),
+            name: id.to_string(),
+        })
+        .collect();
+    for (character, rank) in holders {
+        reg.characters
+            .get_mut(*character)
+            .expect("a shipped cadet")
+            .rank = Some(rank.to_string());
+    }
+    reg.command = radius.map(|r| command_rules(r, true, 0));
+    strip_radios(&mut reg);
+    reg
+}
+
+/// A crewed placement: one named cadet, in a formation.
+fn crewed(at: [i32; 2], who: &str, formation: &str, leads: bool) -> UnitPlacement {
+    let mut placement = in_formation(unit_at(at, 0, "medium_tank", who), formation, leads);
+    placement.crew = vec![who.to_string()];
+    placement
+}
+
+fn chain_stage(
+    reg: &DataRegistry,
+    placements: Vec<UnitPlacement>,
+    formations: &[&str],
+) -> BattleState {
+    let formations: Vec<serde_json::Value> = formations
+        .iter()
+        .map(|id| serde_json::json!({ "id": id, "name": id, "side": 0 }))
+        .collect();
+    scripted_battle(
+        reg,
+        serde_json::json!({
+            "id": "chain",
+            "palette": { "g": "grass" },
+            "rows": ["g".repeat(60)],
+            "formations": formations,
+        }),
+        placements,
+    )
+}
+
+/// When a leader falls, the highest rank still fighting takes her place —
+/// not the next vehicle in the order of battle. Rank governs who gives the
+/// orders (the designer's ruling, 2026-09-23); among equals, and on a mod
+/// with no ranks at all, command passes by arrival order as it always did.
+#[test]
+fn the_highest_rank_takes_over_not_the_next_in_line() {
+    let placements = || {
+        vec![
+            crewed([1, 0], "anka", "platoon", true),
+            crewed([2, 0], "juno", "platoon", false),
+            crewed([3, 0], "mina", "platoon", false),
+        ]
+    };
+    for (holders, heir) in [
+        (vec![("anka", "captain"), ("mina", "lieutenant")], UnitId(2)),
+        (vec![], UnitId(1)),
+    ] {
+        let reg = ranked(None, &holders);
+        let mut state = chain_stage(&reg, placements(), &["platoon"]);
+        commit_all(&reg, &mut state);
+        strike_down(&mut state, UnitId(0));
+        state.step_tick(&reg);
+        assert_eq!(
+            state.formations()[0].leader,
+            Some(heir),
+            "with ranks {holders:?}, command passes to {heir:?}"
+        );
+    }
+}
+
+/// A connected army is one command under its senior officer, whichever
+/// formation she happens to lead and wherever the map wrote it down.
+#[test]
+fn a_connected_army_is_one_command_under_its_senior_officer() {
+    let reg = ranked(Some(99), &[("anka", "lieutenant"), ("mina", "captain")]);
+    let state = chain_stage(
+        &reg,
+        vec![
+            crewed([1, 0], "anka", "first", true),
+            crewed([8, 0], "juno", "second", true),
+            crewed([15, 0], "mina", "third", true),
+        ],
+        &["first", "second", "third"],
+    );
+    let commands = state.operational_commands(&reg, 0);
+    assert_eq!(commands.len(), 1, "everybody can hear everybody");
+    assert_eq!(commands[0].commander, UnitId(2), "the captain commands");
+    assert_eq!(commands[0].formations, vec![0, 1, 2]);
+}
+
+/// A column the net cannot reach has a commander of its own — its own senior
+/// — and a junior who can reach the rest of the army does not command a
+/// senior who cannot: they are two commands, each under the senior present.
+#[test]
+fn a_column_cut_off_has_its_own_senior_in_command() {
+    let reg = ranked(Some(6), &[("anka", "captain"), ("juno", "lieutenant")]);
+    let state = chain_stage(
+        &reg,
+        vec![
+            // The captain, alone and far away.
+            crewed([1, 0], "anka", "detached", true),
+            // A lieutenant and a sergeant's column, within reach of each other.
+            crewed([30, 0], "juno", "main", true),
+            crewed([34, 0], "mina", "rear", true),
+        ],
+        &["detached", "main", "rear"],
+    );
+    let commands = state.operational_commands(&reg, 0);
+    let shape: Vec<(UnitId, Vec<usize>)> = commands
+        .iter()
+        .map(|c| (c.commander, c.formations.clone()))
+        .collect();
+    assert_eq!(
+        shape,
+        vec![(UnitId(0), vec![0]), (UnitId(1), vec![1, 2])],
+        "the captain commands herself; the lieutenant commands the column"
+    );
+}
+
+/// With no chain of command priced, a side is one command under its most
+/// senior leader — the game before, where one brain spoke for the side.
+#[test]
+fn with_no_chain_of_command_a_side_is_one_command() {
+    let reg = ranked(None, &[("juno", "captain")]);
+    let state = chain_stage(
+        &reg,
+        vec![
+            crewed([1, 0], "anka", "first", true),
+            crewed([50, 0], "juno", "second", true),
+        ],
+        &["first", "second"],
+    );
+    let commands = state.operational_commands(&reg, 0);
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].commander, UnitId(1));
+}
+
+/// A rank the ladder does not declare is an error, not a silent demotion to
+/// the bottom; and the campaign's cadet carries her rank from her
+/// definition, because promotion is something a campaign does to a person.
+#[test]
+fn a_rank_is_declared_before_it_is_held_and_a_cadet_carries_hers() {
+    let mut reg = ranked(None, &[("anka", "captain")]);
+    let mut report = tactics_core::data::ValidationReport::default();
+    reg.validate_into(&mut report);
+    assert!(
+        report.is_ok(),
+        "declared ranks validate: {:?}",
+        report.errors
+    );
+
+    let mut roster = tactics_core::roster::Roster::new();
+    let id = roster.enlist(0, reg.character("anka").unwrap(), &reg);
+    assert_eq!(roster.get(id).unwrap().rank.as_deref(), Some("captain"));
+
+    reg.characters.get_mut("juno").unwrap().rank = Some("admiral".into());
+    let mut report = tactics_core::data::ValidationReport::default();
+    reg.validate_into(&mut report);
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| e.contains("juno") && e.contains("admiral")),
+        "an undeclared rank is refused: {:?}",
+        report.errors
+    );
+}
+
 // --- the net is two media --------------------------------------------------
 
 /// Two side-0 formations on a road: Alpha's leader far west, her one member

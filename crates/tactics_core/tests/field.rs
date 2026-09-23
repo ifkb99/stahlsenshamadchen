@@ -82,7 +82,8 @@ fn nobody_deploys_onto_their_own_way_off_the_map() {
             "battlefield `{id}` declares no exit, so nobody fighting on it can withdraw"
         );
 
-        let (placements, _, _) = deploy(&reg, &map, &forces, 0);
+        let (placements, _, _) =
+            deploy(&reg, &tactics_core::roster::Roster::new(), &map, &forces, 0);
         assert_eq!(placements.len(), 8, "everyone was placed on `{id}`");
         for placement in &placements {
             let hex = tactics_core::offset_to_hex(placement.at[0], placement.at[1]);
@@ -125,7 +126,7 @@ fn each_army_fills_one_of_the_maps_formations() {
         })
         .collect();
 
-    let (placements, _, _) = deploy(&reg, &map, &forces, 0);
+    let (placements, _, _) = deploy(&reg, &tactics_core::roster::Roster::new(), &map, &forces, 0);
     let named: Vec<&str> = placements
         .iter()
         .filter_map(|p| p.formation.as_deref())
@@ -143,6 +144,55 @@ fn each_army_fills_one_of_the_maps_formations() {
             .filter(|p| p.formation.as_deref() == Some(def.id.as_str()) && p.leads)
             .count();
         assert_eq!(leaders, 1, "exactly one leader in {}", def.id);
+    }
+}
+
+/// An army arriving on a battlefield is led by its senior cadet — the
+/// vehicle carrying the highest rank — and with no ranks declared by its
+/// first vehicle, as it always was.
+#[test]
+fn an_army_is_led_onto_the_field_by_its_senior_cadet() {
+    let file = registry()
+        .map("river_crossing")
+        .expect("shipped battle map")
+        .clone();
+    let map = tactics_core::map::HexMap::from_map_file(&file).expect("map parses");
+    for (captain, leader) in [(Some("mina"), 2usize), (None, 0)] {
+        let mut reg = registry();
+        reg.ranks = vec![tactics_core::data::RankDef {
+            id: "captain".into(),
+            name: "Captain".into(),
+        }];
+        if let Some(who) = captain {
+            reg.characters.get_mut(who).unwrap().rank = Some("captain".into());
+        }
+        let mut roster = tactics_core::roster::Roster::new();
+        let units: Vec<ArmyUnit> = ["anka", "juno", "mina"]
+            .iter()
+            .map(|who| ArmyUnit {
+                vehicle: "medium_tank".into(),
+                crew: vec![roster.enlist(0, reg.character(who).unwrap(), &reg)],
+                name: None,
+            })
+            .collect();
+        let forces = vec![BattleForce {
+            army: ArmyId(0),
+            side: 0,
+            units,
+            mission: None,
+        }];
+        let (placements, _, _) = deploy(&reg, &roster, &map, &forces, 0);
+        let leads: Vec<usize> = placements
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.leads)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(
+            leads,
+            vec![leader],
+            "with {captain:?} a captain, vehicle {leader} leads the army"
+        );
     }
 }
 

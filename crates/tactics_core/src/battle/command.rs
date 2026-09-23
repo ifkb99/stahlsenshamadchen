@@ -99,6 +99,28 @@ pub enum Knower {
     Crew(UnitId),
 }
 
+/// Which net a message travels on. See `BattleState::informs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Net {
+    /// A formation's own net: its leader and its members.
+    Formation,
+    /// The net formation leaders talk to each other on.
+    Command,
+}
+
+/// One operational command: a senior officer and every leader she can reach
+/// with orders. See [`BattleState::operational_commands`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationalCommand {
+    /// Who commands: the most senior leader in the group.
+    pub commander: UnitId,
+    /// Every leader in the group, the commander included, in the order the
+    /// map declared their formations and then by unit id.
+    pub leaders: Vec<UnitId>,
+    /// The formations those leaders lead, by index.
+    pub formations: Vec<usize>,
+}
+
 /// The skill that decides how far a leader's orders carry.
 ///
 /// A string rather than a data field, for the same reason `gunnery` and
@@ -1194,11 +1216,13 @@ impl BattleState {
     /// one that has none it walks an empty list, which is the additivity rule
     /// satisfied by there being nothing to do rather than by a branch.
     ///
-    /// Succession is by **lowest living unit id**, which is placement order,
-    /// which is the order the map author wrote her formation down in. That is
-    /// the authorable rule the `leads` flag already follows for the first
-    /// leader: seniority is something a scenario writer states, not something
-    /// the engine infers from stats.
+    /// Succession is by **rank** — the highest rank still fighting aboard
+    /// any member ([`Self::unit_rank`]) — and among equals by **lowest living
+    /// unit id**, which is placement order, which is the order the map author
+    /// wrote her formation down in. With no ladder, or nobody ranked, that is
+    /// placement order alone, which is how command passed before ranks
+    /// existed. Seniority is something content states — a rank, a place in
+    /// the order of battle — never something the engine infers from stats.
     ///
     /// The successor is worse at the job and no code here makes her so. Every
     /// price the chain of command charges — [`BattleState::mission_delay`] and
@@ -1211,7 +1235,7 @@ impl BattleState {
     ///
     /// Formations are walked in declaration order and members in id order, so
     /// what this emits cannot depend on a hash.
-    pub(super) fn pass_command(&mut self, events: &mut Vec<Event>) {
+    pub(super) fn pass_command(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
         for index in 0..self.command.formations.len() {
             let formation = &self.command.formations[index];
             // `unit()` filters on `alive`, which is false for the destroyed
@@ -1221,11 +1245,20 @@ impl BattleState {
             let Some(gone) = formation.leader.filter(|id| self.unit(*id).is_none()) else {
                 continue;
             };
-            let successor = formation
-                .members
-                .iter()
-                .copied()
-                .find(|id| self.unit(*id).is_some());
+            // The highest rank still in the fight, and among equals the first
+            // in the order the map wrote the formation down — so with no
+            // ranks at all this is exactly the arrival order it always was.
+            let mut successor: Option<(UnitId, Option<usize>)> = None;
+            for id in formation.members.iter().copied() {
+                if self.unit(id).is_none() {
+                    continue;
+                }
+                let rank = self.unit_rank(registry, id);
+                if successor.is_none_or(|(_, best)| rank > best) {
+                    successor = Some((id, rank));
+                }
+            }
+            let successor = successor.map(|(id, _)| id);
             self.command.formations[index].leader = successor;
             // A formation with nobody left is left leaderless and silent.
             // There is no promotion to announce and nobody to hear it.
@@ -1428,6 +1461,160 @@ impl BattleState {
         self.walk_net(registry, None);
     }
 
+    /// Whether `speaker` can tell `listener` anything, on `net`.
+    ///
+    /// Radio needs the speaker's set, a listener whose set works, and a path
+    /// the wave survives (VHF is line-of-sight-ish: hills mask, forests do
+    /// not); on a formation's own net it also needs the two to share that
+    /// formation, and on the command net it does not — that net is the one
+    /// formation leaders talk to each other on. A flag needs only eyes, on
+    /// either net: visual signalling is promiscuous and symmetric.
+    fn informs(
+        &self,
+        registry: &DataRegistry,
+        rules: &crate::data::CommandRules,
+        speaker: UnitId,
+        listener: UnitId,
+        net: Net,
+    ) -> bool {
+        let (Some(s), Some(l)) = (self.unit(speaker), self.unit(listener)) else {
+            return false;
+        };
+        let dist = s.pos.distance_to(l.pos);
+        let by_radio = self
+            .radio_reach(registry, speaker)
+            .is_some_and(|reach| dist <= reach as i32)
+            // Hearing needs a working set too: a listener whose radio was
+            // shot out is off the net however loudly her leader transmits.
+            // Visual signalling below is what she has left, which is exactly
+            // the early-war fallback.
+            && l.module_ok(registry, crate::data::ModuleEffect::Radio)
+            && match net {
+                Net::Command => true,
+                Net::Formation => {
+                    let squad = self.command.formation_of(speaker).map(|f| f.id.as_str());
+                    squad.is_some()
+                        && self.command.formation_of(listener).map(|f| f.id.as_str()) == squad
+                }
+            }
+            && self.radio_clear(s.pos, l.pos);
+        let by_sight = rules.visual_range > 0
+            && dist <= rules.visual_range as i32
+            && self.sight.clear(s.pos, l.pos);
+        by_radio || by_sight
+    }
+
+    /// Her rank, for command: the highest rank of any cadet aboard her and
+    /// still in the fight, as a place on the mod's ladder. `None` — below
+    /// every declared rank — for an anonymous crew, a crew nobody ranked, or
+    /// a mod that declares no ladder, which is everybody equal.
+    ///
+    /// Of anybody aboard rather than of one seat, because the senior cadet in
+    /// a hull commands it whatever seat she is in; and of those *fighting*,
+    /// because a lieutenant carried out unconscious commands nothing.
+    pub fn unit_rank(&self, registry: &DataRegistry, unit: UnitId) -> Option<usize> {
+        let u = self.unit(unit)?;
+        u.crew
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| u.crew_state.get(*i).is_none_or(|c| c.fighting()))
+            .filter_map(|(_, id)| self.roster.get(*id))
+            .filter_map(|cadet| registry.rank_index(cadet.rank.as_deref()))
+            .max()
+    }
+
+    /// Who commands whom on `side` at this moment: one [`OperationalCommand`]
+    /// per group of leaders the most senior of them can reach with orders.
+    ///
+    /// **Derived every time it is asked, never declared** — the designer's
+    /// ruling that command is a role held by whoever is present, senior and
+    /// connected, not a title written on the map. The leaders are every
+    /// formation's leader and every unit in no formation. The most senior of
+    /// them (rank, then formations in the order the map declared them, then
+    /// unit id) starts a command and takes every leader her orders reach on
+    /// the command net (`informs`, [`Net::Command`]) — through leaders she
+    /// has already reached, if the mod's command block relays. The most
+    /// senior leader left over starts the next one, and so on.
+    ///
+    /// So a connected army is one command under its senior officer; a column
+    /// cut off behind a hill is a second command under *its* senior; and a
+    /// junior who can reach the commander does not command a senior who
+    /// cannot — they are two commands. Orders care about rank; reports do not,
+    /// and this is not where reports are decided.
+    ///
+    /// With no `command` block every leader reaches every other, so a side is
+    /// one command under its most senior leader — the game before, where one
+    /// brain spoke for the side.
+    pub fn operational_commands(
+        &self,
+        registry: &DataRegistry,
+        side: u8,
+    ) -> Vec<OperationalCommand> {
+        // (leader, the formation she leads if any) in declaration order, then
+        // the unattached by id.
+        let mut leaders: Vec<(UnitId, Option<usize>)> = self
+            .command
+            .formations
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.side == side)
+            .filter_map(|(i, f)| {
+                f.leader
+                    .filter(|id| self.unit(*id).is_some())
+                    .map(|l| (l, Some(i)))
+            })
+            .collect();
+        let mut loose: Vec<UnitId> = self
+            .side_units(side)
+            .filter(|u| u.aboard.is_none() && self.command.formation_of(u.id).is_none())
+            .map(|u| u.id)
+            .collect();
+        loose.sort_unstable();
+        leaders.extend(loose.into_iter().map(|id| (id, None)));
+        let seniority: Vec<Option<usize>> = leaders
+            .iter()
+            .map(|(id, _)| self.unit_rank(registry, *id))
+            .collect();
+        // Most senior first; the declared order breaks ties, never a coordinate.
+        let mut order: Vec<usize> = (0..leaders.len()).collect();
+        order.sort_by_key(|i| (std::cmp::Reverse(seniority[*i]), *i));
+
+        let tells = |speaker: UnitId, listener: UnitId| match registry.command.as_ref() {
+            None => true,
+            Some(rules) => self.informs(registry, rules, speaker, listener, Net::Command),
+        };
+        let relay = registry.command.as_ref().is_none_or(|r| r.relay);
+        let mut assigned = vec![false; leaders.len()];
+        let mut commands = Vec::new();
+        for &head in &order {
+            if assigned[head] {
+                continue;
+            }
+            assigned[head] = true;
+            let mut members = vec![head];
+            let mut anchors = VecDeque::from([head]);
+            while let Some(anchor) = anchors.pop_front() {
+                for &next in &order {
+                    if assigned[next] || !tells(leaders[anchor].0, leaders[next].0) {
+                        continue;
+                    }
+                    assigned[next] = true;
+                    members.push(next);
+                    if relay {
+                        anchors.push_back(next);
+                    }
+                }
+            }
+            members.sort_unstable();
+            commands.push(OperationalCommand {
+                commander: leaders[head].0,
+                leaders: members.iter().map(|i| leaders[*i].0).collect(),
+                formations: members.iter().filter_map(|i| leaders[*i].1).collect(),
+            });
+        }
+        commands
+    }
+
     fn walk_net(&mut self, registry: &DataRegistry, mut events: Option<&mut Vec<Event>>) {
         let Some(rules) = registry.command.as_ref() else {
             return;
@@ -1466,32 +1653,10 @@ impl BattleState {
                 .collect();
             roots.sort_unstable();
 
-            // An edge is "speaker informs listener". Radio needs the
-            // speaker's set, their shared formation net, and a path the
-            // wave survives; a flag only needs eyes.
+            // An edge is "speaker informs listener", on her formation's own
+            // net: see `informs`.
             let informs = |speaker: UnitId, listener: UnitId| -> bool {
-                let (Some(s), Some(l)) = (self.unit(speaker), self.unit(listener)) else {
-                    return false;
-                };
-                let dist = s.pos.distance_to(l.pos);
-                let by_radio = self
-                    .radio_reach(registry, speaker)
-                    .is_some_and(|reach| dist <= reach as i32)
-                    // Hearing needs a working set too: a listener whose
-                    // radio was shot out is off the net however loudly her
-                    // leader transmits. Visual signalling below is what she
-                    // has left, which is exactly the early-war fallback.
-                    && l.module_ok(registry, crate::data::ModuleEffect::Radio)
-                    && {
-                        let squad = self.command.formation_of(speaker).map(|f| f.id.as_str());
-                        squad.is_some()
-                            && self.command.formation_of(listener).map(|f| f.id.as_str()) == squad
-                    }
-                    && self.radio_clear(s.pos, l.pos);
-                let by_sight = rules.visual_range > 0
-                    && dist <= rules.visual_range as i32
-                    && self.sight.clear(s.pos, l.pos);
-                by_radio || by_sight
+                self.informs(registry, rules, speaker, listener, Net::Formation)
             };
             // One walk, both directions: `down` grows the set orders reach,
             // `up` the set reports escape from.
