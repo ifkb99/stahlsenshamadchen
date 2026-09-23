@@ -805,6 +805,19 @@ its crew's nerve, and the route a crew drives is part of her order. Tests:
   `fear_is_priced_by_the_same_arithmetic_that_charges_it` still holds (it
   stages 100%, because the ledger rounds each event to whole points and 1.5
   a miss would tilt its average).
+- **Half of suppression is knowing she is the target** (`morale.targeted`,
+  1 shipped, 0 the game before; the designer's ruling that anything flying
+  by suppresses). Every shot aimed at her charges it, hit, bounce or miss,
+  on top of the projectile's own `suppression`; a shell bursting beside a
+  crew it was not aimed at charges the projectile alone
+  (`RoundPressure::aimed`). **Every round declares a projectile price by
+  what it could do to her** — rifle 1, belt 2, 37 mm 1, 75 AP 2, 88 AP 3,
+  HE 3, the 105 4. It moved a lot: in the four-seed determinism baseline
+  `Defied` went 1 → 18 and `PinnedDown` 5 → 15, and `balance --sim` reads
+  rounds 14.9 → 15.4 with one stalemate in 288. **Stages whose subject is
+  something else go through `common::calm(..)`**, the fear content before
+  the ruling, the way `seen(..)` takes the detection dice out; six do, and
+  each says why.
 - **Bullets do not pin a crew behind plate** (`morale.through_plate_percent`,
   0 shipped, 100 the game before): the share of a small-arms round's
   suppression that reaches her through armour, bounced or missed. This
@@ -839,6 +852,13 @@ its crew's nerve, and the route a crew drives is part of her order. Tests:
   to the coordinate: `hexx::a_star`'s neighbour order, a left-or-right
   choice the invariants once called harmless, and a drill that sent every
   crew with a plateau of safe hexes west. `examples/mirror --map` found each.
+- **A plan has two roles and two lists** (`SideCommand::can_fix`,
+  `can_manoeuvre`): a platoon may hold the firing position, only what
+  drives goes round, and a fix is priced by **everybody in the element,
+  passengers included** (`plan::element_worth`). Before it a grenadier
+  section was priced by its halftrack, whose belt the equipment rule makes
+  worthless against a tank, and a combined-arms side never had two groups to
+  plan with.
 - **The fixing element fixes** (`ai/utility.rs::fixing_fire`): a crew in the
   formation fixing for a plan in flight fires on the plan's target when her
   side has him in sight and she has a gun worth firing, the round still the
@@ -1435,7 +1455,7 @@ instrument's numbers.
   the coordinate (Fire and movement). The lean survived every one: after
   them, and with the pinning and route content, eight seeds read town
   **186–390**, hills 254–322 (302–274 on develop), plains 274–302, forest
-  242–334. The next root the probe names on `battle_hills` is a light
+  242–334; with every round suppressing, town 202–374 and hills 222–352. The next root the probe names on `battle_hills` is a light
   tank's goal in round 4 (*different key*); the skill arena has had one in
   round 3 since before any of this. There is at least one more rule reading
   the compass, and until it is found the `ground` rows of the generated

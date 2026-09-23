@@ -22,7 +22,7 @@ use tactics_core::data::{DataRegistry, RoundPressure, ShotFelt};
 
 mod common;
 use common::stage::{commit_all, two_side_battle, unit_at};
-use common::{registry, seen};
+use common::{calm, registry, seen};
 
 // --- near misses and armour ---------------------------------------------
 
@@ -34,10 +34,13 @@ use common::{registry, seen};
 #[test]
 fn a_near_miss_frightens_by_the_share_of_the_rounds_suppression_the_mod_declares() {
     let mut rules = registry().morale.clone();
+    // The projectile half alone; knowing she is the target has its own test.
+    rules.targeted = 0;
     let belt = RoundPressure {
         small_arms: true,
         suppression: 2,
         armoured: false,
+        aimed: true,
     };
     rules.near_miss_percent = 0;
     assert_eq!(rules.pressure_for(ShotFelt::Missed, belt), 0.0);
@@ -47,6 +50,7 @@ fn a_near_miss_frightens_by_the_share_of_the_rounds_suppression_the_mod_declares
         small_arms: false,
         suppression: 0,
         armoured: true,
+        aimed: true,
     };
     assert_eq!(
         rules.pressure_for(ShotFelt::Missed, solid_shot),
@@ -62,11 +66,13 @@ fn a_near_miss_frightens_by_the_share_of_the_rounds_suppression_the_mod_declares
 #[test]
 fn a_belt_does_not_pin_a_crew_behind_armour_past_the_share_the_mod_lets_through() {
     let mut rules = registry().morale.clone();
+    rules.targeted = 0;
     rules.near_miss_percent = 100;
     let at_a_tank = RoundPressure {
         small_arms: true,
         suppression: 2,
         armoured: true,
+        aimed: true,
     };
     rules.through_plate_percent = 100;
     assert_eq!(rules.pressure_for(ShotFelt::Bounced, at_a_tank), 2.0);
@@ -76,6 +82,7 @@ fn a_belt_does_not_pin_a_crew_behind_armour_past_the_share_the_mod_lets_through(
     assert_eq!(rules.pressure_for(ShotFelt::Missed, at_a_tank), 0.0);
     let at_a_platoon = RoundPressure {
         armoured: false,
+        aimed: true,
         ..at_a_tank
     };
     assert_eq!(
@@ -101,6 +108,8 @@ fn a_belt_that_misses_a_platoon_still_puts_it_on_its_face() {
         reg.balance.min_hit = 0;
         reg.balance.max_hit = 0;
         reg.morale.near_miss_percent = near_miss;
+        // The projectile going past, alone: at zero nothing else is charged.
+        reg.morale.targeted = 0;
         let mut state = two_side_battle(
             &reg,
             &["gggggg", "gggggg", "gggggg"],
@@ -146,7 +155,9 @@ fn a_belt_that_misses_a_platoon_still_puts_it_on_its_face() {
 /// down it, the rung above steady marked `pinned`, and her pressure set on
 /// that rung or below it.
 fn under_the_gun(pressure_on_pinned_rung: bool) -> (DataRegistry, BattleState) {
-    let mut reg = seen(registry());
+    // The pinning gate, not how fast she gets there: pressure is set by
+    // hand, and the gun's fire must not bail her out before she can stop.
+    let mut reg = calm(seen(registry()));
     reg.morale.rungs[1].pinned = true;
     let road = "g".repeat(24);
     let mut state = two_side_battle(
@@ -338,4 +349,98 @@ fn every_order_in_the_vocabulary_has_a_route_price() {
     seen.push(prices.for_verb("march"));
     seen.sort_unstable();
     assert_eq!(seen, vec![1, 2, 3, 4, 5, 6, 7]);
+}
+
+// --- knowing she is the target -------------------------------------------
+
+/// Half of suppression is knowing you're the target: `morale.targeted` is
+/// charged for every shot aimed at her whatever it does, on top of the
+/// projectile's own suppression. A shell bursting beside a crew it was not
+/// aimed at charges the projectile half only. At zero, the game before.
+#[test]
+fn knowing_she_is_the_target_is_charged_for_every_shot_aimed_at_her() {
+    let mut rules = registry().morale.clone();
+    rules.near_miss_percent = 50;
+    rules.targeted = 0;
+    let solid_shot = RoundPressure {
+        small_arms: false,
+        suppression: 2,
+        armoured: true,
+        aimed: true,
+    };
+    let before = [
+        rules.pressure_for(ShotFelt::Missed, solid_shot),
+        rules.pressure_for(ShotFelt::Bounced, solid_shot),
+        rules.pressure_for(ShotFelt::Penetrated { spent: 1.0 }, solid_shot),
+    ];
+    rules.targeted = 3;
+    let after = [
+        rules.pressure_for(ShotFelt::Missed, solid_shot),
+        rules.pressure_for(ShotFelt::Bounced, solid_shot),
+        rules.pressure_for(ShotFelt::Penetrated { spent: 1.0 }, solid_shot),
+    ];
+    for (b, a) in before.iter().zip(after) {
+        assert_eq!(a - b, 3.0, "every aimed shot costs the same to know about");
+    }
+    let beside = RoundPressure {
+        aimed: false,
+        ..solid_shot
+    };
+    assert_eq!(
+        rules.pressure_for(ShotFelt::Missed, beside),
+        1.0,
+        "a burst beside her that was not aimed at her is the projectile half alone"
+    );
+}
+
+/// An armour-piercing round that goes past a tank frightens her crew once
+/// anything flying by is priced: the gun is aimed at her, and she knows it.
+/// Every shot forced wide, so what is read is the miss alone.
+#[test]
+fn a_tank_gun_that_misses_still_frightens_the_crew_it_was_aimed_at() {
+    let felt = |targeted: u32| {
+        let mut reg = seen(registry());
+        reg.balance.min_hit = 0;
+        reg.balance.max_hit = 0;
+        reg.morale.targeted = targeted;
+        let mut state = two_side_battle(
+            &reg,
+            &["gggggg", "gggggg", "gggggg"],
+            vec![
+                unit_at([0, 1], 0, "tank_destroyer", "Gun"),
+                unit_at([4, 1], 1, "medium_tank", "Target"),
+            ],
+            5,
+        );
+        state
+            .apply(
+                &reg,
+                &Order::SetFire {
+                    unit: UnitId(0),
+                    fire: FireIntent::Target {
+                        target: UnitId(1),
+                        weapon: 0,
+                    },
+                },
+            )
+            .expect("the gun can see her");
+        commit_all(&reg, &mut state);
+        let mut missed = 0;
+        for _ in 0..6 {
+            missed += state
+                .step_tick(&reg)
+                .iter()
+                .filter(
+                    |e| matches!(e, Event::ShotMissed { target: Some(t), .. } if *t == UnitId(1)),
+                )
+                .count();
+        }
+        assert!(missed > 0, "the stage is a gun going wide");
+        state.unit(UnitId(1)).map(|u| u.pressure).unwrap_or(0)
+    };
+    let quiet = felt(0);
+    assert!(
+        felt(2) > quiet,
+        "knowing she is the target costs her something"
+    );
 }

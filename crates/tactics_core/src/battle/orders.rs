@@ -2079,21 +2079,25 @@ impl BattleState {
                 .map(|a| a.suppression)
                 .unwrap_or(0),
             armoured: false,
+            aimed: true,
         };
         // A near miss is priced by what went past and at whom: the round's
-        // suppression, and whether she is behind plate a bullet cannot pass.
-        let went_past = |state: &BattleState, ammo: &Option<String>, target: UnitId| {
-            let round = ammo.as_ref().and_then(|id| registry.ammo(id));
-            crate::data::RoundPressure {
-                small_arms: round
-                    .is_some_and(|a| matches!(a.class, crate::data::AmmoClass::SmallArms)),
-                suppression: round.map(|a| a.suppression).unwrap_or(0),
-                armoured: state
-                    .unit(target)
-                    .and_then(|u| registry.vehicle(&u.vehicle))
-                    .is_some_and(|v| v.armoured()),
-            }
-        };
+        // suppression, whether she is behind plate a bullet cannot pass, and
+        // whether it was aimed at her or only burst beside her.
+        let went_past =
+            |state: &BattleState, ammo: &Option<String>, target: UnitId, aimed: bool| {
+                let round = ammo.as_ref().and_then(|id| registry.ammo(id));
+                crate::data::RoundPressure {
+                    small_arms: round
+                        .is_some_and(|a| matches!(a.class, crate::data::AmmoClass::SmallArms)),
+                    suppression: round.map(|a| a.suppression).unwrap_or(0),
+                    armoured: state
+                        .unit(target)
+                        .and_then(|u| registry.vehicle(&u.vehicle))
+                        .is_some_and(|v| v.armoured()),
+                    aimed,
+                }
+            };
 
         // Collected first: the borrow of `events` has to end before units are
         // touched, and iterating in event order keeps this deterministic.
@@ -2144,14 +2148,14 @@ impl BattleState {
         // hex were struck and are priced above; the ring was not, and is
         // frightened by the round's suppression at the near-miss rate.
         let mut near: Vec<(UnitId, crate::data::RoundPressure)> = Vec::new();
-        if rules.near_miss_percent > 0 {
+        if rules.near_miss_percent > 0 || rules.targeted > 0 {
             for e in events.iter() {
                 match e {
                     Event::ShotMissed {
                         target: Some(target),
                         ammo,
                         ..
-                    } => near.push((*target, went_past(self, ammo, *target))),
+                    } => near.push((*target, went_past(self, ammo, *target, true))),
                     Event::ShellLanded { at, ammo, .. } => {
                         let ammo = Some(ammo.clone());
                         let mut ring: Vec<UnitId> = at
@@ -2161,7 +2165,7 @@ impl BattleState {
                             .collect();
                         ring.sort_unstable();
                         for id in ring {
-                            near.push((id, went_past(self, &ammo, id)));
+                            near.push((id, went_past(self, &ammo, id, false)));
                         }
                     }
                     _ => {}

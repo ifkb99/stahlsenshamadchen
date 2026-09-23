@@ -30,9 +30,9 @@ use tactics_core::overworld::{
 
 mod common;
 use common::{
-    always, breaking, crewed_stage, curtained_pair, duel, formation_named, maul, objective_battle,
-    play_round, registry, registry_wireless, seen, sharp_planner, soften, standoff, strike_down,
-    two_side_battle, unit_at,
+    always, breaking, calm, crewed_stage, curtained_pair, duel, formation_named, maul,
+    objective_battle, play_round, registry, registry_wireless, seen, sharp_planner, soften,
+    standoff, strike_down, two_side_battle, unit_at,
 };
 
 // --- campaign missions: orders that outlive the map ------------------------
@@ -3163,7 +3163,7 @@ fn a_crew_cannot_refuse_the_decision_she_made_herself() {
     // her own route away, lays it again, and she stands in place shaking for
     // the rest of the battle — a livelock that looks exactly like the freeze
     // this was built to remove.
-    let mut reg = registry_wireless();
+    let mut reg = calm(registry_wireless());
     always(&mut reg, "flight");
     let mut state = flight_stage(&reg, FLIGHT_SEED);
     state.units[0].pressure = breaking(&reg);

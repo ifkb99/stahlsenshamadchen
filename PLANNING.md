@@ -301,11 +301,34 @@ true:
    crew-rounds and moved no win column. Suppression is an infantry and
    soft-skin effect, and the instrument fields neither.
 
+   **Then combined arms** (the designer: measure as much as you like).
+   `examples/plans` gained riders (`rifle_platoon^` rides the hull before
+   it) and four matchups — combined arms against itself and against six
+   mediums, grenadiers, and guns — chosen with `PLANS_FORCES` so runs split
+   across processes. The first run found no plans at all: a combined-arms
+   side had one group that could go round, because a platoon could not fix
+   (can_manoeuvre refused anything on foot) and, once it could, it was
+   priced by its halftrack's belt. With two roles and the whole element
+   priced, and every round suppressing (the designer's second ruling),
+   taught minus control, A wins:
+
+   | matchup | battles | shipped fear before | every round suppresses |
+   | --- | --- | --- | --- |
+   | combined arms, mirror | 384 | +9 | +13 |
+   | mediums, three groups | 384 | −7 | +9 |
+   | heavies, three groups | 384 | +3 | +4 |
+   | guns against combined arms | 192 | +3 | +2 |
+   | combined arms against mediums | 192 | −1 | −1 |
+   | grenadiers against combined arms | 192 | −3 | −2 |
+   | shipped maps | 720 | +2 | −12 |
+
+   At 384 battles a level pairing wanders about ±10, so the combined-arms
+   row is a lean (about 1.3 sd) under both, and it came from letting the
+   platoon fix rather than from the fear. **Still not a play that wins.**
+
    **What I think is still wrong, for the next session:**
-   - *The instrument fights the wrong war for this play.* Mediums against
-     mediums is the case where fixing by fire matters least. Fix and flank
-     wants to be measured with infantry, carriers and guns on the field —
-     where a belt pins a platoon and a flank on a halftrack is a kill.
+   - ~~*The instrument fights the wrong war for this play.*~~ It fights
+     both now; see above.
    - *The enemy is not fixed.* Two tanks on a firing position do not pin
      four; he attacks them. The play needs the fix to be the stronger part
      or the better ground, or the enemy to be committed elsewhere — a

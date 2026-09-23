@@ -87,6 +87,82 @@ const HEAVIES_3: Force = &[
     "medium_tank",
 ];
 
+/// Combined arms, three groups a side. A slot ending `^` rides in the hull
+/// in the slot before it — a platoon in the back of her halftrack — so a
+/// pair can be a carrier and her fare. This is where fixing by fire should
+/// matter: a belt pins a platoon, and a flank on a carrier is a kill.
+///
+/// Armour, grenadiers and a screen: a line of two mediums, a platoon in her
+/// halftrack, and a light tank with a recon car.
+const MIXED: Force = &[
+    "medium_tank",
+    "medium_tank",
+    "halftrack",
+    "rifle_platoon^",
+    "light_tank",
+    "recon_car",
+];
+/// Infantry first: two platoons in their carriers and a pair of mediums.
+const GRENADIERS: Force = &[
+    "halftrack",
+    "rifle_platoon^",
+    "apc",
+    "rifle_platoon^",
+    "medium_tank",
+    "medium_tank",
+];
+/// Guns: a line, a platoon, and a tank destroyer with a battery behind it.
+const GUNS: Force = &[
+    "medium_tank",
+    "medium_tank",
+    "halftrack",
+    "rifle_platoon^",
+    "tank_destroyer",
+    "artillery",
+];
+
+/// Every matchup the instrument knows, by the name `PLANS_FORCES` selects.
+const BLOCKS: &[(&str, &str, Force, Force)] = &[
+    (
+        "mediums",
+        "mediums against mediums, two groups",
+        MEDIUMS,
+        MEDIUMS,
+    ),
+    (
+        "heavies",
+        "mediums against heavies, two groups",
+        MEDIUMS,
+        HEAVIES,
+    ),
+    (
+        "mediums3",
+        "mediums against mediums, three groups",
+        MEDIUMS_3,
+        MEDIUMS_3,
+    ),
+    (
+        "heavies3",
+        "mediums against heavies, three groups",
+        MEDIUMS_3,
+        HEAVIES_3,
+    ),
+    ("mixed", "combined arms against combined arms", MIXED, MIXED),
+    (
+        "mixed-armour",
+        "combined arms against six mediums",
+        MIXED,
+        MEDIUMS_3,
+    ),
+    (
+        "grenadiers",
+        "grenadiers against combined arms",
+        GRENADIERS,
+        MIXED,
+    ),
+    ("guns", "guns against combined arms", GUNS, MIXED),
+];
+
 fn battle(reg: &DataRegistry, row: &Row, a_force: Force, b_force: Force, seed: u64) -> Tally {
     let arena = &RIDGE_ARENA;
     let flip = seed % 2 == 1;
@@ -124,7 +200,13 @@ fn battle(reg: &DataRegistry, row: &Row, a_force: Force, b_force: Force, seed: u
             (5, 3, false),
         ];
         for (slot, &(pair, formation, leads)) in slots.iter().enumerate().take(force.len()) {
-            let (w, e) = pairs[pair];
+            // A rider stands on her carrier's hex, aboard, and in her
+            // carrier's formation — which is the pair's, by the slot table.
+            let (vehicle, rides) = match force[slot].strip_suffix('^') {
+                Some(v) => (v, true),
+                None => (force[slot], false),
+            };
+            let (w, e) = pairs[if rides { slots[slot - 1].0 } else { pair }];
             let at = if side == 0 { w } else { e };
             let crew = if slot == 0 {
                 vec![commander.to_string()]
@@ -132,10 +214,10 @@ fn battle(reg: &DataRegistry, row: &Row, a_force: Force, b_force: Force, seed: u
                 Vec::new()
             };
             placements.push(UnitPlacement {
-                aboard_at: None,
+                aboard_at: rides.then(|| tactics_core::hex_to_offset(at)),
                 at: tactics_core::hex_to_offset(at),
                 side,
-                vehicle: force[slot].into(),
+                vehicle: vehicle.into(),
                 crew,
                 name: None,
                 facing: None,
@@ -419,22 +501,29 @@ fn main() {
     }
     let games = args.first().copied().unwrap_or(48);
     let offset = args.get(1).copied().unwrap_or(0);
-    for (label, a_force, b_force) in [
-        ("mediums against mediums, two groups", MEDIUMS, MEDIUMS),
-        ("mediums against heavies, two groups", MEDIUMS, HEAVIES),
-        (
-            "mediums against mediums, three groups",
-            MEDIUMS_3,
-            MEDIUMS_3,
-        ),
-        (
-            "mediums against heavies, three groups",
-            MEDIUMS_3,
-            HEAVIES_3,
-        ),
-    ] {
+    // PLANS_FORCES="mixed,guns" picks matchups by name, so several runs can
+    // split the work; nothing named is the four armour blocks, as before.
+    let chosen: Vec<String> = std::env::var("PLANS_FORCES")
+        .map(|v| v.split(',').map(str::to_string).collect())
+        .unwrap_or_else(|_| {
+            ["mediums", "heavies", "mediums3", "heavies3"]
+                .map(String::from)
+                .to_vec()
+        });
+    for name in &chosen {
+        if !BLOCKS.iter().any(|(n, ..)| n == name) {
+            panic!(
+                "PLANS_FORCES knows no `{name}`; there is {}",
+                BLOCKS.iter().map(|b| b.0).collect::<Vec<_>>().join(", ")
+            );
+        }
+    }
+    for &(_, label, a_force, b_force) in BLOCKS
+        .iter()
+        .filter(|(n, ..)| chosen.iter().any(|c| c == n))
+    {
         println!(
-            "ridge arena, {label}: A is 4 medium tanks, two formations a side, command planner, {games} battles a row\n"
+            "ridge arena, {label}: A {a_force:?} against B {b_force:?}, command planner, {games} battles a row\n"
         );
         println!(
             "{:<12} {:>5} {:>5} {:>5} {:>6} {:>8} {:>8} {:>8} {:>9} {:>9} {:>9}",

@@ -93,3 +93,35 @@ pub fn seen(mut reg: DataRegistry) -> DataRegistry {
     reg.balance.detection_certain_percent = 100;
     reg
 }
+
+/// The registry with the fear of being aimed at taken back out: no price for
+/// knowing she is the target, and only the belts and shells that declared
+/// suppression before the designer's ruling of 2026-09-23 ("anything flying
+/// by should suppress") declaring any.
+///
+/// For stages whose subject is something else — a drill, a latitude, the
+/// news on the net, a crew's own decision — and which were calibrated so a
+/// crew under a gun lives to be read: "she survives being shot at" is the
+/// premise, not the finding. The same kind of helper as [`seen`]: the rule
+/// has tests of its own (`fire_and_movement.rs`), and a stage about
+/// something else must not also be a test of how much fear a round costs.
+pub fn calm(mut reg: DataRegistry) -> DataRegistry {
+    reg.morale.targeted = 0;
+    for (id, before) in [
+        ("rifle_ball", 0),
+        ("rpg_heat", 0),
+        ("ac_20_ap", 0),
+        ("ac_20_he", 1),
+        ("ap_37", 0),
+        ("ap_75", 0),
+        ("ap_88", 0),
+        ("he_75", 2),
+        ("he_88", 2),
+        ("he_105", 2),
+    ] {
+        if let Some(a) = reg.ammo.get_mut(id) {
+            a.suppression = before;
+        }
+    }
+    reg
+}
