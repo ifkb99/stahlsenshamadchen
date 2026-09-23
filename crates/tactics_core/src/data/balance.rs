@@ -137,6 +137,15 @@ pub struct Balance {
     /// determinism baseline tell a mod that declines this rule from the game
     /// before it existed.
     pub field_repair_percent: i32,
+    /// Ticks a gun that does not traverse ([`crate::data::VehicleDef::turret`]
+    /// false) spends swinging her hull onto a target outside her frontal
+    /// arc before she can fire at it.
+    ///
+    /// **Zero is the game before hulls and turrets were told apart**: she
+    /// turns and fires in the same tick, as every vehicle always did.
+    /// Above zero, a casemate caught from the side answers late, which is
+    /// the price of her low hull and heavy front.
+    pub pivot_ticks: u32,
     /// Points added to [`Self::field_repair_percent`] per point of the
     /// crew's `maintenance` above average.
     ///
@@ -471,6 +480,7 @@ impl Default for Balance {
             speed_per_driving: 5,
             reload_per_loading: 0,
             field_repair_percent: 0,
+            pivot_ticks: 0,
             repair_per_maintenance: 0,
             retired_speed_per_athletics: None,
             athletics_per_climb_level: 0,

@@ -160,6 +160,12 @@ fn main() {
                     path.len() - 1,
                     path.last().unwrap()
                 ),
+                Event::Pivoted { unit, .. } => {
+                    println!(
+                        "{} swings her hull round onto a target",
+                        name(&state, *unit)
+                    )
+                }
                 Event::UnitTrapped { unit, .. } => {
                     println!("{} AMBUSHED mid-move!", name(&state, *unit))
                 }

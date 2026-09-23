@@ -360,6 +360,20 @@ interior) and the near side (`hit_chance_inner`) are both data
   resolver's arithmetic and nothing else: no doctrine weight, no planner
   number, no falloff. The evaluator's threat term and the player's danger
   overlay both read it, or they are two answers to one question.
+- **Armour follows the hull; a turret does not turn it** (2026-09-23).
+  `VehicleDef::turret` says her guns traverse: she fires without turning,
+  so a crew caught from the side is still showing that side. A gun that
+  does not traverse (casemate, towed piece) swings the whole hull onto a
+  target outside her frontal arc in `combat::lay_on`, paying
+  `balance.pivot_ticks` on every gun and announcing `Event::Pivoted`; no
+  round is spent on the swing. **`turret: false` with `pivot_ticks: 0` is
+  the game before** — every hull swung onto its target for free, which is
+  why 87–90% of hits struck front plate and a flank was worth one shot —
+  and the determinism snapshot passed unregenerated with the fields added
+  and nothing declaring them. Movement still sets the hull facing to the
+  direction of travel. **The evaluator does not yet know a hull arrives
+  facing the way it drove**: `incoming` at a candidate tile reads her facing
+  now, which mattered little while firing re-faced her and matters now.
 - **`Unit.moved` is hexes crossed this round, incremented at the single place
   a unit changes hex** and zeroed in `begin_round`. It is not `move_credit`.
   One increment site is what makes an ordered march, a dash for cover and a

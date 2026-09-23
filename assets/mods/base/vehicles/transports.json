@@ -1,6 +1,7 @@
 [
     {
         "id": "halftrack",
+        "turret": true,
         "footprint": 2,
         "name": "Kette Halftrack",
         "class": "transport",
@@ -40,6 +41,7 @@
     },
     {
         "id": "apc",
+        "turret": true,
         "footprint": 2,
         "name": "Kasten Personnel Carrier",
         "class": "transport",
@@ -79,6 +81,7 @@
     },
     {
         "id": "ifv",
+        "turret": true,
         "footprint": 2,
         "name": "Schütze Fighting Vehicle",
         "class": "transport",

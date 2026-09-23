@@ -16,6 +16,7 @@
     "speed_per_driving": 5,
     "reload_per_loading": 5,
     "field_repair_percent": 10,
+    "pivot_ticks": 2,
     "repair_per_maintenance": 3,
     "athletics_per_climb_level": 2,
     "concealment_per_fieldcraft": 5,
