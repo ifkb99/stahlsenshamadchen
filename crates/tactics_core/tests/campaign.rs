@@ -920,6 +920,69 @@ fn a_vehicle_travelling_with_an_army_has_no_hex_of_its_own() {
     );
 }
 
+/// A campaign has no treasury, and content that still funds one is told so.
+///
+/// Funds were paid in by capturable terrain (`income`) and by campaign
+/// scripts, seeded per side on the map (`funds`), shown on the banner and
+/// spent by nothing at all. They went on 2026-09-23. `income` was also, and
+/// only incidentally, how the campaign planner decided which ground to want;
+/// that job kept its numbers as the terrain's `value`. Both old keys are
+/// retired rather than deleted, so a mod written against them is told what
+/// is being ignored instead of quietly getting a campaign planner that
+/// wants nothing.
+#[test]
+fn a_campaign_has_no_treasury_and_content_that_funds_one_is_told() {
+    let reg = registry();
+    let mut report = ValidationReport::default();
+    reg.validate_into(&mut report);
+    assert!(
+        !report
+            .warnings
+            .iter()
+            .any(|w| w.contains("income") || w.contains("funds")),
+        "the base mod declares neither: {:?}",
+        report.warnings
+    );
+    assert_eq!(
+        (
+            reg.terrain("city").map(|t| t.value),
+            reg.terrain("factory").map(|t| t.value)
+        ),
+        (Some(3), Some(5)),
+        "the campaign planner still wants what it wanted when this was income"
+    );
+
+    let mut funded = reg.clone();
+    funded
+        .terrain
+        .get_mut("city")
+        .expect("the base mod ships a city")
+        .retired_income = Some(3);
+    let mut file = funded
+        .map("frontier")
+        .expect("shipped campaign map")
+        .clone();
+    file.sides[0].retired_funds = Some(20);
+    funded.maps.insert(file.id.clone(), file);
+    let mut report = ValidationReport::default();
+    funded.validate_into(&mut report);
+    assert!(
+        report.is_ok(),
+        "a retired key is a warning, not a broken mod: {:?}",
+        report.errors
+    );
+    for (what, needle) in [
+        ("terrain", "city` declares income"),
+        ("map", "declares funds"),
+    ] {
+        assert!(
+            report.warnings.iter().any(|w| w.contains(needle)),
+            "nothing told the {what} its key is no longer read: {:?}",
+            report.warnings
+        );
+    }
+}
+
 /// The two ways a `victory` block can be written so that it never fires are
 /// errors, not silences.
 #[test]

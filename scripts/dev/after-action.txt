@@ -65,8 +65,8 @@ press Enter until waiting 400
 
 # ...and back to the campaign, where the bill is waiting. This is the shot
 # this tour exists for: named cadets, what happened to each, and a campaign
-# that has stopped to say so instead of narrating it past in among the tile
-# income at three lines a second.
+# that has stopped to say so instead of narrating it past in among the
+# day's traffic at three lines a second.
 expect waiting
 expect log "Day"
 shot /tmp/aa-04-after-action.png

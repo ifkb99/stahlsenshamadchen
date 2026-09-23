@@ -17,10 +17,10 @@ assets/mods/base/
   characters/*.json  people: portrait, crew stats (gunnery, driving, ...)
   vehicles/*.json    chassis: armor facings, movement, vision, weapons[]
   weapons/*.json     damage, penetration, range, accuracy, reload, indirect
-  terrain/*.json     move costs per class, cover, vision block, income
+  terrain/*.json     move costs per class, cover, vision block, campaign value
   doctrines/*.json   AI fighting styles, referenced by side ai blocks
   maps/*.json        palette + ASCII rows + elevation digits (+ scenario)
-  campaigns/*.lua    campaign hooks (on_start, on_turn, on_battle_end)
+  campaigns/*.lua    campaign hooks — parked, see below
 ```
 
 ## Weapons
@@ -102,18 +102,23 @@ Run `cargo run --bin validate-mods` to check every reference (weapons,
 terrain, palettes, placements, the campaign's ending) without launching the
 game.
 
-## Campaign scripts
+## Campaign scripts (parked)
 
-Campaign scripts get a curated `game.*` API and read-only context
-snapshots. See `assets/mods/base/campaigns/demo.lua` for the current
-surface:
+**Parked 2026-09-23** (see `PARKED.md`): the Lua host is only built with
+`cargo run -p stahlsenshamädchen --features lua-campaigns`, and a default
+build ignores `campaigns/*.lua`. What a campaign *is* — how it ends, who
+must not die, what ground matters — is map and terrain data now: the
+overworld map's `victory` block, the `headquarters` flag, and a capturable
+terrain's `value`. There are no funds; a terrain still declaring `income`
+or a map side declaring `funds` is warned about by `validate-mods`.
+
+With the feature on, scripts get a curated `game.*` API and read-only
+context snapshots (`assets/mods/base/campaigns/demo.lua`):
 
 | Call | Effect |
 | --- | --- |
 | `game.message(text)` | Show a message in the campaign log |
-| `game.set_funds(side, amount)` | Overwrite a side's funds |
-| `game.give_funds(side, amount)` | Add to a side's funds |
 | `game.start_battle(map_id)` | Launch a scenario battle map |
 
-Hooks receive a `ctx` table with `turn`, `funds[side]`, `army_counts[side]`,
-and `side_names[side]` (side indices are 0-based).
+Hooks receive a `ctx` table with `turn`, `army_counts[side]` and
+`side_names[side]` (side indices are 0-based).

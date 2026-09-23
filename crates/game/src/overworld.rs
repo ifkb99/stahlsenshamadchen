@@ -1,8 +1,9 @@
-//! The overworld screen: strategic army movement, objective capture,
-//! income, soft fog, and handing off clashes to the battle screen.
+//! The overworld screen: strategic army movement, objective capture, soft
+//! fog, and handing off clashes to the battle screen.
 
 use crate::battle::{BattleOutcome, PendingBattle};
 use crate::camera::CameraFocus;
+#[cfg(feature = "lua-campaigns")]
 use crate::campaign::{self, Campaign, CampaignCommand};
 use crate::iso::{self, ArtCache, ViewCenter};
 use crate::map_render::{self, CurrentMap, HexOverlay};
@@ -210,16 +211,19 @@ impl Plugin for OverworldPlugin {
                     .in_set(ScreenSet::Present)
                     .run_if(in_state(AppState::Overworld)),
             )
-            .add_systems(
-                Update,
-                // Lifecycle because a campaign script can ask for a state
-                // transition, and a frame that leaves the screen should have
-                // been drawn first.
-                apply_campaign_commands
-                    .in_set(ScreenSet::Lifecycle)
-                    .run_if(in_state(AppState::Overworld)),
-            )
             .add_systems(OnExit(AppState::Overworld), leave_overworld);
+        // The parked Lua campaign-script host (PARKED.md), installed from
+        // here so that switching the feature on is the whole of reviving it.
+        #[cfg(feature = "lua-campaigns")]
+        app.add_plugins(campaign::CampaignPlugin).add_systems(
+            Update,
+            // Lifecycle because a campaign script can ask for a state
+            // transition, and a frame that leaves the screen should have
+            // been drawn first.
+            apply_campaign_commands
+                .in_set(ScreenSet::Lifecycle)
+                .run_if(in_state(AppState::Overworld)),
+        );
         // The campaign map answers the same questions the battle screen does,
         // in its own terms. It did not, until the after-action report gave it
         // something worth waiting for: every campaign tour was a stopwatch,
@@ -229,7 +233,7 @@ impl Plugin for OverworldPlugin {
                 .add_systems(
                     Update,
                     publish_script_facts
-                        .after(apply_campaign_commands)
+                        .in_set(ScreenSet::Facts)
                         .run_if(in_state(AppState::Overworld)),
                 );
         }
@@ -304,7 +308,7 @@ fn enter_overworld(
     mut log: ResMut<OwLogLines>,
     existing: Option<ResMut<Overworld>>,
     outcome: Option<Res<BattleOutcome>>,
-    campaign: Option<NonSendMut<Campaign>>,
+    #[cfg(feature = "lua-campaigns")] campaign: Option<NonSendMut<Campaign>>,
     mut focus: ResMut<CameraFocus>,
 ) {
     let registry = &mods.0;
@@ -331,6 +335,7 @@ fn enter_overworld(
                 ow.debrief = Some(report);
             }
             ow.anim.extend(events);
+            #[cfg(feature = "lua-campaigns")]
             if let Some(campaign) = campaign {
                 campaign::call_battle_end_hook(&campaign, &ow.state, outcome.winner);
             }
@@ -383,6 +388,7 @@ fn enter_overworld(
     let center = spawn_world(&mut commands, registry, &art, view.rotation(), &state);
     center_camera(&mut focus, view.rotation(), center);
 
+    #[cfg(feature = "lua-campaigns")]
     if let Some(campaign) = campaign {
         campaign::call_start_hook(&campaign, &state);
     }
@@ -636,7 +642,7 @@ fn pump_events(
     mut overworld: ResMut<Overworld>,
     mut log: ResMut<OwLogLines>,
     mut next: ResMut<NextState<AppState>>,
-    campaign: Option<NonSend<Campaign>>,
+    #[cfg(feature = "lua-campaigns")] campaign: Option<NonSend<Campaign>>,
 ) {
     if overworld.muster.is_some() || overworld.debrief.is_some() || overworld.roster {
         return;
@@ -654,15 +660,12 @@ fn pump_events(
             let name = &overworld.state.sides[*side as usize].name;
             log.push(format!("- Day {turn}: {name} -"));
             // The campaign sees one on_turn per new day (first side's phase).
+            #[cfg(feature = "lua-campaigns")]
             if *side == 0
                 && let Some(campaign) = &campaign
             {
                 campaign::call_turn_hook(campaign, &overworld.state);
             }
-        }
-        OverworldEvent::Income { side, amount } => {
-            let name = &overworld.state.sides[*side as usize].name;
-            log.push(format!("{name} collects {amount} funds."));
         }
         OverworldEvent::ArmyMoved { .. } => {}
         OverworldEvent::CrewCasualty { cadet, fate } => {
@@ -2141,15 +2144,12 @@ fn update_ui(
     if let Ok(mut text) = hud.banner.single_mut() {
         let side = &state.sides[state.active_side as usize];
         let controller = if side.ai.is_some() { "AI" } else { "You" };
-        // What the campaign is *for*, under the day and the money, every
+        // What the campaign is *for*, under the day, every
         // turn: the map's hold rule with how much of it this side has, and
         // whether the headquarters is at stake. A rule the player cannot see
         // is a rule she cannot play toward, and a campaign that has ended
         // says so here rather than only in a log line that scrolls away.
-        let mut banner = format!(
-            "Day {} - {} ({controller}) - Funds {}",
-            state.turn, side.name, side.funds
-        );
+        let mut banner = format!("Day {} - {} ({controller})", state.turn, side.name);
         if let Some(line) = objective_line(state, &mods.0, state.active_side) {
             banner.push('\n');
             banner.push_str(&line);
@@ -2328,17 +2328,14 @@ fn describe_tile(
             None => "unclaimed".into(),
         };
         lines.push(format!("Objective: {owner}"));
-        if terrain.income > 0 {
-            lines.push(format!("Income {}/day", terrain.income));
-        }
     }
     lines.join("\n")
 }
 
+#[cfg(feature = "lua-campaigns")]
 fn apply_campaign_commands(
     mut commands: Commands,
     campaign: Option<NonSendMut<Campaign>>,
-    mut overworld: ResMut<Overworld>,
     mut log: ResMut<OwLogLines>,
     mut next: ResMut<NextState<AppState>>,
 ) {
@@ -2346,16 +2343,6 @@ fn apply_campaign_commands(
     for command in campaign.drain_commands() {
         match command {
             CampaignCommand::Message(text) => log.push(format!("[Campaign] {text}")),
-            CampaignCommand::SetFunds { side, amount } => {
-                if let Some(s) = overworld.state.sides.get_mut(side as usize) {
-                    s.funds = amount;
-                }
-            }
-            CampaignCommand::GiveFunds { side, amount } => {
-                if let Some(s) = overworld.state.sides.get_mut(side as usize) {
-                    s.funds += amount;
-                }
-            }
             CampaignCommand::StartBattle { map_id } => {
                 commands.insert_resource(PendingBattle::Scenario { map_id });
                 next.set(AppState::Battle);

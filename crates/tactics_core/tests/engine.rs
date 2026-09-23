@@ -524,8 +524,13 @@ fn mcts_planner_produces_legal_orders() {
 
 // --- the overworld ---------------------------------------------------------
 
+/// An army takes the ground it stands on, and the side keeps it through the
+/// night. Was `overworld_income_capture_and_battle_trigger`, which never
+/// triggered a battle and whose second half checked that the city paid
+/// funds into a treasury nothing spent; the treasury went on 2026-09-23 and
+/// this half asks what ownership still means — that it persists.
 #[test]
-fn overworld_income_capture_and_battle_trigger() {
+fn an_army_takes_the_ground_it_stands_on_and_keeps_it_overnight() {
     let reg = registry();
     let mut state = OverworldState::from_map(&reg, "frontier", 1).unwrap();
     assert_eq!(state.armies.len(), 4);
@@ -545,17 +550,14 @@ fn overworld_income_capture_and_battle_trigger() {
         "expected a capture event, got {events:?}"
     );
 
-    // End both turns; side 0's next upkeep should pay out city income.
+    // End both turns: nobody contests it, so it is still hers at dawn.
     let _ = state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
-    let funds_before = state.sides[0].funds;
-    let events = state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
-    assert!(
-        events
-            .iter()
-            .any(|e| matches!(e, OverworldEvent::Income { side: 0, .. })),
-        "expected income, got {events:?}"
+    let _ = state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
+    assert_eq!(
+        state.owners.get(&city),
+        Some(&0),
+        "a capture is kept until somebody takes it back"
     );
-    assert!(state.sides[0].funds > funds_before);
 }
 
 #[test]

@@ -156,7 +156,7 @@
     },
     "concealment": 25,
     "capturable": true,
-    "income": 3
+    "value": 3
   },
   {
     "id": "factory",
@@ -172,7 +172,7 @@
     },
     "concealment": 25,
     "capturable": true,
-    "income": 5
+    "value": 5
   },
   {
     "id": "highway",

@@ -25,8 +25,6 @@ use tactics_core::overworld::OverworldState;
 #[derive(Debug, Clone)]
 pub enum CampaignCommand {
     Message(String),
-    SetFunds { side: u8, amount: i32 },
-    GiveFunds { side: u8, amount: i32 },
     StartBattle { map_id: String },
 }
 
@@ -87,24 +85,6 @@ impl Campaign {
         )?;
         let q = queue.clone();
         game.set(
-            "set_funds",
-            lua.create_function(move |_, (side, amount): (u8, i32)| {
-                q.borrow_mut()
-                    .push(CampaignCommand::SetFunds { side, amount });
-                Ok(())
-            })?,
-        )?;
-        let q = queue.clone();
-        game.set(
-            "give_funds",
-            lua.create_function(move |_, (side, amount): (u8, i32)| {
-                q.borrow_mut()
-                    .push(CampaignCommand::GiveFunds { side, amount });
-                Ok(())
-            })?,
-        )?;
-        let q = queue.clone();
-        game.set(
             "start_battle",
             lua.create_function(move |_, map_id: String| {
                 q.borrow_mut().push(CampaignCommand::StartBattle { map_id });
@@ -135,15 +115,12 @@ impl Campaign {
     fn context(&self, state: &OverworldState) -> mlua::Result<Table> {
         let ctx = self.lua.create_table()?;
         ctx.set("turn", state.turn)?;
-        let funds = self.lua.create_table()?;
         let armies = self.lua.create_table()?;
         let names = self.lua.create_table()?;
         for (i, side) in state.sides.iter().enumerate() {
-            funds.set(i, side.funds)?;
             names.set(i, side.name.clone())?;
             armies.set(i, state.side_armies(i as u8).count())?;
         }
-        ctx.set("funds", funds)?;
         ctx.set("side_names", names)?;
         ctx.set("army_counts", armies)?;
         Ok(ctx)
