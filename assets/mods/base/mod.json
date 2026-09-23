@@ -488,6 +488,11 @@
     "levels_per_tick": 4,
     "max_ticks": 5
   },
+  "ranks": [
+    { "id": "sergeant", "name": "Cadet Sergeant" },
+    { "id": "lieutenant", "name": "Cadet Lieutenant" },
+    { "id": "captain", "name": "Cadet Captain" }
+  ],
   "command": {
     "radius": 8,
     "radius_per_signals": 1,
