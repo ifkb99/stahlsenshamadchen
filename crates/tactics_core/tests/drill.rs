@@ -96,6 +96,46 @@ fn a_crew_under_fire_takes_cover_instead_of_waiting_for_orders() {
     );
 }
 
+/// Taking cover is one answer, whoever asks it: the planning table's drill
+/// for a crew nobody has ordered sends her where the engine's own reflex
+/// would, [`drill_destination`](tactics_core::battle::drill_destination).
+///
+/// It used to run the whole evaluator under a synthetic `drill` doctrine —
+/// a second model of the same reaction — and on open ground the two parted:
+/// with the gun at column 9 of this stage the old drill sent her to (3,2)
+/// and the reflex's rule to (2,1), so a crew the planning table had placed
+/// could be moved again by the reflex a tick after she arrived. Found by
+/// scanning stage layouts for where the two disagreed; the forest in
+/// `drill_stage` is one where they happened to agree.
+#[test]
+fn the_planning_table_takes_cover_where_the_reflex_would() {
+    let reg = registry_wireless();
+    let row = format!("f{}", "g".repeat(29));
+    let mut state = two_side_battle(
+        &reg,
+        &[&row, &row, &row],
+        vec![
+            unit_at([5, 1], 0, "recon_car", "Unordered"),
+            unit_at([9, 1], 1, "medium_tank", "Gun Tank"),
+        ],
+        51,
+    );
+    let crew = UnitId(0);
+    let threats = tactics_core::battle::threats(&reg, &state, crew);
+    assert!(!threats.is_empty(), "the stage needs a gun bearing on her");
+    let reflex = tactics_core::battle::drill_destination(&reg, &state, crew, &threats)
+        .expect("there is quieter ground in reach");
+
+    executor_only_side(&reg, 51).plan_round(&reg, &mut state);
+    let unit = state.unit(crew).unwrap();
+    assert!(unit.planned, "the drill plans her");
+    assert_eq!(
+        unit.planned_destination(),
+        reflex,
+        "the planning table sends her where the reflex would"
+    );
+}
+
 #[test]
 fn an_idle_crew_out_of_danger_stays_put() {
     // The other half of the bargain: the drill is survival, not initiative.
@@ -295,7 +335,7 @@ fn an_arrival_keeps_the_insistence_she_arrived_under() {
         );
         let watcher = UnitId(0);
         assert!(
-            !tactics_core::ai::threatened(&reg, &state, watcher),
+            !tactics_core::battle::threatened(&reg, &state, watcher),
             "the stage must put nothing on her, or the drill is what is being tested"
         );
         let next_door = tactics_core::offset_to_hex(3, 0);

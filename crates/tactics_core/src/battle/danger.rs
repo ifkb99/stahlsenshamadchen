@@ -271,3 +271,150 @@ fn guns_bearing_on(
         }
     }
 }
+
+// --- the battle drill ------------------------------------------------------
+//
+// `threatened` and `threats` lived in `ai::` while the engine's own reflex
+// and rout called them from `battle::orders`, so a rule of the battlefield
+// depended on the AI module. They are questions about fire, answered by this
+// module's walk, and they live beside it.
+
+/// Whether anything the side can see could put fire on this unit where she
+/// stands. Fog-honest (spotted enemies only) and deterministic, because "was
+/// she in danger" must answer the same on every machine.
+///
+/// Six very different things ask it, and they must ask it the same way or the
+/// game contradicts itself: the battle drill at the planning table, which is
+/// what an unordered crew does when nobody has told her anything; the
+/// evaluator, where being under fire is what suspends a movement to contact;
+/// the taxi rules, where nobody mounts up or waits at a tailgate under fire;
+/// the dismount reflex; and the engine's mid-round drill and its rout, where
+/// the same danger noticed at tick four is what sends an idle crew scrambling.
+/// All of them are the same sentence — *is somebody shooting at me* — so all
+/// of them read the same predicate rather than formulas that can drift apart.
+///
+/// **It is [`crate::battle::incoming`] and nothing else**, which is the whole
+/// of Wave 2's first part: this used to be a second walk over the visible
+/// enemies asking [`best_weapon_against`] the same question
+/// [`crate::battle::danger`] asks, with its own gate. Two walks are two
+/// answers waiting to happen — a gun added to one and not the other, or a
+/// gate reworded in one place — and the currency has exactly one answer to
+/// *who can shoot her there*. The two are arithmetically identical today
+/// (`best_weapon_from` admits a gun precisely when its `worth` is positive,
+/// and the sum of positive terms is positive), so this is a refactor with a
+/// test on it rather than a behaviour change; what it buys is that it stays
+/// identical.
+pub fn threatened(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> bool {
+    let Some(me) = state.unit(unit) else {
+        return false;
+    };
+    incoming(registry, state, unit, me.pos).worth > 0.0
+}
+
+/// The enemies she knows of that could put fire on this unit where she stands, in
+/// id order. The list form of [`threatened`], for the two callers — the
+/// mid-round drill and the rout — that must weigh each threat against when
+/// she first laid eyes on it, or run away from where it is standing.
+///
+/// [`crate::battle::fire_on`]'s membership, and deliberately nothing more:
+/// the bearings carry a weapon, a hit chance and a cadence that neither
+/// caller wants, but taking the ids off the one walk is what keeps "who can
+/// shoot her" from having two answers.
+pub fn threats(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> Vec<UnitId> {
+    let Some(me) = state.unit(unit) else {
+        return Vec::new();
+    };
+    fire_on(registry, state, unit, me.pos)
+        .into_iter()
+        .map(|bearing| bearing.enemy)
+        .collect()
+}
+
+/// The threats `unit` has *noticed*: [`threats`], less any gun she has not
+/// yet caught up with on her reaction clock.
+///
+/// The clock is per enemy — `spotted_since` plus her `reactions` delay — and
+/// the same one opportunity fire pays, so a gun that appeared out of a
+/// treeline this tick is one she does not know about yet. Kept as a list
+/// rather than collapsed to a boolean, because [`drill_destination`] prices
+/// ground against these guns and no others: reacting to a gun she has not
+/// caught up with would be the reaction-latency defect rebuilt inside the
+/// reflex latency is about.
+///
+/// The mid-round reflex's clock. The planning table's drill does not read
+/// it: planning is a pause, and nothing else planned there reads it either.
+pub fn noticed_threats(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> Vec<UnitId> {
+    let Some(me) = state.unit(unit) else {
+        return Vec::new();
+    };
+    let now = state.round as u64 * registry.scale.ticks_per_round as u64
+        + state.resolving_tick().unwrap_or(0) as u64;
+    let delay =
+        super::stats::reaction_delay(registry, &state.roster, me, state.terrain_at(me.pos)) as u64;
+    let fog = state.fog.side(me.side);
+    threats(registry, state, unit)
+        .into_iter()
+        .filter(|enemy| {
+            fog.spotted_since
+                .get(enemy)
+                .is_none_or(|since| now >= since + delay)
+        })
+        .collect()
+}
+
+/// Where the orderly reaction takes a crew under fire: the reachable hex
+/// where the guns in `noticed` can do least to her, and only if it is
+/// strictly quieter than where she stands.
+///
+/// **One answer for both drills.** The engine's mid-round reflex
+/// (`run_crew_drill`, with the guns she has noticed on her clock) and the
+/// planning table's drill for a crew nobody has ordered (`SideCommand`, with
+/// every gun bearing on her) both ask this. The planning table used to run
+/// the whole evaluator under a synthetic `drill` doctrine instead, so a crew
+/// it sent to one hex could be moved to another by the reflex a tick after
+/// she arrived — the same reaction on two models.
+///
+/// The currency, not the terrain table. This used to take the reachable tile
+/// with the highest terrain `cover`, which is a second model of what cover
+/// is for beside a resolver that answers the question exactly: a wood the gun
+/// is looking straight into scores 30 and is a death trap, and the reverse
+/// slope twenty metres behind it scores 0 and cannot be shot at at all.
+/// [`incoming_from`] brings range, sight, elevation, facing, obliquity and the
+/// gun actually bearing on her into the decision — the arithmetic the
+/// evaluator spends and the player's overlay draws.
+///
+/// Strictly better ground only: equal danger never causes a pointless
+/// shuffle, and each dash is to ground the guns can do less on, which is
+/// what makes the drill settle instead of oscillate. Ties go to the cheaper
+/// drive, then the coordinate, last, as the invariants allow.
+pub fn drill_destination(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    noticed: &[UnitId],
+) -> Option<Hex> {
+    let pos = state.unit(unit)?.pos;
+    let danger_at = |hex: Hex| worth_key(incoming_from(registry, state, unit, hex, noticed).worth);
+    let here = danger_at(pos);
+    super::movement::reachable(registry, state, unit)
+        .into_iter()
+        .map(|(hex, cost)| (hex, cost, danger_at(hex)))
+        .filter(|&(hex, _, danger)| hex != pos && danger < here)
+        .min_by_key(|&(hex, cost, danger)| (danger, cost, hex.x, hex.y))
+        .map(|(hex, _, _)| hex)
+}
+
+/// A round of expected fire, as an integer key a tiebreak can be sorted on.
+///
+/// `f32` has no total order, and every "where should she stand" decision in
+/// this engine has to be settled the same way on every machine — the
+/// determinism snapshot is a byte comparison. Quantising to about a
+/// thousandth of a substance point is also the right *behaviour*: two hexes
+/// whose expected fire differs in the fourth decimal are ground the resolver
+/// cannot really tell apart, and treating them as equal lets the later keys
+/// (the cheapest drive, then the coordinate) settle it instead of a rounding
+/// artefact. Saturating on the cast handles a non-finite worth by pinning it
+/// at the ends rather than panicking.
+pub(crate) fn worth_key(worth: f32) -> i64 {
+    (worth * 1024.0) as i64
+}

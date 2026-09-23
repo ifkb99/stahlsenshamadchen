@@ -35,7 +35,7 @@
 //! read against each doctrine's own `delegation`. It was a constant here
 //! until 2026-08-27; the reasoning behind the number lives on the field now.
 
-use super::{AiConfig, AiPlanner, Evaluator, next_unplanned_unit, threatened};
+use super::{AiConfig, AiPlanner, Evaluator, next_unplanned_unit};
 use crate::battle::{BattleState, FireIntent, Formation, FormationId, Mission, Order};
 use crate::data::{DataRegistry, DoctrineDef};
 use crate::map::{Objective, ObjectiveKind};
@@ -95,12 +95,14 @@ pub struct SideCommand {
     /// Plans units in no formation, under the side's own doctrine — which is
     /// exactly what the whole side was before formations existed.
     fallback: UtilityPlanner,
-    /// Plans the battle drill: the self-preservation move of an unordered
-    /// unit under fire, when the commander is a human who has said nothing.
-    /// Runs the `drill` posture from mod data — return fire, seek cover,
-    /// want nothing else on the map — so "she moved without orders" is
-    /// always survival and never campaigning.
-    drill: UtilityPlanner,
+    /// Chooses the shot of the battle drill: the self-preservation reaction
+    /// of an unordered unit under fire, when the commander is a human who has
+    /// said nothing. *Where* she goes is [`crate::battle::drill_destination`],
+    /// the same answer the engine's mid-round reflex takes; this evaluator,
+    /// under the `drill` posture from mod data, only picks what she returns
+    /// fire at from there — so "she moved without orders" is always survival
+    /// and never campaigning.
+    drill: Evaluator,
     /// The side's doctrine, resolved once at build so the brain can consult
     /// it for formations that declare none of their own.
     side_doctrine: Option<DoctrineDef>,
@@ -146,11 +148,7 @@ impl SideCommand {
             commander: None,
             executors: HashMap::new(),
             fallback: UtilityPlanner::from_config(config, seed ^ 0xC0FF_EE00, data),
-            drill: UtilityPlanner::new(
-                Evaluator::new(drill_doctrine(data)),
-                config.difficulty,
-                seed ^ 0xD811_0000,
-            ),
+            drill: Evaluator::new(drill_doctrine(data)),
             side_doctrine: None,
             built: false,
             reviews_missions: true,
@@ -919,13 +917,43 @@ impl AiPlanner<BattleState, Order> for SideCommand {
             // engine's mid-round reflex asks too; a crew holding ground she
             // was sent to under a binding order holds it, because the
             // insistence arrived with her.
+            //
+            // Where she goes is the engine's own drill, asked here five
+            // seconds sooner: the reachable ground where the guns bearing on
+            // her can do least. This used to be the whole evaluator under a
+            // `drill` doctrine — a second model of the same reaction, which
+            // could send her to one hex at the planning table and have the
+            // reflex move her to another a tick after she arrived. What the
+            // evaluator still decides is her shot from wherever she ends up.
+            //
+            // Every gun she knows of, not only the ones she has caught up
+            // with on her reaction clock: the planning table is a pause, and
+            // nothing else planned at it — the executors, the evaluator's
+            // threat term — reads the clock either. The clock is for
+            // reacting while the round runs, which is the reflex's half.
             let yields = state.unit(unit).is_none_or(|u| u.yields_to_drill());
-            if yields && threatened(registry, state, unit) {
+            let noticed = if yields {
+                crate::battle::threats(registry, state, unit)
+            } else {
+                Vec::new()
+            };
+            if !noticed.is_empty() {
                 self.last_drill = true;
-                self.pending = self.drill.plan_unit(registry, state, unit).into();
-                if let Some(order) = self.pending.pop_front() {
-                    return order;
+                let pos = state.unit(unit).map(|u| u.pos).unwrap_or_default();
+                let dest = crate::battle::drill_destination(registry, state, unit, &noticed);
+                let fire = match self
+                    .drill
+                    .score_tile(registry, state, unit, dest.unwrap_or(pos))
+                    .attack
+                {
+                    Some((target, weapon)) => FireIntent::Target { target, weapon },
+                    None => FireIntent::Hold,
+                };
+                if let Some(to) = dest {
+                    self.pending.push_back(Order::SetFire { unit, fire });
+                    return Order::SetMove { unit, to };
                 }
+                return Order::SetFire { unit, fire };
             }
             // A standing personal destination marches on: one round's worth
             // of ground toward it, the same leg the engine walked on the

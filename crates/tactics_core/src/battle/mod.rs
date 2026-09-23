@@ -34,7 +34,10 @@ pub use command::{
     CommandState, Contact, CutOff, Formation, FormationId, Goal, Knower, Latitude, March, Mission,
     MissionChange, PersonalOrder, WaitingOrders, formation_exit, nearest_exit,
 };
-pub use danger::{Bearing, Incoming, fire_on, fire_on_as, incoming, incoming_from};
+pub use danger::{
+    Bearing, Incoming, drill_destination, fire_on, fire_on_as, incoming, incoming_from,
+    noticed_threats, threatened, threats,
+};
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
     MoveGrid, Roads, along_the_bearing, destination_blocked, edge_cost as movement_edge_cost,

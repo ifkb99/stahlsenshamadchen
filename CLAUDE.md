@@ -541,16 +541,25 @@ converted at the mod's exchange rate.
   better at it. A third species of null beside "no effect" and "never
   evaluated" — symmetric, invisible to every table this harness has. The
   harness wants a table whose question is what the battle was about.
-- **There is one walk and one gate.** `ai::threats` is `fire_on`'s
-  membership and `ai::threatened` is `incoming(..).worth > 0`;
-  `there_is_one_answer_to_who_can_shoot_her` fails on any threshold above
-  the stage's cheapest bearing. **The mid-round drill minimises fire and the
-  rout maximises distance** — the designer's split between an orderly
-  reaction and a frightened one. The drill (`run_crew_drill`, `orders.rs`)
-  takes the reachable tile with the least `incoming_from` worth against the
-  guns she has caught up with on her reaction clock, no distance term at
-  all, and only strictly quieter ground, so it settles instead of
-  oscillating; the rout (`flight_destination`) takes distance first and
+- **There is one walk and one gate.** `battle::threats` is `fire_on`'s
+  membership and `battle::threatened` is `incoming(..).worth > 0` — in
+  `battle::danger`, not `ai::`, because the engine's own reflex and rout
+  call them; `there_is_one_answer_to_who_can_shoot_her` fails on any
+  threshold above the stage's cheapest bearing. **The drill minimises fire
+  and the rout maximises distance** — the designer's split between an
+  orderly reaction and a frightened one. **The drill is one function,
+  `battle::drill_destination`**: the reachable tile with the least
+  `incoming_from` worth, no distance term at all, and only strictly quieter
+  ground, so it settles instead of oscillating. Both drills ask it — the
+  engine's mid-round reflex (`run_crew_drill`) against the guns she has
+  caught up with on her reaction clock (`noticed_threats`), and the
+  planning table's drill for a human side's unordered crew (`SideCommand`)
+  against every gun bearing on her, because planning is a pause and nothing
+  else planned there reads the clock. The planning drill used to be the
+  whole evaluator under a `drill` doctrine, a second model that could send
+  her to a different hex from the one the reflex then moved her to
+  (`the_planning_table_takes_cover_where_the_reflex_would`); the doctrine
+  now only picks her shot. The rout (`flight_destination`) takes distance first and
   spends `incoming` on the ties. Neither reads terrain `cover` any more;
   they were the last "where to stand" rules outside the currency, and
   moving them was worth seven points on the ridge before any weight moved.

@@ -1397,7 +1397,7 @@ fn there_is_one_answer_to_who_can_shoot_her() {
     let state = firing_positions(&reg, 11);
     let mut with_somebody = 0;
     for me in state.units.iter() {
-        let listed = tactics_core::ai::threats(&reg, &state, me.id);
+        let listed = tactics_core::battle::threats(&reg, &state, me.id);
         let bearing: Vec<UnitId> = tactics_core::battle::fire_on(&reg, &state, me.id, me.pos)
             .into_iter()
             .map(|b| b.enemy)
@@ -1409,7 +1409,7 @@ fn there_is_one_answer_to_who_can_shoot_her() {
         );
         let worth = tactics_core::battle::incoming(&reg, &state, me.id, me.pos).worth;
         assert_eq!(
-            tactics_core::ai::threatened(&reg, &state, me.id),
+            tactics_core::battle::threatened(&reg, &state, me.id),
             worth > 0.0,
             "{} counts as under fire exactly when a round of that fire is worth something \
              ({worth})",
