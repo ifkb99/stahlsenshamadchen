@@ -1248,7 +1248,7 @@ fn pump_events(
                     )
                 });
             }
-            BattleEvent::ShotMissed { attacker, at } => {
+            BattleEvent::ShotMissed { attacker, at, .. } => {
                 log.push(if mine(*attacker) {
                     traffic(*attacker, "miss.")
                 } else {
@@ -1323,6 +1323,12 @@ fn pump_events(
                 // the line with nothing in the log to explain it is
                 // indistinguishable from the game malfunctioning.
                 log.push(format!("{who}: {rung} — {doing}."));
+            }
+            // Pinned: she stopped short of hotter ground. Worded as her own
+            // traffic because only her side hears it, and because a crew
+            // halting mid-route with nothing in the log reads as a bug.
+            BattleEvent::PinnedDown { unit, .. } => {
+                log.push(traffic(*unit, "pinned down — will not go forward."));
             }
             // The mid-round drill. Same sentence shape as the planning-table
             // drill's line, so the player learns one idiom for "she decided
@@ -3275,9 +3281,15 @@ mod tests {
                 differed += 1;
             }
         }
+        // Two until 2026-09-23. The pair that stopped parting is the light
+        // tank on the medium: her belt was worth firing at plate for the fear
+        // it caused, and once the base mod let no bullet's suppression through
+        // armour (`morale.through_plate_percent: 0`) the currency reaches for
+        // the gun, as the listed-damage key always did. Re-scanned, not
+        // re-picked: at the old reading of 100 the count is two again.
         assert_eq!(
-            differed, 2,
-            "the listed-damage key and the currency part on exactly the two pairs they \
+            differed, 1,
+            "the listed-damage key and the currency part on exactly the pairs they \
              were found to part on; if this moves, re-scan rather than re-pick the pairs"
         );
     }

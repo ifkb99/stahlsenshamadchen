@@ -46,6 +46,9 @@ struct Tally {
     a_flank_hits: u32,
     a_hits: u32,
     by_score: u32,
+    /// Rounds B's crews began on a pinned rung (`MoraleRung::pinned`),
+    /// summed over crews: how much of the battle the enemy spent pinned.
+    b_pinned: u32,
 }
 
 /// (A's doctrine, A's commander, B's doctrine, B's commander).
@@ -228,6 +231,11 @@ fn battle(reg: &DataRegistry, row: &Row, a_force: Force, b_force: Force, seed: u
                 );
             }
         }
+        t.b_pinned += state
+            .units
+            .iter()
+            .filter(|u| u.side != a_side && u.alive() && reg.morale.rung(u.pressure).pinned)
+            .count() as u32;
         for e in state.resolve_round(reg) {
             if let Event::ShotHit {
                 attacker, facing, ..
@@ -380,19 +388,22 @@ fn main() {
     taught.id = "taught".into();
     taught.teaches = vec!["fix_and_flank".into()];
     reg.doctrines.insert(untaught.id.clone(), untaught);
-    // PLANS_SET="playout_samples=4,playout_margin=0.1" overrides planner
-    // numbers for a quick comparison without editing the mod.
+    // PLANS_SET="morale.near_miss_percent=50,playout_rounds=8" overrides any
+    // field by the path the json uses — `balance --set`'s own machinery, so
+    // the two instruments cannot disagree about what a path means. A bare
+    // name is a `planner` field.
     if let Ok(set) = std::env::var("PLANS_SET") {
-        for pair in set.split(',') {
-            let Some((k, v)) = pair.split_once('=') else {
-                continue;
+        for pair in set.split(',').filter(|p| !p.is_empty()) {
+            let pair = if pair.split_once('=').is_some_and(|(k, _)| !k.contains('.')) {
+                format!("planner.{pair}")
+            } else {
+                pair.to_string()
             };
-            match k {
-                "playout_samples" => reg.planner.playout_samples = v.parse().unwrap(),
-                "playout_rounds" => reg.planner.playout_rounds = v.parse().unwrap(),
-                "playout_margin" => reg.planner.playout_margin = v.parse().unwrap(),
-                other => panic!("PLANS_SET knows no `{other}`"),
-            }
+            let ov = tactics_core::harness::overrides::Override::parse(&pair)
+                .unwrap_or_else(|e| panic!("PLANS_SET: {e}"));
+            let said = tactics_core::harness::overrides::apply_override(&mut reg, &ov)
+                .unwrap_or_else(|e| panic!("PLANS_SET: {e}"));
+            eprintln!("  set {} = {} (was {said})", ov.path, ov.value);
         }
     }
     reg.doctrines.insert(taught.id.clone(), taught);
@@ -426,8 +437,18 @@ fn main() {
             "ridge arena, {label}: A is 4 medium tanks, two formations a side, command planner, {games} battles a row\n"
         );
         println!(
-            "{:<12} {:>5} {:>5} {:>5} {:>6} {:>8} {:>8} {:>8} {:>9} {:>9}",
-            "row", "A", "B", "draw", "rounds", "A plans", "A go", "B plans", "flank%", "A flank%"
+            "{:<12} {:>5} {:>5} {:>5} {:>6} {:>8} {:>8} {:>8} {:>9} {:>9} {:>9}",
+            "row",
+            "A",
+            "B",
+            "draw",
+            "rounds",
+            "A plans",
+            "A go",
+            "B plans",
+            "flank%",
+            "A flank%",
+            "B pinned"
         );
         for row in ROWS {
             let seeds: Vec<u64> = (offset..offset + games).collect();
@@ -446,11 +467,12 @@ fn main() {
                 t.a_hits += x.a_hits;
                 t.a_flank_hits += x.a_flank_hits;
                 t.by_score += x.by_score;
+                t.b_pinned += x.b_pinned;
             }
             eprint!("[{} by score] ", t.by_score);
             let per = |n: u32| n as f32 / games as f32;
             println!(
-                "{:<12} {:>5} {:>5} {:>5} {:>6.1} {:>8.2} {:>8.2} {:>8.2} {:>8.0}% {:>8.0}%",
+                "{:<12} {:>5} {:>5} {:>5} {:>6.1} {:>8.2} {:>8.2} {:>8.2} {:>8.0}% {:>8.0}% {:>9.2}",
                 row.0,
                 t.a,
                 t.b,
@@ -461,6 +483,7 @@ fn main() {
                 per(t.b_plans),
                 100.0 * t.flank_hits as f32 / t.hits.max(1) as f32,
                 100.0 * t.a_flank_hits as f32 / t.a_hits.max(1) as f32,
+                per(t.b_pinned),
             );
         }
         println!();
@@ -468,7 +491,8 @@ fn main() {
     println!(
         "\n  `plans` and `go` are per battle: plans adopted (a replacement counts again) and\n  \
          words to go given. `flank%` is the share of all hits and bounces that struck a side\n  \
-         or rear plate; `A flank%` the same for side A's guns. At {games} battles a level\n  \
+         or rear plate; `A flank%` the same for side A's guns. `B pinned` is crew-rounds B spent on\n  \
+         a pinned rung, per battle. At {games} battles a level\n  \
          pairing wanders several wins either way — sweep the seed offset before believing a gap."
     );
 }

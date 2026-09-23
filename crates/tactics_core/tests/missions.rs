@@ -3698,6 +3698,7 @@ fn a_gentle_mod_has_girls_who_never_refuse() {
             at_pressure: 0,
             obeys: true,
             accuracy: 0,
+            pinned: false,
         }],
         ..reg.morale.clone()
     };
@@ -3858,7 +3859,14 @@ fn an_ordered_withdrawal_needs_no_wounds() {
     // *mission* is that order, so it pulls at full strength on full health —
     // which is what makes withdrawal a command decision rather than a
     // symptom.
-    let reg = registry_wireless();
+    //
+    // The pull, not the road: a withdrawal's route is priced for dead ground
+    // (`balance.route_exposure.withdraw`), and a covered way out may begin
+    // with a sidestep that brings her no nearer the lane this round. That is
+    // the route rule's business and its own test's; here the road is the
+    // straight one so what is read is whether the order pulls at all.
+    let mut reg = registry_wireless();
+    reg.balance.route_exposure.withdraw = 0;
     let mut state = BattleState::from_map(&reg, "river_crossing", 13).unwrap();
     let lane = state
         .map

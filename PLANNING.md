@@ -265,16 +265,54 @@ true:
    `river_crossing`, which has none. That is the harm gone and no gain yet:
    every row is inside the seed spread.
 
+   **Then pinning, focus of fire and routes by order** (2026-09-23, the
+   designer's three notes). Longer playouts first: at ten rounds, a battle
+   here lasts eight or nine, so the playout already sees the whole fight, and
+   it read the same (ridge three groups vs mediums: taught 38, 48 against
+   control 40, 45; maps −3 in 360). The length was never the problem.
+
+   *Why the enemy was not pinned*: nothing could pin him. Fear cost a gunner
+   her aim and nothing else until the crew broke outright, a miss frightened
+   nobody, and bullets on plate frightened tank crews as much as riflemen.
+   Now a near miss charges the round's own suppression at
+   `near_miss_percent`, bullets reach a crew behind plate only at
+   `through_plate_percent` (0 shipped: the proper equipment is needed), and a
+   crew on a `pinned` rung will not step onto hotter ground (CLAUDE.md, Fire
+   and movement). And the fixing element now fires on the plan's target
+   (`fixing_fire`); before, it fought like anybody else and its target was
+   pinned no more often than the control's.
+
+   Measured (`examples/plans`, `B pinned` = crew-rounds B spent pinned a
+   battle; A wins at offsets 0 and 1000):
+
+   | row | vs mediums, 3 groups | vs heavies, 3 groups | maps (360) |
+   | --- | --- | --- | --- |
+   | control | 53, 59 | 8, 3 | — |
+   | A taught | 54, 56 | 5, 6 | −6, +5 |
+
+   Pinning happens — four to five crew-rounds a battle against mediums, two
+   to three against heavies, where it was nothing — but the play still does
+   not win, and the target is pinned about as often under a plan as without
+   one. **Tank against tank, the fire that would pin a crew mostly kills her
+   first**: a 75 that gets through costs three or four points of a six-point
+   rung, and she seldom lives to feel the second. The shipped AP rounds
+   declare no suppression, so a miss by one frightens nobody; giving them
+   some (`ammo.ap_75.suppression=1`, `ap_88=2`) doubled the pinned
+   crew-rounds and moved no win column. Suppression is an infantry and
+   soft-skin effect, and the instrument fields neither.
+
    **What I think is still wrong, for the next session:**
+   - *The instrument fights the wrong war for this play.* Mediums against
+     mediums is the case where fixing by fire matters least. Fix and flank
+     wants to be measured with infantry, carriers and guns on the field —
+     where a belt pins a platoon and a flank on a halftrack is a kill.
    - *The enemy is not fixed.* Two tanks on a firing position do not pin
      four; he attacks them. The play needs the fix to be the stronger part
      or the better ground, or the enemy to be committed elsewhere — a
      question for the template's roles, not its weights. A playout can only
      choose between the plays it is offered; it cannot make a play good.
-   - *Five rounds may be too short to see a flank pay.* The flankers spend
-     most of a playout getting there. `playout_rounds` is sweepable
-     (`PLANS_SET=planner.playout_rounds=8`), and each round is a round of
-     the whole engine per option per sample.
+   - ~~*Five rounds may be too short to see a flank pay.*~~ Ten read the
+     same; a battle here is over in nine.
    - *The battle maps are not the mirrors they are drawn as.* `battle_town`
      reads two to one to the east end with the reserve in, and the first
      root `examples/mirror --map` finds is the path finder settling a tie

@@ -310,6 +310,12 @@ fn main() {
                 Event::Defied {
                     unit, rung, doing, ..
                 } => println!("   ** {}: {rung} — {doing} **", name(&state, *unit)),
+                Event::PinnedDown { unit, .. } => {
+                    println!(
+                        "   ** {}: pinned down — will not go forward **",
+                        name(&state, *unit)
+                    )
+                }
                 Event::UnitExited {
                     unit, objective, ..
                 } => println!(

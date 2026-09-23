@@ -637,5 +637,6 @@ pub fn felt(reg: &DataRegistry, ammo: &Option<String>, small_arms: bool) -> Roun
             .and_then(|id| reg.ammo(id))
             .map(|a| a.suppression)
             .unwrap_or(0),
+        armoured: false,
     }
 }

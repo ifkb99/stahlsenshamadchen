@@ -484,6 +484,50 @@ pub fn destination_blocked(
     Occupancy::gather(registry, state, unit, Some(hex)).blocked(registry, state, hex)
 }
 
+/// The pinning gate: a crew on a `pinned` morale rung will not step onto
+/// ground where more fire reaches her than reaches her where she stands.
+///
+/// **The one reading of the rule**, asked by everything that moves a crew —
+/// [`reachable`] (so the planner, the player's move range and
+/// [`step_toward`] never offer the ground), [`path_to`] (so a route to
+/// allowed ground does not cross forbidden ground) and the tick's own drive
+/// (so a crew pinned half-way along a route stops where she is). "Fire" is
+/// [`super::incoming`], her own knowledge priced in the currency, so she is
+/// held by the guns she knows of and by nothing she has not seen.
+///
+/// The ceiling is the fire on her hex when she is asked. Quieter ground is
+/// always open, which is what makes a pinned crew crawl for cover rather
+/// than freeze: the drill's destination is by construction no hotter.
+pub struct Pinning {
+    unit: UnitId,
+    ceiling: f32,
+    heat: std::cell::RefCell<HashMap<Hex, f32>>,
+}
+
+impl Pinning {
+    /// The gate for `unit` now, or `None` if her rung does not pin her.
+    pub fn of(registry: &DataRegistry, state: &BattleState, unit: &Unit) -> Option<Self> {
+        if !registry.morale.rung(unit.pressure).pinned {
+            return None;
+        }
+        Some(Self {
+            unit: unit.id,
+            ceiling: super::incoming(registry, state, unit.id, unit.pos).worth,
+            heat: std::cell::RefCell::new(HashMap::new()),
+        })
+    }
+
+    /// Whether she will step onto `hex`.
+    pub fn allows(&self, registry: &DataRegistry, state: &BattleState, hex: Hex) -> bool {
+        let heat = *self
+            .heat
+            .borrow_mut()
+            .entry(hex)
+            .or_insert_with(|| super::incoming(registry, state, self.unit, hex).worth);
+        heat <= self.ceiling + 1e-3
+    }
+}
+
 /// All tiles the unit can end its move on, with the cheapest cost to reach
 /// each. You may pass through friends but not park on them; see
 /// [`destination_blocked`] for why unspotted enemies stay in the set.
@@ -498,6 +542,7 @@ pub fn reachable(registry: &DataRegistry, state: &BattleState, id: UnitId) -> Ha
     // One walk over the units, then every question about every tile in her
     // reach is a lookup. See [`Occupancy`] for what that is worth.
     let occupancy = Occupancy::gather(registry, state, unit, None);
+    let pinning = Pinning::of(registry, state, unit);
 
     let mut best: HashMap<Hex, u32> = HashMap::new();
     let mut heap = BinaryHeap::new();
@@ -511,6 +556,12 @@ pub fn reachable(registry: &DataRegistry, state: &BattleState, id: UnitId) -> Ha
         }
         for next in hex.all_neighbors() {
             if !occupancy.passable(next) {
+                continue;
+            }
+            if pinning
+                .as_ref()
+                .is_some_and(|p| !p.allows(registry, state, next))
+            {
                 continue;
             }
             let Some(step) = state.moves.cost(class, max_climb, hex, next) else {
@@ -557,15 +608,47 @@ pub fn step_toward(
     id: UnitId,
     destination: Hex,
 ) -> Option<Hex> {
-    let pos = state.unit(id)?.pos;
+    let unit = state.unit(id)?;
+    let pos = unit.pos;
     let bearing = destination - pos;
+    // How far each hex still is from the destination, as her order prices
+    // the way: the crow flight when nothing is watching or her order does
+    // not care, and otherwise the covered way round (`to_go`). The two agree
+    // exactly at a price of zero on a whole battle map, which is why the
+    // cheaper one stands in for the other.
+    let left = match Watch::of(registry, state, unit) {
+        Some(watch) => {
+            let way = to_go(state, &watch, destination);
+            Some((watch, way))
+        }
+        None => None,
+    };
+    let remaining = |hex: Hex| match &left {
+        Some((watch, way)) => way
+            .get(&hex)
+            .copied()
+            .unwrap_or(u32::MAX / 2)
+            .saturating_add(watch.price(state, hex)),
+        None => destination.distance_to(hex) as u32,
+    };
+    let friends = friends_of(state, unit);
     reachable(registry, state, id)
         .into_iter()
         .min_by_key(|(hex, cost)| {
             (
-                destination.distance_to(*hex),
+                remaining(*hex),
                 *cost,
                 -along_the_bearing(*hex - pos, bearing),
+                // Two hexes the same distance on, at the same cost and the
+                // same bearing, are each other's reflection about her line of
+                // advance, and the coordinate below would pick the same side
+                // of it for every crew in the game — the "harmless left or
+                // right" this key was once said to be. On a ridge it is not
+                // harmless: it sent one end's crews over the crest and the
+                // other's along the foot (`examples/mirror --map
+                // battle_hills`). Keeping with her own is the same from
+                // either end.
+                apart(&friends, *hex),
                 // Last, and only ever a coin flip off the line of advance:
                 // `reachable` is a `HashMap`, so the three keys above being
                 // non-total made the winner depend on hash order. That is the
@@ -578,6 +661,40 @@ pub fn step_toward(
         })
         .map(|(hex, _)| hex)
         .filter(|step| *step != pos)
+}
+
+/// What is left of the way to `destination` from every hex of the map,
+/// counted in hexes with every watched hex entered on the way costing
+/// [`Watch`]'s price more — `step_toward`'s notion of "closer" for a crew
+/// whose order wants dead ground. A reverse search from the destination, so
+/// one call answers every hex she might halt on this round. Crow steps
+/// rather than terrain cost, because the key it replaces was a crow
+/// distance and terrain already speaks through `reachable`'s own cost.
+fn to_go(state: &BattleState, watch: &Watch, destination: Hex) -> HashMap<Hex, u32> {
+    let mut left: HashMap<Hex, u32> = HashMap::new();
+    let mut heap = BinaryHeap::new();
+    left.insert(destination, 0);
+    heap.push(Reverse((0u32, destination.x, destination.y)));
+    while let Some(Reverse((d, x, y))) = heap.pop() {
+        let hex = Hex::new(x, y);
+        if left.get(&hex).is_some_and(|&b| b < d) {
+            continue;
+        }
+        // Stepping from `next` onto `hex` enters `hex`, so that is the hex
+        // whose watcher is charged.
+        let enter = 1 + watch.price(state, hex);
+        for next in hex.all_neighbors() {
+            if !state.map.contains(next) {
+                continue;
+            }
+            let total = d + enter;
+            if left.get(&next).is_none_or(|&b| total < b) {
+                left.insert(next, total);
+                heap.push(Reverse((total, next.x, next.y)));
+            }
+        }
+    }
+    left
 }
 
 /// How much of `step` goes the way `bearing` points: the cube dot product.
@@ -717,8 +834,110 @@ pub fn roads(registry: &DataRegistry, state: &BattleState, id: UnitId, rounds: u
     out
 }
 
+/// What the order she is driving under makes a hex in the enemy's sight
+/// cost her, and who is watching: `balance.route_exposure` for her order's
+/// verb, against every enemy she knows of (`Knower::Crew`) as an observer
+/// reaching his own vision range.
+///
+/// `None` when the price is zero or nobody is watching, which is the whole
+/// of the rule's absence: every route is then the plain cheapest one.
+pub struct Watch {
+    price: u32,
+    observers: Vec<(Hex, u32)>,
+    seen: std::cell::RefCell<HashMap<Hex, bool>>,
+}
+
+impl Watch {
+    pub fn of(registry: &DataRegistry, state: &BattleState, unit: &Unit) -> Option<Self> {
+        let price = registry
+            .balance
+            .route_exposure
+            .for_verb(driving_under(state, unit));
+        if price == 0 {
+            return None;
+        }
+        let observers: Vec<(Hex, u32)> = state
+            .known_enemies(registry, super::Knower::Crew(unit.id))
+            .into_iter()
+            .map(|e| {
+                (
+                    e.pos,
+                    registry
+                        .vehicle(&e.vehicle)
+                        .map(|v| v.vision_range)
+                        .unwrap_or(0),
+                )
+            })
+            .collect();
+        if observers.is_empty() {
+            return None;
+        }
+        Some(Self {
+            price,
+            observers,
+            seen: std::cell::RefCell::new(HashMap::new()),
+        })
+    }
+
+    /// What entering `hex` costs her on top of the ground: the price if a
+    /// watcher can see it, else nothing. One definition of "seen" with the
+    /// planner's covered routes (`ground::watched`).
+    pub fn price(&self, state: &BattleState, hex: Hex) -> u32 {
+        let seen = *self
+            .seen
+            .borrow_mut()
+            .entry(hex)
+            .or_insert_with(|| crate::ground::watched(state, &self.observers, hex));
+        if seen { self.price } else { 0 }
+    }
+}
+
+/// The verb of the order `unit` is driving under, as `route_exposure` keys
+/// it: `march` for a personal march, her formation's mission as she heard
+/// it, or nothing.
+fn driving_under(state: &BattleState, unit: &Unit) -> &'static str {
+    if unit.march().is_some() {
+        return "march";
+    }
+    state
+        .formation_of(unit.id)
+        .and_then(|f| f.mission_for(unit.id))
+        .map(|m| m.verb())
+        .unwrap_or("")
+}
+
+/// How far `hex` stands from the rest of her side: the sum of distances to
+/// every friend on the field. The path finder's tiebreak between routes of
+/// equal price, and chosen because it is **the same number from either end
+/// of a mirrored field** — a reflection carries her and all her friends
+/// across together — where the neighbour order `hexx::a_star` settled ties
+/// by is a compass, and handed `battle_town` to its eastern end
+/// (`examples/mirror --map`). Staying with one's own is also what a driver
+/// with no other reason to choose does.
+pub(crate) fn apart(friends: &[Hex], hex: Hex) -> u32 {
+    friends.iter().map(|f| f.distance_to(hex) as u32).sum()
+}
+
+/// Where the rest of her side is standing: every friend on the field, not
+/// her and not a passenger. What [`apart`] measures against.
+pub(crate) fn friends_of(state: &BattleState, unit: &Unit) -> Vec<Hex> {
+    state
+        .units
+        .iter()
+        .filter(|u| u.side == unit.side && u.id != unit.id && u.alive() && u.aboard.is_none())
+        .map(|u| u.pos)
+        .collect()
+}
+
 /// Cheapest path for `unit` to `to`, if it exists within this turn's budget.
-/// Returns the path including the start tile, plus its total cost.
+/// Returns the path including the start tile, plus its total cost in
+/// movement points.
+///
+/// "Cheapest" is the ground **plus** what her order makes a watched hex cost
+/// ([`Watch`]), so a scout goes round and an assault goes straight; the
+/// budget is still spent in movement points alone, since being seen does not
+/// slow a tank. Ties fall to the route that keeps her nearest her own
+/// ([`apart`]) and only then to the coordinate.
 pub fn path_to(
     registry: &DataRegistry,
     state: &BattleState,
@@ -735,20 +954,72 @@ pub fn path_to(
     }
     let (class, max_climb) = unit_movement(registry, state, unit);
     let budget = move_points(registry, &state.roster, unit, state.terrain_at(unit.pos));
+    let pinning = Pinning::of(registry, state, unit);
+    let watch = Watch::of(registry, state, unit);
+    let friends = friends_of(state, unit);
 
-    let path = hexx::algorithms::a_star(unit.pos, to, |from, next| {
-        if from == next {
-            return Some(0);
+    // The search runs over (hex, movement spent), not hex alone. The price a
+    // route is chosen by is the ground *plus* exposure, but the budget is the
+    // ground alone, and a search keyed on the hex keeps only the cheapest
+    // price to each — which may be the covered way round that has already
+    // spent too much, having thrown away the exposed way that would have
+    // fitted. That refused orders `reachable` had just offered
+    // (`two_commanders_fight_each_other_without_an_illegal_order_or_a_wedged_round`
+    // caught it). A round's budget is a handful of points, so the extra key
+    // costs a handful of labels per hex.
+    type Label = (Hex, u32);
+    let start: Label = (unit.pos, 0);
+    let mut best: HashMap<Label, (u32, u32)> = HashMap::new();
+    let mut came: HashMap<Label, Label> = HashMap::new();
+    let mut heap = BinaryHeap::new();
+    best.insert(start, (0, 0));
+    heap.push(Reverse((0u32, 0u32, 0u32, unit.pos.x, unit.pos.y)));
+    let mut arrived: Option<Label> = None;
+    while let Some(Reverse((price, spread, spent, x, y))) = heap.pop() {
+        let hex = Hex::new(x, y);
+        let here = (hex, spent);
+        if best.get(&here).is_some_and(|&b| b < (price, spread)) {
+            continue;
         }
-        if !occupancy.passable(next) {
-            return None;
+        if hex == to {
+            arrived = Some(here);
+            break;
         }
-        state.moves.cost(class, max_climb, from, next)
-    })?;
-
-    let mut cost = 0;
-    for pair in path.windows(2) {
-        cost += state.moves.cost(class, max_climb, pair[0], pair[1])?;
+        for next in hex.all_neighbors() {
+            if !occupancy.passable(next) {
+                continue;
+            }
+            if pinning
+                .as_ref()
+                .is_some_and(|p| !p.allows(registry, state, next))
+            {
+                continue;
+            }
+            let Some(step) = state.moves.cost(class, max_climb, hex, next) else {
+                continue;
+            };
+            let total = spent + step;
+            if total > budget {
+                continue;
+            }
+            let key = (
+                price + step + watch.as_ref().map_or(0, |w| w.price(state, next)),
+                spread + apart(&friends, next),
+            );
+            let there = (next, total);
+            if best.get(&there).is_none_or(|&b| key < b) {
+                best.insert(there, key);
+                came.insert(there, here);
+                heap.push(Reverse((key.0, key.1, total, next.x, next.y)));
+            }
+        }
     }
-    (cost <= budget).then_some((path, cost))
+    let arrived = arrived?;
+    let mut labels = vec![arrived];
+    while let Some(prev) = came.get(labels.last()?) {
+        labels.push(*prev);
+    }
+    labels.reverse();
+    let path: Vec<Hex> = labels.iter().map(|(h, _)| *h).collect();
+    (path.first() == Some(&unit.pos)).then_some((path, arrived.1))
 }

@@ -60,6 +60,13 @@ fn an_ordered_shot_that_cannot_penetrate_bounces_and_does_nothing() {
     // defends it in both directions now, one battle each. Both belts are
     // staged rather than inherited from the base mod, so the test says what
     // the *rule* does and a content edit cannot quietly retire half of it.
+    //
+    // The designer's later ruling (2026-09-23) is that the proper equipment
+    // is needed to degrade armour *and its crew's nerve*, and the base mod
+    // now lets none of a bullet's suppression through plate
+    // (`morale.through_plate_percent: 0`). The loud belt below therefore
+    // stages the old reading, 100, and the shipped reading is a third battle
+    // at the end: the same belt, the same bounces, and nobody frayed.
     let quiet = {
         let mut reg = registry_wireless();
         reg.ammo
@@ -71,6 +78,7 @@ fn an_ordered_shot_that_cannot_penetrate_bounces_and_does_nothing() {
     let reg = {
         let mut reg = registry_wireless();
         reg.ammo.get_mut("ball_mg").expect("shipped").suppression = 2;
+        reg.morale.through_plate_percent = 100;
         reg
     };
     let mut state = plink_stage(&reg, 301);
@@ -148,6 +156,38 @@ fn an_ordered_shot_that_cannot_penetrate_bounces_and_does_nothing() {
         silent.unit(wall).unwrap().pressure,
         0,
         "plinking with a belt that declares nothing does not fray anyone's nerves"
+    );
+
+    // And the shipped reading: the loud belt again, against a mod that lets
+    // none of a bullet's suppression through plate. The belt still declares
+    // it; the crew behind the glacis does not feel it.
+    let shipped = {
+        let mut reg = registry_wireless();
+        reg.ammo.get_mut("ball_mg").expect("shipped").suppression = 2;
+        reg.morale.through_plate_percent = 0;
+        reg
+    };
+    let mut buttoned = plink_stage(&shipped, 301);
+    buttoned
+        .apply(
+            &shipped,
+            &Order::SetFire {
+                unit: plinker,
+                fire: FireIntent::Target {
+                    target: wall,
+                    weapon: 0,
+                },
+            },
+        )
+        .unwrap();
+    commit_all(&shipped, &mut buttoned);
+    while buttoned.resolving_tick().is_some() && !buttoned.is_over() {
+        buttoned.step_tick(&shipped);
+    }
+    assert_eq!(
+        buttoned.unit(wall).unwrap().pressure,
+        0,
+        "the proper equipment is needed: a belt does not pin a crew behind plate"
     );
 }
 
@@ -755,6 +795,7 @@ fn a_one_rung_ladder_never_abandons_anything() {
         at_pressure: 0,
         obeys: true,
         accuracy: 0,
+        pinned: false,
     }];
     let mut state = duel(&reg, 405);
     commit_all(&reg, &mut state);
@@ -1157,6 +1198,7 @@ fn the_ladder_charges_a_shell_for_what_it_spent() {
     let felt = RoundPressure {
         small_arms: false,
         suppression: 2,
+        armoured: false,
     };
     let outcome = (rules.hit + rules.penetrated) as f32;
     assert_eq!(

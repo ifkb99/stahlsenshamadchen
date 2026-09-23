@@ -362,9 +362,24 @@ pub enum Event {
         intended: UnitId,
         onto: UnitId,
     },
+    /// A crew on a pinned rung stopped short of ground where more fire
+    /// would reach her (`MoraleRung::pinned`). Her side's own business, like
+    /// the rung itself.
+    PinnedDown {
+        unit: UnitId,
+        at: Hex,
+    },
     ShotMissed {
         attacker: UnitId,
         at: Hex,
+        /// Who it was aimed at, if anybody — blind fire into an empty hex
+        /// was aimed at nobody. The crew a near miss frightens.
+        #[serde(default)]
+        target: Option<UnitId>,
+        /// The round that went past, for the same reason `ShotHit` carries
+        /// one: the pressure pass prices what arrived.
+        #[serde(default)]
+        ammo: Option<String>,
     },
     UnitDestroyed {
         unit: UnitId,
@@ -679,7 +694,8 @@ impl Event {
             // to it: you could not see inside her tank but you could read her
             // nerve.
             | Event::MoraleChanged { unit, .. }
-            | Event::Defied { unit, .. } => own_unit(unit),
+            | Event::Defied { unit, .. }
+            | Event::PinnedDown { unit, .. } => own_unit(unit),
 
             // A spot report belongs to whoever made it. `by` and not `unit`:
             // the interesting party is the crew doing the reporting, and the
@@ -1916,6 +1932,7 @@ impl BattleState {
             // can animate straight from the sprite's current tile.
             let mut walked = vec![start];
             let mut trapped_at = None;
+            let mut pinned_at = None;
             let mut blocked = false;
             while let Some(unit) = self.unit(id) {
                 let Some(&next) = unit.intent.path.first() else {
@@ -1950,6 +1967,17 @@ impl BattleState {
                 if !self.room_for(registry, me, next) {
                     break;
                 }
+                // Pinned: the step onto hotter ground is the one she will not
+                // take, whoever laid the route and whenever the fire arrived.
+                // The same gate `reachable` and `path_to` ask, so a route
+                // planned before she was pinned is the only kind that meets
+                // it here.
+                if movement::Pinning::of(registry, self, me)
+                    .is_some_and(|p| !p.allows(registry, self, next))
+                {
+                    pinned_at = Some(me.pos);
+                    break;
+                }
                 let unit = self.unit_mut(id).expect("alive above");
                 unit.move_credit -= price;
                 // Counted here, at the one place a unit changes hex, so that
@@ -1973,6 +2001,14 @@ impl BattleState {
                     unit: id,
                     path: walked,
                 });
+            }
+            if let Some(at) = pinned_at {
+                // She has gone to ground: the rest of the route is off, and
+                // her side hears why she stopped.
+                if let Some(unit) = self.unit_mut(id) {
+                    unit.intent.path.clear();
+                }
+                events.push(Event::PinnedDown { unit: id, at });
             }
             if blocked || trapped_at.is_some() {
                 // The route ran into somebody; the rest of it is off.
@@ -2042,6 +2078,21 @@ impl BattleState {
                 .and_then(|id| registry.ammo(id))
                 .map(|a| a.suppression)
                 .unwrap_or(0),
+            armoured: false,
+        };
+        // A near miss is priced by what went past and at whom: the round's
+        // suppression, and whether she is behind plate a bullet cannot pass.
+        let went_past = |state: &BattleState, ammo: &Option<String>, target: UnitId| {
+            let round = ammo.as_ref().and_then(|id| registry.ammo(id));
+            crate::data::RoundPressure {
+                small_arms: round
+                    .is_some_and(|a| matches!(a.class, crate::data::AmmoClass::SmallArms)),
+                suppression: round.map(|a| a.suppression).unwrap_or(0),
+                armoured: state
+                    .unit(target)
+                    .and_then(|u| registry.vehicle(&u.vehicle))
+                    .is_some_and(|v| v.armoured()),
+            }
         };
 
         // Collected first: the borrow of `events` has to end before units are
@@ -2088,6 +2139,35 @@ impl BattleState {
                 _ => None,
             })
             .collect();
+        // What went past her: a shot aimed at her that missed, and a shell
+        // that burst in the ring beside her hex. The crews in the burst's own
+        // hex were struck and are priced above; the ring was not, and is
+        // frightened by the round's suppression at the near-miss rate.
+        let mut near: Vec<(UnitId, crate::data::RoundPressure)> = Vec::new();
+        if rules.near_miss_percent > 0 {
+            for e in events.iter() {
+                match e {
+                    Event::ShotMissed {
+                        target: Some(target),
+                        ammo,
+                        ..
+                    } => near.push((*target, went_past(self, ammo, *target))),
+                    Event::ShellLanded { at, ammo, .. } => {
+                        let ammo = Some(ammo.clone());
+                        let mut ring: Vec<UnitId> = at
+                            .all_neighbors()
+                            .into_iter()
+                            .flat_map(|h| self.occupants(h).map(|u| u.id).collect::<Vec<_>>())
+                            .collect();
+                        ring.sort_unstable();
+                        for id in ring {
+                            near.push((id, went_past(self, &ammo, id)));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         let losses: Vec<(u8, Hex)> = events
             .iter()
             .filter_map(|e| match e {
@@ -2134,6 +2214,13 @@ impl BattleState {
                 self,
                 id,
                 rules.pressure_for(ShotFelt::Bounced, round).round() as u32,
+            );
+        }
+        for (id, round) in near {
+            add(
+                self,
+                id,
+                rules.pressure_for(ShotFelt::Missed, round).round() as u32,
             );
         }
         for members in bereaved {

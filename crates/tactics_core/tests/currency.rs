@@ -681,6 +681,13 @@ fn her_machine_gun(reg: &DataRegistry) -> &tactics_core::data::WeaponDef {
 #[test]
 fn a_burst_that_cannot_get_through_still_counts_for_what_it_does_to_her_nerve() {
     let mut reg = seen(registry());
+    // Behind plate the base mod lets none of a bullet's suppression through
+    // (`morale.through_plate_percent: 0`, the designer's proper-equipment
+    // ruling of 2026-09-23). This stage is a belt at a glacis because that
+    // is where the pressure half stands alone, with no damage to hide in, so
+    // it stages the reading under which a belt frightens a crew behind
+    // plate at all.
+    reg.morale.through_plate_percent = 100;
     // A belt that says something about what it is like to be under it. The
     // number is the stage's, not the base mod's: this test is about the
     // mechanism, and the shipped value is chosen by sweep elsewhere.
@@ -775,6 +782,17 @@ fn a_burst_that_cannot_get_through_still_counts_for_what_it_does_to_her_nerve() 
 #[test]
 fn fear_is_priced_by_the_same_arithmetic_that_charges_it() {
     let mut reg = seen(registry());
+    // Behind plate the base mod lets none of a bullet's suppression through
+    // (`morale.through_plate_percent: 0`, the designer's proper-equipment
+    // ruling of 2026-09-23). This stage is a belt at a glacis because that
+    // is where the pressure half stands alone, with no damage to hide in, so
+    // it stages the reading under which a belt frightens a crew behind
+    // plate at all.
+    reg.morale.through_plate_percent = 100;
+    // A miss is charged too, and at the whole of the round's suppression so
+    // the ledger's rounding to whole points cannot tilt the average: at 50%
+    // a belt of 3 would charge 1.5 and be rounded to 2 every time.
+    reg.morale.near_miss_percent = 100;
     reg.ammo
         .get_mut("ball_mg")
         .expect("the base mod ships a belt")
@@ -835,6 +853,16 @@ fn fear_is_priced_by_the_same_arithmetic_that_charges_it() {
                     charged += reg
                         .morale
                         .pressure_for(ShotFelt::Penetrated { spent }, felt(&reg, ammo, false))
+                        .round();
+                }
+                BattleEvent::ShotMissed {
+                    target: Some(target),
+                    ammo,
+                    ..
+                } if *target == plate => {
+                    charged += reg
+                        .morale
+                        .pressure_for(ShotFelt::Missed, felt(&reg, ammo, true))
                         .round();
                 }
                 BattleEvent::ShotBounced {
@@ -1174,6 +1202,13 @@ fn a_mod_that_says_nothing_about_suppression_plays_the_game_before() {
 #[test]
 fn the_loader_will_fire_a_belt_at_plate_she_cannot_beat_when_fear_is_worth_something() {
     let mut reg = seen(registry());
+    // Behind plate the base mod lets none of a bullet's suppression through
+    // (`morale.through_plate_percent: 0`, the designer's proper-equipment
+    // ruling of 2026-09-23). This stage is a belt at a glacis because that
+    // is where the pressure half stands alone, with no damage to hide in, so
+    // it stages the reading under which a belt frightens a crew behind
+    // plate at all.
+    reg.morale.through_plate_percent = 100;
     reg.ammo
         .get_mut("ball_mg")
         .expect("the base mod ships a belt")
@@ -1230,7 +1265,14 @@ fn the_loader_will_fire_a_belt_at_plate_she_cannot_beat_when_fear_is_worth_somet
 /// fails the second.
 #[test]
 fn suppression_and_what_fear_is_worth_are_data_and_are_read() {
-    let base = seen(registry());
+    let mut base = seen(registry());
+    // Behind plate the base mod lets none of a bullet's suppression through
+    // (`morale.through_plate_percent: 0`, the designer's proper-equipment
+    // ruling of 2026-09-23). This stage is a belt at a glacis because that
+    // is where the pressure half stands alone, with no damage to hide in, so
+    // it stages the reading under which a belt frightens a crew behind
+    // plate at all.
+    base.morale.through_plate_percent = 100;
     let state = a_belt_at_a_glacis(&base, 31);
     let (plate, belt) = (UnitId(0), UnitId(1));
     let (plate_pos, belt_pos) = (

@@ -126,6 +126,23 @@ pub struct MoraleRung {
     /// where fear sharpens somebody up.
     #[serde(default)]
     pub accuracy: i32,
+    /// Whether a crew on this rung is **pinned**: she will not move onto
+    /// ground where more fire can reach her than reaches her where she is.
+    ///
+    /// What being pinned means on a real battlefield — a crew under effective
+    /// fire keeps her head down, goes to ground and does not get up to
+    /// advance into it, and a commander who wants her to has to lift the fire
+    /// first. It is the effect a base of fire exists to produce, and until
+    /// this rung existed nothing could produce it: fear cost a gunner her aim
+    /// and nothing else until the crew broke outright. She still obeys, still
+    /// fires and may still crawl to *quieter* ground; what she refuses is the
+    /// step forward. Read in one place, `movement::reachable`'s pinning gate,
+    /// which the planner, the order validator and the tick's own drive all
+    /// pass through, so a human's crew is held exactly as a machine's.
+    ///
+    /// `#[serde(default)]` to false: a ladder written before it pins nobody.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 fn yes() -> bool {
@@ -235,6 +252,43 @@ pub struct MoraleRules {
     /// rate rather than to a rule.
     #[serde(default)]
     pub point_worth: f32,
+    /// Percent of a round's `suppression` charged to the crew a shot was
+    /// aimed at and **missed**, and to every crew in the ring round a shell's
+    /// burst that the burst did not strike.
+    ///
+    /// Suppression is volume of fire arriving near somebody, not only onto
+    /// her: a belt that cracks past a platoon puts it on its face whether or
+    /// not a bullet finds anyone, and a howitzer's near misses are most of
+    /// what a battery does to a position. Until this a miss cost nothing at
+    /// all, so the only way to frighten a crew was to hit her, and a base of
+    /// fire could pin nobody it could not already kill. What is charged is
+    /// the *round's* own declared suppression — an armour-piercing shot that
+    /// declares none frightens nobody by missing, which is the designer's
+    /// ruling that the proper equipment is needed to suppress.
+    ///
+    /// `#[serde(default)]` to zero: a miss is free, the game before.
+    #[serde(default)]
+    pub near_miss_percent: u32,
+    /// Percent of a **small-arms** round's `suppression` that reaches a crew
+    /// behind armour — a bullet that bounced off her plate, or missed her
+    /// armoured hull.
+    ///
+    /// Bullets pattering on a buttoned-up tank do not pin her crew: the
+    /// proper equipment to degrade armour, its crew's nerve included, is a
+    /// gun. The ladder's `bounced` price has never been charged for small
+    /// arms, for the same reason; this carries the argument to the round's
+    /// own suppression, which was charged in full. A bullet that gets
+    /// *through* (a halftrack's thin side) is charged in full whatever this
+    /// says, because then she is not behind armour.
+    ///
+    /// `#[serde(default)]` to 100, the game before: a belt against a glacis
+    /// frightened the crew as much as a belt against a platoon.
+    #[serde(default = "hundred")]
+    pub through_plate_percent: u32,
+}
+
+fn hundred() -> u32 {
+    100
 }
 
 /// What a shot that arrived did to the plate, as the pressure ladder prices
@@ -263,6 +317,10 @@ pub enum ShotFelt {
     },
     /// The round struck and the armour held.
     Bounced,
+    /// The round was aimed at her and went past, or a shell burst beside
+    /// her without striking her. Priced at [`MoraleRules::near_miss_percent`]
+    /// of the round's suppression.
+    Missed,
 }
 
 /// The two things about a round that the pressure ladder charges for.
@@ -280,6 +338,11 @@ pub struct RoundPressure {
     pub small_arms: bool,
     /// [`crate::data::AmmoDef::suppression`] for the round that arrived.
     pub suppression: u32,
+    /// The crew it was aimed at is behind armour
+    /// ([`crate::data::VehicleDef::armoured`]). Read only for a small-arms
+    /// [`ShotFelt::Missed`] — a bounce is behind plate by definition — by
+    /// [`MoraleRules::through_plate_percent`].
+    pub armoured: bool,
 }
 
 impl Default for MoraleRules {
@@ -293,6 +356,7 @@ impl Default for MoraleRules {
                     at_pressure: 0,
                     obeys: true,
                     accuracy: 0,
+                    pinned: false,
                 },
                 MoraleRung {
                     id: "wavering".into(),
@@ -300,6 +364,7 @@ impl Default for MoraleRules {
                     at_pressure: 6,
                     obeys: true,
                     accuracy: -10,
+                    pinned: false,
                 },
                 MoraleRung {
                     id: "breaking".into(),
@@ -307,6 +372,7 @@ impl Default for MoraleRules {
                     at_pressure: 12,
                     obeys: false,
                     accuracy: -20,
+                    pinned: false,
                 },
             ],
             hit: 3,
@@ -330,6 +396,8 @@ impl Default for MoraleRules {
             // fear is felt and never weighed, which is what every planner in
             // this engine did before suppression joined the currency.
             point_worth: 0.0,
+            near_miss_percent: 0,
+            through_plate_percent: 100,
         }
     }
 }
@@ -355,6 +423,7 @@ impl MoraleRules {
                     at_pressure: 0,
                     obeys: true,
                     accuracy: 0,
+                    pinned: false,
                 })
             })
     }
@@ -388,18 +457,30 @@ impl MoraleRules {
     /// A real number rather than ladder points, because the expectation is
     /// one; the charge rounds it at the ledger, once, in `apply_pressure`.
     pub fn pressure_for(&self, outcome: ShotFelt, round: RoundPressure) -> f32 {
-        let outcome_price = match outcome {
+        let suppression = round.suppression as f32;
+        // What a bullet's suppression is worth to a crew behind plate: the
+        // share `through_plate_percent` lets through. A penetration is not
+        // behind plate, whatever the hull, so it is never scaled; a bounce
+        // always is, being off plate by definition; a miss is when the hull
+        // it missed is armoured.
+        let through_plate = suppression * self.through_plate_percent as f32 / 100.0;
+        let behind_plate = if round.small_arms && round.armoured {
+            through_plate
+        } else {
+            suppression
+        };
+        match outcome {
             ShotFelt::Penetrated { spent } => {
-                (self.hit + self.penetrated) as f32 * spent.clamp(0.0, 1.0)
+                (self.hit + self.penetrated) as f32 * spent.clamp(0.0, 1.0) + suppression
             }
             // Bullets pattering on plate frighten nobody buttoned up behind
-            // it — through *this* price. A belt that declares suppression
-            // frightens them through that one, which is the designer saying
-            // so per round rather than the engine deciding it per class.
-            ShotFelt::Bounced if round.small_arms => 0.0,
-            ShotFelt::Bounced => self.bounced as f32,
-        };
-        outcome_price + round.suppression as f32
+            // it through the ladder's `bounced` price, and only through the
+            // round's own suppression as far as `through_plate_percent`
+            // says.
+            ShotFelt::Bounced if round.small_arms => through_plate,
+            ShotFelt::Bounced => self.bounced as f32 + suppression,
+            ShotFelt::Missed => behind_plate * self.near_miss_percent as f32 / 100.0,
+        }
     }
 
     /// Pressure shed at the end of a round by a crew with this much of the
@@ -455,6 +536,7 @@ mod tests {
                 at_pressure: 0,
                 obeys: true,
                 accuracy: 0,
+                pinned: false,
             }],
             ..MoraleRules::default()
         };

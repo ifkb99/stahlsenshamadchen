@@ -146,6 +146,10 @@ pub struct Balance {
     /// Above zero, a casemate caught from the side answers late, which is
     /// the price of her low hull and heavy front.
     pub pivot_ticks: u32,
+    /// What a hex in sight of an enemy she knows of costs a crew driving
+    /// somewhere, in movement points, by the order she is driving under.
+    /// See [`RouteExposure`].
+    pub route_exposure: RouteExposure,
     /// Points added to [`Self::field_repair_percent`] per point of the
     /// crew's `maintenance` above average.
     ///
@@ -468,6 +472,54 @@ pub struct Balance {
     pub pen_scatter: i32,
 }
 
+/// How much the order a crew is driving under wants dead ground: movement
+/// points added to every hex of her route that an enemy she knows of can see
+/// (`ground::watched` — his sight line, inside his vision range).
+///
+/// The designer's ruling (2026-09-23): the route is part of the order. A
+/// crew sent to *find* the enemy goes the long way round in dead ground,
+/// because being found first is the one way to fail a reconnaissance; a crew
+/// sent to *take* ground through fire goes straight, because the time a
+/// detour costs is time the defender uses. The price is paid by the path
+/// finder that drives her (`movement::path_to`) and by the step a long march
+/// takes each round (`movement::step_toward`), so the road a crew is ordered
+/// down is the road she drives.
+///
+/// Keyed by the mission's verb (`Mission::verb`), and `march` for a crew on
+/// a personal march order. **In `balance`**, not `planner`, because it
+/// reaches a human's crew: the driver of a player's scout car picks her own
+/// route, and picks it by the same rule as a machine's. Every field defaults
+/// to zero, which is the shortest route whatever the order — the game before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RouteExposure {
+    pub advance: u32,
+    pub assault: u32,
+    pub hold: u32,
+    pub reconnoitre: u32,
+    pub withdraw: u32,
+    pub support: u32,
+    /// A crew detached on a march of her own (`PersonalOrder::Marching`).
+    pub march: u32,
+}
+
+impl RouteExposure {
+    /// The price for an order named by its verb, or for a personal march.
+    /// An unknown verb prices nothing.
+    pub fn for_verb(&self, verb: &str) -> u32 {
+        match verb {
+            "advance" => self.advance,
+            "assault" => self.assault,
+            "hold" => self.hold,
+            "reconnoitre" => self.reconnoitre,
+            "withdraw" => self.withdraw,
+            "support" => self.support,
+            "march" => self.march,
+            _ => 0,
+        }
+    }
+}
+
 impl Default for Balance {
     fn default() -> Self {
         Self {
@@ -481,6 +533,7 @@ impl Default for Balance {
             reload_per_loading: 0,
             field_repair_percent: 0,
             pivot_ticks: 0,
+            route_exposure: RouteExposure::default(),
             repair_per_maintenance: 0,
             retired_speed_per_athletics: None,
             athletics_per_climb_level: 0,

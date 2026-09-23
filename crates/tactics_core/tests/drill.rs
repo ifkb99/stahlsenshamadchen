@@ -321,7 +321,14 @@ fn an_arrival_keeps_the_insistence_she_arrived_under() {
     // worth nothing against a medium tank in either currency — so neither
     // drill has any reason to divert either twin, and what is being read is
     // the arrival alone.
-    let reg = seen(registry_wireless());
+    //
+    // And nobody near misses: the watcher has to live through the round
+    // for there to be a next one, and the arrival is read when the round
+    // turns. Once a belt going past frightened a section, the tank's own
+    // opportunity fire broke her in round one and the battle ended with
+    // the march still standing.
+    let mut reg = seen(registry_wireless());
+    reg.morale.near_miss_percent = 0;
     let arrived = |latitude: Latitude| {
         let row = "g".repeat(10);
         let mut state = two_side_battle(

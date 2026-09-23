@@ -501,6 +501,7 @@ impl UtilityPlanner {
         if let Some(dest) = dest {
             orders.push(Order::SetMove { unit, to: dest });
         }
+        let attack = fixing_fire(registry, state, unit, dest.unwrap_or(pos)).or(attack);
         match attack {
             Some((target, weapon)) => orders.push(Order::SetFire {
                 unit,
@@ -518,6 +519,41 @@ impl UtilityPlanner {
         }
         orders
     }
+}
+
+/// The fire a crew owes a plan: if she is in the formation fixing the
+/// enemy for a fix-and-flank in flight, the plan's target, with the gun that
+/// is worth most against him from `from` — whenever her side has him in
+/// sight and she has a gun that can reach him at all.
+///
+/// This is what *fixing* is. Without it the fixing element took its firing
+/// position and then shot at whatever its own sweep liked best, so the
+/// enemy the flank was aimed at was no more suppressed than anybody else —
+/// `examples/plans` read the same pinned crew-rounds with the play as
+/// without it. Concentrating fire on one crew is how a base of fire pins
+/// him: every round goes into the pressure ladder of the crew the flankers
+/// are coming for. The round is still the loader's choice, priced in worth,
+/// so it is suppression she fires only if the arithmetic says so.
+fn fixing_fire(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    from: Hex,
+) -> Option<(UnitId, usize)> {
+    let side = state.unit(unit)?.side;
+    let formations = state.formations();
+    let plan = state.plans(side).find(|p| {
+        formations
+            .get(p.fix.index())
+            .is_some_and(|f| f.members.contains(&unit))
+    })?;
+    let target = state.unit(plan.target)?;
+    if !state.fog.side(side).spotted.contains(&target.id) {
+        return None;
+    }
+    let (weapon, value) =
+        crate::battle::best_weapon_from(registry, state, unit, from, target.id, target.pos)?;
+    (value.worth > 0.0).then_some((target.id, weapon))
 }
 
 impl AiPlanner<BattleState, Order> for UtilityPlanner {
