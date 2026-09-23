@@ -285,6 +285,22 @@ pub struct MoraleRules {
     /// frightened the crew as much as a belt against a platoon.
     #[serde(default = "hundred")]
     pub through_plate_percent: u32,
+    /// Pressure from **knowing she is the target**: charged for every shot
+    /// aimed at her, whatever the round and whatever it does — a hit, a
+    /// bounce or a miss.
+    ///
+    /// The designer's ruling (2026-09-23): anything flying by suppresses, and
+    /// half of suppression is knowing you're targeted. The other half is the
+    /// projectile, which is the round's own `suppression` — what it could do
+    /// to her if it found her, so a 105 going past frightens more than a
+    /// rifle bullet. A shell bursting beside a crew it was not aimed at
+    /// charges the projectile half only. Behind plate, against small arms,
+    /// it is scaled by [`Self::through_plate_percent`] with the rest.
+    ///
+    /// `#[serde(default)]` to zero, the game before: being shot at cost only
+    /// what the round declared.
+    #[serde(default)]
+    pub targeted: u32,
 }
 
 fn hundred() -> u32 {
@@ -343,6 +359,10 @@ pub struct RoundPressure {
     /// [`ShotFelt::Missed`] — a bounce is behind plate by definition — by
     /// [`MoraleRules::through_plate_percent`].
     pub armoured: bool,
+    /// The shot was aimed at her, so she knows she is the target
+    /// ([`MoraleRules::targeted`]). False only for a shell bursting beside a
+    /// crew it was not aimed at.
+    pub aimed: bool,
 }
 
 impl Default for MoraleRules {
@@ -398,6 +418,7 @@ impl Default for MoraleRules {
             point_worth: 0.0,
             near_miss_percent: 0,
             through_plate_percent: 100,
+            targeted: 0,
         }
     }
 }
@@ -457,29 +478,36 @@ impl MoraleRules {
     /// A real number rather than ladder points, because the expectation is
     /// one; the charge rounds it at the ledger, once, in `apply_pressure`.
     pub fn pressure_for(&self, outcome: ShotFelt, round: RoundPressure) -> f32 {
-        let suppression = round.suppression as f32;
-        // What a bullet's suppression is worth to a crew behind plate: the
-        // share `through_plate_percent` lets through. A penetration is not
-        // behind plate, whatever the hull, so it is never scaled; a bounce
-        // always is, being off plate by definition; a miss is when the hull
-        // it missed is armoured.
-        let through_plate = suppression * self.through_plate_percent as f32 / 100.0;
-        let behind_plate = if round.small_arms && round.armoured {
-            through_plate
+        let projectile = round.suppression as f32;
+        let targeted = if round.aimed {
+            self.targeted as f32
         } else {
-            suppression
+            0.0
         };
+        // What reaches a crew behind plate from a bullet: the share
+        // `through_plate_percent` lets through, of both halves. A penetration
+        // is not behind plate, whatever the hull, so it is never scaled; a
+        // bounce always is, being off plate by definition; a miss is when the
+        // hull it missed is armoured.
+        let plate = |x: f32| x * self.through_plate_percent as f32 / 100.0;
         match outcome {
             ShotFelt::Penetrated { spent } => {
-                (self.hit + self.penetrated) as f32 * spent.clamp(0.0, 1.0) + suppression
+                (self.hit + self.penetrated) as f32 * spent.clamp(0.0, 1.0) + projectile + targeted
             }
             // Bullets pattering on plate frighten nobody buttoned up behind
             // it through the ladder's `bounced` price, and only through the
             // round's own suppression as far as `through_plate_percent`
             // says.
-            ShotFelt::Bounced if round.small_arms => through_plate,
-            ShotFelt::Bounced => self.bounced as f32 + suppression,
-            ShotFelt::Missed => behind_plate * self.near_miss_percent as f32 / 100.0,
+            ShotFelt::Bounced if round.small_arms => plate(projectile + targeted),
+            ShotFelt::Bounced => self.bounced as f32 + projectile + targeted,
+            ShotFelt::Missed => {
+                let felt = targeted + projectile * self.near_miss_percent as f32 / 100.0;
+                if round.small_arms && round.armoured {
+                    plate(felt)
+                } else {
+                    felt
+                }
+            }
         }
     }
 

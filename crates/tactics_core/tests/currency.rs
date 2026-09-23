@@ -20,7 +20,7 @@ use tactics_core::data::{DataRegistry, ShotFelt};
 
 mod common;
 use common::{
-    MARCH_TO, always, breaking, commit_all, executor_only_side, felt, marching_under_fire,
+    MARCH_TO, always, breaking, calm, commit_all, executor_only_side, felt, marching_under_fire,
     play_round, registry, registry_wireless, seen, soften, two_side_battle, unit_at,
 };
 
@@ -548,7 +548,7 @@ fn the_ground_prior_stands_down_where_the_arithmetic_speaks() {
 /// one the player cannot countermand reads as the game arguing with her.
 #[test]
 fn a_crew_who_breaks_off_says_so_and_one_who_was_meant_does_not() {
-    let reg = seen(registry_wireless());
+    let reg = calm(seen(registry_wireless()));
 
     // The march she was given, fought for a round so that there is a march
     // under way for the drill to preempt: `radio()` plans her herself on the
@@ -937,6 +937,11 @@ fn fear_is_priced_by_the_same_arithmetic_that_charges_it() {
 #[test]
 fn a_shell_that_only_scrapes_through_is_priced_by_the_same_arithmetic_too() {
     let mut reg = seen(registry());
+    // A miss is charged as well now — knowing she is the target, and the
+    // round going past — and at the whole of it, so the ledger's rounding to
+    // whole points cannot tilt the average (an 88's miss at 50% would be 2.5
+    // points, rounded to 3 every time).
+    reg.morale.near_miss_percent = 100;
     reg.vehicles
         .get_mut("heavy_tank")
         .expect("the base mod ships a heavy tank")
@@ -1024,6 +1029,16 @@ fn a_shell_that_only_scrapes_through_is_priced_by_the_same_arithmetic_too() {
                     charged += reg
                         .morale
                         .pressure_for(ShotFelt::Penetrated { spent }, felt(&reg, ammo, false))
+                        .round();
+                }
+                BattleEvent::ShotMissed {
+                    target: Some(target),
+                    ammo,
+                    ..
+                } if *target == plate && ap(ammo) => {
+                    charged += reg
+                        .morale
+                        .pressure_for(ShotFelt::Missed, felt(&reg, ammo, false))
                         .round();
                 }
                 BattleEvent::ShotBounced {
@@ -1266,6 +1281,9 @@ fn the_loader_will_fire_a_belt_at_plate_she_cannot_beat_when_fear_is_worth_somet
 #[test]
 fn suppression_and_what_fear_is_worth_are_data_and_are_read() {
     let mut base = seen(registry());
+    // What the round declares, alone: knowing she is the target is charged
+    // for any round and would make a silent belt read as loud.
+    base.morale.targeted = 0;
     // Behind plate the base mod lets none of a bullet's suppression through
     // (`morale.through_plate_percent: 0`, the designer's proper-equipment
     // ruling of 2026-09-23). This stage is a belt at a glacis because that
@@ -1557,7 +1575,7 @@ fn the_drill_goes_where_the_gun_cannot_see_her_not_to_the_nearest_wood() {
 /// far end of the field.
 #[test]
 fn a_frightened_crew_runs_from_the_gun_and_an_orderly_one_ducks_out_of_its_sight() {
-    let mut reg = seen(registry_wireless());
+    let mut reg = calm(seen(registry_wireless()));
     soften(&mut reg);
     let (watcher, gun) = (UnitId(0), UnitId(1));
 

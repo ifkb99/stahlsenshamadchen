@@ -402,6 +402,7 @@ impl<'r> Round<'r> {
             small_arms: self.small_arms,
             suppression: self.suppression,
             armoured: false,
+            aimed: true,
         }
     }
 

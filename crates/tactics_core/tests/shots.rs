@@ -1193,12 +1193,16 @@ fn a_remnant_platoon_is_a_story_not_a_gun() {
 /// puts one point inside) and a clamp at the whole of it.
 #[test]
 fn the_ladder_charges_a_shell_for_what_it_spent() {
-    let reg = registry();
+    let mut reg = registry();
+    // The outcome and the round's own suppression; knowing she is the
+    // target is a flat price on top, tested in `fire_and_movement.rs`.
+    reg.morale.targeted = 0;
     let rules = &reg.morale;
     let felt = RoundPressure {
         small_arms: false,
         suppression: 2,
         armoured: false,
+        aimed: true,
     };
     let outcome = (rules.hit + rules.penetrated) as f32;
     assert_eq!(
@@ -1254,7 +1258,15 @@ fn the_ladder_charges_a_shell_for_what_it_spent() {
 /// equality fails.
 #[test]
 fn a_remnant_platoon_frightens_by_the_one_point_her_bullet_still_spends() {
-    let reg = seen(registry_wireless());
+    let mut reg = seen(registry_wireless());
+    // What her bullet spends, alone. Knowing she is the target is charged
+    // whatever the bullet does, so a remnant and a full platoon share it
+    // and it would blur the ratio this test reads — as would a rifle round
+    // that declares suppression of its own, or a miss priced at all: each
+    // is a constant both platoons pay.
+    reg.morale.targeted = 0;
+    reg.morale.near_miss_percent = 0;
+    reg.ammo.get_mut("rifle_ball").expect("shipped").suppression = 0;
     let row = "g".repeat(5);
     let mut state = two_side_battle(
         &reg,

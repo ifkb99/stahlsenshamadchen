@@ -205,6 +205,41 @@ fn worth_from(
         .unwrap_or(0.0)
 }
 
+/// Everybody in formation `index` still fighting, passengers included: the
+/// fixing element is what the formation can put on him, not what its
+/// leader can. A grenadier section is led by her halftrack, whose belt the
+/// proper-equipment rule leaves worthless against a tank, while the RPGs
+/// ride in the back — priced by the leader alone, a platoon never fixed
+/// anything.
+fn element(state: &BattleState, index: usize) -> Vec<&Unit> {
+    state
+        .formations()
+        .get(index)
+        .map(|f| {
+            f.members
+                .iter()
+                .filter_map(|id| state.unit(*id))
+                .filter(|u| u.alive())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The best round of fire anybody in the element could put on `target` from
+/// `from`.
+fn element_worth(
+    registry: &DataRegistry,
+    state: &BattleState,
+    element: &[&Unit],
+    from: Hex,
+    target: &Unit,
+) -> f32 {
+    element
+        .iter()
+        .map(|u| worth_from(registry, state, u.id, from, target))
+        .fold(0.0, f32::max)
+}
+
 /// Every enemy she knows of, as an observer: where he is and how far he sees.
 fn observers(registry: &DataRegistry, state: &BattleState, side: u8) -> Vec<(Hex, u32)> {
     state
@@ -257,10 +292,10 @@ pub fn target(
         .map(|(_, _, id)| id)
 }
 
-/// The best fix-and-flank she can see against `target` with the formations
-/// in `eligible`, or `None` when nothing clears the template's threshold. The
-/// cheap model's own verdict; see [`candidates`] for the list a playout
-/// chooses from.
+/// The best fix-and-flank she can see against `target`, fixing with one of
+/// `fixers` and going round with one of `movers`, or `None` when nothing
+/// clears the template's threshold. The cheap model's own verdict; see
+/// [`candidates`] for the list a playout chooses from.
 #[allow(clippy::too_many_arguments)]
 pub fn fix_and_flank(
     registry: &DataRegistry,
@@ -269,21 +304,23 @@ pub fn fix_and_flank(
     commander: UnitId,
     template: &TemplateDef,
     params: &FixAndFlank,
-    eligible: &[usize],
+    fixers: &[usize],
+    movers: &[usize],
     target: UnitId,
     strength: Strength,
     rng: &mut ChaCha8Rng,
 ) -> Option<Candidate> {
     candidates(
-        registry, state, side, commander, template, params, eligible, target, strength, rng,
+        registry, state, side, commander, template, params, fixers, movers, target, strength, rng,
     )
     .into_iter()
     .next()
     .filter(|c| c.score >= params.threshold)
 }
 
-/// Every fix-and-flank she can see against `target` with the formations in
-/// `eligible` — every ordered pair, each fixing formation's best firing
+/// Every fix-and-flank she can see against `target`, fixing with one of
+/// `fixers` (a platoon may hold a firing position) and going round with one
+/// of `movers` (only what can drive goes round) — every ordered pair, each fixing formation's best firing
 /// positions and each manoeuvre formation's best flanks, as many of each as
 /// her breadth allows — scored by the cheap model, misjudgement included,
 /// best first, and as many kept as her breadth allows. The model nominates;
@@ -296,7 +333,8 @@ pub fn candidates(
     commander: UnitId,
     template: &TemplateDef,
     params: &FixAndFlank,
-    eligible: &[usize],
+    fixers: &[usize],
+    movers: &[usize],
     target: UnitId,
     strength: Strength,
     rng: &mut ChaCha8Rng,
@@ -307,8 +345,8 @@ pub fn candidates(
     let watchers = observers(registry, state, side);
     let [near, far] = params.standoff;
     let mut found: Vec<Candidate> = Vec::new();
-    for &f in eligible {
-        for &m in eligible {
+    for &f in fixers {
+        for &m in movers {
             if f == m {
                 continue;
             }
@@ -325,9 +363,19 @@ pub fn candidates(
                     .filter(|h| h.distance_to(tgt.pos) >= near as i32),
             );
             let onto = Area::around([tgt.pos], 1);
+            let fixing = element(state, f);
+            let reach_of = fixing
+                .iter()
+                .map(|u| direct_range(registry, u))
+                .max()
+                .unwrap_or(0);
+            // Positions the element can hurt him from at all, best first: a
+            // platoon's RPG reaches three hexes where her carrier's belt
+            // reaches six, and the six are no use against plate.
             let fires: Vec<(Hex, u32, i32)> =
-                firing_positions(registry, state, &reach, &onto, direct_range(registry, fl))
+                firing_positions(registry, state, &reach, &onto, reach_of)
                     .into_iter()
+                    .filter(|(h, _, _)| element_worth(registry, state, &fixing, *h, tgt) > 0.0)
                     .take(strength.breadth)
                     .collect();
             if fires.is_empty() {
@@ -379,7 +427,7 @@ pub fn candidates(
                 // The fix must be able to hurt him from there, or it fixes
                 // nothing; and the flank is worth what it gains over the
                 // manoeuvre element standing here beside it.
-                if worth_from(registry, state, fl.id, fire, tgt) <= 0.0 {
+                if element_worth(registry, state, &fixing, fire, tgt) <= 0.0 {
                     continue;
                 }
                 let in_line = worth_from(registry, state, ml.id, fire, tgt);

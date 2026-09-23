@@ -26,7 +26,8 @@
         "blast": 0,
         "velocity": 800,
         "description": "What a platoon carries by the thousand. It settles every argument between people standing in the open and loses every argument with armour plate, which is the whole reason infantry carry something else as well.",
-        "volatility": 0.3
+        "volatility": 0.3,
+        "suppression": 1
     },
     {
         "id": "rpg_heat",
@@ -40,7 +41,8 @@
         "blast": 2,
         "velocity": 300,
         "description": "A shaped charge on a rocket motor, and the reason a tank does not drive into a wood alone. The jet forms on impact and does not care how far it flew, so the flat pair is the physics rather than a rounding: what limits it is that the cadet firing has to let the tank get to three hexes and then hit it.",
-        "volatility": 1.2
+        "volatility": 1.2,
+        "suppression": 2
     },
     {
         "id": "ac_20_ap",
@@ -53,7 +55,8 @@
         "post_pen": 1.0,
         "velocity": 1000,
         "description": "A very fast, very small solid shot. It opens carriers, scout cars and anything else built to stop rifle fire, and it bounces off the front of a tank all day — which is exactly the argument about what an infantry fighting vehicle is for.",
-        "volatility": 0.8
+        "volatility": 0.8,
+        "suppression": 1
     },
     {
         "id": "ac_20_he",
@@ -65,7 +68,7 @@
         ],
         "post_pen": 1.2,
         "blast": 1,
-        "suppression": 1,
+        "suppression": 2,
         "velocity": 950,
         "description": "A shell small enough that the burst is barely a burst, fired fast enough that it does not need to be. The belt the gunner reaches for when the target is a hedgerow with people behind it.",
         "volatility": 1.2
@@ -81,7 +84,8 @@
         "post_pen": 1.0,
         "velocity": 760,
         "description": "A solid shot from the gun that was already too small when the war it was designed for started. Fast, accurate, and forever arriving at armour that has grown since.",
-        "volatility": 0.8
+        "volatility": 0.8,
+        "suppression": 1
     },
     {
         "id": "ap_75",
@@ -94,7 +98,8 @@
         "post_pen": 1.3,
         "velocity": 750,
         "description": "The round the medium tank was built around: enough to matter at a kilometre, and small enough that she can carry forty of them and still have room for high explosive.",
-        "volatility": 0.8
+        "volatility": 0.8,
+        "suppression": 2
     },
     {
         "id": "ap_88",
@@ -107,7 +112,8 @@
         "post_pen": 1.6,
         "velocity": 840,
         "description": "Sixteen hexes of flat trajectory and a shot that is still dangerous at the end of them. What it costs is rate of fire and the number she can stow.",
-        "volatility": 0.8
+        "volatility": 0.8,
+        "suppression": 3
     },
     {
         "id": "he_75",
@@ -119,7 +125,7 @@
         ],
         "post_pen": 1.5,
         "blast": 3,
-        "suppression": 2,
+        "suppression": 3,
         "velocity": 550,
         "description": "The round that takes ground. It will not get through a tank's front plate, and against everything a tank actually meets — guns, trucks, a hedgerow with people in it — it is the only thing aboard worth loading.",
         "volatility": 1.5
@@ -134,7 +140,7 @@
         ],
         "post_pen": 1.8,
         "blast": 4,
-        "suppression": 2,
+        "suppression": 3,
         "velocity": 700,
         "description": "A heavier burst from a gun that would rather be shooting armour. Carried because a tank destroyer with nothing but solid shot is helpless against the crew that towed the gun into place.",
         "volatility": 1.5
@@ -149,7 +155,7 @@
         ],
         "post_pen": 2.2,
         "blast": 6,
-        "suppression": 2,
+        "suppression": 4,
         "velocity": 470,
         "description": "Lobbed rather than aimed, and it does not need to hit. The howitzer fires nothing else, which is the whole argument for keeping her behind the ridge and someone else in front of it.",
         "volatility": 1.5

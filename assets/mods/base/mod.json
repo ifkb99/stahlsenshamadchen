@@ -577,6 +577,7 @@
     "recovery_near_leader": 2,
     "point_worth": 0.5,
     "near_miss_percent": 50,
-    "through_plate_percent": 0
+    "through_plate_percent": 0,
+    "targeted": 1
   }
 }

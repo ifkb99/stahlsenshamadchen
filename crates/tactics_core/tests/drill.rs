@@ -33,7 +33,7 @@ use tactics_core::map::HexMap;
 
 mod common;
 use common::{
-    MARCH_TO, command_rules, commit_all, duel, executor_only_side, formation_named,
+    MARCH_TO, calm, command_rules, commit_all, duel, executor_only_side, formation_named,
     marching_under_fire, maul, play_round, registry, registry_wireless, seen, soften, strike_down,
     strip_radios, two_side_battle, unit_at,
 };
@@ -228,7 +228,7 @@ fn a_binding_march_presses_on_where_an_ordinary_one_takes_cover() {
     // What the seed still decides is whether she lives through the opening
     // round, and if that has to move again, scan for another rather than
     // weakening what is asserted below.
-    let reg = seen(registry_wireless());
+    let reg = calm(seen(registry_wireless()));
     // Hunted rather than written down, for the reason the currency test's
     // twin is: a `const 4` chosen because it bruised without killing stopped
     // doing either the moment loaders started reaching their guns.
@@ -329,6 +329,7 @@ fn an_arrival_keeps_the_insistence_she_arrived_under() {
     // the march still standing.
     let mut reg = seen(registry_wireless());
     reg.morale.near_miss_percent = 0;
+    reg.morale.targeted = 0;
     let arrived = |latitude: Latitude| {
         let row = "g".repeat(10);
         let mut state = two_side_battle(
@@ -1841,7 +1842,7 @@ fn a_target_watched_across_rounds_is_not_news_twice() {
     // The other direction: the old gate re-charged the delay at the top of
     // every round. A crew that has held the same enemy in sight since last
     // round owes nothing — her gun speaks on the first tick it is ready.
-    let mut reg = registry();
+    let mut reg = calm(registry());
     reg.command = None;
     // Soft guns for the same reason as `crews_report_moving_up_the_ladder`:
     // the clock across the round boundary is the thing under test, and it

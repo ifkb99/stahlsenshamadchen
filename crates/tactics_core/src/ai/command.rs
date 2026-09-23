@@ -684,11 +684,22 @@ impl SideCommand {
             .map(|e| e.id)
             .collect();
         for command in &commands {
+            // Two roles, two lists. Going round is for a formation that can
+            // drive; holding a firing position is for anybody who can shoot
+            // from one, a platoon included — infantry is the classic base of
+            // fire, and without it a combined-arms force never had two groups
+            // to plan with.
             let eligible: Vec<usize> = command
                 .formations
                 .iter()
                 .copied()
                 .filter(|i| self.can_manoeuvre(registry, state, side, *i))
+                .collect();
+            let fixers: Vec<usize> = command
+                .formations
+                .iter()
+                .copied()
+                .filter(|i| self.can_fix(registry, state, side, *i))
                 .collect();
             let strength = plan::Strength::of(registry, state, command.commander);
             let mut current = state.plan_of(command.commander).cloned();
@@ -703,7 +714,7 @@ impl SideCommand {
                 current = None;
             }
             let standing = current.as_ref().and_then(|p| {
-                let stands = eligible.contains(&p.fix.index())
+                let stands = fixers.contains(&p.fix.index())
                     && eligible.contains(&p.manoeuvre.index())
                     && known_now.contains(&p.target);
                 if !stands {
@@ -717,7 +728,8 @@ impl SideCommand {
             // nominates nothing — she carries out what she was handed.
             let mut nominated: Vec<plan::Candidate> = Vec::new();
             if !self.playing_out
-                && eligible.len() >= 2
+                && !eligible.is_empty()
+                && fixers.iter().any(|f| eligible.iter().any(|m| m != f))
                 && let Some(target) = plan::target(registry, state, side, command, goal)
             {
                 let mut rng = plan::judgement_rng(self.seed, state.round, command.commander);
@@ -732,6 +744,7 @@ impl SideCommand {
                         command.commander,
                         template,
                         params,
+                        &fixers,
                         &eligible,
                         target,
                         strength,
@@ -877,7 +890,38 @@ impl SideCommand {
     /// Whether a formation can take a part in a plan: on this side, led, not
     /// beaten or leaving, and not somebody the review would give another job
     /// first — a base of fire, a screen, infantry holding cover.
+    /// Whether a formation can be a plan's fixing element: everything
+    /// [`Self::can_manoeuvre`] asks except that she be able to drive, because
+    /// a base of fire holds a position rather than going round. A platoon
+    /// qualifies; a battery and a screen do not.
+    fn can_fix(
+        &self,
+        registry: &DataRegistry,
+        state: &BattleState,
+        side: u8,
+        index: usize,
+    ) -> bool {
+        self.plan_role_open(registry, state, side, index)
+    }
+
     fn can_manoeuvre(
+        &self,
+        registry: &DataRegistry,
+        state: &BattleState,
+        side: u8,
+        index: usize,
+    ) -> bool {
+        self.plan_role_open(registry, state, side, index)
+            && state
+                .command
+                .formations()
+                .get(index)
+                .is_some_and(|f| !Self::goes_on_foot(registry, state, f))
+    }
+
+    /// What both plan roles ask of a formation: hers, led, not leaving, not
+    /// a battery, and not a screen her doctrine sends looking.
+    fn plan_role_open(
         &self,
         registry: &DataRegistry,
         state: &BattleState,
@@ -898,7 +942,6 @@ impl SideCommand {
             .wants_out(registry, state, formation, doctrine)
             .is_some()
             || Self::lays_indirect(registry, state, formation)
-            || Self::goes_on_foot(registry, state, formation)
         {
             return false;
         }
