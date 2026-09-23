@@ -70,6 +70,25 @@ pub fn nearest_exit(state: &BattleState, side: u8, from: Hex) -> Option<String> 
     best.map(|(_, o)| o.id.clone())
 }
 
+/// The retreat lane a formation would take: [`nearest_exit`], measured from
+/// its leader (or, leaderless, its first member still on the roll).
+///
+/// Two callers, and they are the reason it is here rather than in either:
+/// the player pressing `W` on a formation of her own, and the campaign
+/// handing a withdrawing army's battle its lane ([`crate::field::Clash`]).
+/// It used to live in the game crate, which is where the second of those
+/// lived too — so the campaign's half of the rule could not be reached by
+/// any headless run.
+pub fn formation_exit(state: &BattleState, formation: usize) -> Option<String> {
+    let formation = state.formations().get(formation)?;
+    let from = formation
+        .leader
+        .and_then(|id| state.unit(id))
+        .or_else(|| formation.members.iter().find_map(|id| state.unit(*id)))
+        .map(|u| u.pos)?;
+    nearest_exit(state, formation.side, from)
+}
+
 /// The skill that decides how far a leader's orders carry.
 ///
 /// A string rather than a data field, for the same reason `gunnery` and

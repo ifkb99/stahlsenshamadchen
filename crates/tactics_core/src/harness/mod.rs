@@ -22,6 +22,7 @@
 //! wants exactly these pieces.
 
 pub mod arena;
+pub mod campaign;
 pub mod overrides;
 pub mod parallel;
 pub mod tally;
