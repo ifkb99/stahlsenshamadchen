@@ -2,6 +2,7 @@
 
 mod battle;
 mod camera;
+#[cfg(feature = "lua-campaigns")]
 mod campaign;
 mod devtools;
 mod iso;
@@ -107,7 +108,6 @@ fn main() -> AppExit {
         .init_resource::<iso::ViewCenter>()
         .add_plugins((
             mods::ModsPlugin,
-            campaign::CampaignPlugin,
             camera::CameraPlugin,
             battle::BattlePlugin,
             overworld::OverworldPlugin,

@@ -46,9 +46,12 @@ pub struct SideSpec {
     /// `None` = human controlled; otherwise which AI planner runs this side.
     #[serde(default)]
     pub ai: Option<AiConfig>,
-    /// Overworld starting funds.
-    #[serde(default)]
-    pub funds: i32,
+    /// Retired 2026-09-23, and kept only to be warned about: a campaign has
+    /// no treasury. Funds were paid by terrain and by campaign scripts and
+    /// spent by nothing, so a number here never changed what anybody could
+    /// do.
+    #[serde(default, rename = "funds", skip_serializing)]
+    pub retired_funds: Option<i32>,
 }
 
 /// Which way a vehicle is pointing, in compass terms.
@@ -1118,6 +1121,15 @@ impl MapFile {
                 // named some other hex entirely and that nothing checked or
                 // used; both are retired and warned about below.
                 check.check(a.at, Some(&u.vehicle), &u.crew, a.side);
+            }
+        }
+        for side in &self.sides {
+            if let Some(was) = side.retired_funds {
+                report.warnings.push(format!(
+                    "map `{}`: side `{}` declares funds {was}, which is no longer read; a \
+                     campaign has no treasury",
+                    self.id, side.name
+                ));
             }
         }
         for army in &self.armies {

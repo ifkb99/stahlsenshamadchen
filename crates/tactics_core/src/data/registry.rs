@@ -473,6 +473,18 @@ impl DataRegistry {
             }
         }
         for t in self.terrain.values() {
+            // Retired with the treasury it paid into; see `TerrainDef::value`.
+            // Warned rather than carried across, because a mod that set
+            // `income` to pay for something now wants to decide what the
+            // campaign planner should make of this ground instead.
+            if let Some(was) = t.retired_income {
+                report.warn(format!(
+                    "terrain `{}` declares income {was}, which is no longer read: there are \
+                     no funds. What the campaign planner wants from this ground is `value` \
+                     (the base mod's city is 3 and factory 5, the numbers income had)",
+                    t.id
+                ));
+            }
             if !(0..=100).contains(&t.cover) {
                 report.error(format!("terrain `{}` cover must be 0-100", t.id));
             }

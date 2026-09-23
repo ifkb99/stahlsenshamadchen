@@ -78,3 +78,37 @@ utility planner or the evaluator makes MCTS slower, that is not a reason to
 reject the change. If it ever starts *blocking* work rather than sitting
 still, delete it; the history has it, and this file explains what you would be
 deleting.
+
+---
+
+## The Lua campaign-script host (`crates/game/src/campaign.rs`)
+
+**Parked 2026-09-23, behind `--features lua-campaigns`. It was a second way
+to write campaign rules, and the first way does its whole job.**
+
+A vendored Lua 5.4 (`mlua`), three hooks (`on_start`, `on_turn`,
+`on_battle_end`) and, after funds went, two verbs: `game.message` and
+`game.start_battle`. The only script ever shipped, `demo.lua`, handed out
+funds nothing could spend and printed four lines. Everything a campaign
+*is* — how it ends, who must not die, which ground matters — became map and
+terrain data before this was parked (the `victory` block, the `headquarters`
+flag, terrain `value`), and that data is read by the headless campaign in
+`harness::campaign`; the hooks lived only in the Bevy crate, so no headless
+run, test or save could see them, and `start_battle` jumped straight to a
+scenario map past the clash path every other battle takes.
+
+**What it costs in the tree:** 165 lines, `mlua` optional (4 crates of 507
+in the game's dependency tree, and a C build of Lua when on), and five
+`#[cfg(feature = "lua-campaigns")]` lines in `overworld.rs`. Keep it
+compiling with
+`cargo clippy -p stahlsenshamädchen --all-targets --features lua-campaigns -- -D warnings`;
+nothing else builds it.
+
+**What would justify reviving it.** A campaign that needs *narrative* — a
+scripted event, a reinforcement on day six, a line of dialogue when a named
+cadet dies — which data cannot say. Revive it in core, not here: a hook
+trait in `tactics_core` that `harness::campaign::play` calls at the same
+three moments the screen does, hook state in the save, and `start_battle`
+through `field::Clash`. A script that only the screen can run is a rule the
+instruments cannot measure, which is why it was parked rather than kept.
+

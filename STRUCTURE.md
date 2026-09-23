@@ -613,13 +613,19 @@ pins it, mutation-checked against the old model. Only a human side's unordered
 crews ever used the planning drill, so the determinism snapshot passed
 unregenerated and no `balance` table can see it.
 
-## 13. The Lua campaign host is a second campaign-rule system
+## 13. ~~The Lua campaign host is a second campaign-rule system~~
 
-`crates/game/src/campaign.rs` (`mlua`) and `assets/mods/base/campaigns/demo.lua`
-beside the data-driven `victory` block. Its only verbs are a log line, funds,
-and `StartBattle { map_id }`, which bypasses the clash path. **Funds have no
-sink**: terrain income and scripts add to them and the HUD prints them, and
-nothing spends them. The hooks live only in the Bevy crate, so they are not in
-a save and no headless run can see them.
+**Closed 2026-09-23** (the designer's call: park the host, drop the funds).
+The host is behind `--features lua-campaigns`, off by default, with `mlua`
+optional; PARKED.md says why and what reviving it properly would take. Funds
+are gone from core, content and the HUD — the `Income` event, the treasury
+on `OverworldSide`, the banner's "Funds 20" — and a terrain declaring
+`income` or a map side declaring `funds` gets a `validate-mods` warning, the
+`planner.mission_weight` courtesy (`a_campaign_has_no_treasury_and_content_that_funds_one_is_told`).
 
-**Check:** `grep -rn "\.funds" crates/*/src`.
+**`income` had a second, live job**: it was how the campaign planner ranked
+ground (`4 + income / 2`). That job kept its numbers as terrain `value` —
+city 3, factory 5 — so removing the treasury did not also change what the
+AI marches on: `examples/campaign` over 32 seeds, plus two listed battle by
+battle, is byte-identical before and after. `SAVE_VERSION` did not move: an
+older save's `funds` key is simply not read, which is the right answer for it.

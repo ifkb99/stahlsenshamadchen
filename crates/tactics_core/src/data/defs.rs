@@ -636,9 +636,22 @@ pub struct TerrainDef {
     /// enemies unless adjacent.
     #[serde(default)]
     pub concealing: bool,
-    /// Overworld: funds generated per turn for the owning side.
+    /// Overworld: what holding this ground is worth to a campaign commander,
+    /// on the campaign planner's own scale (a capturable tile is worth
+    /// `4 + value / 2` against an enemy army's 6). Read by
+    /// [`crate::overworld::SimpleOverworldPlanner`] and nothing else.
+    ///
+    /// It was `income`, and it did two jobs: it paid funds into a treasury
+    /// nothing ever spent, and it told the campaign planner which ground to
+    /// want. The treasury is gone (2026-09-23); the second job was live, so
+    /// it kept its numbers under the name of what it does.
     #[serde(default)]
-    pub income: i32,
+    pub value: i32,
+    /// Retired 2026-09-23, and kept only to be warned about: funds are gone,
+    /// and what the campaign planner wants from this ground is
+    /// [`Self::value`].
+    #[serde(default, rename = "income", skip_serializing)]
+    pub retired_income: Option<i32>,
     /// Overworld: whether an army can capture this tile as an objective.
     #[serde(default)]
     pub capturable: bool,

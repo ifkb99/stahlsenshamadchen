@@ -1,5 +1,6 @@
 //! The strategic layer: armies move between objectives on a hex map,
-//! capture income-producing tiles, and trigger battles when they clash.
+//! capture the ground the map says is worth holding, and trigger battles when
+//! they clash.
 //!
 //! Information is softer than in battles: armies are visible to everyone
 //! unless they sit in `concealing` terrain with no enemy adjacent.
@@ -29,7 +30,6 @@ impl ArmyId {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OverworldSide {
     pub name: String,
-    pub funds: i32,
     /// `None` = human controlled.
     pub ai: Option<AiConfig>,
 }
@@ -311,10 +311,6 @@ pub enum OverworldEvent {
         side: u8,
         turn: u32,
     },
-    Income {
-        side: u8,
-        amount: i32,
-    },
     ArmyMoved {
         army: ArmyId,
         path: Vec<Hex>,
@@ -595,7 +591,6 @@ impl OverworldState {
             .iter()
             .map(|s| OverworldSide {
                 name: s.name.clone(),
-                funds: s.funds,
                 ai: s.ai.clone(),
             })
             .collect();
@@ -1448,18 +1443,6 @@ impl OverworldState {
             side: next,
             turn: self.turn,
         });
-        let amount: i32 = self
-            .owners
-            .iter()
-            .filter(|(_, owner)| **owner == next)
-            .filter_map(|(hex, _)| self.map.get(*hex))
-            .filter_map(|tile| registry.terrain(&tile.terrain))
-            .map(|t| t.income)
-            .sum();
-        if amount > 0 {
-            self.sides[next as usize].funds += amount;
-            events.push(OverworldEvent::Income { side: next, amount });
-        }
         // Last, with everybody standing where the night left them: who can be
         // reached today decides which orders may be given today.
         self.recompute_contact(registry, next, &mut events);
@@ -1966,7 +1949,7 @@ impl AiPlanner<OverworldState, OverworldOrder> for SimpleOverworldPlanner {
                 continue;
             };
             if t.capturable && state.owners.get(&hex) != Some(&side) {
-                targets.push((hex, 4.0 + t.income as f32 * 0.5));
+                targets.push((hex, 4.0 + t.value as f32 * 0.5));
             }
         }
         if targets.is_empty() {
