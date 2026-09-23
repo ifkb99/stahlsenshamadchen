@@ -1115,6 +1115,7 @@ fn spacing_doctrine() -> tactics_core::data::DoctrineDef {
         route_caution: 0.0,
         contest_aversion: 0.0,
         screening: 0.0,
+        teaches: Vec::new(),
     }
 }
 

@@ -74,6 +74,7 @@ fn drill_doctrine(data: &DataRegistry) -> DoctrineDef {
             route_caution: 0.0,
             contest_aversion: 0.0,
             screening: 0.0,
+            teaches: Vec::new(),
         })
 }
 
@@ -426,7 +427,9 @@ impl SideCommand {
         // Stable, so equal values keep declaration order.
         ground.sort_by_key(|(o, _)| Reverse(o.value));
 
-        let mut orders = Vec::new();
+        // Plans first: a formation her commander has given a part in a plan
+        // is spoken for, and the round-robin below is for everybody else.
+        let (mut orders, planned) = self.review_plans(registry, state, side);
         let mut next = 0usize;
         for (index, formation) in state.command.formations().iter().enumerate() {
             if formation.side != side {
@@ -445,6 +448,9 @@ impl SideCommand {
             // delayed mission would never land at all.
             let ordered = formation.latest_mission();
             if matches!(ordered, Some(Mission::Withdraw { .. })) {
+                continue;
+            }
+            if planned.contains(&index) {
                 continue;
             }
             let doctrine = self.doctrine_for(index);
@@ -610,6 +616,183 @@ impl SideCommand {
             }
         }
         orders
+    }
+
+    /// Review every operational command's plan, and return the orders that
+    /// follow and the formations those plans speak for.
+    ///
+    /// For each command ([`BattleState::operational_commands`]), in the order
+    /// the engine lists them: the plan in flight is kept if it still stands
+    /// and nothing beats its re-score by the commander's commitment; replaced
+    /// if something does; dropped if it no longer stands and nothing does; and
+    /// a commander with no plan adopts the best candidate she can see, if any
+    /// clears its template's threshold. A plan whose commander no longer heads
+    /// a command — she fell, or her group was absorbed by a senior's — is
+    /// dropped, and the senior plans for everybody she now commands.
+    fn review_plans(
+        &self,
+        registry: &DataRegistry,
+        state: &BattleState,
+        side: u8,
+    ) -> (Vec<Order>, Vec<usize>) {
+        use super::plan;
+        let mut orders = Vec::new();
+        let mut planned = Vec::new();
+        let Some(academy) = self.side_doctrine.as_ref() else {
+            return (orders, planned);
+        };
+        let commands = state.operational_commands(registry, side);
+        for stale in state.plans(side) {
+            if !commands.iter().any(|c| c.commander == stale.commander) {
+                orders.push(Order::SetPlan {
+                    side,
+                    commander: stale.commander,
+                    plan: None,
+                });
+            }
+        }
+        // The ground a plan should serve: the most valuable scoring ground
+        // this side does not hold, as the round-robin would hand it out.
+        let goal = state
+            .objectives()
+            .filter(|(o, held)| o.kind == ObjectiveKind::Hold && *held != Some(side))
+            .max_by_key(|(o, _)| (o.value, Reverse(o.id.clone())))
+            .map(|(o, _)| o.anchor());
+        let known_now: Vec<crate::battle::UnitId> = state
+            .known_enemies(registry, crate::battle::Knower::Commander(side))
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        for command in &commands {
+            let eligible: Vec<usize> = command
+                .formations
+                .iter()
+                .copied()
+                .filter(|i| self.can_manoeuvre(registry, state, side, *i))
+                .collect();
+            let strength = plan::Strength::of(registry, state, command.commander);
+            let mut current = state.plan_of(command.commander).cloned();
+            // A plan that has run its course ends here, and her formations go
+            // back to the ground they were given — the round-robin below.
+            if current.as_ref().is_some_and(|p| plan::done(state, p)) {
+                orders.push(Order::SetPlan {
+                    side,
+                    commander: command.commander,
+                    plan: None,
+                });
+                current = None;
+            }
+            let standing = current.as_ref().and_then(|p| {
+                let stands = eligible.contains(&p.fix.index())
+                    && eligible.contains(&p.manoeuvre.index())
+                    && known_now.contains(&p.target);
+                if !stands {
+                    return None;
+                }
+                let params = plan::as_fix_and_flank(registry.template(&p.template)?)?;
+                plan::rescore(registry, state, p, params)
+            });
+            let mut best: Option<plan::Candidate> = None;
+            if eligible.len() >= 2
+                && let Some(target) = plan::target(registry, state, side, command, goal)
+            {
+                let mut rng = plan::judgement_rng(self.seed, state.round, command.commander);
+                for template in plan::repertoire(registry, state, academy, command.commander) {
+                    let Some(params) = plan::as_fix_and_flank(template) else {
+                        continue;
+                    };
+                    if let Some(c) = plan::fix_and_flank(
+                        registry,
+                        state,
+                        side,
+                        command.commander,
+                        template,
+                        params,
+                        &eligible,
+                        target,
+                        strength,
+                        &mut rng,
+                    ) && best.as_ref().is_none_or(|b| c.score > b.score)
+                    {
+                        best = Some(c);
+                    }
+                }
+            }
+            let same = |p: &crate::battle::Plan, c: &plan::Candidate| {
+                p.template == c.plan.template
+                    && p.fix == c.plan.fix
+                    && p.manoeuvre == c.plan.manoeuvre
+                    && p.fire_position == c.plan.fire_position
+                    && p.flank == c.plan.flank
+            };
+            // Once the word is given the attack goes in: a plan in its going
+            // phase is carried through while it still stands, never swapped
+            // for a better-looking one. The first measurement caught the
+            // commander giving the word and adopting a new plan in the same
+            // review, whose orders recalled the assault a moment after it
+            // was ordered — the dithering commitment exists to prevent.
+            let committed = current
+                .as_ref()
+                .is_some_and(|p| p.phase == crate::battle::PlanPhase::Going);
+            let chosen = match (&current, standing, best) {
+                (Some(p), Some(score), Some(c))
+                    if !committed && !same(p, &c) && c.score > score + strength.commitment =>
+                {
+                    orders.extend(plan::adopt(&c));
+                    Some((c.plan.fix, c.plan.manoeuvre))
+                }
+                (Some(p), Some(_), _) => Some((p.fix, p.manoeuvre)),
+                (_, _, Some(c)) => {
+                    orders.extend(plan::adopt(&c));
+                    Some((c.plan.fix, c.plan.manoeuvre))
+                }
+                (Some(_), None, None) => {
+                    orders.push(Order::SetPlan {
+                        side,
+                        commander: command.commander,
+                        plan: None,
+                    });
+                    None
+                }
+                (None, _, None) => None,
+            };
+            if let Some((f, m)) = chosen {
+                planned.extend([f.index(), m.index()]);
+            }
+        }
+        (orders, planned)
+    }
+
+    /// Whether a formation can take a part in a plan: on this side, led, not
+    /// beaten or leaving, and not somebody the review would give another job
+    /// first — a base of fire, a screen, infantry holding cover.
+    fn can_manoeuvre(
+        &self,
+        registry: &DataRegistry,
+        state: &BattleState,
+        side: u8,
+        index: usize,
+    ) -> bool {
+        let Some(formation) = state.command.formations().get(index) else {
+            return false;
+        };
+        if formation.side != side
+            || formation.leader.and_then(|id| state.unit(id)).is_none()
+            || matches!(formation.latest_mission(), Some(Mission::Withdraw { .. }))
+        {
+            return false;
+        }
+        let doctrine = self.doctrine_for(index);
+        if self
+            .wants_out(registry, state, formation, doctrine)
+            .is_some()
+            || Self::lays_indirect(registry, state, formation)
+            || Self::goes_on_foot(registry, state, formation)
+        {
+            return false;
+        }
+        let eyes = Self::eyes_share(registry, state, formation);
+        !(doctrine.screening > 0.0 && eyes > 1.0 - doctrine.screening)
     }
 
     /// Who this formation should be shooting for, if it is the side's base
@@ -858,6 +1041,15 @@ impl AiPlanner<BattleState, Order> for SideCommand {
             // what plans are for. Marking the round either way keeps this
             // from re-running per order.
             self.reviewed_round = Some(state.round);
+            // A plan's trigger is watched every round, pulse or no pulse: the
+            // word to go is the one order that cannot wait for her next
+            // review, because the moment it answers — the fix in place, the
+            // flankers found — does not.
+            let words: Vec<Order> = state
+                .plans(side)
+                .flat_map(|plan| super::plan::trigger(registry, state, plan))
+                .collect();
+            self.pending.extend(words);
             let due = self.next_review.is_none_or(|at| state.round >= at);
             if due || self.interrupted(registry, state, side) {
                 let interval = self.review_interval(registry, state, side);

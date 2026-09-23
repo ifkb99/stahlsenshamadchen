@@ -462,6 +462,7 @@ fn a_formation_keeps_its_interval_and_its_sight_lines() {
         route_caution: 0.0,
         contest_aversion: 0.0,
         screening: 0.0,
+        teaches: Vec::new(),
     });
     let score = |col: i32| {
         evaluator
@@ -1644,6 +1645,7 @@ fn support_holds_her_at_overwatch_distance() {
         route_caution: 0.0,
         contest_aversion: 0.0,
         screening: 0.0,
+        teaches: Vec::new(),
     });
     let score = |col: i32| {
         evaluator

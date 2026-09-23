@@ -308,6 +308,14 @@ impl Arena {
 
     /// The map, built and checked.
     pub fn map(&self) -> Option<HexMap> {
+        self.map_with_formations(&[])
+    }
+
+    /// The map, declaring these formations as `(id, side)`: the arena's
+    /// ground with a chain of command on it, for the tables that measure
+    /// what commanders do. Formations are declarations, not ground, so the
+    /// mirror check is unaffected by them.
+    pub fn map_with_formations(&self, formations: &[(&str, u8)]) -> Option<HexMap> {
         let centre = self.centre_hex();
         let radius = self.radius as i32;
 
@@ -378,6 +386,10 @@ impl Arena {
             "elevation": levels,
             "objectives": objectives,
             "victory_score": self.victory_score,
+            "formations": formations
+                .iter()
+                .map(|(id, side)| serde_json::json!({ "id": id, "name": id, "side": side }))
+                .collect::<Vec<_>>(),
         }))
         .ok()?;
         let map = HexMap::from_map_file(&file).ok()?;

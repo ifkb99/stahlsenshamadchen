@@ -12,6 +12,7 @@ mod morale;
 mod planner;
 mod registry;
 mod scale;
+mod templates;
 
 pub use ammo::{AmmoClass, AmmoDef};
 pub use balance::{Balance, ReactionRules};
@@ -30,3 +31,4 @@ pub use morale::{
 pub use planner::PlannerRules;
 pub use registry::{DataError, DataRegistry, ValidationReport, parse_color};
 pub use scale::Scale;
+pub use templates::{FixAndFlank, TemplateDef, TemplateKind};

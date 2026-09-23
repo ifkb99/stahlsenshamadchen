@@ -491,6 +491,101 @@ pub fn firing_positions(
     out
 }
 
+/// Every covered route out of one start: one search, asked about as many
+/// ends as the caller likes.
+///
+/// A plan weighs many possible destinations for one element — every hex off
+/// the enemy's frontal arc within reach — and routing to each separately
+/// would be a search per candidate. This is the search once.
+pub struct CoveredRoutes {
+    from: Hex,
+    best: HashMap<Hex, u32>,
+    came: HashMap<Hex, Hex>,
+    exposed: HashMap<Hex, bool>,
+    steps: HashMap<(Hex, Hex), u32>,
+}
+
+impl CoveredRoutes {
+    /// Search out of `from` inside `area` for a vehicle of `class`, every hex
+    /// `observers` can see costing `exposure_price` more movement points.
+    #[allow(clippy::too_many_arguments)]
+    pub fn search(
+        ground: &impl Ground,
+        class: MovementClass,
+        max_climb: i32,
+        from: Hex,
+        observers: &[(Hex, u32)],
+        area: &Area,
+        exposure_price: u32,
+    ) -> Self {
+        let mut exposed: HashMap<Hex, bool> = HashMap::new();
+        let mut steps: HashMap<(Hex, Hex), u32> = HashMap::new();
+        let mut best: HashMap<Hex, u32> = HashMap::new();
+        let mut came: HashMap<Hex, Hex> = HashMap::new();
+        // Coordinates last in the heap key: they settle only exact ties.
+        let mut heap = BinaryHeap::new();
+        best.insert(from, 0);
+        heap.push(Reverse((0u32, from.x, from.y)));
+        while let Some(Reverse((cost, x, y))) = heap.pop() {
+            let at = Hex::new(x, y);
+            if best.get(&at).is_some_and(|b| cost > *b) {
+                continue;
+            }
+            for next in at.all_neighbors() {
+                if !area.contains(next) {
+                    continue;
+                }
+                let Some(step) = ground.step_cost(class, max_climb, at, next) else {
+                    continue;
+                };
+                steps.insert((at, next), step);
+                let seen = *exposed
+                    .entry(next)
+                    .or_insert_with(|| watched(ground, observers, next));
+                let total = cost + step + if seen { exposure_price } else { 0 };
+                if best.get(&next).is_none_or(|b| total < *b) {
+                    best.insert(next, total);
+                    came.insert(next, at);
+                    heap.push(Reverse((total, next.x, next.y)));
+                }
+            }
+        }
+        Self {
+            from,
+            best,
+            came,
+            exposed,
+            steps,
+        }
+    }
+
+    /// The route to `to`, or `None` if the search never reached it.
+    pub fn to(&self, to: Hex) -> Option<Route> {
+        self.best.get(&to)?;
+        let mut path = vec![to];
+        while let Some(prev) = self.came.get(path.last()?) {
+            path.push(*prev);
+        }
+        path.reverse();
+        if path.first() != Some(&self.from) {
+            return None;
+        }
+        let mut cost = 0;
+        let mut seen = 0;
+        for pair in path.windows(2) {
+            cost += self.steps.get(&(pair[0], pair[1]))?;
+            if self.exposed.get(&pair[1]).copied().unwrap_or(false) {
+                seen += 1;
+            }
+        }
+        Some(Route {
+            path,
+            cost,
+            exposed: seen,
+        })
+    }
+}
+
 /// The cheapest way from `from` to `to` inside `area` for a vehicle of
 /// `class`, where every hex `observers` can see costs `exposure_price` more
 /// movement points than it otherwise would.
@@ -498,7 +593,7 @@ pub fn firing_positions(
 /// At a price of zero it is the plain shortest route; as the price rises it
 /// trades distance for dead ground, which is what a covered approach is. The
 /// start is not charged — she is wherever she is. `None` when no route inside
-/// the area exists.
+/// the area exists. One destination of [`CoveredRoutes`].
 #[allow(clippy::too_many_arguments)]
 pub fn covered_route(
     ground: &impl Ground,
@@ -510,64 +605,15 @@ pub fn covered_route(
     area: &Area,
     exposure_price: u32,
 ) -> Option<Route> {
-    let inside = |h: Hex| h == from || h == to || area.contains(h);
-    let mut seen_memo: HashMap<Hex, bool> = HashMap::new();
-    let mut exposed = |h: Hex| {
-        *seen_memo
-            .entry(h)
-            .or_insert_with(|| watched(ground, observers, h))
-    };
-
-    let mut best: HashMap<Hex, u32> = HashMap::new();
-    let mut came: HashMap<Hex, Hex> = HashMap::new();
-    // Coordinates last in the heap key: they settle only exact ties.
-    let mut heap = BinaryHeap::new();
-    best.insert(from, 0);
-    heap.push(Reverse((0u32, from.x, from.y)));
-    while let Some(Reverse((cost, x, y))) = heap.pop() {
-        let at = Hex::new(x, y);
-        if best.get(&at).is_some_and(|b| cost > *b) {
-            continue;
-        }
-        if at == to {
-            break;
-        }
-        for next in at.all_neighbors() {
-            if !inside(next) {
-                continue;
-            }
-            let Some(step) = ground.step_cost(class, max_climb, at, next) else {
-                continue;
-            };
-            let price = step + if exposed(next) { exposure_price } else { 0 };
-            let total = cost + price;
-            if best.get(&next).is_none_or(|b| total < *b) {
-                best.insert(next, total);
-                came.insert(next, at);
-                heap.push(Reverse((total, next.x, next.y)));
-            }
-        }
-    }
-    best.get(&to)?;
-    let mut path = vec![to];
-    while let Some(prev) = came.get(path.last()?) {
-        path.push(*prev);
-    }
-    path.reverse();
-    if path.first() != Some(&from) {
-        return None;
-    }
-    let mut cost = 0;
-    let mut seen = 0;
-    for pair in path.windows(2) {
-        cost += ground.step_cost(class, max_climb, pair[0], pair[1])?;
-        if exposed(pair[1]) {
-            seen += 1;
-        }
-    }
-    Some(Route {
-        path,
-        cost,
-        exposed: seen,
-    })
+    let area = Area::of(area.hexes().iter().copied().chain([from, to]));
+    CoveredRoutes::search(
+        ground,
+        class,
+        max_climb,
+        from,
+        observers,
+        &area,
+        exposure_price,
+    )
+    .to(to)
 }

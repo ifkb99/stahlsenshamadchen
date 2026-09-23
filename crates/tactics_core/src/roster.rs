@@ -240,6 +240,10 @@ pub struct Cadet {
     /// campaign does to a person and not an edit to a mod.
     #[serde(default)]
     pub rank: Option<String>,
+    /// Templates she knows beyond her academy's teaching, stamped from her
+    /// definition and hers to add to.
+    #[serde(default)]
+    pub templates: Vec<String>,
 }
 
 impl Cadet {
@@ -261,6 +265,7 @@ impl Cadet {
             battles: 0,
             called_up: false,
             rank: def.rank.clone(),
+            templates: def.templates.clone(),
         }
     }
 
@@ -777,6 +782,7 @@ mod tests {
                 .unwrap_or_default(),
             traits: Vec::new(),
             rank: None,
+            templates: Vec::new(),
         }
     }
 
