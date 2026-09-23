@@ -1108,7 +1108,20 @@ fn kill_chain_table(reg: &DataRegistry, duels: &mut Duels) {
                 duels.facts(vehicle),
             ) {
                 (Some(shot), Some(facts)) => {
-                    let overmatch = ammo.blast > 0 && blast_overmatches(ammo.blast, facts.thinnest);
+                    // Against the plate the shot strikes, which is the front
+                    // this table is about — the resolver's `overpressure`
+                    // asks the struck face, never the thinnest one. It used
+                    // to ask the thinnest, and every burst that could crush
+                    // a hull's rear read as crushing its front: the 75's HE
+                    // "knocked out" a tank destroyer in 1.8 shots head-on,
+                    // a thing the game never does, and the table said high
+                    // explosive beat solid shot against armour everywhere.
+                    let front = reg
+                        .vehicle(vehicle)
+                        .map(|v| v.armor.value(tactics_core::data::ArmorFacing::Front))
+                        .unwrap_or(0);
+                    let overmatch =
+                        ammo.blast > 0 && front > 0 && blast_overmatches(ammo.blast, front);
                     let chain = kill_chain(reg, &shot, facts, weapon, overmatch);
                     if chain.shots.is_finite() && chain.shots < 400.0 {
                         format!("{:.1} ({:.1}r)", chain.shots, chain.rounds)
