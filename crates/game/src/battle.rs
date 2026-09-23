@@ -2273,7 +2273,7 @@ fn handle_input(
     if battle.mode == InputMode::BlindFire {
         battle.mode = InputMode::Normal;
         if let Some(unit) = battle.selected {
-            let weapon = best_weapon_for_tile(registry, &battle.state, unit, hex);
+            let weapon = area_weapon(registry, &battle.state, unit, hex);
             set_intent(
                 registry,
                 &mut battle,
@@ -2634,29 +2634,52 @@ fn aim_at(state: &BattleState, command_rules: bool, hex: Hex, side: u8) -> Aim {
     }
 }
 
-fn best_weapon_for_tile(
-    registry: &tactics_core::data::DataRegistry,
-    state: &BattleState,
-    unit: UnitId,
-    at: Hex,
-) -> usize {
-    let from = state.unit(unit).map(|u| u.pos).unwrap_or_default();
-    best_weapon_from(registry, state, unit, from, at)
-}
-
-/// The heaviest weapon that reaches `at` from `from`.
-fn best_weapon_from(
+/// The gun she would lay on `target` from `from`: core's answer, the one the
+/// AI's executors and the danger overlay read.
+///
+/// This used to be a chooser of its own that picked the in-range weapon with
+/// the highest *listed* `damage`, which is a second model of what a gun is
+/// for sitting beside [`tactics_core::battle::best_weapon_from`] — sight,
+/// penetration, the round in the breech, cadence and fear all ignored. The
+/// two disagreed exactly where it matters: a medium tank clicked onto a
+/// rifle platoon laid the 75 because 6 beats 2, where a round of the
+/// coaxial is worth more. The player and her opponent price the same shot
+/// now, or the player is playing a different game from the one the AI does.
+///
+/// `None` when nothing aboard can do anything to her from there — out of
+/// range, out of sight, or plate nothing she carries can trouble. The caller
+/// decides what that means for an order; the preview still wants a gun to
+/// talk about.
+fn weapon_against(
     registry: &tactics_core::data::DataRegistry,
     state: &BattleState,
     unit: UnitId,
     from: Hex,
+    target: UnitId,
+) -> Option<usize> {
+    let at = state.unit(target)?.pos;
+    tactics_core::battle::best_weapon_from(registry, state, unit, from, target, at).map(|(i, _)| i)
+}
+
+/// The gun for a blind barrage on `at`: the hardest-hitting weapon whose
+/// range band reaches it from where she stands.
+///
+/// The one place a listed `damage` is the right key, because it is the one
+/// shot with nobody to price it against: blind fire is at a hex the player
+/// has no contact on, and every figure in the currency is a figure about a
+/// target. Deliberately not a fallback for [`weapon_against`] — a shot at
+/// somebody is always priced against her.
+fn area_weapon(
+    registry: &tactics_core::data::DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
     at: Hex,
 ) -> usize {
     let Some(u) = state.unit(unit) else { return 0 };
     let Some(vehicle) = registry.vehicle(&u.vehicle) else {
         return 0;
     };
-    let dist = from.distance_to(at);
+    let dist = u.pos.distance_to(at);
     vehicle
         .weapons
         .iter()
@@ -2684,10 +2707,11 @@ fn engage_with_best(
         .unit(unit)
         .map(|u| u.planned_destination())
         .unwrap_or_default();
-    let Some(tgt_pos) = battle.state.unit(target).map(|t| t.pos) else {
-        return;
-    };
-    let weapon = best_weapon_from(registry, &battle.state, unit, from, tgt_pos);
+    // Nothing worth firing from there still gets an order — the engine
+    // accepts one out of range on purpose, so she can be sent to drive into
+    // a firing position and engage in the same round — and it lays the main
+    // armament, which is what the old chooser fell back to as well.
+    let weapon = weapon_against(registry, &battle.state, unit, from, target).unwrap_or(0);
     set_intent(
         registry,
         battle,
@@ -3264,10 +3288,10 @@ fn update_panel(
             state.unit(*attacker).map(|u| u.side) != state.unit(*target).map(|u| u.side)
         });
     if let Some((attacker, target)) = attack {
-        let weapon = state
-            .unit(target)
-            .map(|t| best_weapon_for_tile(registry, state, attacker, t.pos))
-            .unwrap_or(0);
+        // Previewed from where she stands, not where she is driving: the
+        // panel answers "what if she fired now".
+        let from = state.unit(attacker).map(|u| u.pos).unwrap_or_default();
+        let weapon = weapon_against(registry, state, attacker, from, target).unwrap_or(0);
         if let Some(preview) =
             tactics_core::battle::preview_attack(registry, state, attacker, weapon, target, false)
         {
@@ -3490,6 +3514,108 @@ mod tests {
         tactics_core::data::DataRegistry::load_dir(&root)
             .expect("mods load")
             .0
+    }
+
+    /// Two crews `dist` hexes apart on open grass, in a row. Unit 0 is side
+    /// 0's `vehicle`, unit 1 side 1's `target`.
+    fn pair(
+        reg: &tactics_core::data::DataRegistry,
+        vehicle: &str,
+        target: &str,
+        dist: i32,
+    ) -> BattleState {
+        let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+            "id": "test_map",
+            "palette": { "g": "grass" },
+            "rows": ["ggggggggggggg", "ggggggggggggg", "ggggggggggggg"],
+        }))
+        .unwrap();
+        let map = tactics_core::map::HexMap::from_map_file(&file).unwrap();
+        let placement = |at: [i32; 2], side: u8, vehicle: &str| UnitPlacement {
+            aboard_at: None,
+            at,
+            side,
+            vehicle: vehicle.into(),
+            crew: Vec::new(),
+            name: None,
+            facing: None,
+            formation: None,
+            leads: false,
+        };
+        let placements = vec![
+            placement([0, 1], 0, vehicle),
+            placement([dist, 1], 1, target),
+        ];
+        let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &placements);
+        let sides = ["West", "East"].map(|name| SideState {
+            name: name.into(),
+            ai: None,
+        });
+        BattleState::from_placements(
+            reg,
+            map,
+            sides.to_vec(),
+            &placements,
+            &crews,
+            std::sync::Arc::new(roster),
+            3,
+        )
+        .expect("the staged placements are content the base mod ships")
+    }
+
+    /// A shot the player orders at somebody is priced by the same function
+    /// the AI's executors and the danger overlay read. The chooser this
+    /// replaced ranked by listed `damage`, and the pairs below are where the
+    /// two disagreed on the base mod (found by scanning every multi-gun
+    /// chassis against every target at one to eight hexes): a rifle platoon
+    /// threw the RPG at a scout section where a round of rifle fire is worth
+    /// more, and a light tank laid the 37 on plate it cannot beat where the
+    /// coaxial at least frightens the crew behind it. The medium tank against
+    /// a platoon is the control — both choosers agree it is the main gun.
+    #[test]
+    fn the_player_lays_the_gun_the_ai_would() {
+        let mut reg = registry();
+        reg.balance.detection_certain_percent = 100;
+        let mut differed = 0;
+        for (vehicle, target, dist) in [
+            ("rifle_platoon", "scout_section", 2),
+            ("light_tank", "medium_tank", 3),
+            ("medium_tank", "rifle_platoon", 3),
+        ] {
+            let state = pair(&reg, vehicle, target, dist);
+            assert!(
+                state.fog.side(0).spotted.contains(&UnitId(1)),
+                "{vehicle} must see {target} for the question to mean anything"
+            );
+            let from = state.unit(UnitId(0)).unwrap().pos;
+            let at = state.unit(UnitId(1)).unwrap().pos;
+            let core = tactics_core::battle::best_weapon_from(
+                &reg,
+                &state,
+                UnitId(0),
+                from,
+                UnitId(1),
+                at,
+            )
+            .map(|(i, _)| i);
+            assert!(
+                core.is_some(),
+                "{vehicle} has something worth firing at {target}"
+            );
+            assert_eq!(
+                weapon_against(&reg, &state, UnitId(0), from, UnitId(1)),
+                core,
+                "{vehicle} on {target}: the player's choice is core's choice"
+            );
+            if core != Some(area_weapon(&reg, &state, UnitId(0), at)) {
+                differed += 1;
+            }
+        }
+        assert_eq!(
+            differed, 2,
+            "the listed-damage key and the currency part on exactly the two pairs they \
+             were found to part on; if this moves, re-scan rather than re-pick the pairs"
+        );
     }
 
     /// Deployment puts a side at the shallowest tiles of its own map edge —
