@@ -393,14 +393,31 @@ pub fn drill_destination(
     unit: UnitId,
     noticed: &[UnitId],
 ) -> Option<Hex> {
-    let pos = state.unit(unit)?.pos;
+    let me = state.unit(unit)?;
+    let pos = me.pos;
     let danger_at = |hex: Hex| worth_key(incoming_from(registry, state, unit, hex, noticed).worth);
     let here = danger_at(pos);
+    // Ties are the ordinary case, not the exception: every hex no gun she
+    // has noticed can reach is worth exactly nothing, and a crew backing out
+    // of a gun's envelope has a plateau of them. They fall to the one nearest
+    // her friends (`movement::apart`) before the coordinate, because the
+    // coordinate alone is a compass — it sent every drilling crew west, which
+    // is backwards for one end of a battlefield and forwards for the other,
+    // and was worth a two-to-one lean on the mirrored `battle_hills`.
+    let friends = super::movement::friends_of(state, me);
     super::movement::reachable(registry, state, unit)
         .into_iter()
         .map(|(hex, cost)| (hex, cost, danger_at(hex)))
         .filter(|&(hex, _, danger)| hex != pos && danger < here)
-        .min_by_key(|&(hex, cost, danger)| (danger, cost, hex.x, hex.y))
+        .min_by_key(|&(hex, cost, danger)| {
+            (
+                danger,
+                cost,
+                super::movement::apart(&friends, hex),
+                hex.x,
+                hex.y,
+            )
+        })
         .map(|(hex, _, _)| hex)
 }
 

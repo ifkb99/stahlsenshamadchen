@@ -290,6 +290,13 @@ pub struct VehicleDef {
 }
 
 impl VehicleDef {
+    /// Whether a crew in this vehicle is behind armour: any face of it
+    /// listed above zero. What `morale.through_plate_percent` asks of a
+    /// hull a bullet missed.
+    pub fn armoured(&self) -> bool {
+        self.armor.front > 0 || self.armor.side > 0 || self.armor.rear > 0
+    }
+
     /// How much room she takes up. Zero in the file means one, so a chassis
     /// that says nothing is the size it always was and nobody has to write
     /// `"footprint": 1` on every vehicle in a mod.

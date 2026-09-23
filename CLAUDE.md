@@ -126,8 +126,13 @@ the game. `--sim` fights whole battles. The rules for reading it:
   reports the first decision that is not its twin's reflection, with a
   verdict: *equal-key tiebreak* (two hexes of one objective the same distance
   from her, settled by the coordinate the invariants allow to go last — a
-  coin, not a defect) or *different key* (a rule read the compass). Both
-  arenas come back with nothing but the coin.
+  coin, not a defect) or *different key* (a rule read the compass). The
+  ridge arena comes back with nothing but the coin; **the skill arena does
+  not** (a *different key* root in round 3 on every seed, on develop before
+  2026-09-23 as well — an earlier note here said both were clean).
+  `--map battle_hills` or `battle_town` plays a generated battle map instead,
+  twins paired by reflected placement, and `--no-search` removes the search
+  roll so a divergence at first contact is a rule and not a die.
 - **`seats` prices the muster's choice**: the five battle maps fought twice
   per seed with each side handicapped in turn, so the map's own lean cancels
   and a `win%` can be read against the `whole` control (whose spread over
@@ -375,7 +380,8 @@ PLANNING.md step 4, `ai/plan.rs`. **No shipped doctrine teaches a play
 yet**, because the one play built has not been shown to win (below), so
 shipped battles are unchanged and the determinism snapshot passed
 unregenerated. `examples/plans` teaches it to measure it (`--maps` on the
-shipped battlefields; `PLANS_SET=path=value` to override a number);
+shipped battlefields; `PLANS_SET=path=value,...` overrides any field by its
+json path through `harness::overrides`, a bare name being a `planner` field);
 `tests/plans.rs`.
 
 - **Templates are data, their algorithm is Rust** (`TemplateDef`,
@@ -428,6 +434,10 @@ shipped battlefields; `PLANS_SET=path=value` to override a number);
   That is `plans --maps`, which puts both sides under the `command`
   planner; the four maps themselves still declare `utility` (Content gaps),
   so a battle fought from the game plans nothing until that changes.
+- **Ten-round playouts read the same as five** (a battle here is over in
+  eight or nine), and with pinning and focused fixing fire the play is still
+  neutral: −6 and +5 wins in 360 on the maps. PLANNING.md step 4 has why —
+  tank against tank, the fire that would pin a crew kills her first.
 
 ### Reading ground
 
@@ -518,7 +528,9 @@ interior) and the near side (`hit_chance_inner`) are both data
   armoured chassis in the base mod, so the infantry numbers are attributable
   to this one field.
 - **Suppression is `MoraleRung::accuracy`**, not a second fear system. A
-  one-rung ladder has none without an `if`.
+  one-rung ladder has none without an `if`. **Pinning is `MoraleRung::pinned`**
+  on the same ladder, and so are near misses and armour (Fire and movement,
+  below).
 - **Dispersion is a different fact from flight time.** `ShellInFlight.impact`
   is rolled from `WeaponDef.dispersion` (a percentage of range) when the shot
   is fired; `shell_lands` resolves against `impact` everywhere — occupant,
@@ -775,6 +787,63 @@ converted at the mod's exchange rate.
   or making for, counting footprints against capacity.
 - **Difficulty applies to the chooser, not to the tile sweep.** A worse
   commander goes to the wrong place, which a player can see and punish.
+
+### Fire and movement
+
+The designer's rulings of 2026-09-23: the enemy should be pinned the way he
+is on a real battlefield, the proper equipment is needed to degrade armour and
+its crew's nerve, and the route a crew drives is part of her order. Tests:
+`tests/fire_and_movement.rs`, every guard mutation-checked.
+
+- **A near miss frightens** (`morale.near_miss_percent`, 50 shipped, 0 the
+  game before): a shot aimed at her that misses, and a shell bursting in the
+  ring round her hex, charge that share of the *round's own* `suppression`
+  through `pressure_for(ShotFelt::Missed, ..)`. `ShotMissed` carries its
+  `target` and `ammo` so the charge reads the event. An AP round declares no
+  suppression and frightens nobody by missing — the equipment rule, as data.
+  `combat::expected_shot` adds the `(1 − p)` half through `miss_pressure`, so
+  `fear_is_priced_by_the_same_arithmetic_that_charges_it` still holds (it
+  stages 100%, because the ledger rounds each event to whole points and 1.5
+  a miss would tilt its average).
+- **Bullets do not pin a crew behind plate** (`morale.through_plate_percent`,
+  0 shipped, 100 the game before): the share of a small-arms round's
+  suppression that reaches her through armour, bounced or missed. This
+  **reverses the Wave 1 ruling** that a belt on a glacis is worth firing
+  for the fear; the machinery tests that stage a belt at plate now declare
+  100 and say why, and the shipped reading has a battle of its own in
+  `an_ordered_shot_that_cannot_penetrate_bounces_and_does_nothing`. A bullet
+  that gets *through* is charged in full.
+- **A pinned crew will not step onto hotter ground** (`MoraleRung::pinned`;
+  the base mod's second rung, renamed *Pinned*). `movement::Pinning` is the
+  one gate: `reachable`, `path_to` and the tick's own step all ask it, so
+  the planner, the player's move range and a route laid before the fire
+  arrived agree. "Hotter" is `incoming` with her own knowledge; quieter
+  ground stays open, so she crawls for cover rather than freezing. A crew
+  stopped mid-route emits `Event::PinnedDown`, her side's business.
+- **The route follows the order** (`balance.route_exposure`, movement
+  points per hex a known enemy can see — `ground::watched`, one definition
+  with the planner's covered routes — keyed by `Mission::verb` and `march`).
+  Shipped: reconnoitre 4, withdraw 3, support 2, advance 1, hold 1, assault
+  0, march 0; all zero is the shortest road whatever the order.
+  `every_order_in_the_vocabulary_has_a_route_price` guards the join. **In
+  `balance`**, because a player's scout car picks her road by the same rule.
+  `path_to` searches (hex, movement spent) so the budget is exact under a
+  price it does not spend — keyed on the hex alone it refused orders
+  `reachable` had offered, and `two_commanders_fight_...` caught it.
+  `step_toward` walks the priced way round (`to_go`, a reverse search from
+  the destination) and is the crow flight when nothing is watching.
+- **Ties go to her friends before the compass.** `movement::apart` — the sum
+  of distances to every friend on the field — is the key after the real ones
+  in `path_to`, `step_toward` and `drill_destination`, because it is the same
+  number from either end of a mirrored field. All three used to fall straight
+  to the coordinate: `hexx::a_star`'s neighbour order, a left-or-right
+  choice the invariants once called harmless, and a drill that sent every
+  crew with a plateau of safe hexes west. `examples/mirror --map` found each.
+- **The fixing element fixes** (`ai/utility.rs::fixing_fire`): a crew in the
+  formation fixing for a plan in flight fires on the plan's target when her
+  side has him in sight and she has a gun worth firing, the round still the
+  loader's choice in worth. Before it the fix shot at whatever its own sweep
+  liked, and pinned its target no more often than anybody else was pinned.
 
 ### The road, not the crow flight
 
@@ -1355,21 +1424,22 @@ instrument's numbers.
 - **Overworld elevation is priced at the battle scale.** `Scale` has one
   `elevation_meters`, so `frontier`'s mountains at elevation 2 read as 20 m.
   Harmless today; a strategic map wants its own vertical scale.
-- **The path finder reads the compass, and `battle_town` shows it.**
-  `movement::path_to` is `hexx::a_star`, which settles a tie between
-  equal-cost paths by its own neighbour order: two crews on reflected hexes
-  making for reflected ground take the same number of steps by paths that
-  are not reflections (`examples/mirror --map battle_hills --no-search`
-  finds it in tick 2 of round 1, the reserve medium going straight and then
-  turning where her twin turns first). With the reserve in, the `ground`
-  table reads `battle_town` **194–382 to the east end over eight seeds**
-  (148–140 over four before it), and exchanging which side has the lower
-  ids leaves it there (218–358), so it is the ends and not the id order.
-  The placements are exact reflections (`a = ±28`, same rows). The reserve
-  did not make the rule; it walks into the tie more often. Fixing it wants a
-  path tiebreak on something a reflection preserves — distance from the
-  straight line, say — with the coordinate last, and it will move the
-  determinism snapshot. Read the town row through it until then.
+- **The generated maps lean to an end, and three compass ties were not the
+  cause.** With the reserve in, the `ground` table read `battle_town`
+  **194–382 to the east end over eight seeds**, and exchanging which side
+  has the lower ids left it there (218–358), so it is the ends and not the
+  id order; the placements are exact reflections. `examples/mirror --map`
+  found three tiebreaks reading the compass — `hexx::a_star`'s neighbour
+  order in `path_to`, `step_toward`'s left-or-right, and the drill's
+  plateau of safe hexes — and all three now go to `movement::apart` before
+  the coordinate (Fire and movement). The lean survived every one: after
+  them, and with the pinning and route content, eight seeds read town
+  **186–390**, hills 254–322 (302–274 on develop), plains 274–302, forest
+  242–334. The next root the probe names on `battle_hills` is a light
+  tank's goal in round 4 (*different key*); the skill arena has had one in
+  round 3 since before any of this. There is at least one more rule reading
+  the compass, and until it is found the `ground` rows of the generated
+  maps are measuring it.
 - **Difficulty discriminates on the ridge and not on the old arena — but
   only just.** At 8 seeds × 36 (576 a row) on `ridge_arena`, 5 over 1 is
   **51.4%** and 5 over 3 **49.7%** since the ladder scaled by damage spent
@@ -1423,7 +1493,7 @@ four seeds, after the ladder scaled by damage spent (2026-09-09):
 
 | | |
 | --- | --- |
-| round resolution | 1.47 ms (1.96 before `substitution_penalty` went to 6 — this row moves with how well the AI plays, and every partial crew on `river_crossing` now has a stand-in in a seat; 1.84 after Wave 1, 1.59 after Phase 2) |
+| round resolution | 1.96–2.07 ms after pinning and routes (1.75 for develop on the same machine the same day: pinned crews price fire per hex, and `path_to` searches hex × movement spent); 1.47 ms before that (1.96 before `substitution_penalty` went to 6 — this row moves with how well the AI plays, and every partial crew on `river_crossing` now has a stand-in in a seat; 1.84 after Wave 1, 1.59 after Phase 2) |
 | `reachable()` per call | 14.2 µs (16.6 before the occupancy walk was gathered once) |
 | `roads()` per call | 118.8 µs |
 | `unit_vision` per unit, cold | 89.2 µs (90.8 the run before: the machine is comparable) |
@@ -1641,7 +1711,9 @@ says whether the machine is comparable.
 - `crates/game/src/battle.rs` is ~3500 lines and `overworld.rs` ~2200.
   `battle/panel.rs` holds the pure formatters; **"does it hold a Bevy type" is
   the line to draw** for the next extraction (STRUCTURE.md).
-- **The engine tests are nine binaries, split by subject** (2026-09-11).
+- **The engine tests are split by subject** (2026-09-11; since then
+  `field.rs`, `ground.rs`, `plans.rs` and `fire_and_movement.rs` have
+  joined).
   `engine.rs` had reached 17,568 lines and 305 tests in one binary; it keeps
   the four sections that are the substrate the rest stand on (content and the
   scale contract, determinism, the overworld, gunnery previews) and the other

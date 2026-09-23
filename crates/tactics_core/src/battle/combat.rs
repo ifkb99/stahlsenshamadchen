@@ -401,6 +401,7 @@ impl<'r> Round<'r> {
         crate::data::RoundPressure {
             small_arms: self.small_arms,
             suppression: self.suppression,
+            armoured: false,
         }
     }
 
@@ -608,6 +609,30 @@ fn round_pressure(registry: &DataRegistry, profile: &ShotProfile, round: &Round<
     );
     profile.pen_chance * rules.pressure_for(crate::data::ShotFelt::Penetrated { spent }, felt)
         + (1.0 - profile.pen_chance) * rules.pressure_for(crate::data::ShotFelt::Bounced, felt)
+}
+
+/// What a shot at `target` that misses her is expected to cost her nerve —
+/// the other half of [`round_pressure`], weighted by the chance of a miss in
+/// [`expected_shot`]. The charge is `apply_pressure` pricing a
+/// `ShotMissed` through the same [`crate::data::MoraleRules::pressure_for`],
+/// so the two agree by construction. Zero at `near_miss_percent: 0`, which
+/// is the game before a miss frightened anybody.
+fn miss_pressure(
+    registry: &DataRegistry,
+    state: &BattleState,
+    target: UnitId,
+    round: &Round<'_>,
+) -> f32 {
+    let felt = crate::data::RoundPressure {
+        armoured: state
+            .unit(target)
+            .and_then(|u| registry.vehicle(&u.vehicle))
+            .is_some_and(|v| v.armoured()),
+        ..round.pressure()
+    };
+    registry
+        .morale
+        .pressure_for(crate::data::ShotFelt::Missed, felt)
 }
 
 /// The share of a round's listed budget that a penetration spending `spent`
@@ -1422,7 +1447,8 @@ pub fn expected_shot(
     // arithmetic.
     let p = hit_chance(registry, state, attacker, from, weapon, target, at, blind) as f32 / 100.0;
     let expected = p * round_damage(registry, state, target, &profile, round.ammo);
-    let pressure = p * round_pressure(registry, &profile, &round);
+    let pressure = p * round_pressure(registry, &profile, &round)
+        + (1.0 - p) * miss_pressure(registry, state, target, &round);
     ShotValue {
         expected,
         pressure,
@@ -1772,6 +1798,8 @@ fn resolve_shot(
         events.push(Event::ShotMissed {
             attacker,
             at: tgt_pos,
+            target: Some(target),
+            ammo: round.ammo.map(|a| a.id.clone()),
         });
         // The shot missed *her*. Whether it also missed everybody else
         // standing on her hex is a different question, and one that did not
@@ -2749,7 +2777,12 @@ fn fire_at_tile(
                     opportunity: false,
                     moving: state.unit(attacker).is_some_and(|a| a.moved > 0),
                 });
-                events.push(Event::ShotMissed { attacker, at });
+                events.push(Event::ShotMissed {
+                    attacker,
+                    at,
+                    target: None,
+                    ammo: None,
+                });
             }
         }
     }

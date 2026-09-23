@@ -17,6 +17,15 @@
     "reload_per_loading": 5,
     "field_repair_percent": 10,
     "pivot_ticks": 2,
+    "route_exposure": {
+      "advance": 1,
+      "assault": 0,
+      "hold": 1,
+      "reconnoitre": 4,
+      "withdraw": 3,
+      "support": 2,
+      "march": 0
+    },
     "repair_per_maintenance": 3,
     "athletics_per_climb_level": 2,
     "concealment_per_fieldcraft": 5,
@@ -523,10 +532,11 @@
       },
       {
         "id": "wavering",
-        "name": "Wavering",
+        "name": "Pinned",
         "at_pressure": 6,
         "obeys": true,
-        "accuracy": -10
+        "accuracy": -10,
+        "pinned": true
       },
       {
         "id": "breaking",
@@ -565,6 +575,8 @@
     "recovery": 2,
     "recovery_per_skill": 4,
     "recovery_near_leader": 2,
-    "point_worth": 0.5
+    "point_worth": 0.5,
+    "near_miss_percent": 50,
+    "through_plate_percent": 0
   }
 }
