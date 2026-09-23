@@ -14,6 +14,9 @@
 //! - [`roster`]: cadets as mutable per-campaign instances, as opposed to the
 //!   immutable [`data`] definitions they are stamped from.
 //! - [`overworld`]: the strategic layer simulation.
+//! - [`ground`]: reading terrain the way a commander does — vantages, dead
+//!   ground, covered routes — lazily, a region at a time, for a world that
+//!   will not end at the map edge.
 //! - [`field`]: the seam between them — a clash on the campaign map staged
 //!   as a battle, and the battle's result handed back.
 //! - [`save`]: serialising a game in progress, such that reloading it
@@ -25,6 +28,7 @@ pub mod battle;
 pub mod data;
 pub mod field;
 pub mod force;
+pub mod ground;
 pub mod harness;
 pub mod map;
 pub mod overworld;

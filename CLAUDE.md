@@ -337,6 +337,40 @@ enemies does this knower know of", and every brain and screen asks it —
   because a gun layer engages what her side has found, reported or not.
   `known_enemies` is about *deciding*, never about resolving.
 
+### Reading ground
+
+`tactics_core::ground` reads terrain the way a commander does — high
+ground, dead ground, firing positions, covered routes — for the planning
+layer in PLANNING.md. **Nothing in the AI reads it yet.** Tests:
+`tests/ground.rs`, against the ridge arena's rule-built features.
+
+- **It asks the world four questions through `Ground` and nothing else**
+  (terrain id, elevation, sight line, step cost). `BattleState` answers
+  them; `Patch` answers them for any number of maps folded in at offsets.
+  A future streamed world is a third implementation, not a rewrite.
+- **Lazy and per region.** `region_of` is `hexx`'s hexagonal tiling of the
+  whole plane (radius 4, 61 tiles); a region is read the first time one of
+  its hexes is asked about and cached in the `TerrainReader`, which the
+  planner owns — a reading is a pure function of the ground, so nothing is
+  saved and nothing in a battle is rebuilt for it. **When tiles change or
+  stream in, call `forget_around`**, or the reader keeps its old answer
+  (`two_maps_side_by_side_read_as_one_piece_of_ground` pins both halves).
+- **An unknown tile is not counted**, never counted as seen or unseen: a
+  reading's `share` is of the tiles that exist in range, so a map edge is
+  not a hill. The sight grid itself treats an unknown tile as transparent
+  (see `SightGrid`), which is right for a ray passing over the edge of the
+  known world and wrong for counting it.
+- **High ground is relief, not view.** A vantage is a hex no neighbour
+  overtops and something within `RELIEF_RADIUS` undercuts; view ranks
+  vantages. The first draft found them by how much *more* a hex sees than
+  its neighbours and it was noise — a wood blinds its own tiles, so every
+  hex beside one looked prominent, and a hill-less plain had seventeen.
+- **Every question is asked inside an `Area`**, the commander's area of
+  interest; dead ground and covered routes are relative to observers and
+  are never cached.
+- `planner.outlook_range` (12) is how far a tile's view is counted.
+  Measured cold: one region 5.3 ms, every vantage on a 1261-tile map 57 ms.
+
 ### The shot
 
 The far side (struck face, obliquity, scatter, the loader's choice, the
