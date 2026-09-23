@@ -166,6 +166,11 @@ fn elevation_prior() -> f32 {
     0.4
 }
 
+/// Serde's default for [`PlannerRules::outlook_range`].
+fn outlook_range() -> u32 {
+    12
+}
+
 /// Serde's default for [`PlannerRules::eyes_ratio_percent`].
 fn eyes_ratio_percent() -> i32 {
     250
@@ -660,6 +665,12 @@ pub struct PlannerRules {
     /// [`DoctrineDef::screening`](super::DoctrineDef::screening) existed.
     #[serde(default = "eyes_ratio_percent")]
     pub eyes_ratio_percent: i32,
+    /// How far a tile's view is counted when the terrain reader
+    /// ([`crate::ground::TerrainReader`]) asks how much ground it commands, in
+    /// hexes. Twelve is 1.2 km, about what the shipped gun tanks see.
+    #[serde(default = "outlook_range")]
+    pub outlook_range: u32,
+
     #[serde(default = "kill_bonus")]
     pub kill_bonus: f32,
     /// What a round of fire from a tile is worth per point of the doctrine's
@@ -823,6 +834,7 @@ impl Default for PlannerRules {
             cover_prior: cover_prior(),
             elevation_prior: elevation_prior(),
             eyes_ratio_percent: eyes_ratio_percent(),
+            outlook_range: outlook_range(),
             kill_bonus: kill_bonus(),
             attack_worth: attack_worth(),
             attack_floor: attack_floor(),

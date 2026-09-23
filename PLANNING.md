@@ -179,8 +179,15 @@ true:
 ## Order of work
 
 1. ~~Hull and turret facing~~ (2026-09-23).
-2. **The terrain reader**, alone, tested against the arenas: does it find
-   the ridge's dead ground and the hedgerow banks?
+2. ~~**The terrain reader**~~ (2026-09-23): `tactics_core::ground`. It finds
+   the ridge's crest and both spurs exactly, all 42 reverse-slope wood hexes
+   as dead ground from the crest, and a covered route to the far flank that
+   is 27 movement points with 8 exposed hexes against the plain route's 19
+   with 17. Built for many tiles: a `Ground` trait, lazy per-region readings
+   on a tiling of the whole plane, areas of interest, and a test that two
+   maps side by side read as one piece of ground. Still to decide when a
+   world exists: whether readings are owned per planner (today, simple, no
+   save burden) or shared world-wide (cheaper once there are many planners).
 3. **Rank and dynamic operational command**: seniority on cadets, the
    per-component senior, succession of the role. Behaviour-neutral with one
    component and today's single plan.

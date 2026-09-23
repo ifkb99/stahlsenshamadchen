@@ -78,6 +78,7 @@ fn main() {
     let reach = bench_reachable(&registry, &seeds);
     let road = bench_roads(&registry, &seeds);
     let fog = bench_fog(&registry, &seeds);
+    let (region, whole) = bench_ground(&registry, &seeds);
 
     row("measurement", "result", "notes");
     println!("{}", "-".repeat(78));
@@ -105,6 +106,16 @@ fn main() {
         "unit_vision per unit (cold)",
         &fmt_us(fog),
         "raycasts every tile in range",
+    );
+    row(
+        "terrain reading per region (cold)",
+        &fmt_ms(region),
+        "61 tiles, each counting what it sees",
+    );
+    row(
+        "vantages, whole map (cold)",
+        &fmt_ms(whole),
+        "a commander's area of interest is smaller",
     );
 
     for difficulty in [1u8, 3, 5] {
@@ -257,6 +268,32 @@ fn bench_fog(registry: &DataRegistry, seeds: &[u64]) -> Duration {
         samples.push(t.elapsed() / (REPS * ids.len() as u32));
     }
     mean(&samples)
+}
+
+/// The terrain reader, cold: one region's readings, and every vantage on the
+/// whole map. Cold because a reading is cached per region and paid once per
+/// planner; the whole map is the upper bound a real area of interest stays
+/// under.
+fn bench_ground(registry: &DataRegistry, seeds: &[u64]) -> (Duration, Duration) {
+    use tactics_core::ground::{Area, TerrainReader};
+    let (mut regions, mut wholes) = (Vec::new(), Vec::new());
+    for &seed in seeds {
+        let state = BattleState::from_map(registry, MAP, seed).expect("battle");
+        let centre = state.map.center();
+        const REPS: u32 = 5;
+        let t = Instant::now();
+        for _ in 0..REPS {
+            let mut reader = TerrainReader::new(registry);
+            std::hint::black_box(reader.tile(registry, &state, centre));
+        }
+        regions.push(t.elapsed() / REPS);
+        let area = Area::of(state.map.iter().map(|(h, _)| h));
+        let t = Instant::now();
+        let mut reader = TerrainReader::new(registry);
+        std::hint::black_box(reader.vantages(registry, &state, &area));
+        wholes.push(t.elapsed());
+    }
+    (mean(&regions), mean(&wholes))
 }
 
 /// Time per `next_order` call, which is the unit a human waits on.
