@@ -11,6 +11,9 @@ behind it lives in [DONE.md](DONE.md); read it before undoing a decision that
 looks arbitrary, and **read it for the measurements** — this file states the
 rules and DONE.md holds the evidence, the wrong first drafts and the numbers.
 [PARKED.md](PARKED.md) says why code with no callers is still in the tree.
+[PLANNING.md](PLANNING.md) is the design memo for the AI planning layer
+(templates matched onto terrain, fluid levels of command, plans that change),
+written before any of it is built.
 [STRUCTURE.md](STRUCTURE.md) carries the seams that are in the wrong place —
 a rule living in the wrong crate, a contract asserted in prose that nothing
 checks — as against the rules that are wrong, which are here.
