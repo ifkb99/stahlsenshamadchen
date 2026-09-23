@@ -19,7 +19,7 @@ use tactics_core::battle::{
     BattleState, Destruction, EndReason, Event as BattleEvent, FireIntent, Latitude, Mission,
     Order, UnitId, reachable,
 };
-use tactics_core::data::{DataRegistry, RoundPressure, ShotFelt};
+use tactics_core::data::{ArmorFacing, DataRegistry, RoundPressure, ShotFelt};
 
 mod common;
 use common::{
@@ -402,6 +402,176 @@ fn a_mod_without_ammunition_still_fights_with_its_guns_own_numbers() {
             "uncounted rounds are infinite ones: nothing was spent"
         );
     }
+}
+
+// --- the hull and the gun --------------------------------------------------
+
+/// A gun crew on open grass with a recon car off her flank: the car's
+/// machine gun cannot hurt either chassis these tests stage, so the only
+/// thing that can happen is the subject answering it. Her hull is turned to
+/// face east, which puts the car — due north of her — outside her frontal
+/// arc. Unit 0 is the subject, unit 1 the car.
+fn flanked(reg: &DataRegistry, vehicle: &str) -> BattleState {
+    let row = "ggggggg";
+    let mut state = common::two_side_battle(
+        reg,
+        &[row, row, row, row, row],
+        vec![
+            common::unit_at([3, 4], 0, vehicle, "Subject"),
+            common::unit_at([2, 0], 1, "recon_car", "Flanker"),
+        ],
+        5,
+    );
+    let east = {
+        let me = state.unit(UnitId(0)).unwrap().pos;
+        me.main_direction_to(me + tactics_core::Hex::new(1, 0))
+    };
+    state.unit_mut(UnitId(0)).unwrap().facing = east;
+    let (me, car) = (
+        state.unit(UnitId(0)).unwrap(),
+        state.unit(UnitId(1)).unwrap(),
+    );
+    assert_ne!(
+        tactics_core::battle::struck_facing(me.pos, me.facing, car.pos),
+        ArmorFacing::Front,
+        "the stage needs the flanker outside her frontal arc"
+    );
+    assert!(
+        state.fog.side(0).spotted.contains(&UnitId(1)),
+        "and in her sight"
+    );
+    state
+}
+
+/// Order the subject onto the flanker and play ticks until she has fired or
+/// `ticks` have gone by. The events of every tick played.
+fn engage(reg: &DataRegistry, state: &mut BattleState, ticks: u32) -> Vec<BattleEvent> {
+    state
+        .apply(
+            reg,
+            &Order::SetFire {
+                unit: UnitId(0),
+                fire: FireIntent::Target {
+                    target: UnitId(1),
+                    weapon: 0,
+                },
+            },
+        )
+        .expect("an ordered shot at a spotted enemy");
+    common::commit_all(reg, state);
+    let mut events = Vec::new();
+    for _ in 0..ticks {
+        let tick = state.step_tick(reg);
+        let fired = tick.iter().any(
+            |e| matches!(e, BattleEvent::ShotFired { attacker, .. } if *attacker == UnitId(0)),
+        );
+        events.extend(tick);
+        if fired {
+            break;
+        }
+    }
+    events
+}
+
+/// A turret answers a flank without turning the hull, so she is still
+/// showing the side she was caught on. Before hulls and turrets were told
+/// apart every vehicle swung her whole hull onto whatever she shot at, for
+/// nothing: a flank was worth one shot, and 87–90% of hits in every sample
+/// struck front plate.
+#[test]
+fn a_turret_answers_a_flank_without_turning_the_hull() {
+    let reg = seen(registry());
+    assert!(reg.vehicle("medium_tank").unwrap().turret);
+    let mut state = flanked(&reg, "medium_tank");
+    let before = state.unit(UnitId(0)).unwrap().facing;
+    let events = engage(&reg, &mut state, 6);
+    assert!(
+        events.iter().any(
+            |e| matches!(e, BattleEvent::ShotFired { attacker, .. } if *attacker == UnitId(0))
+        ),
+        "she answers: {events:?}"
+    );
+    assert_eq!(
+        state.unit(UnitId(0)).unwrap().facing,
+        before,
+        "and her hull is where she left it"
+    );
+}
+
+/// A gun that does not traverse swings the whole hull round first, says so,
+/// and pays `balance.pivot_ticks` before the shot — the price of a casemate's
+/// low hull and heavy front. No round is spent on the pivot.
+#[test]
+fn a_casemate_swings_her_hull_round_and_pays_for_it() {
+    let reg = seen(registry());
+    assert!(!reg.vehicle("tank_destroyer").unwrap().turret);
+    let pivot = reg.balance.pivot_ticks;
+    assert!(pivot > 0, "the base mod prices the pivot");
+    let mut state = flanked(&reg, "tank_destroyer");
+    let rounds_before: u32 = state.unit(UnitId(0)).unwrap().ammo.values().sum();
+    let events = engage(&reg, &mut state, 1);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::Pivoted { unit, .. } if *unit == UnitId(0))),
+        "the pivot is announced: {events:?}"
+    );
+    assert!(
+        !events.iter().any(
+            |e| matches!(e, BattleEvent::ShotFired { attacker, .. } if *attacker == UnitId(0))
+        ),
+        "and there is no shot on the tick she spends turning"
+    );
+    let me = state.unit(UnitId(0)).unwrap();
+    let car = state.unit(UnitId(1)).unwrap();
+    assert_eq!(
+        tactics_core::battle::struck_facing(me.pos, me.facing, car.pos),
+        ArmorFacing::Front,
+        "her front is on the flanker now"
+    );
+    assert_eq!(
+        me.ammo.values().sum::<u32>(),
+        rounds_before,
+        "turning costs time, never a shell"
+    );
+    assert!(
+        me.cooldowns.iter().all(|cd| *cd >= pivot - 1),
+        "every gun on the hull waits out the swing: {:?}",
+        me.cooldowns
+    );
+}
+
+/// With no turret declared and no pivot priced, every hull swings onto its
+/// target and fires in the same tick — the game before this rule, which is
+/// what a mod that says nothing gets.
+#[test]
+fn with_no_turret_and_no_pivot_every_hull_swings_onto_its_target_as_it_always_did() {
+    let mut reg = seen(registry());
+    reg.balance.pivot_ticks = 0;
+    for v in reg.vehicles.values_mut() {
+        v.turret = false;
+    }
+    let mut state = flanked(&reg, "medium_tank");
+    let events = engage(&reg, &mut state, 6);
+    assert!(
+        events.iter().any(
+            |e| matches!(e, BattleEvent::ShotFired { attacker, .. } if *attacker == UnitId(0))
+        ),
+        "she fires: {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::Pivoted { .. })),
+        "without a price nobody announces a pivot"
+    );
+    let me = state.unit(UnitId(0)).unwrap();
+    let car = state.unit(UnitId(1)).unwrap();
+    assert_eq!(
+        tactics_core::battle::struck_facing(me.pos, me.facing, car.pos),
+        ArmorFacing::Front,
+        "and her whole hull turned onto the car"
+    );
 }
 
 // --- the outcome engine: no hit points -------------------------------------

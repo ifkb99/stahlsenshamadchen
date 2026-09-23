@@ -1,6 +1,7 @@
 [
     {
         "id": "recon_car",
+        "turret": true,
         "footprint": 2,
         "name": "Luchs Scout Car",
         "class": "recon",
@@ -39,6 +40,7 @@
     },
     {
         "id": "light_tank",
+        "turret": true,
         "footprint": 2,
         "name": "Wiesel Light Tank",
         "class": "light_tank",
@@ -80,6 +82,7 @@
     },
     {
         "id": "medium_tank",
+        "turret": true,
         "footprint": 3,
         "name": "Panther Medium Tank",
         "class": "medium_tank",
@@ -123,6 +126,7 @@
     },
     {
         "id": "heavy_tank",
+        "turret": true,
         "footprint": 4,
         "name": "Löwe Heavy Tank",
         "class": "heavy_tank",

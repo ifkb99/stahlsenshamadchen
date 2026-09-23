@@ -167,6 +167,20 @@ pub struct VehicleDef {
     /// difference shows up. See [`crate::roster::resolve_crew_fate`].
     #[serde(default = "default_safety")]
     pub safety: i32,
+    /// Whether her guns traverse without the hull: a turret, a pintle, a
+    /// platoon's rifles. When she fires, only the gun turns, and her armour
+    /// keeps facing the way she drove — so a crew who has been got round is
+    /// still showing the flank she was caught on.
+    ///
+    /// `false`, the default, is a gun that points where the hull does: a
+    /// casemate, a towed piece. She turns the whole vehicle onto every
+    /// target, paying [`crate::data::Balance::pivot_ticks`] to do it when the
+    /// target is outside her frontal arc. At the default pivot of zero that
+    /// is every vehicle before this field existed, which swung its whole
+    /// hull onto whatever it shot at for nothing — and is why a flank was
+    /// worth one shot and then faced her front.
+    #[serde(default)]
+    pub turret: bool,
     /// What this vehicle carries in its racks: [`crate::data::AmmoDef`] id to rounds
     /// aboard.
     ///

@@ -166,6 +166,13 @@ pub enum Event {
         unit: UnitId,
         path: Vec<Hex>,
     },
+    /// A gun that does not traverse swung her whole hull toward `toward`
+    /// instead of firing this tick. Said out loud because the alternative is
+    /// a crew who has a target and does not shoot, which looks like a bug.
+    Pivoted {
+        unit: UnitId,
+        toward: Hex,
+    },
     /// The unit ran into an unspotted enemy and stopped short; the rest of
     /// its route is abandoned.
     UnitTrapped {
@@ -583,6 +590,7 @@ impl Event {
             // out, mounting, dismounting, dying or driving off the board is
             // not a secret from anybody who can see her.
             Event::UnitMoved { .. }
+            | Event::Pivoted { .. }
             | Event::UnitTrapped { .. }
             | Event::ShotFired { .. }
             | Event::ShellLanded { .. }

@@ -1,6 +1,7 @@
 [
     {
         "id": "rifle_platoon",
+        "turret": true,
         "footprint": 1,
         "name": "Rifle Platoon",
         "class": "infantry",
@@ -41,6 +42,7 @@
     },
     {
         "id": "scout_section",
+        "turret": true,
         "footprint": 1,
         "name": "Scout Section",
         "class": "infantry",

@@ -1140,6 +1140,13 @@ fn pump_events(
                     });
                 }
             }
+            BattleEvent::Pivoted { unit, .. } => {
+                log.push(if mine(*unit) {
+                    traffic(*unit, "target off the front — swinging the hull round.")
+                } else {
+                    format!("{} is swinging round.", name(*unit))
+                });
+            }
             BattleEvent::UnitTrapped { unit, .. } => {
                 log.push(if mine(*unit) {
                     traffic(*unit, "ambush! we're in it —")

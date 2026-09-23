@@ -2561,6 +2561,58 @@ fn chamber_and_spend<'r>(
 
 /// Fire one weapon at a unit, spending its reload and a round from the
 /// racks, and giving away the shooter's position.
+/// Bring her gun to bear on `at` for a shot: the gun turns, and — for a gun
+/// that does not traverse — the hull turns with it.
+///
+/// Returns `false` when she spent this tick swinging the hull instead of
+/// firing: a casemate or towed piece ([`crate::data::VehicleDef::turret`]
+/// false) with a target outside her frontal arc, under a nonzero
+/// [`crate::data::Balance::pivot_ticks`]. Every gun on the hull waits out
+/// the pivot, because they all point where it does. Asked before a round is
+/// chambered, so the pivot costs time and never a shell.
+///
+/// A turret leaves the hull alone, and the hull is where the armour is.
+/// Before this every vehicle swung her whole hull onto whatever she shot
+/// at, for nothing, so a flanked tank answered once and from then on showed
+/// the flanker her front: 83–89% of hits in every sample struck front
+/// plate, and no manoeuvre was worth more than a single shot.
+fn lay_on(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    attacker: UnitId,
+    at: Hex,
+    events: &mut Vec<Event>,
+) -> bool {
+    let Some(att) = state.unit(attacker) else {
+        return false;
+    };
+    if att.pos == at {
+        return true;
+    }
+    if registry.vehicle(&att.vehicle).is_some_and(|v| v.turret) {
+        return true;
+    }
+    // Her own frontal arc: the same three edges `struck_facing` calls her
+    // front, asked from her side of the shot.
+    let in_arc = struck_facing(att.pos, att.facing, at) == ArmorFacing::Front;
+    let pivot = registry.balance.pivot_ticks;
+    let Some(att) = state.unit_mut(attacker) else {
+        return false;
+    };
+    att.facing = att.pos.main_direction_to(at);
+    if in_arc || pivot == 0 {
+        return true;
+    }
+    for cd in &mut att.cooldowns {
+        *cd = (*cd).max(pivot);
+    }
+    events.push(Event::Pivoted {
+        unit: attacker,
+        toward: at,
+    });
+    false
+}
+
 fn fire_at_unit(
     registry: &DataRegistry,
     state: &mut BattleState,
@@ -2576,6 +2628,9 @@ fn fire_at_unit(
     let Some(tgt_pos) = state.unit(target).map(|t| t.pos) else {
         return;
     };
+    if !lay_on(registry, state, attacker, tgt_pos, events) {
+        return;
+    }
     let Some(round) = chamber_and_spend(registry, state, attacker, &weapon, Some(target), events)
     else {
         return;
@@ -2583,13 +2638,11 @@ fn fire_at_unit(
     // Asked before the mutable borrow, and asked of the crew rather than the
     // datasheet: how fast this gun comes back is the loader's business.
     let reload = crewed_reload(registry, state, attacker, &weapon);
-    if let Some(att) = state.unit_mut(attacker) {
-        if att.pos != tgt_pos {
-            att.facing = att.pos.main_direction_to(tgt_pos);
-        }
-        if let Some(cd) = att.cooldowns.get_mut(weapon_index) {
-            *cd = reload;
-        }
+    if let Some(cd) = state
+        .unit_mut(attacker)
+        .and_then(|att| att.cooldowns.get_mut(weapon_index))
+    {
+        *cd = reload;
     }
     // An indirect gun ordered onto a *unit* still fires at the ground she is
     // standing on right now, because that is all a gunner behind a ridge can
@@ -2640,19 +2693,20 @@ fn fire_at_tile(
     let Some((att_pos, side)) = state.unit(attacker).map(|a| (a.pos, a.side)) else {
         return;
     };
+    if !lay_on(registry, state, attacker, at, events) {
+        return;
+    }
     // Spent whether or not anybody is standing there: shelling empty ground
     // costs the shell.
     let Some(round) = chamber_and_spend(registry, state, attacker, &weapon, None, events) else {
         return;
     };
     let reload = crewed_reload(registry, state, attacker, &weapon);
-    if let Some(att) = state.unit_mut(attacker) {
-        if att.pos != at {
-            att.facing = att.pos.main_direction_to(at);
-        }
-        if let Some(cd) = att.cooldowns.get_mut(weapon_index) {
-            *cd = reload;
-        }
+    if let Some(cd) = state
+        .unit_mut(attacker)
+        .and_then(|att| att.cooldowns.get_mut(weapon_index))
+    {
+        *cd = reload;
     }
     // Shelling ground is what an indirect gun does natively, so this is the
     // path where flight time is least surprising: the shell goes up, and who
