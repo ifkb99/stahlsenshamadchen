@@ -195,13 +195,74 @@ true:
 by map; difficulty 5 beating 1 on the ridge by more than the seed spread;
 doctrine moving the round-robin standings.
 
+## The designer's rulings (2026-09-23, second round)
+
+- **Templates belong to cadets.** A cadet knows the plays she knows; the
+  commander who plans is the one whose repertoire is searched. Doctrine
+  decides which templates an academy *teaches* — it no longer chooses
+  anything at battle time.
+- **Doctrines need a rethink** (below is a strawman, not a ruling).
+- **Cadets have explicit ranks.** Rank governs **orders, which flow
+  downward**: who may command whom, who takes over when a commander falls,
+  whose plan wins when two operational commanders' nets join.
+- **Information flows every way.** Lower ranks can and should share what
+  they see — with each other and upward — regardless of rank. Reports are
+  not orders; the net carries both, and only orders care about rank.
+
+What that means for the design:
+
+- `CharacterDef` gains a `rank` (content), and the campaign's roster keeps
+  it (promotion is then a campaign event, not a map edit). Seniority inside
+  a rank is the tiebreak — battles fought, then the character's order in
+  the academy's list — so succession never falls to a coin.
+- **Two graphs on one net.** The contact walk already computes who can hear
+  whom. *Orders* travel it only downward in rank from the operational
+  commander; *reports* travel it in any direction between any two crews
+  who can talk. So two components cut off from one another in command can
+  still share a picture if any crew links them for reports — which is the
+  case the single side-wide picture could not express, and the reason
+  `Knower` will want a third answer: what *this group* has been told.
+- **The operational commander of a component is its highest rank present**
+  (seniority breaking ties), not the leader of the first-declared
+  formation. A junior who is in contact does not command a senior who is
+  cut off; the senior commands her own component and the junior hers.
+
+## A strawman for doctrine
+
+Today's `DoctrineDef` mixes three different kinds of thing, which may be
+why it decides so little:
+
+| today's field | what it really is | where it would live |
+| --- | --- | --- |
+| `aggression`, `initiative`, `withdraw_threshold`, `delegation` | a commander's temperament | the cadet: cores and traits, read when *she* plans |
+| `cover_value`, `elevation_value`, `concentration`, `route_caution`, `contest_aversion`, `scouting`, `screening`, `indirect_appetite` | habits drilled into every crew | the academy's **standing operating procedures**: what a crew trained there does when nobody has told her anything |
+| `objective_value` | what this battle is for | the **orders**: the mission, the operational plan |
+
+A doctrine then becomes an academy's **curriculum**:
+
+- **Templates taught**, each with the proficiency a graduate starts at
+  (a command-type skill per template, or one `command` skill scaled by how
+  much the curriculum stresses the template).
+- **Standing operating procedures**: the tactical-level weights above,
+  which is what makes a Kuhlmann crew and a Valkyrie crew behave
+  differently when both are left alone.
+- **A culture of command**: the default latitude orders are given with and
+  the default commitment cost (how stubbornly its graduates hold a plan) —
+  which a cadet's own traits then move.
+
+A cadet's repertoire is what her academy taught her, plus what she has
+picked up — a campaign can let a cadet who survived a flank learn it, or a
+cadet from another academy bring her own plays. That is where "who
+commands this battle" stops being a formality: two cadets of the same rank
+from the same academy can still fight differently.
+
 ## Open questions for the designer
 
-- **Who owns templates** — the doctrine (what the academy teaches), the
-  commander (what this cadet knows, through her `command` skill), or both?
-- **Rank**: an explicit rank per cadet, or seniority the academy keeps
-  (years, battles, command skill)? Can a junior with better contact command
-  a senior who is cut off?
+- **The doctrine strawman above** — right split? Is anything in today's
+  `DoctrineDef` a thing the *battle* should decide rather than a person or
+  an academy?
+- **What ranks exist**, and does rank carry anything besides order flow
+  (a bigger command radius, more formations one commander can hold)?
 - **When two operational commanders' nets join mid-plan**, does the senior
   absorb immediately, or finish the current phase first?
 - **Hysteresis per doctrine or per cadet** — or doctrine sets the base and
