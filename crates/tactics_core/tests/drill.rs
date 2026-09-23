@@ -327,7 +327,11 @@ fn an_arrival_keeps_the_insistence_she_arrived_under() {
     // turns. Once a belt going past frightened a section, the tank's own
     // opportunity fire broke her in round one and the battle ended with
     // the march still standing.
+    // Nor a price on closing her up: the section's rifles cannot hurt her,
+    // but since 2026-09-23 they can button her up (`balance.buttoning_worth`),
+    // which would make them a threat and the drill the thing being tested.
     let mut reg = seen(registry_wireless());
+    reg.balance.buttoning_worth = 0;
     reg.morale.near_miss_percent = 0;
     reg.morale.targeted = 0;
     let arrived = |latitude: Latitude| {

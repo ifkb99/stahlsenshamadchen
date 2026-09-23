@@ -402,6 +402,7 @@ impl<'r> Round<'r> {
             small_arms: self.small_arms,
             suppression: self.suppression,
             armoured: false,
+            open_top: false,
             aimed: true,
         }
     }
@@ -536,7 +537,7 @@ pub fn round_worth(
     worth_of(
         registry,
         round_damage(registry, state, target, profile, round.ammo),
-        round_pressure(registry, profile, round),
+        round_pressure(registry, state, target, profile, round),
     )
 }
 
@@ -601,15 +602,50 @@ fn round_damage(
 /// charges. A draft of this comment said the crew heard the same thing
 /// either way; the designer ruled otherwise, and the ruling is what lets a
 /// remnant platoon's fire expect nearly nothing (ARCH-TODO.md, Wave 4).
-fn round_pressure(registry: &DataRegistry, profile: &ShotProfile, round: &Round<'_>) -> f32 {
+fn round_pressure(
+    registry: &DataRegistry,
+    state: &BattleState,
+    target: UnitId,
+    profile: &ShotProfile,
+    round: &Round<'_>,
+) -> f32 {
     let rules = &registry.morale;
-    let felt = round.pressure();
+    let felt = felt_by(registry, state, target, round);
     let spent = spent_share(
         (profile.damage as f32 * profile.pen_share).round() as i32,
         round.listed,
     );
     profile.pen_chance * rules.pressure_for(crate::data::ShotFelt::Penetrated { spent }, felt)
         + (1.0 - profile.pen_chance) * rules.pressure_for(crate::data::ShotFelt::Bounced, felt)
+}
+
+/// What closing her up is worth to a gun that can do it, a round's worth
+/// (`balance.buttoning_worth`), when this round would: small arms, at a
+/// roofed armoured hull that is not closed up already. Every such shot
+/// closes her, hit or miss, so there are no odds to weigh; the caller
+/// spreads it over the gun's shots so a belt is paid once a round and not
+/// once a bullet.
+fn buttoning(
+    registry: &DataRegistry,
+    state: &BattleState,
+    target: UnitId,
+    round: &Round<'_>,
+) -> f32 {
+    let b = &registry.balance;
+    if b.buttoned_ticks == 0 || b.buttoning_worth == 0 || !round.small_arms {
+        return 0.0;
+    }
+    let Some(t) = state.unit(target) else {
+        return 0.0;
+    };
+    let roofed = registry
+        .vehicle(&t.vehicle)
+        .is_some_and(|v| v.armoured() && !v.open_top);
+    if roofed && t.buttoned == 0 {
+        b.buttoning_worth as f32
+    } else {
+        0.0
+    }
 }
 
 /// What a shot at `target` that misses her is expected to cost her nerve —
@@ -624,16 +660,29 @@ fn miss_pressure(
     target: UnitId,
     round: &Round<'_>,
 ) -> f32 {
-    let felt = crate::data::RoundPressure {
-        armoured: state
-            .unit(target)
-            .and_then(|u| registry.vehicle(&u.vehicle))
-            .is_some_and(|v| v.armoured()),
+    registry.morale.pressure_for(
+        crate::data::ShotFelt::Missed,
+        felt_by(registry, state, target, round),
+    )
+}
+
+/// A round's pressure facts as the crew at `target` feels them: the round's
+/// own, and her hull — behind plate, and whether it has a roof. The same
+/// facts `apply_pressure` reads off her when it charges the shot.
+fn felt_by(
+    registry: &DataRegistry,
+    state: &BattleState,
+    target: UnitId,
+    round: &Round<'_>,
+) -> crate::data::RoundPressure {
+    let hull = state
+        .unit(target)
+        .and_then(|u| registry.vehicle(&u.vehicle));
+    crate::data::RoundPressure {
+        armoured: hull.is_some_and(|v| v.armoured()),
+        open_top: hull.is_some_and(|v| v.open_top),
         ..round.pressure()
-    };
-    registry
-        .morale
-        .pressure_for(crate::data::ShotFelt::Missed, felt)
+    }
 }
 
 /// The share of a round's listed budget that a penetration spending `spent`
@@ -1448,12 +1497,13 @@ pub fn expected_shot(
     // arithmetic.
     let p = hit_chance(registry, state, attacker, from, weapon, target, at, blind) as f32 / 100.0;
     let expected = p * round_damage(registry, state, target, &profile, round.ammo);
-    let pressure = p * round_pressure(registry, &profile, &round)
+    let pressure = p * round_pressure(registry, state, target, &profile, &round)
         + (1.0 - p) * miss_pressure(registry, state, target, &round);
     ShotValue {
         expected,
         pressure,
-        worth: worth_of(registry, expected, pressure),
+        worth: worth_of(registry, expected, pressure)
+            + buttoning(registry, state, target, &round) / shots.max(f32::EPSILON),
         shots,
     }
 }

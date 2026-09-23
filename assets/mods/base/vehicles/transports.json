@@ -1,6 +1,7 @@
 [
     {
         "id": "halftrack",
+        "open_top": true,
         "turret": true,
         "footprint": 2,
         "name": "Kette Halftrack",

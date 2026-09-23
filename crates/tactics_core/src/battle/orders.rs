@@ -362,6 +362,13 @@ pub enum Event {
         intended: UnitId,
         onto: UnitId,
     },
+    /// Small-arms fire found a roofed armoured hull and her crew closed up
+    /// (`balance.buttoned_ticks`). Announced when she closes, not every tick
+    /// she stays shut. Her side's business: the hatches are a deed, but a
+    /// line in the enemy's log for every burst on a tank is noise.
+    ButtonedUp {
+        unit: UnitId,
+    },
     /// A crew on a pinned rung stopped short of ground where more fire
     /// would reach her (`MoraleRung::pinned`). Her side's own business, like
     /// the rung itself.
@@ -695,7 +702,8 @@ impl Event {
             // nerve.
             | Event::MoraleChanged { unit, .. }
             | Event::Defied { unit, .. }
-            | Event::PinnedDown { unit, .. } => own_unit(unit),
+            | Event::PinnedDown { unit, .. }
+            | Event::ButtonedUp { unit } => own_unit(unit),
 
             // A spot report belongs to whoever made it. `by` and not `unit`:
             // the interesting party is the crew doing the reporting, and the
@@ -1364,6 +1372,7 @@ impl BattleState {
             for cd in &mut unit.cooldowns {
                 *cd = cd.saturating_sub(1);
             }
+            unit.buttoned = unit.buttoned.saturating_sub(1);
         }
 
         // Orders in transit land at the top of the tick, before anybody
@@ -2071,30 +2080,45 @@ impl BattleState {
         // the outcome. Looked up here, off the event, because the event is
         // the record of what was fired and this pass is the one place that
         // turns a tick's news into pressure.
-        let felt = |ammo: &Option<String>, small_arms: bool| crate::data::RoundPressure {
-            small_arms,
-            suppression: ammo
-                .as_ref()
-                .and_then(|id| registry.ammo(id))
-                .map(|a| a.suppression)
-                .unwrap_or(0),
-            armoured: false,
-            aimed: true,
+        // The hull it arrived at, as the price list asks about it: behind
+        // plate at all, and whether that plate has a roof.
+        let hull = |state: &BattleState, target: UnitId| {
+            let v = state
+                .unit(target)
+                .and_then(|u| registry.vehicle(&u.vehicle));
+            (
+                v.is_some_and(|v| v.armoured()),
+                v.is_some_and(|v| v.open_top),
+            )
         };
+        let felt =
+            |state: &BattleState, ammo: &Option<String>, small_arms: bool, target: UnitId| {
+                let (armoured, open_top) = hull(state, target);
+                crate::data::RoundPressure {
+                    small_arms,
+                    suppression: ammo
+                        .as_ref()
+                        .and_then(|id| registry.ammo(id))
+                        .map(|a| a.suppression)
+                        .unwrap_or(0),
+                    armoured,
+                    open_top,
+                    aimed: true,
+                }
+            };
         // A near miss is priced by what went past and at whom: the round's
         // suppression, whether she is behind plate a bullet cannot pass, and
         // whether it was aimed at her or only burst beside her.
         let went_past =
             |state: &BattleState, ammo: &Option<String>, target: UnitId, aimed: bool| {
                 let round = ammo.as_ref().and_then(|id| registry.ammo(id));
+                let (armoured, open_top) = hull(state, target);
                 crate::data::RoundPressure {
                     small_arms: round
                         .is_some_and(|a| matches!(a.class, crate::data::AmmoClass::SmallArms)),
                     suppression: round.map(|a| a.suppression).unwrap_or(0),
-                    armoured: state
-                        .unit(target)
-                        .and_then(|u| registry.vehicle(&u.vehicle))
-                        .is_some_and(|v| v.armoured()),
+                    armoured,
+                    open_top,
                     aimed,
                 }
             };
@@ -2119,7 +2143,7 @@ impl BattleState {
                     ShotFelt::Penetrated {
                         spent: super::combat::spent_share(*damage, *budget),
                     },
-                    felt(ammo, false),
+                    felt(self, ammo, false, *target),
                 )),
                 _ => None,
             })
@@ -2139,7 +2163,7 @@ impl BattleState {
                     rattled,
                     ammo,
                     ..
-                } => Some((*target, felt(ammo, !rattled))),
+                } => Some((*target, felt(self, ammo, !rattled, *target))),
                 _ => None,
             })
             .collect();
@@ -2206,19 +2230,51 @@ impl BattleState {
         // Rounded here, once, at the ledger: the price list is a real
         // number because the expectation is one, and a crew's pressure is
         // whole points because the rungs are.
-        for (id, outcome, round) in hits {
+        for &(id, outcome, round) in &hits {
             // Every hit in the stream is a penetration now — the bounces
             // file separately below — so the shell that came through costs
             // both the old price of being hit and the new price of knowing
             // the armor did not hold, by the share of itself it spent.
             add(self, id, rules.pressure_for(outcome, round).round() as u32);
         }
-        for (id, round) in clangs {
+        for &(id, round) in &clangs {
             add(
                 self,
                 id,
                 rules.pressure_for(ShotFelt::Bounced, round).round() as u32,
             );
+        }
+        // Bullets on or past a roofed hull close her up. Read off the same
+        // arrivals the fear is priced from: a small-arms bounce, a small-arms
+        // hit on an armoured hull, a small-arms miss aimed at one. An
+        // open-topped hull has no hatches and feels the fear instead
+        // (`open_top_percent`), and a platoon has nothing to close.
+        let hatch_shut = registry.balance.buttoned_ticks;
+        let mut closing: Vec<UnitId> = Vec::new();
+        if hatch_shut > 0 {
+            let roofed = |r: &crate::data::RoundPressure| r.small_arms && r.armoured && !r.open_top;
+            closing.extend(
+                hits.iter()
+                    .filter(|(_, _, r)| roofed(r))
+                    .map(|(id, _, _)| *id),
+            );
+            closing.extend(clangs.iter().filter(|(_, r)| roofed(r)).map(|(id, _)| *id));
+            closing.extend(
+                near.iter()
+                    .filter(|(_, r)| r.aimed && roofed(r))
+                    .map(|(id, _)| *id),
+            );
+            closing.sort_unstable();
+            closing.dedup();
+        }
+        for id in closing {
+            if let Some(unit) = self.unit_mut(id) {
+                let was = unit.buttoned;
+                unit.buttoned = unit.buttoned.max(hatch_shut);
+                if was == 0 {
+                    events.push(Event::ButtonedUp { unit: id });
+                }
+            }
         }
         for (id, round) in near {
             add(

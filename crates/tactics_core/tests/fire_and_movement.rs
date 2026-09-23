@@ -21,7 +21,7 @@ use tactics_core::battle::{
 use tactics_core::data::{DataRegistry, RoundPressure, ShotFelt};
 
 mod common;
-use common::stage::{commit_all, two_side_battle, unit_at};
+use common::stage::{commit_all, duel, two_side_battle, unit_at};
 use common::{calm, registry, seen};
 
 // --- near misses and armour ---------------------------------------------
@@ -40,6 +40,7 @@ fn a_near_miss_frightens_by_the_share_of_the_rounds_suppression_the_mod_declares
         small_arms: true,
         suppression: 2,
         armoured: false,
+        open_top: false,
         aimed: true,
     };
     rules.near_miss_percent = 0;
@@ -50,6 +51,7 @@ fn a_near_miss_frightens_by_the_share_of_the_rounds_suppression_the_mod_declares
         small_arms: false,
         suppression: 0,
         armoured: true,
+        open_top: false,
         aimed: true,
     };
     assert_eq!(
@@ -72,6 +74,7 @@ fn a_belt_does_not_pin_a_crew_behind_armour_past_the_share_the_mod_lets_through(
         small_arms: true,
         suppression: 2,
         armoured: true,
+        open_top: false,
         aimed: true,
     };
     rules.through_plate_percent = 100;
@@ -82,6 +85,7 @@ fn a_belt_does_not_pin_a_crew_behind_armour_past_the_share_the_mod_lets_through(
     assert_eq!(rules.pressure_for(ShotFelt::Missed, at_a_tank), 0.0);
     let at_a_platoon = RoundPressure {
         armoured: false,
+        open_top: false,
         aimed: true,
         ..at_a_tank
     };
@@ -366,6 +370,7 @@ fn knowing_she_is_the_target_is_charged_for_every_shot_aimed_at_her() {
         small_arms: false,
         suppression: 2,
         armoured: true,
+        open_top: false,
         aimed: true,
     };
     let before = [
@@ -443,4 +448,187 @@ fn a_tank_gun_that_misses_still_frightens_the_crew_it_was_aimed_at() {
         felt(2) > quiet,
         "knowing she is the target costs her something"
     );
+}
+
+// --- buttoned up, and open tops -------------------------------------------
+
+/// Bullets reach the crew of an open-topped hull at `open_top_percent` of
+/// their suppression where a roofed hull takes `through_plate_percent`: the
+/// plate stops the bullet and the missing roof lets the fear in.
+#[test]
+fn an_open_topped_crew_feels_the_bullets_a_roofed_one_does_not() {
+    let mut rules = registry().morale.clone();
+    rules.targeted = 0;
+    rules.through_plate_percent = 0;
+    rules.open_top_percent = 100;
+    let roofed = RoundPressure {
+        small_arms: true,
+        suppression: 2,
+        armoured: true,
+        open_top: false,
+        aimed: true,
+    };
+    let open = RoundPressure {
+        open_top: true,
+        ..roofed
+    };
+    assert_eq!(rules.pressure_for(ShotFelt::Bounced, roofed), 0.0);
+    assert_eq!(rules.pressure_for(ShotFelt::Bounced, open), 2.0);
+}
+
+/// A medium tank's belt on a hull, every shot forced wide: a roofed hull
+/// closes up and says so, an open-topped one has no hatches to close, and at
+/// `buttoned_ticks: 0` — the game before — nobody ever closes up.
+#[test]
+fn small_arms_fire_closes_a_roofed_hull_up_and_an_open_one_cannot_close() {
+    let closes = |target: &str, ticks: u32| {
+        let mut reg = seen(registry());
+        reg.balance.min_hit = 0;
+        reg.balance.max_hit = 0;
+        reg.balance.buttoned_ticks = ticks;
+        if let Some(v) = reg.vehicles.get_mut("halftrack") {
+            v.open_top = true;
+        }
+        let mut state = two_side_battle(
+            &reg,
+            &["gggggg", "gggggg", "gggggg"],
+            vec![
+                unit_at([0, 1], 0, "medium_tank", "Gun"),
+                unit_at([3, 1], 1, target, "Target"),
+            ],
+            9,
+        );
+        state
+            .apply(
+                &reg,
+                &Order::SetFire {
+                    unit: UnitId(0),
+                    fire: FireIntent::Target {
+                        target: UnitId(1),
+                        weapon: 1,
+                    },
+                },
+            )
+            .expect("the belt can see her");
+        commit_all(&reg, &mut state);
+        let mut said = false;
+        for _ in 0..3 {
+            said |= state
+                .step_tick(&reg)
+                .iter()
+                .any(|e| matches!(e, Event::ButtonedUp { unit } if *unit == UnitId(1)));
+        }
+        let shut = state.unit(UnitId(1)).is_some_and(|u| u.buttoned > 0);
+        assert_eq!(said, shut, "she says so exactly when she closes");
+        shut
+    };
+    assert!(
+        closes("medium_tank", 3),
+        "a tank crew under a belt closes up"
+    );
+    assert!(!closes("halftrack", 3), "an open top has nothing to close");
+    assert!(!closes("medium_tank", 0), "and at zero nobody ever does");
+}
+
+/// Closed up, she does not find the platoon in the grass that she would have
+/// found at once over the hatch rim — and she still finds a tank in the
+/// open, because a hull is as plain through a periscope as over the rim.
+/// Staged with every look certain, so the only thing that can take the
+/// platoon away from her is `buttoned_search_percent`.
+#[test]
+fn a_crew_closed_up_loses_the_infantry_and_keeps_the_tanks() {
+    let found = |target: &str, buttoned: bool| {
+        let mut reg = seen(registry());
+        reg.balance.detection_certain_percent = 100;
+        reg.balance.buttoned_search_percent = 0;
+        let mut state = two_side_battle(
+            &reg,
+            &["gggggg", "gggggg", "gggggg"],
+            vec![
+                unit_at([0, 1], 0, "medium_tank", "Looking"),
+                unit_at([3, 1], 1, target, "There"),
+            ],
+            13,
+        );
+        // Forget what was found at setup and let a tick go by, so the look
+        // is taken again by the crew as she now is. A held contact is never
+        // re-rolled, so without the forgetting there would be no look.
+        if buttoned {
+            state.unit_mut(UnitId(0)).unwrap().buttoned = 5;
+        }
+        state.fog.side_mut(0).spotted.clear();
+        state.fog.side_mut(0).searched.clear();
+        commit_all(&reg, &mut state);
+        state.step_tick(&reg);
+        state.fog.side(0).spotted.contains(&UnitId(1))
+    };
+    assert!(found("rifle_platoon", false), "hatches open, she sees them");
+    assert!(!found("rifle_platoon", true), "closed up, she does not");
+    assert!(
+        found("medium_tank", true),
+        "a tank in the open she still sees"
+    );
+}
+
+/// Closed up she is later to everything: `buttoned_reaction_ticks` on top of
+/// what her crew's reactions give her, and nothing while her hatches are
+/// open.
+#[test]
+fn a_crew_closed_up_reacts_later() {
+    let mut reg = seen(registry());
+    reg.balance.buttoned_reaction_ticks = 2;
+    let mut state = duel(&reg, 17);
+    let open = {
+        let u = state.unit(UnitId(0)).unwrap();
+        tactics_core::battle::stats::reaction_delay(&reg, &state.roster, u, state.terrain_at(u.pos))
+    };
+    state.unit_mut(UnitId(0)).unwrap().buttoned = 3;
+    let u = state.unit(UnitId(0)).unwrap();
+    let shut = tactics_core::battle::stats::reaction_delay(
+        &reg,
+        &state.roster,
+        u,
+        state.terrain_at(u.pos),
+    );
+    assert_eq!(shut, open + 2);
+}
+
+/// The price that makes a belt worth firing at a tank: nothing at zero,
+/// `buttoning_worth` a round while her hatches are open, and nothing again
+/// once they are shut — closing a closed hull buys nothing.
+#[test]
+fn a_belt_is_worth_firing_at_a_tank_to_close_her_up_and_not_once_she_is_shut() {
+    let worth = |value: u32, shut: bool| {
+        let mut reg = seen(registry());
+        reg.morale.through_plate_percent = 0;
+        reg.morale.targeted = 0;
+        reg.balance.buttoned_ticks = 3;
+        reg.balance.buttoning_worth = value;
+        let mut state = duel(&reg, 19);
+        if shut {
+            state.unit_mut(UnitId(1)).unwrap().buttoned = 3;
+        }
+        let (from, at) = (
+            state.unit(UnitId(0)).unwrap().pos,
+            state.unit(UnitId(1)).unwrap().pos,
+        );
+        let belt = reg.weapon("mg").unwrap().clone();
+        let shot = tactics_core::battle::expected_shot(
+            &reg,
+            &state,
+            UnitId(0),
+            from,
+            &belt,
+            UnitId(1),
+            at,
+            false,
+        );
+        shot.worth * shot.shots
+    };
+    assert_eq!(worth(0, false), 0.0, "a belt on plate is worth nothing");
+    assert!(
+        (worth(2, false) - 2.0).abs() < 1e-3,
+        "closing her up is worth two a round"
+    );
+    assert_eq!(worth(2, true), 0.0, "and nothing once she is shut");
 }

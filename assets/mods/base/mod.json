@@ -17,6 +17,10 @@
     "reload_per_loading": 5,
     "field_repair_percent": 10,
     "pivot_ticks": 2,
+    "buttoned_ticks": 3,
+    "buttoned_search_percent": 50,
+    "buttoned_reaction_ticks": 1,
+    "buttoning_worth": 1,
     "route_exposure": {
       "advance": 1,
       "assault": 0,
@@ -578,6 +582,7 @@
     "point_worth": 0.5,
     "near_miss_percent": 50,
     "through_plate_percent": 0,
-    "targeted": 1
+    "targeted": 1,
+    "open_top_percent": 75
   }
 }

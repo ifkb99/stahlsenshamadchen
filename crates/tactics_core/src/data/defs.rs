@@ -189,6 +189,15 @@ pub struct VehicleDef {
     /// worth one shot and then faced her front.
     #[serde(default)]
     pub turret: bool,
+    /// Her fighting compartment has no roof: a halftrack, a self-propelled
+    /// gun, a tank destroyer with an open turret. Bullets that do not
+    /// penetrate still reach her crew — plunging fire, grenades, a belt
+    /// from above — at [`crate::data::MoraleRules::open_top_percent`] of
+    /// their suppression, and she has no hatches to close
+    /// ([`crate::data::Balance::buttoned_ticks`]). `false`, the default, is
+    /// every vehicle before this field existed.
+    #[serde(default)]
+    pub open_top: bool,
     /// What this vehicle carries in its racks: [`crate::data::AmmoDef`] id to rounds
     /// aboard.
     ///

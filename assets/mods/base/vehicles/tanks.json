@@ -171,6 +171,7 @@
     },
     {
         "id": "tank_destroyer",
+        "open_top": true,
         "footprint": 3,
         "name": "Marder Tank Destroyer",
         "class": "tank_destroyer",
@@ -211,6 +212,7 @@
     },
     {
         "id": "artillery",
+        "open_top": true,
         "footprint": 3,
         "name": "Hummel Self-Propelled Gun",
         "class": "artillery",

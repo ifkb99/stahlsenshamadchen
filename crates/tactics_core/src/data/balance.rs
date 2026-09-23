@@ -150,6 +150,38 @@ pub struct Balance {
     /// somewhere, in movement points, by the order she is driving under.
     /// See [`RouteExposure`].
     pub route_exposure: RouteExposure,
+    /// Ticks a roofed armoured crew stays closed up after small-arms fire
+    /// finds her — a bullet off her plate, or a belt aimed at her going
+    /// past. Re-armed by every such shot.
+    ///
+    /// The designer's ruling (2026-09-23) and the historical record: rifle
+    /// and machine-gun fire does not break a tank crew's nerve, it makes her
+    /// button up, and a buttoned-up crew is nearly blind to infantry close
+    /// in — which is what infantry fired at tanks *for*, so the anti-tank
+    /// team could close (German and US doctrine alike; a closed-down crew
+    /// "cannot see anything within 10 meters", FM 3-23.25). Buttoned up she
+    /// finds a concealed enemy at [`Self::buttoned_search_percent`] of her
+    /// chance and reacts [`Self::buttoned_reaction_ticks`] later; her nerve
+    /// and her aim are untouched. **Zero is the game before**: nobody ever
+    /// closes up.
+    pub buttoned_ticks: u32,
+    /// Percent of her detection chance a buttoned-up crew keeps against a
+    /// target that has any concealment — infantry, a scout team — at any
+    /// range. 100 is the neutral value. Vehicles in the open are found as
+    /// well through periscopes as over the hatch rim, which is what the one
+    /// study of closed-hatch acquisition found, so this reads only a target
+    /// who is hard to see in the first place.
+    pub buttoned_search_percent: i32,
+    /// Ticks added to her reaction delay while she is buttoned up.
+    pub buttoned_reaction_ticks: u32,
+    /// What closing a roofed hull up is worth to the gun that does it, in
+    /// substance points a round — the price that lets a crew who can do no
+    /// damage to a tank want to fire at her anyway. Spent once a round
+    /// (spread over the gun's shots), and only against a hull that is not
+    /// already closed up. Whole substance points, because `Balance` is
+    /// compared exactly. Zero is the game before: a belt that can do nothing
+    /// to a tank is not fired at one.
+    pub buttoning_worth: u32,
     /// Points added to [`Self::field_repair_percent`] per point of the
     /// crew's `maintenance` above average.
     ///
@@ -534,6 +566,10 @@ impl Default for Balance {
             field_repair_percent: 0,
             pivot_ticks: 0,
             route_exposure: RouteExposure::default(),
+            buttoned_ticks: 0,
+            buttoned_search_percent: 100,
+            buttoned_reaction_ticks: 0,
+            buttoning_worth: 0,
             repair_per_maintenance: 0,
             retired_speed_per_athletics: None,
             athletics_per_climb_level: 0,

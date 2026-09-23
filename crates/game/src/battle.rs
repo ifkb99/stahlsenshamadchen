@@ -1327,6 +1327,11 @@ fn pump_events(
             // Pinned: she stopped short of hotter ground. Worded as her own
             // traffic because only her side hears it, and because a crew
             // halting mid-route with nothing in the log reads as a bug.
+            // Closed up: said, because a tank that suddenly stops seeing
+            // the platoon in the hedge needs a reason in the log.
+            BattleEvent::ButtonedUp { unit } => {
+                log.push(traffic(*unit, "under small-arms fire — closing up."));
+            }
             BattleEvent::PinnedDown { unit, .. } => {
                 log.push(traffic(*unit, "pinned down — will not go forward."));
             }
