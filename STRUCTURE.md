@@ -482,3 +482,83 @@ collectively a drift; every one is a number a modder would want. They want a
 sweep to prove nothing moved, which is why they are one chunk and not ten.
 
 </details>
+
+---
+
+Found 2026-09-23 by a structural read of the tree at the end of the MVP
+cluster, looking for places where two paths answer one question. The core is
+not layered in the way it once was — the one-system arc closed the largest
+case, and every write to a unit's movement state is in `battle/orders.rs` —
+so what is left is at the seams: between what a side knows and what it is
+shown, between the player's path and the AI's, and between the campaign and
+the battle.
+
+## 9. ~~The player's weapon choice is a second model of a shot~~
+
+**Fixed 2026-09-23.** `crates/game/src/battle.rs` carried its own
+`best_weapon_from` — the same name as core's — ranking the weapons in range by
+listed `damage`: no sight, no penetration, no round, no cadence, no fear. It
+chose the gun for a click-to-engage and for the attack preview, so the player
+and the AI priced the same shot with two functions. A shot at somebody now
+goes through `weapon_against`, which is core's
+`battle::best_weapon_from` and nothing else. Blind fire keeps a chooser of its
+own, `area_weapon`, named for the one shot with nobody to price it against.
+
+Where they parted, found by scanning every multi-gun chassis against every
+target at one to eight hexes rather than by guessing (the first guess — a
+medium tank on a platoon — was wrong; both pick the 75): a rifle platoon threw
+the RPG at soft targets where rifle fire is worth more, and a light tank laid
+the 37 on plate it cannot beat where the coaxial frightens the crew behind it.
+If either of those reads wrong in play, it is wrong for the AI too, and now it
+is one number to change. `the_player_lays_the_gun_the_ai_would`, mutation-
+checked; all eleven tours pass.
+
+## 10. The campaign↔battle bridge lives in the Bevy crate
+
+`deploy`, `inherit_army_missions`, `formation_exit`, `stage_field_battle`,
+`field_battle_problem` and `battle_outcome` (which carries the campaign's rule
+for when an army has *withdrawn*) are in `crates/game/src/battle.rs`, and
+`choose_battle_map` in `overworld.rs`. So no instrument can play a campaign:
+`balance` measures battles, and permadeath, the `hold_days` ending and the
+headquarters planner are measured by nothing. The harness also stages battles
+through its own deployment (`Arena::deployment`, `muster_deployment`), never
+the campaign's. And `deploy` prices every chassis as `Tracked`, foot included,
+and forms up by offset column.
+
+**Check:** `grep -n "^fn deploy\|^fn battle_outcome\|^fn stage_field_battle"
+crates/game/src/battle.rs`.
+
+## 11. A side knows two things about the enemy, and each reader picks one
+
+`fog.spotted` is every crew's eyes pooled across the side, instantly. The
+command `picture` (`battle/command.rs::recompute_picture`) is what has been
+*reported*, with ghosts where it is stale. The AI reads the first everywhere
+(`ai::visible_enemies`: `score_tile`, the goal chooser, `fire_on`, `incoming`,
+both drills); the player's renderer and aim read the second (`shown_to`,
+`aim_at`). Two consequences: the danger panel and overlay, which read
+`fire_on`, can name and outline a gun the player's screen shows as hidden or a
+ghost — a fog leak — and a mod's `command` block makes the player's game
+harder while the AI's executors never wait for a report.
+
+**Check:** `grep -rn "visible_enemies\|\.picture(" crates/*/src`.
+
+## 12. "Take cover" is two functions
+
+At the planning table `SideCommand` runs a `UtilityPlanner` under a synthetic
+`drill` doctrine (`ai/command.rs::drill_doctrine`) — `score_tile`, triggered by
+`ai::threatened` with no reaction delay. Mid-round `run_crew_drill`
+(`battle/orders.rs`) takes the reachable hex with the least `incoming_from`
+worth against the guns she has *noticed*, strictly quieter only. The rout is
+rightly different; these two are the same orderly reaction on two models, and
+can send one crew to two hexes a tick apart.
+
+## 13. The Lua campaign host is a second campaign-rule system
+
+`crates/game/src/campaign.rs` (`mlua`) and `assets/mods/base/campaigns/demo.lua`
+beside the data-driven `victory` block. Its only verbs are a log line, funds,
+and `StartBattle { map_id }`, which bypasses the clash path. **Funds have no
+sink**: terrain income and scripts add to them and the HUD prints them, and
+nothing spends them. The hooks live only in the Bevy crate, so they are not in
+a save and no headless run can see them.
+
+**Check:** `grep -rn "\.funds" crates/*/src`.
