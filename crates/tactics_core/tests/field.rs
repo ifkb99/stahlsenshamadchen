@@ -159,6 +159,9 @@ fn an_army_is_led_onto_the_field_by_its_senior_cadet() {
     let map = tactics_core::map::HexMap::from_map_file(&file).expect("map parses");
     for (captain, leader) in [(Some("mina"), 2usize), (None, 0)] {
         let mut reg = registry();
+        for character in reg.characters.values_mut() {
+            character.rank = None;
+        }
         reg.ranks = vec![tactics_core::data::RankDef {
             id: "captain".into(),
             name: "Captain".into(),
