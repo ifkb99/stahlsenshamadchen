@@ -23,10 +23,6 @@ order Commit { side: 1 }
 TickStarted { tick: 0 }
 ShotFired { attacker: UnitId(3), from: Hex { x: -4, y: 20, z: -16 }, at: Hex { x: 17, y: 20, z: -37 }, weapon: "howitzer_105", blind: false, opportunity: false, moving: false }
 UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: -4, y: 20, z: -16 } }
-ContactReported { unit: UnitId(5), by: UnitId(1), at: Hex { x: 21, y: 14, z: -35 } }
-ContactReported { unit: UnitId(7), by: UnitId(1), at: Hex { x: 17, y: 20, z: -37 } }
-ContactReported { unit: UnitId(1), by: UnitId(7), at: Hex { x: 5, y: 14, z: -19 } }
-ContactReported { unit: UnitId(2), by: UnitId(7), at: Hex { x: -2, y: 26, z: -24 } }
 ContactReported { unit: UnitId(3), by: UnitId(7), at: Hex { x: -4, y: 20, z: -16 } }
 TickStarted { tick: 1 }
 UnitMoved { unit: UnitId(2), path: [Hex { x: -2, y: 26, z: -24 }, Hex { x: -1, y: 25, z: -24 }] }
@@ -493,10 +489,6 @@ order Commit { side: 1 }
 TickStarted { tick: 0 }
 ShotFired { attacker: UnitId(3), from: Hex { x: -4, y: 20, z: -16 }, at: Hex { x: 21, y: 14, z: -35 }, weapon: "howitzer_105", blind: false, opportunity: false, moving: false }
 UnitSpotted { unit: UnitId(3), by_side: 1, at: Hex { x: -4, y: 20, z: -16 } }
-ContactReported { unit: UnitId(5), by: UnitId(1), at: Hex { x: 21, y: 14, z: -35 } }
-ContactReported { unit: UnitId(0), by: UnitId(7), at: Hex { x: 0, y: 20, z: -20 } }
-ContactReported { unit: UnitId(1), by: UnitId(7), at: Hex { x: 5, y: 14, z: -19 } }
-ContactReported { unit: UnitId(2), by: UnitId(7), at: Hex { x: -2, y: 26, z: -24 } }
 ContactReported { unit: UnitId(3), by: UnitId(7), at: Hex { x: -4, y: 20, z: -16 } }
 TickStarted { tick: 1 }
 UnitMoved { unit: UnitId(2), path: [Hex { x: -2, y: 26, z: -24 }, Hex { x: -1, y: 25, z: -24 }] }
@@ -1026,11 +1018,6 @@ order SetMove { unit: UnitId(7), to: Hex { x: 12, y: 20, z: -32 } }
 order Commit { side: 1 }
 TickStarted { tick: 0 }
 ShotFired { attacker: UnitId(3), from: Hex { x: -4, y: 20, z: -16 }, at: Hex { x: 17, y: 20, z: -37 }, weapon: "howitzer_105", blind: false, opportunity: false, moving: false }
-ContactReported { unit: UnitId(5), by: UnitId(1), at: Hex { x: 21, y: 14, z: -35 } }
-ContactReported { unit: UnitId(7), by: UnitId(1), at: Hex { x: 17, y: 20, z: -37 } }
-ContactReported { unit: UnitId(0), by: UnitId(7), at: Hex { x: 0, y: 20, z: -20 } }
-ContactReported { unit: UnitId(1), by: UnitId(7), at: Hex { x: 5, y: 14, z: -19 } }
-ContactReported { unit: UnitId(3), by: UnitId(7), at: Hex { x: -4, y: 20, z: -16 } }
 TickStarted { tick: 1 }
 UnitMoved { unit: UnitId(2), path: [Hex { x: -2, y: 26, z: -24 }, Hex { x: -1, y: 25, z: -24 }] }
 UnitMoved { unit: UnitId(7), path: [Hex { x: 17, y: 20, z: -37 }, Hex { x: 16, y: 20, z: -36 }] }
@@ -1429,9 +1416,6 @@ order SetGoal { unit: UnitId(7), goal: Take(Hex { x: 10, y: 20, z: -30 }) }
 order SetMove { unit: UnitId(7), to: Hex { x: 11, y: 20, z: -31 } }
 order Commit { side: 1 }
 TickStarted { tick: 0 }
-ContactReported { unit: UnitId(0), by: UnitId(7), at: Hex { x: 0, y: 20, z: -20 } }
-ContactReported { unit: UnitId(1), by: UnitId(7), at: Hex { x: 5, y: 14, z: -19 } }
-ContactReported { unit: UnitId(2), by: UnitId(7), at: Hex { x: -2, y: 26, z: -24 } }
 TickStarted { tick: 1 }
 UnitMoved { unit: UnitId(2), path: [Hex { x: -2, y: 26, z: -24 }, Hex { x: -1, y: 26, z: -25 }] }
 UnitMoved { unit: UnitId(7), path: [Hex { x: 17, y: 20, z: -37 }, Hex { x: 16, y: 20, z: -36 }] }

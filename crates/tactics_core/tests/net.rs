@@ -661,6 +661,47 @@ fn a_contact_no_longer_seen_goes_stale_not_absent() {
     );
 }
 
+/// What the side can already see when the battle opens is in the picture
+/// before anybody plans round one — and with no `command` block there is no
+/// picture at all, which is the game without one.
+///
+/// Both setup paths used to compute the fog and stop, so the picture did not
+/// exist until the first tick: the player's screen, which draws it, showed no
+/// enemy during the first planning phase however plainly one stood in view.
+/// Two tanks in the open, neither in a formation, so each answers to her own
+/// side and reports what she sees.
+#[test]
+fn the_commander_is_told_what_is_already_in_sight_when_the_battle_opens() {
+    let reg = common::seen(registry());
+    assert!(
+        reg.command.is_some(),
+        "the base mod declares a chain of command"
+    );
+    let state = common::duel(&reg, 3);
+    assert!(
+        state.is_planning() && state.round <= 1,
+        "nothing has been resolved yet"
+    );
+    for (side, enemy) in [(0u8, UnitId(1)), (1, UnitId(0))] {
+        assert!(
+            state
+                .picture(side)
+                .iter()
+                .any(|c| c.unit == enemy && c.fresh),
+            "side {side} can see {enemy:?} and was not told before round one: {:?}",
+            state.picture(side)
+        );
+    }
+
+    let mut bare = reg.clone();
+    bare.command = None;
+    let state = common::duel(&bare, 3);
+    assert!(
+        state.picture(0).is_empty() && state.picture(1).is_empty(),
+        "with no chain of command there is nobody to tell and nothing to draw from"
+    );
+}
+
 // --- commander loss and succession -----------------------------------------
 
 #[test]

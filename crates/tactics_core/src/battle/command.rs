@@ -1403,6 +1403,22 @@ impl BattleState {
     /// battle that never asked for a chain of command, so every caller reading
     /// [`Formation::in_contact`] gets `true` and the old game back.
     pub(super) fn recompute_contact(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
+        self.walk_net(registry, Some(events));
+    }
+
+    /// The upward half of [`Self::recompute_contact`] alone: whose reports
+    /// can reach command (`voiceless`), without settling who has lost or
+    /// regained contact.
+    ///
+    /// For battle setup, which needs the picture before round one is planned
+    /// and so needs to know who can speak — but must not settle contact,
+    /// because a crew who *starts* cut off is news, and the first tick is
+    /// where she is announced (`a_scout_out_of_contact_reports_nothing`).
+    pub(super) fn recompute_voices(&mut self, registry: &DataRegistry) {
+        self.walk_net(registry, None);
+    }
+
+    fn walk_net(&mut self, registry: &DataRegistry, mut events: Option<&mut Vec<Event>>) {
         let Some(rules) = registry.command.as_ref() else {
             return;
         };
@@ -1495,7 +1511,9 @@ impl BattleState {
             let heard = walk(true);
             let speaking = walk(false);
 
-            self.settle_contact(side, &heard, events);
+            if let Some(events) = events.as_deref_mut() {
+                self.settle_contact(side, &heard, events);
+            }
             let mut voiceless: Vec<UnitId> = living
                 .iter()
                 .copied()
