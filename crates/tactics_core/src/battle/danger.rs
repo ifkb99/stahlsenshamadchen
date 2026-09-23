@@ -16,7 +16,7 @@
 //! the answer. Those are judgment and belong to whoever is asking. This
 //! module answers a question about the rules.
 
-use super::{BattleState, Unit, UnitId, combat};
+use super::{BattleState, Knower, Unit, UnitId, combat};
 use crate::data::DataRegistry;
 use hexx::Hex;
 
@@ -95,14 +95,16 @@ pub struct Incoming {
     pub worth: f32,
 }
 
-/// Every spotted enemy that could put fire on `unit` if she stood at `at`,
-/// with her best weapon for the job, in enemy id order.
+/// Every enemy `unit` knows of that could put fire on her if she stood at
+/// `at`, with his best weapon for the job, in enemy id order.
 ///
-/// Fog-honest: only enemies `unit`'s own side has found are listed, so a
-/// planner reading this cannot flinch away from a tank nobody has seen and
-/// thereby tell the player it is there. That makes the answer a statement
-/// about the side's *picture* rather than about the board, which is the
-/// only kind of statement an AI is allowed to act on.
+/// Fog-honest: only enemies she knows about are listed —
+/// [`BattleState::known_enemies`] for [`Knower::Crew`], her picture if she
+/// can hear the net and her own eyes — so a planner reading this cannot
+/// flinch away from a tank nobody has told her of and thereby tell the
+/// player it is there. [`fire_on_as`] asks the same question with somebody
+/// else's knowledge, which is what the player's danger panel needs: she is
+/// the commander, and she knows what has been reported.
 ///
 /// Deterministic twice over: the enemies come in id order and each one's
 /// weapon is chosen by [`combat::best_weapon_from`]'s first-wins tie-break,
@@ -118,27 +120,54 @@ pub fn fire_on(
     unit: UnitId,
     at: Hex,
 ) -> Vec<Bearing> {
+    fire_on_as(registry, state, Knower::Crew(unit), unit, at)
+}
+
+/// [`fire_on`], asked with `who`'s knowledge of the enemy rather than her
+/// own.
+///
+/// The player's danger panel and overlay pass [`Knower::Commander`]: what
+/// she is shown on the board is her picture, and advice that named a gun
+/// the board draws as a ghost — or not at all — would be the fog leaking
+/// through the one panel built to be honest about it.
+pub fn fire_on_as(
+    registry: &DataRegistry,
+    state: &BattleState,
+    who: Knower,
+    unit: UnitId,
+    at: Hex,
+) -> Vec<Bearing> {
     let mut bearings = Vec::new();
-    guns_bearing_on(registry, state, unit, at, None, |enemy, weapon, value| {
-        // The gun is known to exist by the walk above; asking the chassis
-        // for it again only to name it would be a second lookup for a
-        // number we would then have to keep in step.
-        let hit_percent = registry
-            .vehicle(&enemy.vehicle)
-            .and_then(|v| v.weapons.get(weapon))
-            .and_then(|w| registry.weapon(w))
-            .map(|w| combat::hit_chance(registry, state, enemy.id, enemy.pos, w, unit, at, false))
-            .unwrap_or(0);
-        bearings.push(Bearing {
-            enemy: enemy.id,
-            weapon,
-            hit_percent,
-            expected: value.expected,
-            pressure: value.pressure,
-            worth: value.worth,
-            shots: value.shots,
-        });
-    });
+    guns_bearing_on(
+        registry,
+        state,
+        who,
+        unit,
+        at,
+        None,
+        |enemy, weapon, value| {
+            // The gun is known to exist by the walk above; asking the chassis
+            // for it again only to name it would be a second lookup for a
+            // number we would then have to keep in step.
+            let hit_percent = registry
+                .vehicle(&enemy.vehicle)
+                .and_then(|v| v.weapons.get(weapon))
+                .and_then(|w| registry.weapon(w))
+                .map(|w| {
+                    combat::hit_chance(registry, state, enemy.id, enemy.pos, w, unit, at, false)
+                })
+                .unwrap_or(0);
+            bearings.push(Bearing {
+                enemy: enemy.id,
+                weapon,
+                hit_percent,
+                expected: value.expected,
+                pressure: value.pressure,
+                worth: value.worth,
+                shots: value.shots,
+            });
+        },
+    );
     bearings
 }
 
@@ -197,15 +226,23 @@ fn sum_bearings(
     only: Option<&[UnitId]>,
 ) -> Incoming {
     let mut total = Incoming::default();
-    guns_bearing_on(registry, state, unit, at, only, |_, _, value| {
-        total.substance += value.expected * value.shots;
-        total.pressure += value.pressure * value.shots;
-        total.worth += value.worth_per_round();
-    });
+    guns_bearing_on(
+        registry,
+        state,
+        Knower::Crew(unit),
+        unit,
+        at,
+        only,
+        |_, _, value| {
+            total.substance += value.expected * value.shots;
+            total.pressure += value.pressure * value.shots;
+            total.worth += value.worth_per_round();
+        },
+    );
     total
 }
 
-/// Every spotted enemy who could put fire on `unit` at `at`, handed to
+/// Every enemy `who` knows of who could put fire on `unit` at `at`, handed to
 /// `each` as (enemy, weapon index, what one shot is worth) in enemy id
 /// order.
 ///
@@ -217,15 +254,13 @@ fn sum_bearings(
 fn guns_bearing_on(
     registry: &DataRegistry,
     state: &BattleState,
+    who: Knower,
     unit: UnitId,
     at: Hex,
     only: Option<&[UnitId]>,
     mut each: impl FnMut(&Unit, usize, combat::ShotValue),
 ) {
-    let Some(me) = state.unit(unit) else {
-        return;
-    };
-    for enemy in crate::ai::visible_enemies(state, me.side) {
+    for enemy in state.known_enemies(registry, who) {
         if only.is_some_and(|ids| !ids.contains(&enemy.id)) {
             continue;
         }

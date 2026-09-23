@@ -31,10 +31,10 @@ pub use combat::{
     preview_attack, round_worth, spent_share, struck_facing, weapon_ready,
 };
 pub use command::{
-    CommandState, Contact, CutOff, Formation, FormationId, Goal, Latitude, March, Mission,
+    CommandState, Contact, CutOff, Formation, FormationId, Goal, Knower, Latitude, March, Mission,
     MissionChange, PersonalOrder, WaitingOrders, formation_exit, nearest_exit,
 };
-pub use danger::{Bearing, Incoming, fire_on, incoming, incoming_from};
+pub use danger::{Bearing, Incoming, fire_on, fire_on_as, incoming, incoming_from};
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
     MoveGrid, Roads, along_the_bearing, destination_blocked, edge_cost as movement_edge_cost,
@@ -1003,6 +1003,7 @@ impl BattleState {
         state.board_mounted_starts(registry, &file.units);
         state.fog = FogMap::new(state.sides.len());
         fog::recompute(registry, &mut state);
+        state.open_the_net(registry);
         Ok(state)
     }
 
@@ -1073,7 +1074,31 @@ impl BattleState {
         state.board_mounted_starts(registry, placements);
         state.fog = FogMap::new(state.sides.len());
         fog::recompute(registry, &mut state);
+        state.open_the_net(registry);
         Ok(state)
+    }
+
+    /// Pass up what the side can already see, before anybody plans round
+    /// one.
+    ///
+    /// Both setup paths used to compute the fog and stop, so under command
+    /// rules the picture did not exist until the first tick had run: the
+    /// commander planned round one with an empty picture, and the player's
+    /// screen — which draws the picture — showed no enemy at all, even one
+    /// standing in plain sight of her whole formation (on `river_crossing`,
+    /// four or five of them). Nobody noticed because the AI read the pooled
+    /// fog instead; once the brains read the picture too, a blind round one
+    /// is a blind AI.
+    ///
+    /// Only the picture and who can speak to it. Who has *lost contact* is
+    /// still settled on the first tick, because a crew who starts cut off is
+    /// news and that is where she is announced. The `ContactReported`
+    /// events are dropped: a sighting in hand when the battle opens is the
+    /// state of things, not something that just happened. With no `command`
+    /// block both calls return at once, which is the game as it was.
+    fn open_the_net(&mut self, registry: &DataRegistry) {
+        self.recompute_voices(registry);
+        self.recompute_picture(registry, &mut Vec::new());
     }
 
     /// Board everyone a scenario says starts aboard, after every unit exists.

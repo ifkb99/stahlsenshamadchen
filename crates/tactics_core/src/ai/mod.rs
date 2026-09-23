@@ -3,7 +3,7 @@
 //! [`AiPlanner`] is generic over the state and order types, so the same trait
 //! drives battle units and overworld armies. Planners are handed the full
 //! state but must only act on what their side's fog allows -- the provided
-//! implementations go through [`visible_enemies`] and friends rather than
+//! implementations go through [`BattleState::known_enemies`] rather than
 //! peeking at hidden units.
 //!
 //! Three things are deliberately independent, because they answer different
@@ -215,15 +215,6 @@ pub fn difficulty_foresight(difficulty: u8) -> f32 {
         4 => 0.8,
         _ => 1.0,
     }
-}
-
-/// Enemies of `side` that its fog currently allows it to target.
-pub fn visible_enemies(state: &BattleState, side: u8) -> Vec<&Unit> {
-    let fog = state.fog.side(side);
-    state
-        .alive_units()
-        .filter(|u| u.side != side && fog.spotted.contains(&u.id))
-        .collect()
 }
 
 /// The next unit of `side` that has not been given orders this round.

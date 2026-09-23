@@ -302,6 +302,38 @@ Finding somebody inside your own field of view costs a roll
   be unseen, so it is a player-facing rule until the goal chooser learns to
   want it.
 
+### What a side knows, and who knows it
+
+`BattleState::known_enemies(registry, who)` is the one answer to "which
+enemies does this knower know of", and every brain and screen asks it —
+`ai::visible_enemies`, which read the pooled fog everywhere, is gone.
+
+- **Two knowers, because the picture exists to make them differ.** A
+  `Knower::Commander(side)` — the player, the AI's mission review — knows
+  the *fresh* contacts in her picture. A `Knower::Crew(unit)` — the
+  executor planning her round, the evaluator, the goal chooser, both drills,
+  `incoming` — knows that picture if she can hear the net
+  (`hears_orders`), plus anything in the side's fog she can see with her own
+  eyes or saw by its muzzle flash. A scout out of contact acts on what her
+  commander is never told.
+- **With no `command` block both answers are the pooled fog**, so the rule
+  is additive: `a_zeroed_command_block_is_the_game_without_one_with_a_commander_at_both_ends`
+  fights it on a perfect net and requires the same deeds as no net.
+- **The picture admits what the fog admits.** The fog spots a gun off her
+  muzzle flash with nobody looking at her hex; `recompute_picture` files
+  that as a report by any crew who can speak, an eyewitness first. Without
+  it a howitzer shelling the line from out of sight was spotted and never
+  reported, and the zeroed-block pin is what caught it.
+- **The picture exists before round one.** `open_the_net` at the end of
+  both setup paths computes who can speak and what they have passed up;
+  *contact* still settles on the first tick, because a crew who starts cut
+  off is news. Before it, the player's board drew no enemy during the first
+  planning phase however plainly one stood in view.
+- **The engine's rules are not knowledge.** Opportunity fire, ordered
+  shots and detection read `fog.spotted` — what the side has acquired —
+  because a gun layer engages what her side has found, reported or not.
+  `known_enemies` is about *deciding*, never about resolving.
+
 ### The shot
 
 The far side (struck face, obliquity, scatter, the loader's choice, the
@@ -321,8 +353,9 @@ interior) and the near side (`hit_chance_inner`) are both data
   the sign flipped) and the loader's round choice (`best_round_against`
   judges from real positions). Her facing at `at` is her facing now.
 - **`battle::danger::fire_on(registry, state, unit, at)` is the one answer to
-  "what could the enemy put on her there".** Spotted enemies only, best
-  weapon each through `combat::best_weapon_from` (the three gates — range
+  "what could the enemy put on her there".** Enemies *she knows of* only
+  (`known_enemies` with `Knower::Crew`, below; `fire_on_as` asks with
+  somebody else's knowledge), best weapon each through `combat::best_weapon_from` (the three gates — range
   band, sight unless indirect, expectation above zero — in one place), the
   resolver's arithmetic and nothing else: no doctrine weight, no planner
   number, no falloff. The evaluator's threat term and the player's danger
@@ -453,7 +486,7 @@ converted at the mod's exchange rate.
   the suppression refactor was proved behaviour-neutral before the cadence
   diff was read.
 - **The threat term is `incoming(registry, state, unit, tile).worth`**: the
-  sum over every *found* enemy of a round of what the resolver says she
+  sum over every enemy *she knows of* of a round of what the resolver says she
   would take standing there. There is no distance falloff and no range gate
   — both stood in for positional terms the arithmetic could not see, and
   either one reinstated charges the same fact twice. `caution * exposure`
@@ -1013,11 +1046,14 @@ with `examples/minimal_window.rs`). Rules:
 ### The danger overlay
 
 The player's half of the currency: `panel::format_danger` (pure over a
-`BattleState`, reading `fire_on` verbatim) leads the tile panel whenever one
+`BattleState`, reading `fire_on_as` with `Knower::Commander` verbatim) leads the tile panel whenever one
 of her own crews is selected and a hex is hovered, and `D` tints the selected
 crew's reachable tiles by a round of fire in worth.
 
-- **It is `fire_on` and nothing else.** No arithmetic of its own beyond the
+- **It is `fire_on_as(Commander)` and nothing else** — the same walk the
+  AI's crews read, asked with the player's knowledge, which is the picture
+  her board draws. A crew's unreported sightings stay off it the way they
+  stay off the board. No arithmetic of its own beyond the
   sums and their share of `substance().0`; the AI and the player price the
   same ground or the player is pricing a different game from the one her
   opponent plays. Per gun the panel prints one shot and the gun's cadence

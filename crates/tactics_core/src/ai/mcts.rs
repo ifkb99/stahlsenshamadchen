@@ -392,7 +392,10 @@ impl AiPlanner<BattleState, Order> for MctsPlanner {
         // With nobody in sight, determinization leaves an empty battlefield
         // and every branch looks like a win. Scouting is the greedy planner's
         // job anyway.
-        if super::visible_enemies(state, side).is_empty() {
+        if state
+            .known_enemies(registry, crate::battle::Knower::Commander(side))
+            .is_empty()
+        {
             return self.fallback.next_order(registry, state, side);
         }
 

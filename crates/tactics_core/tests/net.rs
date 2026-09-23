@@ -21,8 +21,8 @@ use tactics_core::ai::{
     AiConfig, AiDriver, AiPlanner, Evaluator, UtilityPlanner, make_battle_planner,
 };
 use tactics_core::battle::{
-    BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Latitude, Mission,
-    Order, SideState, UnitId,
+    BattleState, EndReason, Event as BattleEvent, FireIntent, FormationId, Knower, Latitude,
+    Mission, Order, SideState, UnitId,
 };
 use tactics_core::data::DataRegistry;
 use tactics_core::map::{HexMap, UnitPlacement};
@@ -618,6 +618,67 @@ fn a_scout_out_of_contact_reports_nothing() {
     assert!(contact.fresh, "freshly, because somebody can see him now");
 }
 
+/// What the side knows is two questions, and every brain and screen asks one
+/// of them through `BattleState::known_enemies`.
+///
+/// The cut-off scout of [`a_scout_out_of_contact_reports_nothing`] has found
+/// a recon car her commander has never heard of. The commander — the player's
+/// seat, and the AI's mission review — does not know he is there. The scout
+/// does, because she is looking at him, and her own planning, drill and
+/// danger read him. Her leader, who hears the net but cannot see that far,
+/// does not. Before this, every AI crew planned against the side's pooled
+/// fog, so a chain of command cost the human and nobody else, and the danger
+/// panel could name a gun the board did not draw.
+///
+/// With no `command` block both questions have the old answer: the pooled
+/// fog, everybody's eyes.
+#[test]
+fn a_cut_off_scout_acts_on_what_she_sees_and_her_commander_never_hears_of_it() {
+    let mut reg = registry();
+    reg.command = Some(command_rules(8, false, 0));
+    strip_radios(&mut reg);
+    let mut state = picture_stage(&reg, 3);
+    let (leader, scout, enemy) = (UnitId(0), UnitId(1), UnitId(2));
+    commit_all(&reg, &mut state);
+    state.step_tick(&reg);
+    assert!(
+        state.fog.side(0).spotted.contains(&enemy) && !state.hears_orders(scout),
+        "the stage is a scout off the net who has found somebody"
+    );
+    let ids = |who: Knower, state: &BattleState, reg: &DataRegistry| -> Vec<UnitId> {
+        state.known_enemies(reg, who).iter().map(|u| u.id).collect()
+    };
+    assert_eq!(
+        ids(Knower::Commander(0), &state, &reg),
+        Vec::<UnitId>::new(),
+        "nobody has told the commander"
+    );
+    assert_eq!(
+        ids(Knower::Crew(scout), &state, &reg),
+        vec![enemy],
+        "the scout is looking at him"
+    );
+    assert_eq!(
+        ids(Knower::Crew(leader), &state, &reg),
+        Vec::<UnitId>::new(),
+        "her leader can neither see him nor hear about him"
+    );
+
+    let mut bare = reg.clone();
+    bare.command = None;
+    for who in [
+        Knower::Commander(0),
+        Knower::Crew(scout),
+        Knower::Crew(leader),
+    ] {
+        assert_eq!(
+            ids(who, &state, &bare),
+            vec![enemy],
+            "{who:?}: with no chain of command, what anybody sees everybody knows"
+        );
+    }
+}
+
 #[test]
 fn a_contact_no_longer_seen_goes_stale_not_absent() {
     // "We lost sight of it" is information; "it was never there" is a lie.
@@ -658,6 +719,47 @@ fn a_contact_no_longer_seen_goes_stale_not_absent() {
     assert_eq!(
         ghost.at, seen_at,
         "standing where he was last reported, not where he is"
+    );
+}
+
+/// What the side can already see when the battle opens is in the picture
+/// before anybody plans round one — and with no `command` block there is no
+/// picture at all, which is the game without one.
+///
+/// Both setup paths used to compute the fog and stop, so the picture did not
+/// exist until the first tick: the player's screen, which draws it, showed no
+/// enemy during the first planning phase however plainly one stood in view.
+/// Two tanks in the open, neither in a formation, so each answers to her own
+/// side and reports what she sees.
+#[test]
+fn the_commander_is_told_what_is_already_in_sight_when_the_battle_opens() {
+    let reg = common::seen(registry());
+    assert!(
+        reg.command.is_some(),
+        "the base mod declares a chain of command"
+    );
+    let state = common::duel(&reg, 3);
+    assert!(
+        state.is_planning() && state.round <= 1,
+        "nothing has been resolved yet"
+    );
+    for (side, enemy) in [(0u8, UnitId(1)), (1, UnitId(0))] {
+        assert!(
+            state
+                .picture(side)
+                .iter()
+                .any(|c| c.unit == enemy && c.fresh),
+            "side {side} can see {enemy:?} and was not told before round one: {:?}",
+            state.picture(side)
+        );
+    }
+
+    let mut bare = reg.clone();
+    bare.command = None;
+    let state = common::duel(&bare, 3);
+    assert!(
+        state.picture(0).is_empty() && state.picture(1).is_empty(),
+        "with no chain of command there is nobody to tell and nothing to draw from"
     );
 }
 
