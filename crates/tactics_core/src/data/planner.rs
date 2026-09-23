@@ -178,6 +178,18 @@ fn plan_sure_level() -> i32 {
 fn plan_misjudge_per_level() -> f32 {
     1.0
 }
+fn playout_rounds() -> u32 {
+    5
+}
+fn playout_samples() -> u32 {
+    4
+}
+fn playout_margin() -> f32 {
+    0.1
+}
+fn playout_noise_per_level() -> f32 {
+    0.005
+}
 fn plan_commitment() -> f32 {
     10.0
 }
@@ -713,6 +725,25 @@ pub struct PlannerRules {
     /// exist to replace.
     #[serde(default = "plan_commitment")]
     pub plan_commitment: f32,
+    /// Rounds of the real engine a commander plays each option out for when
+    /// she chooses between plans (`crate::ai::plan::playout`): the plan in
+    /// hand, the best few the cheap model nominates, and none at all.
+    #[serde(default = "playout_rounds")]
+    pub playout_rounds: u32,
+    /// How many dice she plays each option out under, averaged. **Zero is
+    /// no playouts at all**: the cheap model alone decides, which is how
+    /// plans were chosen before playouts existed.
+    #[serde(default = "playout_samples")]
+    pub playout_samples: u32,
+    /// How much better, in position value (−1 to 1), an option must play out
+    /// than the plan in hand before a commander of average `will` switches
+    /// — scaled by her `will` over average, as [`Self::plan_commitment`] is.
+    #[serde(default = "playout_margin")]
+    pub playout_margin: f32,
+    /// How far she misreads a playout's result, either way, per level of
+    /// `command` short of [`Self::plan_sure_level`], in position value.
+    #[serde(default = "playout_noise_per_level")]
+    pub playout_noise_per_level: f32,
 
     #[serde(default = "kill_bonus")]
     pub kill_bonus: f32,
@@ -883,6 +914,10 @@ impl Default for PlannerRules {
             plan_sure_level: plan_sure_level(),
             plan_misjudge_per_level: plan_misjudge_per_level(),
             plan_commitment: plan_commitment(),
+            playout_rounds: playout_rounds(),
+            playout_samples: playout_samples(),
+            playout_margin: playout_margin(),
+            playout_noise_per_level: playout_noise_per_level(),
 
             kill_bonus: kill_bonus(),
             attack_worth: attack_worth(),

@@ -196,15 +196,17 @@ true:
    **The designer owes the content**: which ranks exist and who holds them.
    Also open: `SideCommand` still speaks for the whole side; step 4 gives
    each operational command its own planner.
-4. **One template, fix and flank** — *built 2026-09-23, not yet winning.*
+4. **One template, fix and flank** — *built 2026-09-23; chosen by playout;
+   neutral, not yet winning.*
    Everything the design called for exists and is tested: templates as data,
    repertoires from academy and cadet, planning strength from the commander's
    `command` and `will`, one planner per operational command, plans on the
    battle with review, commitment, a deadline and completion, and the play
    priced wholly in the currency. `examples/plans` measures it.
 
-   **What it measured** (96 battles a row, two seed offsets, ridge arena,
-   four mediums a side in two formations):
+   **The first measurement** (96 battles a row, two seed offsets, ridge
+   arena, four mediums a side in two formations), with the cheap model
+   choosing:
 
    | row | vs mediums | vs heavies |
    | --- | --- | --- |
@@ -212,11 +214,8 @@ true:
    | A taught | 43, 35 | 7, 8 |
    | A strong commander | 42, 40 | 14, 11 |
 
-   Plans form (about two a battle) and flank hits rise a few points, but the
-   side that knows the play does not win more, and the stronger commander
-   does not either. On the shipped battlefields plans are almost never
-   adopted: each side has one armoured line, and infantry and scouts are
-   given other jobs, so no commander has two formations to manoeuvre with.
+   Plans formed and flank hits rose a few points, but knowing the play *lost*
+   battles, and the stronger commander did no better.
 
    **What the traces showed** and was fixed on the way: a flat worth per
    flank face (fixed by pricing the flank in worth), no price for splitting
@@ -226,20 +225,61 @@ true:
    her own assault in the review that ordered it (a going plan is carried
    through). None of it turned the win column.
 
+   **Then the battle became the evaluator** (the designer agreed, with a
+   second group a side). The cheap model now only *nominates*; the choice is
+   made by playing out the plan in hand, each nomination and — if she has a
+   plan — dropping it, `planner.playout_rounds` (5) rounds of the real
+   engine each, on the board her commander knows (`plan::known_world`:
+   `determinize` narrowed from what the side has spotted to what she has
+   been told), averaged over `playout_samples` (4) dice and misread by
+   `playout_noise_per_level` per level of skill gap; she switches only past
+   `playout_margin` (0.1). `playout_samples: 0` is the model alone, the game
+   before. Two things it took:
+   - *Score material, never the copy's verdict.* The copy holds only the
+     enemies she knows, so it "ends" the moment they are gone; the first
+     playouts scored nearly every option 1.0 and could tell none apart.
+   - *The optimizer's curse.* With one sample and no margin, the strongest
+     commander lost to the weakest: the best of several noisy readings is
+     the luckiest, and a commander who weighs more options is fooled more
+     often. Four samples and a margin of a tenth are what cured it.
+
+   And the four generated or shared battlefields (`battle_forest`,
+   `battle_hills`, `battle_plains`, `battle_town`) now field a **reserve** a
+   side — a medium and a light, a formation of their own — so a commander
+   has a second manoeuvre group on ground the campaign fights over.
+
+   **What it measures now** (A wins, 96 battles a row, offsets 0 and 1000;
+   ridge arena, three groups a side):
+
+   | row | vs mediums | vs heavies |
+   | --- | --- | --- |
+   | control (nobody taught) | 40, 45 | 4, 4 |
+   | A taught | 39, 49 | 10, 5 |
+   | both taught | 44, 43 | 11, 8 |
+   | A strong commander | 44, 44 | 2, 7 |
+   | A weak commander | 43, 53 | 4, 4 |
+
+   and on the five shipped maps, each fought with the play taught to one end
+   and then the other, 36 battles a seating: **−6 wins in 360**, with plans
+   adopted 0.2 to 0.5 times a battle where the reserve exists and never on
+   `river_crossing`, which has none. That is the harm gone and no gain yet:
+   every row is inside the seed spread.
+
    **What I think is still wrong, for the next session:**
    - *The enemy is not fixed.* Two tanks on a firing position do not pin
      four; he attacks them. The play needs the fix to be the stronger part
      or the better ground, or the enemy to be committed elsewhere — a
-     question for the template's roles, not its weights.
-   - *The score is a model of a battle, and the battle is the engine.* A
-     plan could be scored by playing it out: a few rounds of the real
-     resolver on a fog-honest copy (`mcts::determinize`), the plan against
-     the ordinary allocation, for the top two or three candidates only.
-     That is search over *plans*, a handful of rollouts a review, and it
-     answers "does this beat not planning" with the game rather than a
-     guess. MCTS failed because it searched moves with a weak evaluator;
-     this would search plans with the strongest evaluator there is.
-   - *The content gives nobody two manoeuvre elements* on a shipped map.
+     question for the template's roles, not its weights. A playout can only
+     choose between the plays it is offered; it cannot make a play good.
+   - *Five rounds may be too short to see a flank pay.* The flankers spend
+     most of a playout getting there. `playout_rounds` is sweepable
+     (`PLANS_SET=planner.playout_rounds=8`), and each round is a round of
+     the whole engine per option per sample.
+   - *The battle maps are not the mirrors they are drawn as.* `battle_town`
+     reads two to one to the east end with the reserve in, and the first
+     root `examples/mirror --map` finds is the path finder settling a tie
+     between equal-cost paths by its neighbour order (CLAUDE.md, Known
+     issues). Anything measured on the town row reads through it.
 5. The library, doctrine preferences as data, and the player's orders in the
    same vocabulary.
 

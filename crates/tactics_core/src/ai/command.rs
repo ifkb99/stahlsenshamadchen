@@ -45,6 +45,10 @@ use std::collections::{HashMap, VecDeque};
 
 use super::UtilityPlanner;
 
+/// The two formations a plan pairs, fixing and manoeuvring, as the review
+/// hands them to the round-robin to leave alone.
+type Pairing = (FormationId, FormationId);
+
 /// The posture an unordered crew under fire falls back on. Mod data first —
 /// the base game ships a `drill` doctrine and a mod may retune what drilled
 /// self-preservation looks like — with a built-in equivalent if a mod
@@ -139,6 +143,10 @@ pub struct SideCommand {
     /// mattered most — a personal march broken off for cover — was the one
     /// case that went unannounced.
     last_drill: bool,
+    /// Whether this commander is inside somebody's playout
+    /// (`crate::ai::plan::playout`): she carries the plans she was handed out
+    /// and makes none of her own, or every playout would play out playouts.
+    playing_out: bool,
 }
 
 impl SideCommand {
@@ -160,6 +168,18 @@ impl SideCommand {
             known_contacts: Vec::new(),
             pending: VecDeque::new(),
             last_drill: false,
+            playing_out: false,
+        }
+    }
+
+    /// The commander a playout runs her side under: the same doctrine and
+    /// the same executors, carrying out the plans on the board and making
+    /// none — so a playout measures the plan it was handed, and never
+    /// recurses into playouts of its own.
+    pub fn for_playout(config: &AiConfig, seed: u64, data: &DataRegistry) -> Self {
+        Self {
+            playing_out: true,
+            ..Self::from_config(config, seed, data)
         }
     }
 
@@ -692,8 +712,12 @@ impl SideCommand {
                 let params = plan::as_fix_and_flank(registry.template(&p.template)?)?;
                 plan::rescore(registry, state, p, params)
             });
-            let mut best: Option<plan::Candidate> = None;
-            if eligible.len() >= 2
+            // Nominations: the cheap model's best few from every play she
+            // knows, as many as her breadth allows. Inside a playout she
+            // nominates nothing — she carries out what she was handed.
+            let mut nominated: Vec<plan::Candidate> = Vec::new();
+            if !self.playing_out
+                && eligible.len() >= 2
                 && let Some(target) = plan::target(registry, state, side, command, goal)
             {
                 let mut rng = plan::judgement_rng(self.seed, state.round, command.commander);
@@ -701,7 +725,7 @@ impl SideCommand {
                     let Some(params) = plan::as_fix_and_flank(template) else {
                         continue;
                     };
-                    if let Some(c) = plan::fix_and_flank(
+                    nominated.extend(plan::candidates(
                         registry,
                         state,
                         side,
@@ -712,11 +736,10 @@ impl SideCommand {
                         target,
                         strength,
                         &mut rng,
-                    ) && best.as_ref().is_none_or(|b| c.score > b.score)
-                    {
-                        best = Some(c);
-                    }
+                    ));
                 }
+                nominated.sort_by(|a, b| b.score.total_cmp(&a.score));
+                nominated.truncate(strength.breadth);
             }
             let same = |p: &crate::battle::Plan, c: &plan::Candidate| {
                 p.template == c.plan.template
@@ -734,27 +757,115 @@ impl SideCommand {
             let committed = current
                 .as_ref()
                 .is_some_and(|p| p.phase == crate::battle::PlanPhase::Going);
-            let chosen = match (&current, standing, best) {
-                (Some(p), Some(score), Some(c))
-                    if !committed && !same(p, &c) && c.score > score + strength.commitment =>
-                {
-                    orders.extend(plan::adopt(&c));
-                    Some((c.plan.fix, c.plan.manoeuvre))
+            let drop = |orders: &mut Vec<Order>| {
+                orders.push(Order::SetPlan {
+                    side,
+                    commander: command.commander,
+                    plan: None,
+                })
+            };
+            let chosen = if self.playing_out || (committed && standing.is_some()) {
+                // Carry out what she has; drop only what no longer stands.
+                match (&current, standing) {
+                    (Some(p), Some(_)) => Some((p.fix, p.manoeuvre)),
+                    (Some(_), None) => {
+                        drop(&mut orders);
+                        None
+                    }
+                    (None, _) => None,
                 }
-                (Some(p), Some(_), _) => Some((p.fix, p.manoeuvre)),
-                (_, _, Some(c)) => {
-                    orders.extend(plan::adopt(&c));
-                    Some((c.plan.fix, c.plan.manoeuvre))
+            } else if registry.planner.playout_samples > 0
+                && (!nominated.is_empty() || current.is_some())
+            {
+                // **The battle is the evaluator.** Play out the plan in hand
+                // (or none), every nomination, and — if she has a plan —
+                // dropping it, and keep the best, switching only past her
+                // margin. Every playout is misread by her skill gap.
+                let mut rng =
+                    plan::judgement_rng(self.seed ^ 0x5EED, state.round, command.commander);
+                let mut options: Vec<(Vec<Order>, Option<Pairing>)> = Vec::new();
+                match (&current, standing) {
+                    (Some(p), Some(_)) => options.push((Vec::new(), Some((p.fix, p.manoeuvre)))),
+                    (Some(_), None) => {
+                        let mut o = Vec::new();
+                        drop(&mut o);
+                        options.push((o, None));
+                    }
+                    (None, _) => options.push((Vec::new(), None)),
                 }
-                (Some(_), None, None) => {
-                    orders.push(Order::SetPlan {
-                        side,
-                        commander: command.commander,
-                        plan: None,
-                    });
-                    None
+                for c in &nominated {
+                    if current.as_ref().is_some_and(|p| same(p, c)) {
+                        continue;
+                    }
+                    options.push((plan::adopt(c), Some((c.plan.fix, c.plan.manoeuvre))));
                 }
-                (None, _, None) => None,
+                if current.is_some() && standing.is_some() {
+                    let mut o = Vec::new();
+                    drop(&mut o);
+                    options.push((o, None));
+                }
+                let values: Vec<f32> = options
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (orders, _))| {
+                        let read = plan::playout(
+                            registry,
+                            state,
+                            side,
+                            orders,
+                            &self.config,
+                            self.seed ^ state.round as u64 ^ ((i as u64 + 1) << 32),
+                        );
+                        let misread = if strength.playout_noise > 0.0 {
+                            rand::RngExt::random_range(
+                                &mut rng,
+                                -strength.playout_noise..=strength.playout_noise,
+                            )
+                        } else {
+                            0.0
+                        };
+                        read + misread
+                    })
+                    .collect();
+                let mut pick = 0;
+                for (i, v) in values.iter().enumerate().skip(1) {
+                    if *v > values[pick] {
+                        pick = i;
+                    }
+                }
+                if pick != 0 && values[pick] <= values[0] + strength.playout_margin {
+                    pick = 0;
+                }
+                let (picked, formations) = options.swap_remove(pick);
+                orders.extend(picked);
+                formations
+            } else {
+                // No playouts: the cheap model decides, as it did before
+                // there were any.
+                let best = nominated.into_iter().next().filter(|c| {
+                    registry
+                        .template(&c.plan.template)
+                        .and_then(plan::as_fix_and_flank)
+                        .is_some_and(|p| c.score >= p.threshold)
+                });
+                match (&current, standing, best) {
+                    (Some(p), Some(score), Some(c))
+                        if !committed && !same(p, &c) && c.score > score + strength.commitment =>
+                    {
+                        orders.extend(plan::adopt(&c));
+                        Some((c.plan.fix, c.plan.manoeuvre))
+                    }
+                    (Some(p), Some(_), _) => Some((p.fix, p.manoeuvre)),
+                    (_, _, Some(c)) => {
+                        orders.extend(plan::adopt(&c));
+                        Some((c.plan.fix, c.plan.manoeuvre))
+                    }
+                    (Some(_), None, None) => {
+                        drop(&mut orders);
+                        None
+                    }
+                    (None, _, None) => None,
+                }
             };
             if let Some((f, m)) = chosen {
                 planned.extend([f.index(), m.index()]);

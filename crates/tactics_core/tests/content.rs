@@ -122,16 +122,18 @@ fn the_new_maps_field_enough_formations_a_side_with_a_leader_each() {
                     "map `{id}`: formation `{formation}` needs exactly one cadet in charge"
                 );
             }
-            // Six armoured vehicles, the taxi, her platoon and a scout
-            // section: nine placements, of which eight stand on the ground
-            // at the bell because the platoon starts in the back of the
-            // taxi. `the_new_maps_field_infantry_and_their_rides` checks
-            // that second number, which is the one an opponent sees.
+            // Six armoured vehicles, the taxi, her platoon, a scout section
+            // and a reserve of two — a medium and a light, a second group
+            // to manoeuvre with, so a commander who knows a play has the
+            // elements to run it: eleven placements, of which ten stand on
+            // the ground at the bell because the platoon starts in the back
+            // of the taxi. `the_new_maps_field_infantry_and_their_rides`
+            // checks that second number, which is the one an opponent sees.
             assert_eq!(
                 file.units.iter().filter(|u| u.side == side).count(),
-                9,
-                "map `{id}` side {side} is meant to field nine units: six vehicles, \
-                 a platoon, her ride and a scout section"
+                11,
+                "map `{id}` side {side} is meant to field eleven units: six vehicles, \
+                 a platoon, her ride, a scout section and a reserve of two"
             );
         }
     }
@@ -389,9 +391,9 @@ fn the_new_maps_field_infantry_and_their_rides() {
                     .iter()
                     .filter(|u| u.side == side && u.aboard.is_none())
                     .count(),
-                8,
-                "map `{id}` side {side} puts eight units on the ground at the bell; \
-                 the ninth is in the back of the taxi"
+                10,
+                "map `{id}` side {side} puts ten units on the ground at the bell; \
+                 the eleventh is in the back of the taxi"
             );
         }
         for rider in riders {

@@ -51,6 +51,8 @@ cargo run --release -p tactics_core --example balance -- \
     --sim --games 36 --only skill --absolute --sweep seed=0,1000,2000,3000 --arena ridge_arena
 # does the AI play a mirrored battle as its own reflection? (a coordinate leaking into a decision)
 cargo run --release -p tactics_core --example mirror -- --arena ridge_arena
+# ...on a generated battle map, with no search roll to muddy first contact
+cargo run --release -p tactics_core --example mirror -- --map battle_town --no-search --rounds 20
 ```
 
 ### Reading a balance number
@@ -372,7 +374,9 @@ governs orders flowing down, and information flows every way**. Tests:
 PLANNING.md step 4, `ai/plan.rs`. **No shipped doctrine teaches a play
 yet**, because the one play built has not been shown to win (below), so
 shipped battles are unchanged and the determinism snapshot passed
-unregenerated. `examples/plans` teaches it to measure it; `tests/plans.rs`.
+unregenerated. `examples/plans` teaches it to measure it (`--maps` on the
+shipped battlefields; `PLANS_SET=path=value` to override a number);
+`tests/plans.rs`.
 
 - **Templates are data, their algorithm is Rust** (`TemplateDef`,
   `TemplateKind::FixAndFlank` and its numbers; `templates/` in a mod).
@@ -401,6 +405,29 @@ unregenerated. `examples/plans` teaches it to measure it; `tests/plans.rs`.
   the word is given**: a going plan is carried through while it stands
   (the first measurement caught a commander recalling her own assault).
   The trigger is checked every round and has a deadline (`go_by`).
+- **The model nominates; the battle chooses.** With `planner.playout_samples`
+  above zero (4 shipped), the review plays out the plan in hand, each
+  nomination and dropping it, `playout_rounds` (5) of the real engine each,
+  and switches only past `playout_margin` (0.1), each reading misread by
+  `playout_noise_per_level` per level of the commander's skill gap. Zero
+  samples is the model alone. Three rules: **a playout is fought on what
+  her commander has been told** (`plan::known_world`, `Knower::Commander`,
+  not the side's `spotted` — tested in `net.rs` beside the stage that tells
+  the two apart); **it scores `position_value` with `over` cleared**,
+  because a copy holding only the enemies she knows "ends" when they are
+  gone and every option read 1.0; and **inside a playout nobody plans**
+  (`SideCommand::for_playout`), or playouts would play out playouts. The
+  samples and the margin are the cure for the optimizer's curse — at one
+  sample and no margin the strongest commander lost to the weakest, because
+  the best of more noisy readings is the luckiest.
+- **Four battlefields field a reserve a side** (`*_reserve`, a medium and a
+  light) so a commander has two manoeuvre groups; `river_crossing` has none
+  and is still the determinism baseline. With it, plans are adopted about
+  0.2–0.5 times a battle on the shipped maps and knowing the play is worth
+  −6 wins in 360: neutral, which is the harm of the model gone and no gain.
+  That is `plans --maps`, which puts both sides under the `command`
+  planner; the four maps themselves still declare `utility` (Content gaps),
+  so a battle fought from the game plans nothing until that changes.
 
 ### Reading ground
 
@@ -1328,6 +1355,21 @@ instrument's numbers.
 - **Overworld elevation is priced at the battle scale.** `Scale` has one
   `elevation_meters`, so `frontier`'s mountains at elevation 2 read as 20 m.
   Harmless today; a strategic map wants its own vertical scale.
+- **The path finder reads the compass, and `battle_town` shows it.**
+  `movement::path_to` is `hexx::a_star`, which settles a tie between
+  equal-cost paths by its own neighbour order: two crews on reflected hexes
+  making for reflected ground take the same number of steps by paths that
+  are not reflections (`examples/mirror --map battle_hills --no-search`
+  finds it in tick 2 of round 1, the reserve medium going straight and then
+  turning where her twin turns first). With the reserve in, the `ground`
+  table reads `battle_town` **194–382 to the east end over eight seeds**
+  (148–140 over four before it), and exchanging which side has the lower
+  ids leaves it there (218–358), so it is the ends and not the id order.
+  The placements are exact reflections (`a = ±28`, same rows). The reserve
+  did not make the rule; it walks into the tie more often. Fixing it wants a
+  path tiebreak on something a reflection preserves — distance from the
+  straight line, say — with the coordinate last, and it will move the
+  determinism snapshot. Read the town row through it until then.
 - **Difficulty discriminates on the ridge and not on the old arena — but
   only just.** At 8 seeds × 36 (576 a row) on `ridge_arena`, 5 over 1 is
   **51.4%** and 5 over 3 **49.7%** since the ladder scaled by damage spent

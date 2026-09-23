@@ -65,16 +65,26 @@ const ROWS: &[Row] = &[
     ("A weak", "taught", "mina", "taught", "irma"),
 ];
 
-/// Each side's four hulls, leaders first: formation one is slots 0 and 1,
-/// formation two slots 2 and 3.
-type Force = [&'static str; 4];
+/// A side's hulls in pairs, leader first: each pair is one formation.
+type Force = &'static [&'static str];
 
-const MEDIUMS: Force = ["medium_tank"; 4];
+const MEDIUMS: Force = &["medium_tank"; 4];
 /// Heavy tanks leading both formations: fronts the 75 cannot touch, which is
 /// the case a flank exists for.
-const HEAVIES: Force = ["heavy_tank", "medium_tank", "heavy_tank", "medium_tank"];
+const HEAVIES: Force = &["heavy_tank", "medium_tank", "heavy_tank", "medium_tank"];
+/// Three groups a side: a line to fix with, a group to go round, and one
+/// left over — the arena's whole deployment, six pairs.
+const MEDIUMS_3: Force = &["medium_tank"; 6];
+const HEAVIES_3: Force = &[
+    "heavy_tank",
+    "medium_tank",
+    "heavy_tank",
+    "medium_tank",
+    "heavy_tank",
+    "medium_tank",
+];
 
-fn battle(reg: &DataRegistry, row: &Row, b_force: &Force, seed: u64) -> Tally {
+fn battle(reg: &DataRegistry, row: &Row, a_force: Force, b_force: Force, seed: u64) -> Tally {
     let arena = &RIDGE_ARENA;
     let flip = seed % 2 == 1;
     let (_, a_doc, a_cmd, b_doc, b_cmd) = *row;
@@ -83,24 +93,34 @@ fn battle(reg: &DataRegistry, row: &Row, b_force: &Force, seed: u64) -> Tally {
     } else {
         ((a_doc, a_cmd), (b_doc, b_cmd))
     };
+    let groups = a_force.len() / 2;
+    let declared: Vec<(String, u8)> = (1..=groups)
+        .flat_map(|g| [(format!("w{g}"), 0u8), (format!("e{g}"), 1u8)])
+        .collect();
+    let declared: Vec<(&str, u8)> = declared.iter().map(|(id, s)| (id.as_str(), *s)).collect();
     let map = arena
-        .map_with_formations(&[("w1", 0), ("w2", 0), ("e1", 1), ("e2", 1)])
+        .map_with_formations(&declared)
         .expect("the ridge builds");
     let pairs = arena.deployment();
     let mut placements = Vec::new();
     let (west_force, east_force) = if flip {
-        (b_force, &MEDIUMS)
+        (b_force, a_force)
     } else {
-        (&MEDIUMS, b_force)
+        (a_force, b_force)
     };
     for (side, (_, commander), force) in [(0u8, west, west_force), (1u8, east, east_force)] {
-        // Formation one on one flank, two on the other: pairs 0 and 2 share a
-        // flank, as do 1 and 3.
-        for (slot, (formation, leads)) in [(1, true), (1, false), (2, true), (2, false)]
-            .into_iter()
-            .enumerate()
-        {
-            let pair = [0, 2, 1, 3][slot];
+        // Formation one on one flank, two on the other (pairs 0 and 2 share a
+        // flank, as do 1 and 3), and a third, if there is one, on pairs 4
+        // and 5 behind them.
+        let slots: &[(usize, usize, bool)] = &[
+            (0, 1, true),
+            (2, 1, false),
+            (1, 2, true),
+            (3, 2, false),
+            (4, 3, true),
+            (5, 3, false),
+        ];
+        for (slot, &(pair, formation, leads)) in slots.iter().enumerate().take(force.len()) {
             let (w, e) = pairs[pair];
             let at = if side == 0 { w } else { e };
             let crew = if slot == 0 {
@@ -360,6 +380,21 @@ fn main() {
     taught.id = "taught".into();
     taught.teaches = vec!["fix_and_flank".into()];
     reg.doctrines.insert(untaught.id.clone(), untaught);
+    // PLANS_SET="playout_samples=4,playout_margin=0.1" overrides planner
+    // numbers for a quick comparison without editing the mod.
+    if let Ok(set) = std::env::var("PLANS_SET") {
+        for pair in set.split(',') {
+            let Some((k, v)) = pair.split_once('=') else {
+                continue;
+            };
+            match k {
+                "playout_samples" => reg.planner.playout_samples = v.parse().unwrap(),
+                "playout_rounds" => reg.planner.playout_rounds = v.parse().unwrap(),
+                "playout_margin" => reg.planner.playout_margin = v.parse().unwrap(),
+                other => panic!("PLANS_SET knows no `{other}`"),
+            }
+        }
+    }
     reg.doctrines.insert(taught.id.clone(), taught);
 
     let args: Vec<u64> = std::env::args()
@@ -373,9 +408,19 @@ fn main() {
     }
     let games = args.first().copied().unwrap_or(48);
     let offset = args.get(1).copied().unwrap_or(0);
-    for (label, b_force) in [
-        ("mediums against mediums", &MEDIUMS),
-        ("mediums against heavies", &HEAVIES),
+    for (label, a_force, b_force) in [
+        ("mediums against mediums, two groups", MEDIUMS, MEDIUMS),
+        ("mediums against heavies, two groups", MEDIUMS, HEAVIES),
+        (
+            "mediums against mediums, three groups",
+            MEDIUMS_3,
+            MEDIUMS_3,
+        ),
+        (
+            "mediums against heavies, three groups",
+            MEDIUMS_3,
+            HEAVIES_3,
+        ),
     ] {
         println!(
             "ridge arena, {label}: A is 4 medium tanks, two formations a side, command planner, {games} battles a row\n"
@@ -386,7 +431,7 @@ fn main() {
         );
         for row in ROWS {
             let seeds: Vec<u64> = (offset..offset + games).collect();
-            let tallies = run_all(&seeds, |s| battle(&reg, row, b_force, *s));
+            let tallies = run_all(&seeds, |s| battle(&reg, row, a_force, b_force, *s));
             let mut t = Tally::default();
             for x in tallies {
                 t.a += x.a;

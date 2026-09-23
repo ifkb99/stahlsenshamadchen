@@ -56,6 +56,10 @@ pub struct Strength {
     pub misjudge: f32,
     /// How much better a new plan must look before she drops the one she has.
     pub commitment: f32,
+    /// The same, for a plan that has been played out, in position value.
+    pub playout_margin: f32,
+    /// How far she misreads a playout's result, either way.
+    pub playout_noise: f32,
 }
 
 impl Strength {
@@ -92,6 +96,8 @@ impl Strength {
                 as usize,
             misjudge: (p.plan_sure_level - level).max(0) as f32 * p.plan_misjudge_per_level,
             commitment: p.plan_commitment * will as f32 / AVERAGE as f32,
+            playout_margin: p.playout_margin * will as f32 / AVERAGE as f32,
+            playout_noise: (p.plan_sure_level - level).max(0) as f32 * p.playout_noise_per_level,
         }
     }
 }
@@ -252,10 +258,9 @@ pub fn target(
 }
 
 /// The best fix-and-flank she can see against `target` with the formations
-/// in `eligible` — every ordered pair, each fixing formation's best firing
-/// positions and each manoeuvre formation's best flanks, as many of each as
-/// her breadth allows — or `None` when nothing clears the template's
-/// threshold.
+/// in `eligible`, or `None` when nothing clears the template's threshold. The
+/// cheap model's own verdict; see [`candidates`] for the list a playout
+/// chooses from.
 #[allow(clippy::too_many_arguments)]
 pub fn fix_and_flank(
     registry: &DataRegistry,
@@ -269,10 +274,39 @@ pub fn fix_and_flank(
     strength: Strength,
     rng: &mut ChaCha8Rng,
 ) -> Option<Candidate> {
-    let tgt = state.unit(target)?;
+    candidates(
+        registry, state, side, commander, template, params, eligible, target, strength, rng,
+    )
+    .into_iter()
+    .next()
+    .filter(|c| c.score >= params.threshold)
+}
+
+/// Every fix-and-flank she can see against `target` with the formations in
+/// `eligible` — every ordered pair, each fixing formation's best firing
+/// positions and each manoeuvre formation's best flanks, as many of each as
+/// her breadth allows — scored by the cheap model, misjudgement included,
+/// best first, and as many kept as her breadth allows. The model nominates;
+/// a playout ([`playout`]) decides.
+#[allow(clippy::too_many_arguments)]
+pub fn candidates(
+    registry: &DataRegistry,
+    state: &BattleState,
+    side: u8,
+    commander: UnitId,
+    template: &TemplateDef,
+    params: &FixAndFlank,
+    eligible: &[usize],
+    target: UnitId,
+    strength: Strength,
+    rng: &mut ChaCha8Rng,
+) -> Vec<Candidate> {
+    let Some(tgt) = state.unit(target) else {
+        return Vec::new();
+    };
     let watchers = observers(registry, state, side);
     let [near, far] = params.standoff;
-    let mut best: Option<Candidate> = None;
+    let mut found: Vec<Candidate> = Vec::new();
     for &f in eligible {
         for &m in eligible {
             if f == m {
@@ -365,11 +399,8 @@ pub fn fix_and_flank(
                     if strength.misjudge > 0.0 {
                         score += rng.random_range(-strength.misjudge..=strength.misjudge);
                     }
-                    if score < params.threshold || best.as_ref().is_some_and(|b| score <= b.score) {
-                        continue;
-                    }
                     let (assembly, waypoints) = assembly(state, &watchers, tgt.pos, far, route);
-                    best = Some(Candidate {
+                    found.push(Candidate {
                         plan: Plan {
                             side,
                             commander,
@@ -391,7 +422,19 @@ pub fn fix_and_flank(
             }
         }
     }
-    best
+    // Best first; among equals the pairing, then the ground, coordinate last.
+    found.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then(a.plan.fix.index().cmp(&b.plan.fix.index()))
+            .then(a.plan.manoeuvre.index().cmp(&b.plan.manoeuvre.index()))
+            .then(a.plan.flank.x.cmp(&b.plan.flank.x))
+            .then(a.plan.flank.y.cmp(&b.plan.flank.y))
+            .then(a.plan.fire_position.x.cmp(&b.plan.fire_position.x))
+            .then(a.plan.fire_position.y.cmp(&b.plan.fire_position.y))
+    });
+    found.truncate(strength.breadth);
+    found
 }
 
 /// Where the manoeuvre element waits for the word, and the waypoints that get
@@ -581,6 +624,101 @@ pub fn done(state: &BattleState, plan: &Plan) -> bool {
         || plan.phase == PlanPhase::Going
             && leader(state, plan.manoeuvre.index())
                 .is_some_and(|u| u.pos.distance_to(plan.flank) <= 1)
+}
+
+/// The world as `side`'s commander knows it: a copy of the battle with
+/// every enemy she has not been told about taken off the board, and nobody
+/// else's orders known ([`crate::ai::determinize`], narrowed from what her side
+/// has spotted to what she has been told — [`Knower::Commander`]). Fresh
+/// dice, so a playout cannot read the real battle's future.
+pub fn known_world(
+    registry: &DataRegistry,
+    state: &BattleState,
+    side: u8,
+    seed: u64,
+) -> BattleState {
+    let told: Vec<UnitId> = state
+        .known_enemies(registry, Knower::Commander(side))
+        .iter()
+        .map(|u| u.id)
+        .collect();
+    let mut world = crate::ai::determinize(state, side, seed);
+    for unit in &mut world.units {
+        if unit.side != side && unit.alive() && !told.contains(&unit.id) {
+            unit.withdraw();
+        }
+    }
+    world
+}
+
+/// What `orders` are worth to `side`, found by playing them out: the world as
+/// her commander knows it, the orders given, and [`PlannerRules::playout_rounds`]
+/// rounds of the real engine — her side under a commander who carries plans
+/// out but makes none (`SideCommand::for_playout`), everybody else under the
+/// ordinary executor — scored by [`crate::ai::Evaluator::position_value`]'s
+/// material and ground (never the copy's verdict; see the body) and
+/// averaged over [`PlannerRules::playout_samples`] dice.
+///
+/// **The battle is the evaluator.** The cheap model is a guess at what a plan
+/// will do; this asks the game. It is search over *plans*, a handful of
+/// playouts a review — not over moves, which is what MCTS tried and parked
+/// with a weak evaluator at its leaves.
+///
+/// [`PlannerRules::playout_rounds`]: crate::data::PlannerRules::playout_rounds
+/// [`PlannerRules::playout_samples`]: crate::data::PlannerRules::playout_samples
+pub fn playout(
+    registry: &DataRegistry,
+    state: &BattleState,
+    side: u8,
+    orders: &[Order],
+    ours: &crate::ai::AiConfig,
+    seed: u64,
+) -> f32 {
+    let p = &registry.planner;
+    let samples = p.playout_samples.max(1);
+    let evaluator = crate::ai::Evaluator::new(crate::ai::resolve_doctrine(ours, registry));
+    let mut total = 0.0;
+    for sample in 0..samples {
+        let dice = seed ^ (sample as u64 + 1).wrapping_mul(0xA24B_AED4_963E_E407);
+        let mut world = known_world(registry, state, side, dice);
+        for order in orders {
+            let _ = world.apply(registry, order);
+        }
+        let mut driver = crate::ai::AiDriver::new();
+        for other in 0..world.sides.len() as u8 {
+            if other == side {
+                driver.insert(
+                    other,
+                    Box::new(crate::ai::SideCommand::for_playout(ours, dice, registry)),
+                );
+            } else {
+                let theirs = crate::ai::AiConfig {
+                    planner: "utility".into(),
+                    difficulty: 3,
+                    doctrine: None,
+                };
+                driver.insert(
+                    other,
+                    crate::ai::make_battle_planner(&theirs, dice ^ other as u64, registry),
+                );
+            }
+        }
+        for _ in 0..p.playout_rounds {
+            if world.is_over() {
+                break;
+            }
+            driver.plan_round(registry, &mut world);
+            world.resolve_round(registry);
+        }
+        // Material and ground, never the verdict. The copy holds only the
+        // enemies she has been told about, so its battle can "end" the
+        // moment they are gone — and did: the first playouts scored almost
+        // every option as a won battle, 1.0, and could tell none of them
+        // apart. What the options leave behind is what differs.
+        world.over = None;
+        total += evaluator.position_value(registry, &world, side);
+    }
+    total / samples as f32
 }
 
 /// A deterministic stream for one commander's misjudgements at one review.
