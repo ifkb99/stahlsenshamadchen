@@ -22,7 +22,20 @@
 //! cargo run --release -p tactics_core --example mirror -- --arena ridge_arena
 //! cargo run --release -p tactics_core --example mirror -- --seeds 0,1,2,3,4 --rounds 12
 //! cargo run --release -p tactics_core --example mirror -- --difficulty 3
+//! cargo run --release -p tactics_core --example mirror -- --map battle_town
 //! ```
+//!
+//! `--map` plays a *shipped* battle map instead of an arena: one of the
+//! generated ones (`battle_hills`, `battle_town`), whose ground and orders of
+//! battle are exact west–east reflections of each other in map-file columns
+//! (`tools/make_battle_maps.py` asserts it). Their reflection is across the
+//! north–south axis rather than through the centre, each crew's twin is the
+//! crew the map placed on her reflected hex, and crews are stamped anonymous
+//! so that nobody's twin is better trained than she is — the arrangement the
+//! `ground` table fights, but at a difficulty with no blur. It exists because
+//! that table read `battle_town` leaning two to one east once each side had a
+//! reserve, with every placement mirrored and the lean surviving the ids
+//! being exchanged.
 //!
 //! `--release` is not required for correctness — this is a determinism probe,
 //! not a timing one — but a dozen rounds of two planners is a few seconds in
@@ -74,9 +87,11 @@
 use std::sync::Arc;
 use tactics_core::Hex;
 use tactics_core::ai::{AiConfig, AiDriver, make_battle_planner};
+use tactics_core::battle::UnitId;
 use tactics_core::battle::{BattleState, Goal, SideState};
 use tactics_core::data::DataRegistry;
 use tactics_core::harness::arena::{ARENAS, Arena, DEFAULT_ARENA, arena_named};
+use tactics_core::map::HexMap;
 use tactics_core::map::UnitPlacement;
 use tactics_core::roster::Roster;
 
@@ -92,11 +107,73 @@ const ROSTER: [&str; 6] = [
     "light_tank",
 ];
 
+/// What the probe plays on: an arena, or a shipped battle map mirrored west
+/// to east. Everything the comparison needs is the reflection and a centre to
+/// print coordinates from.
+struct Board {
+    id: String,
+    blurb: String,
+    mirror: Box<dyn Fn(Hex) -> Hex>,
+    centre: Hex,
+    map: Option<String>,
+    arena: Option<&'static Arena>,
+}
+
+impl Board {
+    fn of_arena(arena: &'static Arena) -> Self {
+        Board {
+            id: arena.id.to_string(),
+            blurb: arena.blurb.to_string(),
+            mirror: Box::new(move |h| arena.mirror(h)),
+            centre: arena.centre_hex(),
+            map: None,
+            arena: Some(arena),
+        }
+    }
+
+    /// A generated battle map: reflected across the north–south axis, which
+    /// in map-file terms keeps the row and sends column `c` to
+    /// `2·radius − row % 2 − c` — the generator's own doubled lateral
+    /// coordinate, negated.
+    fn of_map(registry: &DataRegistry, id: &str) -> Self {
+        let file = registry.map(id).unwrap_or_else(|| {
+            eprintln!("error: --map {id}: no such map");
+            std::process::exit(1);
+        });
+        let _ = file;
+        // A battle map is the regulation hexagon, 2·radius + 1 across.
+        let span = 2 * registry.scale.battle_map_radius() as i32;
+        Board {
+            id: id.to_string(),
+            blurb: "a shipped battle map, mirrored west to east".into(),
+            mirror: Box::new(move |h| {
+                let [c, r] = tactics_core::hex_to_offset(h);
+                tactics_core::offset_to_hex(span - r.rem_euclid(2) - c, r)
+            }),
+            centre: tactics_core::offset_to_hex(span / 2, span / 2),
+            map: Some(id.to_string()),
+            arena: None,
+        }
+    }
+
+    fn mirror(&self, h: Hex) -> Hex {
+        (self.mirror)(h)
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("{USAGE}");
         return;
+    }
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
+    let (mut registry, _) = DataRegistry::load_dir(&root).expect("mods load");
+    // A search roll is the first die most battles throw, and the rng is drawn
+    // in unit-id order, so the two ends read different dice from it: a
+    // divergence at first contact is a coin until this is ruled out.
+    if args.iter().any(|a| a == "--no-search") {
+        registry.balance.detection_certain_percent = 100;
     }
     let arena = match flag(&args, "--arena") {
         None => DEFAULT_ARENA,
@@ -122,24 +199,30 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(8);
 
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
-    let (registry, _) = DataRegistry::load_dir(&root).expect("mods load");
+    let board = match flag(&args, "--map") {
+        Some(id) => Board::of_map(&registry, id),
+        None => Board::of_arena(arena),
+    };
 
     println!(
         "mirror: {} ({}), difficulty {difficulty} both sides, {} rounds, seeds {seeds:?}",
-        arena.id, arena.blurb, rounds
+        board.id, board.blurb, rounds
     );
-    println!(
-        "  {} vehicles a side on {} deployment pairs\n",
-        ROSTER.len().min(arena.deployment().len()),
-        arena.deployment().len()
-    );
+    if board.arena.is_some() {
+        println!(
+            "  {} vehicles a side on {} deployment pairs\n",
+            ROSTER.len().min(arena.deployment().len()),
+            arena.deployment().len()
+        );
+    } else {
+        println!("  the map's own orders of battle, anonymously crewed\n");
+    }
 
     let mut findings: Vec<Finding> = Vec::new();
     for &seed in &seeds {
-        findings.extend(play(&registry, arena, seed, difficulty, rounds));
+        findings.extend(play(&registry, &board, seed, difficulty, rounds));
     }
-    report(arena, &seeds, &findings);
+    report(&board, &seeds, &findings);
 }
 
 const USAGE: &str = "\
@@ -148,9 +231,12 @@ where a mirrored battle stops being mirrored
   cargo run --release -p tactics_core --example mirror [-- FLAGS]
 
   --arena NAME       which battlefield (default skill_arena)
+  --map ID           a generated battle map instead (battle_hills, battle_town)
   --seeds A,B,C      which battles (default 0,1,2,3)
   --difficulty N     both sides (default 5, where the blur is exactly zero)
   --rounds N         how far to follow each battle (default 8)
+  --no-search        find everybody in sight at once: no search roll, so a
+                     divergence before the first shot is a rule, not a die
 
   At difficulty 5 every divergence is a rule reading something the
   reflection does not preserve, except a tiebreak between candidates whose
@@ -242,6 +328,62 @@ fn stage(registry: &DataRegistry, arena: &Arena, seed: u64) -> BattleState {
     .expect("an arena's own placements are on its own map")
 }
 
+/// Stage a shipped map with every crew stamped anonymous, and pair each of
+/// side A's crews with the side-B crew the map placed on her reflected hex.
+fn stage_map(
+    registry: &DataRegistry,
+    board: &Board,
+    id: &str,
+    seed: u64,
+) -> (BattleState, Vec<(UnitId, UnitId)>) {
+    let file = registry.map(id).expect("the map is in the registry");
+    let map = HexMap::from_map_file(file).expect("the map builds");
+    let mut placements = file.units.clone();
+    for p in &mut placements {
+        p.crew.clear();
+    }
+    let sides = file
+        .sides
+        .iter()
+        .map(|s| SideState {
+            name: s.name.clone(),
+            ai: None,
+        })
+        .collect();
+    let (roster, crews) = Roster::stamp_for(registry, &placements);
+    let state = BattleState::from_placements(
+        registry,
+        map,
+        sides,
+        &placements,
+        &crews,
+        Arc::new(roster),
+        seed,
+    )
+    .expect("a shipped map's placements stage");
+    let mut pairs = Vec::new();
+    for a in state.units.iter().filter(|u| u.side == 0) {
+        let twin = state.units.iter().find(|b| {
+            b.side == 1
+                && b.vehicle == a.vehicle
+                && b.pos == board.mirror(a.pos)
+                && b.aboard.is_some() == a.aboard.is_some()
+        });
+        match twin {
+            Some(b) => pairs.push((a.id, b.id)),
+            None => {
+                eprintln!(
+                    "error: {id}: {} at {:?} has no twin on the reflected hex; the map is not mirrored",
+                    a.vehicle,
+                    tactics_core::hex_to_offset(a.pos)
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+    (state, pairs)
+}
+
 /// Play one battle and report the first round in which any pair breaks.
 ///
 /// Stops at the first broken round rather than carrying on, and that is not
@@ -250,14 +392,24 @@ fn stage(registry: &DataRegistry, arena: &Arena, seed: u64) -> BattleState {
 /// consequence of the first and not a second finding.
 fn play(
     registry: &DataRegistry,
-    arena: &Arena,
+    board: &Board,
     seed: u64,
     difficulty: u8,
     rounds: usize,
 ) -> Vec<Finding> {
     // The same offset `balance`'s own arena duels use, so a divergence found
     // here is one of the battles the skill table actually fought.
-    let mut state = stage(registry, arena, 9000 + seed);
+    let (mut state, pairs) = match (board.arena, &board.map) {
+        (Some(arena), _) => {
+            let state = stage(registry, arena, 9000 + seed);
+            let pairs = (0..state.units.len() / 2)
+                .map(|i| (UnitId(i as u32 * 2), UnitId(i as u32 * 2 + 1)))
+                .collect();
+            (state, pairs)
+        }
+        (None, Some(id)) => stage_map(registry, board, id, 9000 + seed),
+        (None, None) => unreachable!("a board is an arena or a map"),
+    };
     let mut ai = AiDriver::new();
     for side in [0u8, 1] {
         let cfg = AiConfig {
@@ -271,17 +423,20 @@ fn play(
         );
     }
 
-    let pairs = state.units.len() / 2;
     for round in 1..=rounds {
         ai.plan_round(registry, &mut state);
         // Read the plan before it is resolved: a divergence in where a crew
         // has *decided* to go precedes one in where she ends up, and reporting
         // the second when the first is available names the wrong rule.
         let mut found: Vec<Finding> = Vec::new();
-        for pair in 0..pairs {
-            let a = &state.units[pair * 2];
-            let b = &state.units[pair * 2 + 1];
-            if let Some((kind, detail)) = compare(arena, a.pos, a.goal, b.pos, b.goal) {
+        for (pair, &(a, b)) in pairs.iter().enumerate() {
+            let (Some(a), Some(b)) = (
+                state.units.iter().find(|u| u.id == a && u.alive()),
+                state.units.iter().find(|u| u.id == b && u.alive()),
+            ) else {
+                continue;
+            };
+            if let Some((kind, detail)) = compare(board, a.pos, a.goal, b.pos, b.goal) {
                 found.push(Finding {
                     seed,
                     round,
@@ -314,7 +469,7 @@ fn play(
 /// Returns `None` when she is. Otherwise the kind of divergence and a line
 /// naming both halves of it.
 fn compare(
-    arena: &Arena,
+    arena: &Board,
     a_pos: Hex,
     a_goal: Option<Goal>,
     b_pos: Hex,
@@ -403,12 +558,12 @@ fn goal_shape(g: &Option<Goal>) -> &'static str {
 
 /// Arena-relative coordinates, because an absolute axial pair on a map whose
 /// centre is at (15, 10) tells the reader nothing about which end it is.
-fn rel(arena: &Arena, h: Hex) -> (i32, i32) {
-    let d = h - arena.centre_hex();
+fn rel(arena: &Board, h: Hex) -> (i32, i32) {
+    let d = h - arena.centre;
     (d.x, d.y)
 }
 
-fn report(arena: &Arena, seeds: &[u64], findings: &[Finding]) {
+fn report(arena: &Board, seeds: &[u64], findings: &[Finding]) {
     if findings.is_empty() {
         println!(
             "clean: {} battles on {} played mirrored the whole way through.",

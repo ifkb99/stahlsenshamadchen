@@ -731,6 +731,45 @@ fn a_contact_no_longer_seen_goes_stale_not_absent() {
 /// enemy during the first planning phase however plainly one stood in view.
 /// Two tanks in the open, neither in a formation, so each answers to her own
 /// side and reports what she sees.
+/// A playout (`ai::plan::playout`) is fought on the board her commander
+/// knows, not on what her side has spotted: the scout off the net has found
+/// somebody, and he is not on her commander's board. Otherwise choosing a
+/// plan by playing it out would read through the chain of command — the
+/// commander would plan against an enemy nobody told her about.
+#[test]
+fn a_playout_is_fought_on_the_board_her_commander_knows() {
+    let mut reg = registry();
+    reg.command = Some(command_rules(8, false, 0));
+    strip_radios(&mut reg);
+    let mut state = picture_stage(&reg, 3);
+    let (scout, enemy) = (UnitId(1), UnitId(2));
+    commit_all(&reg, &mut state);
+    state.step_tick(&reg);
+    assert!(
+        state.fog.side(0).spotted.contains(&enemy) && !state.hears_orders(scout),
+        "the stage is a scout off the net who has found somebody"
+    );
+    let world = tactics_core::ai::plan::known_world(&reg, &state, 0, 7);
+    let on_board = |world: &BattleState| world.units.iter().any(|u| u.id == enemy && u.alive());
+    assert!(
+        !on_board(&world),
+        "spotted by a crew and never reported is not on her commander's board"
+    );
+    assert!(
+        world
+            .units
+            .iter()
+            .filter(|u| u.side == 0)
+            .all(|u| u.alive())
+    );
+
+    // Once she is told, he is.
+    let mut bare = reg.clone();
+    bare.command = None;
+    let world = tactics_core::ai::plan::known_world(&bare, &state, 0, 7);
+    assert!(on_board(&world));
+}
+
 #[test]
 fn the_commander_is_told_what_is_already_in_sight_when_the_battle_opens() {
     let reg = common::seen(registry());

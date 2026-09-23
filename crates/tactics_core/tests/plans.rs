@@ -4,7 +4,10 @@
 //! Contents: planning strength is the commander's own stats; a commander who
 //! knows the play plans it and one who does not, does not; the word to go and
 //! the three things that give it; a plan in flight is carried by the battle,
-//! through a save; and a play nobody declared is refused.
+//! through a save; a play nobody declared is refused; and the playout that
+//! chooses between plans scores what is left rather than who "won", and never
+//! plans inside itself. That it is fought only on what the commander has
+//! been told is in `net.rs`, beside the stage that separates the two.
 //!
 //! Staged on the ridge arena with two formations a side. No shipped doctrine
 //! teaches a play yet — the instrument (`examples/plans`) has not shown one
@@ -27,8 +30,15 @@ use common::{registry, seen};
 
 /// The base mod, plus a doctrine that teaches fix and flank and one that
 /// teaches nothing, both otherwise bounding overwatch.
+///
+/// **With no playouts**: the tests here that are about what a plan *is* — who
+/// nominates it, when it goes, what the battle keeps — read the cheap model,
+/// which decides alone at `playout_samples: 0`. Whether a playout then
+/// prefers the plan to holding is a judgement about this stage's dice, not
+/// about the machinery, and the playout's own tests are at the bottom.
 fn schooled() -> DataRegistry {
     let mut reg = seen(registry());
+    reg.planner.playout_samples = 0;
     let base = reg.doctrine("bounding_overwatch").unwrap().clone();
     for (id, teaches) in [
         ("taught", vec!["fix_and_flank".to_string()]),
@@ -307,4 +317,57 @@ fn a_play_nobody_declared_is_refused() {
         "{:?}",
         report.errors
     );
+}
+
+// --- the playout ---
+
+/// A playout scores what the options leave on the board, never the copy's
+/// verdict. A board that holds only the enemies she knows can "end" the
+/// moment they are gone — here, at once, since she knows of nobody — and the
+/// first draft scored almost every option as a won battle, 1.0, which could
+/// tell none of them apart.
+#[test]
+fn a_playout_scores_what_is_left_rather_than_who_won_the_copy() {
+    let reg = schooled();
+    let state = ridge_stage(&reg, -9, 9, "irma", "");
+    let ours = AiConfig {
+        planner: "command".into(),
+        difficulty: 3,
+        doctrine: Some("taught".into()),
+    };
+    let value = plan::playout(&reg, &state, 0, &[], &ours, 11);
+    assert!(
+        value < 1.0,
+        "a board with nobody on it but her is not a won battle: {value}"
+    );
+    assert_eq!(
+        value,
+        plan::playout(&reg, &state, 0, &[], &ours, 11),
+        "and the same dice read the same"
+    );
+}
+
+/// The commander a playout runs her side under carries out the plan she was
+/// handed and makes none of her own — or every playout would play out
+/// playouts. The same stage under an ordinary commander plans at once
+/// (`a_commander_who_knows_the_play_plans_it_...`).
+#[test]
+fn a_commander_inside_a_playout_makes_no_plans_of_her_own() {
+    let reg = schooled();
+    let mut state = ridge_stage(&reg, -6, 3, "irma", "");
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
+        Box::new(tactics_core::ai::SideCommand::for_playout(
+            &AiConfig {
+                planner: "command".into(),
+                difficulty: 3,
+                doctrine: Some("taught".into()),
+            },
+            9,
+            &reg,
+        )),
+    );
+    ai.plan_round(&reg, &mut state);
+    assert_eq!(state.plans(0).count(), 0);
 }
