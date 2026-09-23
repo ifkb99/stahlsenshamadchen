@@ -681,6 +681,10 @@ fn her_machine_gun(reg: &DataRegistry) -> &tactics_core::data::WeaponDef {
 #[test]
 fn a_burst_that_cannot_get_through_still_counts_for_what_it_does_to_her_nerve() {
     let mut reg = seen(registry());
+    // A belt at plate has a second price since 2026-09-23 — closing the
+    // hull up (`balance.buttoning_worth`) — and this stage is about the
+    // first. Staged out, the way `calm` stages out the fear of being aimed at.
+    reg.balance.buttoning_worth = 0;
     // Behind plate the base mod lets none of a bullet's suppression through
     // (`morale.through_plate_percent: 0`, the designer's proper-equipment
     // ruling of 2026-09-23). This stage is a belt at a glacis because that
@@ -1155,6 +1159,10 @@ fn a_gun_that_fires_six_times_a_round_is_priced_six_times() {
 #[test]
 fn a_mod_that_says_nothing_about_suppression_plays_the_game_before() {
     let mut reg = seen(registry());
+    // A belt at plate has a second price since 2026-09-23 — closing the
+    // hull up (`balance.buttoning_worth`) — and this stage is about the
+    // first. Staged out, the way `calm` stages out the fear of being aimed at.
+    reg.balance.buttoning_worth = 0;
     for ammo in reg.ammo.values_mut() {
         ammo.suppression = 0;
     }
@@ -1217,6 +1225,10 @@ fn a_mod_that_says_nothing_about_suppression_plays_the_game_before() {
 #[test]
 fn the_loader_will_fire_a_belt_at_plate_she_cannot_beat_when_fear_is_worth_something() {
     let mut reg = seen(registry());
+    // A belt at plate has a second price since 2026-09-23 — closing the
+    // hull up (`balance.buttoning_worth`) — and this stage is about the
+    // first. Staged out, the way `calm` stages out the fear of being aimed at.
+    reg.balance.buttoning_worth = 0;
     // Behind plate the base mod lets none of a bullet's suppression through
     // (`morale.through_plate_percent: 0`, the designer's proper-equipment
     // ruling of 2026-09-23). This stage is a belt at a glacis because that
@@ -1281,6 +1293,10 @@ fn the_loader_will_fire_a_belt_at_plate_she_cannot_beat_when_fear_is_worth_somet
 #[test]
 fn suppression_and_what_fear_is_worth_are_data_and_are_read() {
     let mut base = seen(registry());
+    // A belt at plate has a second price since 2026-09-23 — closing the
+    // hull up (`balance.buttoning_worth`) — and this stage is about the
+    // first. Staged out, the way `calm` stages out the fear of being aimed at.
+    base.balance.buttoning_worth = 0;
     // What the round declares, alone: knowing she is the target is charged
     // for any round and would make a silent belt read as loud.
     base.morale.targeted = 0;

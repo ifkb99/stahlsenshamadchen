@@ -646,9 +646,16 @@ fn search(
         // air. Feeding the shortened reach in made a platoon at three hexes
         // sit at 75% of "reach" and take the full far-band penalty on top of
         // the shortening, which is the same fact charged twice.
-        let chance = registry
+        let mut chance = registry
             .balance
             .detection_chance(ground, distance, *range, unit.moved);
+        // A spotter closed up against small-arms fire looks through
+        // periscopes: a hull in the open is as plain as ever, a crew who is
+        // hard to see in the first place mostly is not seen at all
+        // (`balance.buttoned_search_percent`).
+        if hidden > 0 && state.unit(*spotter).is_some_and(|s| s.buttoned > 0) {
+            chance = chance * registry.balance.buttoned_search_percent / 100;
+        }
         // The arithmetic before the set lookup, deliberately. `best` is a
         // maximum, so a crew who cannot improve on it need not be asked
         // whether she can see the hex at all — and that question is a hash

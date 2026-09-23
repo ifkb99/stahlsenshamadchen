@@ -405,6 +405,12 @@ pub struct Unit {
     /// How much this crew has had to take. Walks them up the morale ladder;
     /// shed a little at the end of every round.
     pub pressure: u32,
+    /// Ticks she has left closed up (`balance.buttoned_ticks`): hatches shut
+    /// against small-arms fire, nearly blind to infantry close in and slow to
+    /// react. Counted down at the top of every tick. `#[serde(default)]`,
+    /// because a battle saved before anybody closed up had nobody closed up.
+    #[serde(default)]
+    pub buttoned: u32,
     /// Her commander's personal order, if she is under one: the whole of
     /// what used to be `detached`, `tasking` and `latitude`.
     ///
@@ -1317,6 +1323,7 @@ impl BattleState {
             dismounting: false,
             last_hit_by: None,
             pressure: 0,
+            buttoned: 0,
             orders: None,
             goal: None,
         });
@@ -1983,7 +1990,13 @@ pub mod stats {
             &rules.skill,
             terrain,
         );
-        rules.delay(level)
+        // Closed up, she sees the world through glass and is late to it.
+        let buttoned = if unit.buttoned > 0 {
+            registry.balance.buttoned_reaction_ticks
+        } else {
+            0
+        };
+        rules.delay(level) + buttoned
     }
 
     /// How well this crew moves on her own feet, used by

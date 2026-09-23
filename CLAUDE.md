@@ -826,6 +826,30 @@ its crew's nerve, and the route a crew drives is part of her order. Tests:
   100 and say why, and the shipped reading has a battle of its own in
   `an_ordered_shot_that_cannot_penetrate_bounces_and_does_nothing`. A bullet
   that gets *through* is charged in full.
+- **Bullets blind a tank; they do not frighten her** (the designer's
+  ruling after the record was read, 2026-09-23: German and US doctrine both
+  fired on tanks to close them up so the anti-tank team could get in, and a
+  closed-down crew "cannot see anything within 10 meters", FM 3-23.25).
+  Small-arms fire that bounces off, hits or is aimed past a **roofed**
+  armoured hull closes her up for `balance.buttoned_ticks` (3), re-armed
+  each time, announced once as `Event::ButtonedUp` (her side's business).
+  Closed up, she finds a target with any concealment — infantry, a scout
+  team — at `buttoned_search_percent` (50) of her chance, and a hull in the
+  open as well as ever (the one closed-hatch study found vehicle
+  acquisition undegraded); and she reacts `buttoned_reaction_ticks` (1)
+  later, inside `stats::reaction_delay` so both reaction clocks agree. Her
+  nerve and her aim are untouched. `balance.buttoning_worth` (1 substance
+  point a round, spread over the gun's shots, only against a hull not
+  already shut) is what makes a belt worth firing at a tank at all; any
+  value above zero clears `best_weapon_from`'s gate, and 1 and 2 swept
+  identical. **Zero ticks is the game before**, pinned by the snapshot
+  passing unregenerated with the machinery in. What the AI does not yet do
+  is *exploit* a blinded tank — walk the RPG team in while she is shut —
+  which wants a play, not a weight.
+- **An open top lets the fear in** (`VehicleDef::open_top`: the Marder, the
+  Hummel and the halftrack): bullets that do not penetrate reach her crew at
+  `morale.open_top_percent` (75; the sources put it at 60–100) instead of
+  `through_plate_percent`, and she has no hatches to close.
 - **A pinned crew will not step onto hotter ground** (`MoraleRung::pinned`;
   the base mod's second rung, renamed *Pinned*). `movement::Pinning` is the
   one gate: `reachable`, `path_to` and the tick's own step all ask it, so

@@ -210,6 +210,9 @@ fn a_gun_that_cannot_hurt_what_it_sees_holds_its_fire() {
     // and the assertion is the one it always made.
     let reg = {
         let mut reg = registry_wireless();
+        // And a third price since 2026-09-23 — closing the hull up
+        // (`balance.buttoning_worth`) — declined with the other two.
+        reg.balance.buttoning_worth = 0;
         reg.ammo
             .get_mut("ball_mg")
             .expect("the base mod ships a belt")
@@ -1202,6 +1205,7 @@ fn the_ladder_charges_a_shell_for_what_it_spent() {
         small_arms: false,
         suppression: 2,
         armoured: false,
+        open_top: false,
         aimed: true,
     };
     let outcome = (rules.hit + rules.penetrated) as f32;

@@ -301,6 +301,14 @@ pub struct MoraleRules {
     /// what the round declared.
     #[serde(default)]
     pub targeted: u32,
+    /// Percent of a small-arms round's suppression — both halves — that
+    /// reaches the crew of an **open-topped** hull
+    /// ([`crate::data::VehicleDef::open_top`]) that it did not penetrate: the
+    /// plate stops the bullet and the missing roof lets the fear in. In place
+    /// of [`Self::through_plate_percent`] for those hulls. Defaults to 100,
+    /// which is what every hull felt before plate was told apart.
+    #[serde(default = "hundred")]
+    pub open_top_percent: u32,
 }
 
 fn hundred() -> u32 {
@@ -359,6 +367,9 @@ pub struct RoundPressure {
     /// [`ShotFelt::Missed`] — a bounce is behind plate by definition — by
     /// [`MoraleRules::through_plate_percent`].
     pub armoured: bool,
+    /// The hull it arrived at has no roof ([`crate::data::VehicleDef::open_top`]):
+    /// behind-plate fear is priced at [`MoraleRules::open_top_percent`].
+    pub open_top: bool,
     /// The shot was aimed at her, so she knows she is the target
     /// ([`MoraleRules::targeted`]). False only for a shell bursting beside a
     /// crew it was not aimed at.
@@ -419,6 +430,7 @@ impl Default for MoraleRules {
             near_miss_percent: 0,
             through_plate_percent: 100,
             targeted: 0,
+            open_top_percent: 100,
         }
     }
 }
@@ -489,7 +501,12 @@ impl MoraleRules {
         // is not behind plate, whatever the hull, so it is never scaled; a
         // bounce always is, being off plate by definition; a miss is when the
         // hull it missed is armoured.
-        let plate = |x: f32| x * self.through_plate_percent as f32 / 100.0;
+        let share = if round.open_top {
+            self.open_top_percent
+        } else {
+            self.through_plate_percent
+        };
+        let plate = |x: f32| x * share as f32 / 100.0;
         match outcome {
             ShotFelt::Penetrated { spent } => {
                 (self.hit + self.penetrated) as f32 * spent.clamp(0.0, 1.0) + projectile + targeted
