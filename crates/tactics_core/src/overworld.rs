@@ -1544,6 +1544,19 @@ impl OverworldState {
         self.world.is_some()
     }
 
+    /// Ticks until the next dawn on the clock.
+    pub fn ticks_to_dawn(&self, registry: &DataRegistry) -> u64 {
+        let per_day = Self::ticks_per_day(registry);
+        per_day - self.clock % per_day
+    }
+
+    /// The time of day on the clock, as `(hours, minutes)` since dawn.
+    pub fn time_of_day(&self, registry: &DataRegistry) -> (u32, u32) {
+        let per_day = Self::ticks_per_day(registry);
+        let seconds = ((self.clock % per_day) as f32 * registry.scale.tick_seconds()) as u32;
+        (seconds / 3600, seconds / 60 % 60)
+    }
+
     /// Ticks in a day, off the scale.
     fn ticks_per_day(registry: &DataRegistry) -> u64 {
         (86_400.0 / registry.scale.tick_seconds()).round() as u64
@@ -2275,6 +2288,11 @@ impl OverworldState {
             self.recompute_contact(registry, side, &mut events);
             events.extend(self.transmit_waiting_missions(side));
         }
+        // Standing orders set out at dawn, every side's at once: an army
+        // told to advance does not wait for anybody's phase to march.
+        for side in 0..side_count {
+            events.extend(self.run_standing_missions_for(registry, side));
+        }
         let first = (0..side_count)
             .find(|s| self.side_armies(*s).next().is_some())
             .unwrap_or(0);
@@ -2795,7 +2813,16 @@ impl OverworldState {
     /// else, and one that started a battle on the way out would be obeying the
     /// opposite of what it was told.
     fn run_standing_missions(&mut self, registry: &DataRegistry) -> Vec<OverworldEvent> {
-        let side = self.active_side;
+        self.run_standing_missions_for(registry, self.active_side)
+    }
+
+    /// [`Self::run_standing_missions`] for one side, whichever side's phase it
+    /// is: at dawn on the clock every side's standing orders set out at once.
+    fn run_standing_missions_for(
+        &mut self,
+        registry: &DataRegistry,
+        side: u8,
+    ) -> Vec<OverworldEvent> {
         let ordered: Vec<(ArmyId, Hex, Engagement)> = self
             .armies
             .iter()
@@ -3310,6 +3337,38 @@ pub fn make_overworld_planner(
         config.difficulty.clamp(1, 5),
         seed,
     ))
+}
+
+/// On the clock, a side's planner gives the day's orders: asked until it
+/// has nothing more to say, each order applied as it comes, and nobody's
+/// turn ended — the clock runs on its own (WORLD.md W3.1, real time). An
+/// order the engine refuses spends that army's day, as in `step_planner`.
+pub fn plan_day(
+    planner: &mut dyn AiPlanner<OverworldState, OverworldOrder>,
+    registry: &DataRegistry,
+    state: &mut OverworldState,
+    side: u8,
+) -> Vec<OverworldEvent> {
+    let mut events = Vec::new();
+    for _ in 0..64 {
+        let order = planner.next_order(registry, state, side);
+        if order == OverworldOrder::EndTurn {
+            break;
+        }
+        match state.apply(registry, &order) {
+            Ok(more) => events.extend(more),
+            Err(_) => {
+                if let OverworldOrder::MoveArmy { army, .. } = order
+                    && let Some(a) = state.army_mut(army)
+                {
+                    a.moved = true;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    events
 }
 
 /// Ask the active side's planner for one order and apply it.
