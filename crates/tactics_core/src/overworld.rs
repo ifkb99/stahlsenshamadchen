@@ -354,6 +354,13 @@ pub enum OverworldEvent {
         defender: ArmyId,
         at: Hex,
     },
+    /// A fight a person commands a side of, and can reach, is planning its
+    /// next minute and waits for her orders; the clock waits with it
+    /// (WORLD.md W4.4).
+    EngagementAwaitsOrders {
+        engagement: u32,
+        side: u8,
+    },
     /// A column reached a fight in progress and joined it (WORLD.md W3.5).
     EngagementJoined {
         engagement: u32,
@@ -639,6 +646,15 @@ pub struct OverworldState {
     /// The next engagement id.
     #[serde(default)]
     pub next_engagement: u32,
+    /// Whether a person commands the fights of the sides nobody's AI
+    /// commands (WORLD.md W4.2–W4.4). When she does, the clock waits at the
+    /// planning phase of any fight her companies are in and she can reach
+    /// over the net, for her orders; her orders past her companies reach
+    /// down; and a fight she cannot reach is fought by her companies' own
+    /// leaders. Off — the harness, and the game until it can show a fight —
+    /// every side of every fight is planned by the engine.
+    #[serde(default)]
+    pub human_command: bool,
 }
 
 /// The kind of column a march is priced for: which movement classes are in
@@ -870,6 +886,7 @@ impl OverworldState {
             engagements: Vec::new(),
             next_unit_id: 0,
             next_engagement: 0,
+            human_command: false,
         };
         // Who can hear whom on the morning of day one. The events are dropped
         // because nothing has *changed* yet — an army that starts the campaign
@@ -1549,6 +1566,13 @@ impl OverworldState {
         let per_day = Self::ticks_per_day(registry);
         let mut events = Vec::new();
         for _ in 0..ticks {
+            // A fight she can reach waits for her orders, and so does the
+            // clock (WORLD.md W4.4): the pause is news reaching her, and the
+            // world does not go on without her while she gives them.
+            if let Some((engagement, side)) = self.awaiting_orders() {
+                events.push(OverworldEvent::EngagementAwaitsOrders { engagement, side });
+                return events;
+            }
             self.clock += 1;
             events.extend(self.run_engagements(registry));
             let marching: Vec<ArmyId> = self
@@ -1917,6 +1941,8 @@ impl OverworldState {
             seed,
             fight: crate::engagement::Fight::Live(Box::new(battle)),
         });
+        let last = self.engagements.len() - 1;
+        self.mark_commanders(registry, last);
         vec![OverworldEvent::EngagementBegan {
             engagement: id,
             attacker,
@@ -2011,10 +2037,93 @@ impl OverworldState {
             a.engaged = Some(fight);
             a.march = None;
         }
+        self.mark_commanders(registry, index);
         vec![OverworldEvent::EngagementJoined {
             engagement: fight,
             army: id,
         }]
+    }
+
+    /// Whether a person commands `side` in fights: it is nobody's AI's and the
+    /// campaign says a person commands.
+    fn commanded_in_person(&self, side: u8) -> bool {
+        self.human_command
+            && self
+                .sides
+                .get(side as usize)
+                .is_some_and(|s| s.ai.is_none())
+    }
+
+    /// Whether a person can command `side` in fight `e` right now: she
+    /// commands it in person and one of its companies there is on her net.
+    fn within_her_reach(&self, e: &crate::engagement::Engagement, side: u8) -> bool {
+        self.commanded_in_person(side)
+            && e.armies().iter().any(|a| {
+                self.army(*a).is_some_and(|army| army.side == side)
+                    && !self.out_of_contact.contains(a)
+            })
+    }
+
+    /// Mark in a fight's battle who commands in person, and the vehicle she
+    /// rides in if it is there — her acting commander's.
+    fn mark_commanders(&mut self, registry: &DataRegistry, e: usize) {
+        let sides: Vec<(u8, Option<CadetId>)> = (0..self.sides.len() as u8)
+            .filter(|s| self.commanded_in_person(*s))
+            .map(|s| (s, self.acting_commander(registry, s)))
+            .collect();
+        let battle = self.engagements[e].battle_mut();
+        battle.commanders = sides
+            .into_iter()
+            .map(|(side, cadet)| {
+                let rides = cadet.and_then(|c| {
+                    battle
+                        .units
+                        .iter()
+                        .find(|u| u.alive() && u.side == side && u.crew.contains(&c))
+                        .map(|u| u.id)
+                });
+                (side, rides)
+            })
+            .collect();
+    }
+
+    /// The fight `id`, if it is going on.
+    pub fn engagement(&self, id: u32) -> Option<&crate::engagement::Engagement> {
+        self.engagements.iter().find(|e| e.id == id)
+    }
+
+    /// Give an order in fight `id` for a side a person commands — a mission
+    /// to one of her companies, an order to a crew (which reaches down), or
+    /// her commit (WORLD.md W4.2–W4.4).
+    pub fn order_in_fight(
+        &mut self,
+        registry: &DataRegistry,
+        id: u32,
+        order: &crate::battle::Order,
+    ) -> Result<Vec<crate::battle::Event>, crate::battle::OrderError> {
+        let e = self
+            .engagements
+            .iter_mut()
+            .find(|e| e.id == id)
+            .ok_or(crate::battle::OrderError::NoSuchSide)?;
+        e.battle_mut().apply(registry, order)
+    }
+
+    /// The first fight waiting for a person's orders, and for which side:
+    /// one in its planning phase with a side she commands, can reach, and
+    /// has not committed.
+    pub fn awaiting_orders(&self) -> Option<(u32, u8)> {
+        self.engagements.iter().find_map(|e| {
+            let battle = e.battle();
+            if battle.is_over() || !battle.is_planning() {
+                return None;
+            }
+            battle
+                .living_sides()
+                .into_iter()
+                .find(|s| self.within_her_reach(e, *s) && !battle.has_committed(*s))
+                .map(|s| (e.id, s))
+        })
     }
 
     /// One clock tick of every fight: a battle whose round is being planned
@@ -2029,7 +2138,19 @@ impl OverworldState {
             difficulty: 3,
             doctrine: None,
         };
-        for e in &mut self.engagements {
+        // Sides a person is giving the orders for, fight by fight: those the
+        // engine leaves for her. Everybody else — the AI, and her companies
+        // she cannot reach — is planned here.
+        let in_person: Vec<Vec<u8>> = self
+            .engagements
+            .iter()
+            .map(|e| {
+                (0..self.sides.len() as u8)
+                    .filter(|s| self.within_her_reach(e, *s))
+                    .collect()
+            })
+            .collect();
+        for (i, e) in self.engagements.iter_mut().enumerate() {
             let seed = e.seed;
             let battle = e.battle_mut();
             if battle.is_over() {
@@ -2040,6 +2161,9 @@ impl OverworldState {
                 let round = battle.round as u64;
                 let mut ai = crate::ai::AiDriver::new();
                 for (side, s) in battle.sides.iter().enumerate() {
+                    if in_person[i].contains(&(side as u8)) {
+                        continue;
+                    }
                     let config = s.ai.clone().unwrap_or_else(|| stand_in.clone());
                     ai.insert(
                         side as u8,

@@ -820,6 +820,15 @@ pub struct Battle<C = Built> {
     /// per side.
     #[serde(default)]
     pub command: CommandState,
+    /// Sides a person commands, and the vehicle she is riding in if she is
+    /// in this fight (WORLD.md W4.2): `(side, her unit)`. On those sides an
+    /// order to a crew outside her own company reaches down past its
+    /// commander — it is held at the radio and lands a round late, and the
+    /// crew drops out of her company's plan when it does (the designer's
+    /// ruling). Empty — every battle there has ever been, and every side the
+    /// AI commands — is no such rule.
+    #[serde(default)]
+    pub commanders: Vec<(u8, Option<UnitId>)>,
     /// Evidence that the skipped caches above hold something.
     ///
     /// Skipped itself, which is exactly what makes it work: serde reaches for
@@ -862,6 +871,7 @@ impl SavedBattle {
             mut score,
             shells,
             command,
+            commanders,
             built: Unbuilt,
         } = self;
 
@@ -903,6 +913,7 @@ impl SavedBattle {
             score,
             shells,
             command,
+            commanders,
             built: Built(()),
         }
     }
@@ -1062,6 +1073,7 @@ impl BattleState {
             score: vec![0; side_count],
             shells: Vec::new(),
             command,
+            commanders: Vec::new(),
             built: Built(()),
         };
         for ((placement, crew), id) in file.units.iter().zip(&crews).zip(&ids) {
@@ -1178,6 +1190,7 @@ impl BattleState {
             score: vec![0; side_count],
             shells: Vec::new(),
             command,
+            commanders: Vec::new(),
             built: Built(()),
         };
         for (i, placement) in placements.iter().enumerate() {
@@ -1706,6 +1719,31 @@ impl BattleState {
             .collect();
         if current != needed {
             Arc::make_mut(&mut self.world).settle(registry, &needed);
+        }
+    }
+
+    /// Whether an order to `id` reaches down past her company's commander
+    /// (WORLD.md W4.2): on a side a person commands, a crew who is not in the
+    /// company her commander rides with. If the commander is not in this
+    /// fight at all, every crew is. On a side nobody commands in person —
+    /// the AI's, and every side of every battle before this — never.
+    pub fn reaches_down(&self, id: UnitId) -> bool {
+        let Some(unit) = self.lookup(id) else {
+            return false;
+        };
+        let Some((_, commander)) = self.commanders.iter().find(|(s, _)| *s == unit.side) else {
+            return false;
+        };
+        let Some(commander) = commander else {
+            return true;
+        };
+        if *commander == id {
+            return false;
+        }
+        let company = |u: UnitId| self.formation_of(u).map(|f| f.id.clone());
+        match (company(id), company(*commander)) {
+            (Some(hers), Some(ours)) => hers != ours,
+            _ => true,
         }
     }
 

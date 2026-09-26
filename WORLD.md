@@ -455,13 +455,31 @@ the determinism snapshot passes **unregenerated**.
       `frontier_world` flag the headquarters company's Panther (Anka Weiss;
       Irma for the Valkyries). The net already roots at the headquarters
       army she rides with.
-- [ ] **W4.2 One level down**, and reaching further allowed at a cost.
+- [x] ~~**W4.2 One level down, and reaching further at a cost.**~~ **Done
+      2026-09-26** (core). `BattleState::commanders` names the sides a
+      person commands and the vehicle she rides in; on those sides an order
+      to a crew outside her company `reaches_down` — it is held at the radio
+      even when the crew can hear, lands at the top of the next round, and
+      detaches the crew from her company's plan when it does (the ruling:
+      latency and a disrupted plan). Her companies are one level down: a
+      mission to one is an ordinary order. Empty on every existing battle
+      and every AI side.
 - [ ] **W4.3 Calling anybody in reach**: reports and requests, distinct
-      from orders.
-- [ ] **W4.4 The pause on news** (`Knower::Commander`), and planning more
-      than one engagement at one pause. *Orders on any tick are done*
-      (2026-09-26): on a clocked campaign an order is taken from any side
-      at any time, and a newer one replaces the march in progress.
+      from orders. *Largely moot at the root of the net*: she has nobody to
+      request from, and orders reach any company on her net on any tick.
+      What is left is presentation — a way to call a company that is not
+      selected (W5).
+- [x] ~~**W4.4 The pause on news.**~~ **Done 2026-09-26** (core). With
+      `OverworldState::human_command` on, a fight in which a side a person
+      commands has a company on her net stops the clock at its planning
+      phase (`EngagementAwaitsOrders`, `awaiting_orders`) until she commits
+      through `order_in_fight`; the engine plans every other side meanwhile,
+      and a company she cannot reach fights under its own leader without
+      the clock waiting. More than one fight waiting is one pause, answered
+      fight by fight. Orders on any tick: on a clocked campaign an order is
+      taken from any side at any time, and a newer one replaces the march
+      in progress. `human_command` is off until the game can show a fight
+      (W5), so the harness and today's game are unchanged.
 - [x] ~~**W4.5 Her death ends the campaign; a wound does not.**~~ **Done
       2026-09-26.** `victory.commander` (both campaigns declare it) makes a
       dead commander a defeat, `CampaignEnd::CommanderKilled`;

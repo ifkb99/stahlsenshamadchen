@@ -708,6 +708,12 @@ fn pump_events(
                 log.push(format!("{} is in contact with {}.", att.name, def.name));
             }
         }
+        // Nothing sets `human_command` in the game yet — a fight has no screen
+        // of its own until W5 — so this is never raised here; said anyway so
+        // the log is honest the day it is.
+        OverworldEvent::EngagementAwaitsOrders { .. } => {
+            log.push("A fight is waiting for your orders.".to_string());
+        }
         OverworldEvent::EngagementJoined { army, .. } => {
             if let Some(a) = overworld.state.army(*army) {
                 log.push(format!("{} joins the fight.", a.name));

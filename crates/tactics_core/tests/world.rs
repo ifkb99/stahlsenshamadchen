@@ -587,3 +587,92 @@ fn a_generated_world_is_saved_as_how_to_make_it_again() {
     let chunk = Hex::new(1, -1);
     assert_eq!(back.chunk_tiles(chunk), made.chunk_tiles(chunk));
 }
+
+// --- a person in command (WORLD.md W4.2–W4.4) ---
+
+use tactics_core::battle::{Event, Latitude, Order, UnitId};
+
+/// river_crossing, and two crews of side 0 in different companies: one in
+/// the company its first formation's leader leads, one in another.
+fn two_companies(reg: &tactics_core::data::DataRegistry) -> (BattleState, UnitId, UnitId, UnitId) {
+    let state = BattleState::from_map(reg, "river_crossing", 3).unwrap();
+    let side0: Vec<_> = state.formations().iter().filter(|f| f.side == 0).collect();
+    assert!(side0.len() >= 2, "the baseline has two companies a side");
+    let her = side0[0].leader.unwrap();
+    let own = *side0[0].members.iter().find(|m| **m != her).unwrap_or(&her);
+    let other = side0[1].members[0];
+    (state, her, own, other)
+}
+
+fn radio(
+    state: &mut BattleState,
+    reg: &tactics_core::data::DataRegistry,
+    unit: UnitId,
+) -> Vec<Event> {
+    let to = state.lookup(unit).unwrap().pos;
+    let to = to
+        .all_neighbors()
+        .into_iter()
+        .find(|h| state.world.contains(*h) && state.occupants(*h).next().is_none())
+        .unwrap();
+    state
+        .apply(
+            reg,
+            &Order::Radio {
+                unit,
+                to: Some(to),
+                fire: None,
+                latitude: Latitude::Delegated,
+            },
+        )
+        .expect("the order is legal")
+}
+
+#[test]
+fn an_order_past_her_companies_lands_a_round_late() {
+    // The designer's ruling: she orders her companies; an order to a crew in
+    // a company she does not ride with reaches down past its commander, and
+    // travels the net to land a round late — and on landing takes the crew
+    // out of her company's plan, as any direct order does.
+    let reg = registry();
+    let (mut state, her, own, other) = two_companies(&reg);
+    state.commanders = vec![(0, Some(her))];
+    assert!(
+        !state.reaches_down(own),
+        "her own company is one level down"
+    );
+    assert!(state.reaches_down(other));
+
+    let held = radio(&mut state, &reg, other);
+    assert!(
+        held.iter()
+            .any(|e| matches!(e, Event::OrdersWaiting { unit } if *unit == other)),
+        "reaching down is held at the radio: {held:?}"
+    );
+    assert!(state.lookup(other).unwrap().orders.is_none(), "not yet");
+
+    let direct = radio(&mut state, &reg, own);
+    assert!(direct.is_empty(), "her own company's crew is told at once");
+    assert!(state.lookup(own).unwrap().orders.is_some());
+
+    for side in 0..state.sides.len() as u8 {
+        let _ = state.apply(&reg, &Order::Commit { side });
+    }
+    let round = state.resolve_round(&reg);
+    let _ = round;
+    assert!(
+        state.lookup(other).unwrap().orders.is_some() || !state.lookup(other).unwrap().alive(),
+        "a round later it has landed, and she is out of her company's plan"
+    );
+}
+
+#[test]
+fn with_nobody_commanding_in_person_no_order_reaches_down() {
+    // Every battle before this, and every side the AI commands: the rule's
+    // absence is the game as it was.
+    let reg = registry();
+    let (mut state, _, _, other) = two_companies(&reg);
+    assert!(state.commanders.is_empty());
+    assert!(!state.reaches_down(other));
+    assert!(radio(&mut state, &reg, other).is_empty());
+}
