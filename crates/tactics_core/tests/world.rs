@@ -422,3 +422,168 @@ fn a_battle_on_a_window_of_the_world_is_the_battle_on_the_whole_of_it() {
         );
     }
 }
+
+// --- saves (W1.6) ---
+
+use tactics_core::save::SaveGame as Save;
+
+/// `river_crossing`'s armies on a window onto a radius-4 generated world.
+fn staged_on_window(reg: &tactics_core::data::DataRegistry, seed: u64) -> BattleState {
+    let rules = WorldGen {
+        radius: 4,
+        ..reg.worldgen.clone().unwrap()
+    };
+    let made = Arc::new(GeneratedWorld::with_rules(rules, R, seed).unwrap());
+    let file = reg.map("river_crossing").unwrap();
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &file.units);
+    let ids: Vec<tactics_core::battle::UnitId> = (0..file.units.len() as u32)
+        .map(tactics_core::battle::UnitId)
+        .collect();
+    let sides = file
+        .sides
+        .iter()
+        .map(|s| SideState {
+            name: s.name.clone(),
+            ai: None,
+        })
+        .collect();
+    BattleState::from_muster_on(
+        reg,
+        World::window_onto(made),
+        Scenario::from_map_file(file),
+        sides,
+        Muster {
+            placements: &file.units,
+            crews: &crews,
+            ids: &ids,
+        },
+        Arc::new(roster),
+        seed,
+    )
+    .unwrap()
+}
+
+/// Play `rounds` with fresh planners seeded `ai_seed`; the transcript.
+fn play_rounds(
+    reg: &tactics_core::data::DataRegistry,
+    state: &mut BattleState,
+    rounds: usize,
+    ai_seed: u64,
+) -> String {
+    let mut ai = AiDriver::new();
+    for (side, doctrine) in [(0u8, "massed_armor"), (1, "elastic_defense")] {
+        ai.insert(
+            side,
+            make_battle_planner(
+                &AiConfig {
+                    planner: "utility".into(),
+                    difficulty: 3,
+                    doctrine: Some(doctrine.into()),
+                },
+                ai_seed + side as u64,
+                reg,
+            ),
+        );
+    }
+    let mut out = String::new();
+    for _ in 0..rounds {
+        if state.is_over() {
+            break;
+        }
+        ai.plan_round_with(reg, state, |d| {
+            out.push_str(&format!("order {:?}\n", d.order))
+        });
+        for event in state.resolve_round(reg) {
+            out.push_str(&format!("{event:?}\n"));
+        }
+    }
+    out
+}
+
+#[test]
+fn a_battle_on_generated_ground_goes_through_a_save_and_fights_on_the_same() {
+    // The future round-trips, which is the property `tests/save.rs` pins for
+    // a battle on a map, pinned here for one on a window: the ground comes
+    // back from the generator's inputs rather than from the file, the same
+    // chunks are resident, and what happens next is the same.
+    let reg = registry();
+    let mut original = staged_on_window(&reg, 21);
+    play_rounds(&reg, &mut original, 3, 5);
+
+    let text = Save::new(&reg, None, Some(original.clone()))
+        .to_json()
+        .expect("a window saves");
+    assert!(
+        !text.contains("\"palette\""),
+        "a window is saved as how to make it, not as its tiles"
+    );
+    let mut restored = Save::from_json(&reg, &text)
+        .expect("and loads")
+        .0
+        .battle
+        .expect("the battle came back");
+    assert_eq!(
+        restored
+            .world
+            .resident_chunks()
+            .unwrap()
+            .collect::<Vec<_>>(),
+        original
+            .world
+            .resident_chunks()
+            .unwrap()
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(restored.world.len(), original.world.len());
+
+    let expected = play_rounds(&reg, &mut original, 5, 5);
+    let actual = play_rounds(&reg, &mut restored, 5, 5);
+    assert!(!expected.is_empty(), "the battle is still live");
+    assert_eq!(
+        actual, expected,
+        "a reloaded window must fight on exactly as before"
+    );
+}
+
+#[test]
+fn ground_that_was_changed_stays_changed_when_forgotten_and_when_saved() {
+    let reg = registry();
+    let mut state = staged_on_window(&reg, 21);
+    let world = Arc::make_mut(&mut state.world);
+    let chunk = world.resident_chunks().unwrap().next().unwrap();
+    let hex = chunk_centre(chunk, R);
+    world.edit(&reg, hex, "water", 0);
+    assert_eq!(world.get(hex).unwrap().terrain, "water");
+
+    world.unload_chunk(chunk);
+    assert_eq!(world.presence(hex), Presence::Unloaded);
+    let needed = std::iter::once((chunk.x, chunk.y))
+        .chain(world.resident_chunks().unwrap().map(|c| (c.x, c.y)))
+        .collect();
+    world.settle(&reg, &needed);
+    assert_eq!(
+        world.get(hex).unwrap().terrain,
+        "water",
+        "the edit is laid over the chunk when it comes back"
+    );
+
+    let text = Save::new(&reg, None, Some(state)).to_json().unwrap();
+    let back = Save::from_json(&reg, &text).unwrap().0.battle.unwrap();
+    assert_eq!(
+        back.world.get(hex).unwrap().terrain,
+        "water",
+        "and it is in the save"
+    );
+}
+
+#[test]
+fn a_generated_world_is_saved_as_how_to_make_it_again() {
+    let reg = registry();
+    let made = GeneratedWorld::new(&reg, 3).unwrap();
+    let text = serde_json::to_string(&made).unwrap();
+    assert!(text.len() < 4_000, "{} bytes for a world", text.len());
+    let back: GeneratedWorld = serde_json::from_str(&text).unwrap();
+    assert_eq!(back.skeleton, made.skeleton);
+    let chunk = Hex::new(1, -1);
+    assert_eq!(back.chunk_tiles(chunk), made.chunk_tiles(chunk));
+}

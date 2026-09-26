@@ -487,8 +487,11 @@ and the seam tests in `tests/ground.rs`.
   machines holding the same ground. The proof is a battle fought on a whole
   generated world and on a paging window onto it, transcript for transcript.
 - **Saved as its tiles, under the key `map`**, so a whole world's save is
-  what a battle's always was. A chunked world refuses to serialise rather
-  than come back whole with its unloaded ground suddenly outside.
+  what a battle's always was. **A window onto a generated world saves as how
+  to make it again** — seed, rules, chunk radius, resident chunks, and the
+  edit overlay (`World::edit`) — and regenerates on load; the rules travel in
+  the file so a retuned mod cannot change a loaded campaign's ground. A
+  chunked world with no generator behind it refuses to serialise.
 
 ### Making a world
 

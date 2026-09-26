@@ -166,6 +166,15 @@ pub struct World {
     /// the generated world it is a window onto. `None` for a whole world,
     /// and for a chunked one whose chunks are handed to it by hand.
     source: Option<Arc<GeneratedWorld>>,
+    /// Ground that is no longer what the generator made — a blown bridge, an
+    /// engineer's road — by hex, for a window onto a generated world. Laid
+    /// over a chunk every time it is loaded, and saved, so an edit survives
+    /// the chunk being forgotten and the game being closed (WORLD.md W1.6).
+    /// Empty for a whole world, whose tiles are saved as they are.
+    edits: std::collections::BTreeMap<(i32, i32), (String, i32)>,
+    /// A window that came off disk knows which chunks were resident but has
+    /// not loaded them yet; [`World::rebuilt`] does.
+    pending: bool,
 }
 
 /// Every chunk whose ground any of `reaches` could touch: for each `(hex,
@@ -233,12 +242,44 @@ impl World {
             moves: _,
             residency,
             source,
+            edits,
+            pending: _,
         } = self;
-        Self {
-            residency,
-            source,
-            ..Self::build(registry, tiles)
+        match (&residency, &source) {
+            // A window: its ground is the generator's plus the edits, loaded
+            // chunk by chunk exactly as it was before it was saved.
+            (Residency::Chunks { radius, resident }, Some(_)) => {
+                let mut world = Self {
+                    residency: Residency::Chunks {
+                        radius: *radius,
+                        resident: BTreeSet::new(),
+                    },
+                    source: source.clone(),
+                    edits,
+                    ..Self::default()
+                };
+                let needed = resident.clone();
+                world.settle(registry, &needed);
+                world
+            }
+            _ => Self {
+                residency,
+                source,
+                edits,
+                ..Self::build(registry, tiles)
+            },
         }
+    }
+
+    /// Change the ground at `hex`, and remember the change: a window onto a
+    /// generated world lays it over the chunk every time the chunk is loaded
+    /// and carries it in a save.
+    pub fn edit(&mut self, registry: &DataRegistry, hex: Hex, terrain: &str, elevation: i32) {
+        if self.source.is_some() {
+            self.edits
+                .insert((hex.x, hex.y), (terrain.to_string(), elevation));
+        }
+        self.insert(registry, hex, terrain, elevation);
     }
 
     /// An empty window onto a generated world, which loads its chunks from
@@ -342,6 +383,15 @@ impl World {
             );
             self.insert(registry, hex, terrain, elevation);
         }
+        let edited: Vec<(Hex, String, i32)> = self
+            .edits
+            .iter()
+            .map(|(&(x, y), (t, e))| (Hex::new(x, y), t.clone(), *e))
+            .filter(|(h, _, _)| chunk_of(*h, radius) == chunk)
+            .collect();
+        for (hex, terrain, elevation) in edited {
+            self.insert(registry, hex, &terrain, elevation);
+        }
         if let Residency::Chunks { resident, .. } = &mut self.residency {
             resident.insert((chunk.x, chunk.y));
         }
@@ -413,7 +463,8 @@ impl World {
     /// Whether the derived grids hold anything — false for a world that has
     /// tiles and came off disk, and for the empty world.
     pub fn is_built(&self) -> bool {
-        self.tiles.is_empty() || (!self.sight.is_empty() && !self.moves.is_empty())
+        !self.pending
+            && (self.tiles.is_empty() || (!self.sight.is_empty() && !self.moves.is_empty()))
     }
 
     /// The tiles themselves.
@@ -478,29 +529,85 @@ impl Ground for World {
     }
 }
 
-/// Saved as its tiles: the same bytes a battle's `map` always was.
-///
-/// Only a whole world can be saved this way. A chunked one would come back
-/// as a whole one holding whatever happened to be resident — every hex it
-/// had not loaded suddenly *outside* — so it is refused until the world's
-/// own save format exists (W1.6: a seed, the skeleton and an edit overlay).
+/// A window onto a generated world, as it is saved: how to make the world
+/// again, which chunks were held, and what has changed since it was made.
+#[derive(Serialize, Deserialize)]
+struct SavedWindow {
+    generated: GeneratedWorld,
+    resident: Vec<(i32, i32)>,
+    #[serde(default)]
+    edits: Vec<((i32, i32), String, i32)>,
+}
+
+/// Either shape a world comes off disk in.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SavedWorld {
+    Window(Box<SavedWindow>),
+    Whole(HexMap),
+}
+
+/// A whole world is saved as its tiles: the same bytes a battle's `map`
+/// always was, so no save written before the world existed changed shape.
+/// A window onto a generated world is saved as the generator's inputs, the
+/// resident chunks and the edits (WORLD.md W1.6) — a few hundred bytes for
+/// a world of any size. A chunked world with no source cannot be made again
+/// and is refused rather than saved as a whole one with its unloaded ground
+/// suddenly outside.
 impl Serialize for World {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        if self.residency != Residency::Whole {
-            return Err(serde::ser::Error::custom(
-                "a world held a chunk at a time is not saved as its tiles",
-            ));
+        match (&self.residency, &self.source) {
+            (Residency::Whole, _) => self.tiles.serialize(s),
+            (Residency::Chunks { resident, .. }, Some(source)) => {
+                #[derive(Serialize)]
+                struct Out<'a> {
+                    generated: &'a GeneratedWorld,
+                    resident: Vec<(i32, i32)>,
+                    edits: Vec<((i32, i32), &'a str, i32)>,
+                }
+                Out {
+                    generated: source,
+                    resident: resident.iter().copied().collect(),
+                    edits: self
+                        .edits
+                        .iter()
+                        .map(|(k, (t, e))| (*k, t.as_str(), *e))
+                        .collect(),
+                }
+                .serialize(s)
+            }
+            (Residency::Chunks { .. }, None) => Err(serde::ser::Error::custom(
+                "a world held a chunk at a time with no generator behind it cannot be saved",
+            )),
         }
-        self.tiles.serialize(s)
     }
 }
 
-/// Loaded as tiles with nothing derived yet; [`World::rebuilt`] finishes it.
+/// Loaded with nothing derived yet; [`World::rebuilt`] finishes it.
 impl<'de> Deserialize<'de> for World {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        Ok(Self {
-            tiles: HexMap::deserialize(d)?,
-            ..Self::default()
+        Ok(match SavedWorld::deserialize(d)? {
+            SavedWorld::Whole(tiles) => Self {
+                tiles,
+                ..Self::default()
+            },
+            SavedWorld::Window(saved) => {
+                let saved = *saved;
+                Self {
+                    residency: Residency::Chunks {
+                        radius: saved.generated.chunk_radius,
+                        resident: saved.resident.into_iter().collect(),
+                    },
+                    source: Some(Arc::new(saved.generated)),
+                    edits: saved
+                        .edits
+                        .into_iter()
+                        .map(|(k, t, e)| (k, (t, e)))
+                        .collect(),
+                    pending: true,
+                    ..Self::default()
+                }
+            }
         })
     }
 }
