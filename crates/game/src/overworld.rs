@@ -393,17 +393,21 @@ fn enter_overworld(
     }
 
     // Fresh campaign: STAHL_CAMPAIGN names one (a dev tool until there is a
-    // start menu — `frontier_world` is the generated campaign), else the
-    // first overworld map from the mods, by id. It used to be whichever one
-    // the registry's hash map yielded first, which is a different campaign
-    // from one launch to the next the day a mod ships a second one.
+    // start menu — `frontier` is the drawn campaign), else the one the mods
+    // open on (`campaign` in `mod.json`; the base mod names the generated
+    // `frontier_world`), else the first overworld map from the mods, by id.
+    // It used to be whichever one the registry's hash map yielded first,
+    // which is a different campaign from one launch to the next the day a
+    // mod ships a second one.
+    let overworld = |id: &String| {
+        registry
+            .map(id)
+            .is_some_and(|m| m.kind == MapKind::Overworld)
+    };
     let map_id = std::env::var("STAHL_CAMPAIGN")
         .ok()
-        .filter(|id| {
-            registry
-                .map(id)
-                .is_some_and(|m| m.kind == MapKind::Overworld)
-        })
+        .filter(overworld)
+        .or_else(|| registry.campaign.clone().filter(overworld))
         .or_else(|| {
             registry
                 .maps

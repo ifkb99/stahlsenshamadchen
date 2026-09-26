@@ -29,7 +29,7 @@ covers what the code *is*; that one covers how to work on it.
 ## Commands
 
 ```sh
-cargo run -p stahlsenshamädchen     # the game (starts on the overworld)
+cargo run -p stahlsenshamädchen     # the game (opens on the generated campaign; STAHL_CAMPAIGN=frontier for the drawn one)
 cargo run --bin validate-mods       # validate assets/mods; prints the scale table
 cargo test -p tactics_core          # headless engine tests (the real suite)
 cargo run -p tactics_core --example playthrough [seed]   # narrated AI battle
@@ -39,10 +39,10 @@ cargo run --release -p tactics_core --example balance -- --sim   # ...fought out
 cargo run --release -p tactics_core --example balance -- --sim --points 100  # richer armies
 cargo run --release -p tactics_core --example balance -- --brains --brain-games 64  # which planner
 cargo run --release -p tactics_core --example balance -- --help  # every flag, with examples
-cargo run --release -p tactics_core --example campaign [seed [to]]  # whole campaigns, every side a machine
+cargo run --release -p tactics_core --example campaign [seed [to]]  # whole campaigns, every side a machine (the mod's `campaign`)
 cargo run --release -p tactics_core --example worldgen [seed]  # a generated world, drawn; -- --chunk q,r for one hex
-cargo run --release -p tactics_core --example campaign -- --map frontier_world  # the generated campaign
-STAHL_CAMPAIGN=frontier_world cargo run -p stahlsenshamädchen  # ...in the game: Space runs the clock, [ ] its speed, Enter to dawn, Z zooms onto the ground
+cargo run --release -p tactics_core --example campaign -- --map frontier  # the drawn campaign
+# in the game's generated campaign: Space runs the clock, [ ] its speed, Enter to dawn, Z zooms onto the ground
 
 # what does this number do that the old one did not?
 cargo run --release -p tactics_core --example balance -- \
@@ -516,6 +516,14 @@ and the seam tests in `tests/ground.rs`.
   it spoils decisions.
 - **Optional, like `command`.** No `worldgen` block is no generator, and
   every scenario and hand-drawn campaign plays as before.
+- **The game opens on the campaign the mods name** (`campaign` in
+  `mod.json`, `frontier_world` in the base mod; `validate-mods` errors on
+  anything that is not an overworld map), then on the first overworld map
+  by id. `STAHL_CAMPAIGN` overrides it, and the tours that walk the drawn
+  campaign (`after-action`, `overworld-tour`, `the-roll`) declare
+  `STAHL_CAMPAIGN=frontier`. `examples/campaign` defaults to the same
+  choice, so the instrument measures what a player plays; every figure
+  quoted for `frontier` is `--map frontier`.
 - **A campaign can stand on a generated world** (`"world"` in its map file;
   `frontier_world`). Its campaign map is the chunks' summaries at the
   chunks' coordinates — a campaign hex and the ground under it are one

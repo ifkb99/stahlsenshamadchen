@@ -1,5 +1,5 @@
 # What a battle cost, on a page that stops for it.
-#!env
+#!env STAHL_CAMPAIGN=frontier
 #
 #   STAHL_PRESENT=immediate STAHL_DEBUG=1 \
 #     STAHL_SCRIPT=scripts/dev/after-action.txt cargo run -p stahlsenshamädchen

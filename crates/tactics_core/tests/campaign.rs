@@ -2277,3 +2277,32 @@ fn a_fight_that_is_over_in_one_place_lets_its_army_go_while_another_goes_on() {
     );
     assert!(!front.armies().contains(&winner));
 }
+
+#[test]
+fn the_game_opens_on_the_generated_campaign_and_one_it_does_not_have_fails_validation() {
+    // The fourth round of rulings: the generated campaign is the default.
+    // Which war a mod is about is the mod's to say, so it is `campaign` in
+    // `mod.json`, and naming anything but an overworld map is an error
+    // rather than a game that opens on nothing.
+    let reg = registry();
+    assert_eq!(reg.campaign.as_deref(), Some("frontier_world"));
+    let state = OverworldState::from_map(&reg, "frontier_world", 1).unwrap();
+    assert!(
+        state.clocked(),
+        "the default campaign runs on the world clock"
+    );
+    assert!(reg.validate().is_ok());
+    for wrong in ["river_crossing", "nowhere"] {
+        let mut reg = registry();
+        reg.campaign = Some(wrong.into());
+        let report = reg.validate();
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|e| e.contains("`campaign`") && e.contains(wrong)),
+            "{wrong}: {:?}",
+            report.errors
+        );
+    }
+}

@@ -6,8 +6,11 @@
 //! cargo run --release -p tactics_core --example campaign              # seeds 0..8
 //! cargo run --release -p tactics_core --example campaign -- 3         # one seed, every battle
 //! cargo run --release -p tactics_core --example campaign -- 0 32      # seeds 0..32, summary only
-//! cargo run --release -p tactics_core --example campaign -- --map frontier_world 0 8  # another campaign
+//! cargo run --release -p tactics_core --example campaign -- --map frontier 0 32  # the drawn one
 //! ```
+//!
+//! With no `--map` it plays the campaign the game opens on (`campaign` in
+//! `mod.json`), so the instrument measures what a player plays.
 //!
 //! The first instrument this project has had that reads the *campaign*
 //! rather than a battle: before `tactics_core::field` existed the path from a
@@ -20,7 +23,7 @@ use tactics_core::data::DataRegistry;
 use tactics_core::harness::campaign::{CampaignOptions, CampaignRun, play};
 use tactics_core::harness::parallel::run_all;
 
-/// The campaign played when `--map` names none.
+/// The campaign played when `--map` names none and no mod names one.
 const MAP: &str = "frontier";
 
 fn main() {
@@ -32,6 +35,7 @@ fn main() {
         .position(|a| a == "--map")
         .and_then(|i| raw.get(i + 1))
         .cloned()
+        .or_else(|| registry.campaign.clone())
         .unwrap_or_else(|| MAP.to_string());
     let args: Vec<u64> = raw
         .iter()

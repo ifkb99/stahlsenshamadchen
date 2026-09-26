@@ -86,4 +86,11 @@ pub struct ModManifest {
     /// Same one-in-effect rule as [`Self::scale`].
     #[serde(default)]
     pub march: Option<super::March>,
+    /// The campaign a new game opens on, by the id of an overworld map
+    /// (WORLD.md, the fourth round of rulings: the generated campaign is the
+    /// default). Content rather than a line in the game crate, because which
+    /// war a mod is *about* is the mod's to say; a later mod naming one
+    /// replaces it. Nobody naming one opens on the first overworld map by id.
+    #[serde(default)]
+    pub campaign: Option<String>,
 }
