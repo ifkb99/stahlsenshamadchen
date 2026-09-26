@@ -24,10 +24,10 @@ use tactics_core::roster::CadetId;
 use tactics_core::save::SaveGame;
 
 #[derive(Resource)]
-struct Overworld {
-    state: OverworldState,
+pub(crate) struct Overworld {
+    pub(crate) state: OverworldState,
     planners: HashMap<u8, Box<dyn AiPlanner<OverworldState, OverworldOrder>>>,
-    anim: VecDeque<OverworldEvent>,
+    pub(crate) anim: VecDeque<OverworldEvent>,
     pace: Timer,
     selected: Option<ArmyId>,
     /// Tiles the selected army can reach, with the cost of getting there.
@@ -388,7 +388,11 @@ fn enter_overworld(
                 .min()
         })
         .expect("base mod provides an overworld map");
-    let state = OverworldState::from_map(registry, &map_id, 1337).expect("overworld builds");
+    let mut state = OverworldState::from_map(registry, &map_id, 1337).expect("overworld builds");
+    // On the clock the player commands her own fights: the clock waits at a
+    // fight she can reach, and the fight screen opens on it (WORLD.md W4.4,
+    // W5).
+    state.human_command = state.clocked();
     log.push(
         "Campaign started. LMB select army / move, G advance, H hold, W fall back, \
          Enter end turn, Q/E rotate.",
@@ -737,8 +741,13 @@ fn pump_events(
         // Nothing sets `human_command` in the game yet — a fight has no screen
         // of its own until W5 — so this is never raised here; said anyway so
         // the log is honest the day it is.
-        OverworldEvent::EngagementAwaitsOrders { .. } => {
+        OverworldEvent::EngagementAwaitsOrders { engagement, .. } => {
+            // Her company is in a fight she can reach: the clock has stopped,
+            // and the fight screen opens on it.
             log.push("A fight is waiting for your orders.".to_string());
+            overworld.paused = true;
+            commands.insert_resource(PendingBattle::Engagement { id: *engagement });
+            next.set(AppState::Battle);
         }
         OverworldEvent::EngagementJoined { army, .. } => {
             if let Some(a) = overworld.state.army(*army) {
@@ -1833,7 +1842,15 @@ fn run_world_clock(mods: Res<Mods>, time: Res<Time>, mut overworld: ResMut<Overw
     {
         ow.paused = true;
     }
-    ow.anim.extend(events);
+    // A column crossing into a new hex is not news: the sprites follow the
+    // campaign as it stands (`sync_armies`), and at six hours a second every
+    // column's every hex queued as a beat of animation held the clock to the
+    // speed of the animation. Captures, contact and fights still play.
+    ow.anim.extend(
+        events
+            .into_iter()
+            .filter(|e| !matches!(e, OverworldEvent::ArmyMoved { .. })),
+    );
     ow.refresh_range(&mods.0);
 }
 

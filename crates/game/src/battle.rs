@@ -33,6 +33,12 @@ pub enum PendingBattle {
     /// Overworld armies clashing on a terrain-picked battle map. More than
     /// two can take part: neighbours on either side may reinforce.
     Field(Clash),
+    /// A fight on the ground of a clocked campaign (WORLD.md W5): the
+    /// screen is a view onto the campaign's own engagement, not a battle of
+    /// its own. It mirrors the fight, sends every order the player gives to
+    /// it, and resolves it by running the world clock — so the fight goes on
+    /// in lockstep with every march on the map.
+    Engagement { id: u32 },
 }
 
 /// Reported back to the overworld when a field battle ends: the engine's
@@ -100,6 +106,10 @@ struct Battle {
     mode: InputMode,
     /// Which overworld clash this battle resolves, if any.
     field: Option<FieldBattle>,
+    /// Which fight on the ground this screen is a view onto, if it is one.
+    engagement: Option<u32>,
+    /// Orders applied to the mirror and not yet sent to the fight itself.
+    forward: Vec<Order>,
     /// Delay before leaving the battle screen once it's decided.
     exit_timer: Option<Timer>,
 }
@@ -702,6 +712,7 @@ fn setup_battle(
     mods: Res<Mods>,
     art: Res<ArtCache>,
     pending: Option<Res<PendingBattle>>,
+    overworld: Option<Res<crate::overworld::Overworld>>,
     view: map_render::View,
     mut log: ResMut<BattleLog>,
     mut focus: ResMut<CameraFocus>,
@@ -719,6 +730,11 @@ fn setup_battle(
     let battle_seed = match &pending {
         PendingBattle::Scenario { .. } => seed(),
         PendingBattle::Field(clash) => seed_override().unwrap_or(clash.seed),
+        PendingBattle::Engagement { .. } => 0,
+    };
+    let engagement_id = match &pending {
+        PendingBattle::Engagement { id } => Some(*id),
+        _ => None,
     };
     let staged = match &pending {
         PendingBattle::Scenario { map_id } => BattleState::from_map(registry, map_id, battle_seed)
@@ -727,6 +743,13 @@ fn setup_battle(
         PendingBattle::Field(clash) => clash
             .stage(registry, battle_seed)
             .map(|(state, field)| (state, Some(field))),
+        // The mirror of the campaign's own fight: nothing is staged, and the
+        // fight's sides are planned by the campaign (the AI's) or by her.
+        PendingBattle::Engagement { id } => overworld
+            .as_ref()
+            .and_then(|ow| ow.state.engagement(*id))
+            .map(|e| (e.battle().clone(), None))
+            .ok_or_else(|| StagingError::MissingMap(format!("fight {id}"))),
     };
 
     // Nothing has been spawned yet, so backing out is just declining to enter:
@@ -744,6 +767,9 @@ fn setup_battle(
     let autoplay = std::env::var("STAHL_AUTOPLAY").is_ok();
     let mut ai = AiDriver::new();
     for (i, side) in state.sides.iter().enumerate() {
+        if engagement_id.is_some() {
+            break;
+        }
         match &side.ai {
             Some(cfg) => {
                 ai.insert(
@@ -769,7 +795,22 @@ fn setup_battle(
     // The view pivots on the map's centroid. Written through `Commands`
     // rather than a `ResMut` so this system can also take `View`, which reads
     // the same resource — two conflicting accesses would panic at runtime.
-    let center = state.world.center();
+    // A fight on the world has no map of its own to centre on: the view
+    // pivots on the fighting instead.
+    let center = if engagement_id.is_some() {
+        let (n, sx, sy) = state
+            .alive_units()
+            .fold((0i64, 0i64, 0i64), |(n, x, y), u| {
+                (n + 1, x + u.pos.x as i64, y + u.pos.y as i64)
+            });
+        if n == 0 {
+            state.world.center()
+        } else {
+            Hex::round([sx as f32 / n as f32, sy as f32 / n as f32])
+        }
+    } else {
+        state.world.center()
+    };
     commands.insert_resource(ViewCenter(center));
     map_render::spawn_map(
         &mut commands,
@@ -868,6 +909,8 @@ fn setup_battle(
         range_dirty: false,
         mode: InputMode::Normal,
         field,
+        engagement: engagement_id,
+        forward: Vec::new(),
         exit_timer: None,
     });
 }
@@ -1727,14 +1770,79 @@ fn drive_ai(mods: Res<Mods>, mut battle: ResMut<Battle>, movers: Query<&Mover>) 
 /// Play out one tick of the committed round, once the previous one has
 /// finished animating. Keeping the simulation at most a tick ahead of the
 /// sprites is what lets the screen show simultaneous action honestly.
-fn advance_resolution(mods: Res<Mods>, mut battle: ResMut<Battle>, movers: Query<&Mover>) {
+fn advance_resolution(
+    mods: Res<Mods>,
+    mut battle: ResMut<Battle>,
+    overworld: Option<ResMut<crate::overworld::Overworld>>,
+    mut log: ResMut<BattleLog>,
+    movers: Query<&Mover>,
+) {
     if battle.state.is_over() || !battle.anim.is_empty() || !movers.is_empty() {
+        return;
+    }
+    let battle = &mut *battle;
+    // A fight on the world: the orders she gave go to the fight itself, and
+    // once her side has committed the fight is resolved by running the world
+    // clock a tick at a time — the fight in lockstep with every march on the
+    // map — and the mirror is taken again from what the campaign now holds.
+    if let Some(id) = battle.engagement {
+        // Already leaving: the fight is over or another one needs her, and
+        // re-arming the exit every frame would keep her here for ever.
+        if battle.exit_timer.is_some() {
+            return;
+        }
+        let Some(mut ow) = overworld else {
+            return;
+        };
+        let ow = &mut *ow;
+        for order in battle.forward.drain(..) {
+            if let Err(e) = ow.state.order_in_fight(&mods.0, id, &order) {
+                log.push(format!("The order did not reach the fight: {e}"));
+            }
+        }
+        let side = battle.view_side();
+        let ready = battle.state.resolving_tick().is_some() || battle.state.has_committed(side);
+        if !ready {
+            return;
+        }
+        let events = ow.state.advance_clock(&mods.0, 1);
+        let other_fight_waits = events.iter().any(|e| {
+            matches!(e, tactics_core::overworld::OverworldEvent::EngagementAwaitsOrders { engagement, .. }
+                if *engagement != id)
+        });
+        // This fight's own call for orders is answered here, on this screen;
+        // only the rest is news for the campaign.
+        ow.anim.extend(events.into_iter().filter(|e| {
+            !matches!(e, tactics_core::overworld::OverworldEvent::EngagementAwaitsOrders { engagement, .. }
+                if *engagement == id)
+        }));
+        match ow.state.engagement(id) {
+            Some(e) => {
+                battle.state = e.battle().clone();
+                battle.anim.extend(
+                    e.recent
+                        .iter()
+                        .filter(|ev| ev.heard_by(&battle.state, side))
+                        .cloned(),
+                );
+                battle.range_dirty = true;
+                if other_fight_waits {
+                    log.push("Another of your fights needs you.".to_string());
+                    battle.exit_timer = Some(Timer::from_seconds(1.0, TimerMode::Once));
+                }
+            }
+            None => {
+                // Over: the campaign has already folded the survivors back
+                // into their companies.
+                log.push("The fight is over.".to_string());
+                battle.exit_timer = Some(Timer::from_seconds(1.5, TimerMode::Once));
+            }
+        }
         return;
     }
     if battle.state.resolving_tick().is_none() {
         return;
     }
-    let battle = &mut *battle;
     let events = battle.state.step_tick(&mods.0);
     battle.anim.extend(events);
     battle.range_dirty = true;
@@ -2144,6 +2252,9 @@ fn set_intent(
         Ok(events) => {
             battle.anim.extend(events);
             battle.range_dirty = true;
+            if battle.engagement.is_some() {
+                battle.forward.push(order.clone());
+            }
         }
         Err(e) => log.push(format!("Order refused: {e}")),
     }
@@ -2172,6 +2283,9 @@ fn set_intent_saying(
             battle.anim.extend(events);
             battle.range_dirty = true;
             log.push(said);
+            if battle.engagement.is_some() {
+                battle.forward.push(order.clone());
+            }
         }
         Err(e) => log.push(format!("Order refused: {e}")),
     }
@@ -2194,15 +2308,22 @@ fn commit_round(
 ) {
     if !battle.delegating(side) {
         match battle.state.apply(registry, &Order::Commit { side }) {
-            Ok(events) => battle.anim.extend(events),
+            Ok(events) => {
+                battle.anim.extend(events);
+                if battle.engagement.is_some() {
+                    battle.forward.push(Order::Commit { side });
+                }
+            }
             Err(e) => log.push(format!("Can't commit: {e}")),
         }
         return;
     }
+    let in_fight = battle.engagement.is_some();
     let Battle {
         state,
         delegate,
         anim,
+        forward,
         ..
     } = battle;
     let driver = delegate.get_or_insert_with(|| {
@@ -2230,6 +2351,11 @@ fn commit_round(
     let mut drilled = Vec::new();
     driver.plan_round_with(registry, state, |decision| {
         events.extend(decision.events.iter().cloned());
+        // Her staff's orders are her orders: in a fight on the world they go
+        // to the fight as well as to the mirror.
+        if in_fight && decision.rejected.is_none() {
+            forward.push(decision.order.clone());
+        }
         if let Some(error) = &decision.rejected {
             refused.push(error.to_string());
         }

@@ -1953,6 +1953,7 @@ impl OverworldState {
             origins,
             seed,
             fight: crate::engagement::Fight::Live(Box::new(battle)),
+            recent: Vec::new(),
         });
         let last = self.engagements.len() - 1;
         self.mark_commanders(registry, last);
@@ -2165,6 +2166,7 @@ impl OverworldState {
             .collect();
         for (i, e) in self.engagements.iter_mut().enumerate() {
             let seed = e.seed;
+            let mut recent = Vec::new();
             let battle = e.battle_mut();
             if battle.is_over() {
                 over.push(e.id);
@@ -2187,12 +2189,15 @@ impl OverworldState {
                         ),
                     );
                 }
-                ai.plan_round(registry, battle);
+                ai.plan_round_with(registry, battle, |d| {
+                    recent.extend(d.events.iter().cloned())
+                });
             }
-            battle.step_tick(registry);
+            recent.extend(battle.step_tick(registry));
             if battle.is_over() {
                 over.push(e.id);
             }
+            e.recent = recent;
         }
         for id in over {
             events.extend(self.close_engagement(registry, id));
@@ -2622,8 +2627,14 @@ impl OverworldState {
         // everybody else's — see `run_clock`.
         if self.world.is_some() {
             let army = self.army(id).expect("checked above").clone();
+            // Ordered onto the hex it stands on: that is a hold, and it ends
+            // whatever march it was on. The campaign planner says "stay" this
+            // way; refusing it spent the army's day and left it marching.
             if army.pos == to {
-                return Err(OverworldError::NoPath);
+                let a = self.army_mut(id).expect("checked above");
+                a.march = None;
+                a.moved = true;
+                return Ok(Vec::new());
             }
             let leg = self.plan_leg(registry, &army, to, engagement)?;
             let a = self.army_mut(id).expect("checked above");
