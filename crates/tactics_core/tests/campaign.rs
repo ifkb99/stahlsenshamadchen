@@ -1207,3 +1207,118 @@ fn the_shipped_campaign_kills_and_a_mod_that_declines_the_rule_does_not() {
         "a campaign that declines the rule killed somebody anyway"
     );
 }
+
+// --- a campaign on a generated world (WORLD.md W2) ---
+
+fn generated(reg: &DataRegistry) -> OverworldState {
+    OverworldState::from_map(reg, "frontier_world", 3).expect("the generated campaign builds")
+}
+
+#[test]
+fn a_generated_campaign_map_is_what_its_world_adds_up_to() {
+    // Bottom up: the campaign hexes are the chunks' summaries, at the
+    // chunks' own coordinates, and nothing else.
+    let reg = registry();
+    let state = generated(&reg);
+    let world = state
+        .world
+        .as_ref()
+        .expect("a generated campaign keeps its world");
+    assert_eq!(*state.map, world.campaign_map());
+    assert_eq!(state.map.len(), world.chunks().count());
+    let mut stands: Vec<Hex> = state.armies.iter().map(|a| a.pos).collect();
+    for a in &state.armies {
+        assert!(
+            state.map.contains(a.pos),
+            "`{}` stands off the campaign map",
+            a.name
+        );
+    }
+    stands.sort_by_key(|h| (h.x, h.y));
+    stands.dedup();
+    assert_eq!(
+        stands.len(),
+        state.armies.len(),
+        "two armies were placed on one hex"
+    );
+}
+
+#[test]
+fn each_side_of_a_generated_campaign_begins_toward_its_own_edge() {
+    // `frontier_world` places Kuhlmann toward the west and the Valkyries
+    // toward the east; on the plane, not in chunk coordinates, which are
+    // turned against it.
+    let reg = registry();
+    let state = generated(&reg);
+    let radius = reg.scale.battle_map_radius();
+    let x = |h: Hex| {
+        let c = tactics_core::world::chunk_centre(h, radius);
+        c.x as f64 + c.y as f64 * 0.5
+    };
+    let mean = |side: u8| {
+        let xs: Vec<f64> = state
+            .armies
+            .iter()
+            .filter(|a| a.side == side)
+            .map(|a| x(a.pos))
+            .collect();
+        xs.iter().sum::<f64>() / xs.len() as f64
+    };
+    assert!(
+        mean(0) < mean(1),
+        "west {} is not west of east {}",
+        mean(0),
+        mean(1)
+    );
+}
+
+#[test]
+fn a_generated_campaign_has_the_ground_its_ending_names() {
+    let reg = registry();
+    let state = generated(&reg);
+    for terrain in &state.victory.hold {
+        assert!(
+            !tiles_of(&state, terrain).is_empty(),
+            "the ending asks for `{terrain}` and the world made none"
+        );
+    }
+}
+
+#[test]
+fn a_generated_campaign_saves_as_how_to_make_its_world() {
+    let reg = registry();
+    let state = generated(&reg);
+    let text = tactics_core::save::SaveGame::<tactics_core::battle::BattleState>::new(
+        &reg,
+        Some(state.clone()),
+        None,
+    )
+    .to_json()
+    .unwrap();
+    let back = tactics_core::save::SaveGame::from_json(&reg, &text)
+        .unwrap()
+        .0
+        .overworld
+        .unwrap();
+    assert_eq!(back.map, state.map);
+    assert_eq!(
+        back.world.as_ref().unwrap().skeleton,
+        state.world.as_ref().unwrap().skeleton
+    );
+}
+
+#[test]
+fn a_generated_campaign_is_fought_to_an_end_without_declining_a_fight() {
+    let reg = registry();
+    for seed in 0..3 {
+        let run = tactics_core::harness::campaign::play(
+            &reg,
+            "frontier_world",
+            seed,
+            &tactics_core::harness::campaign::CampaignOptions::default(),
+        )
+        .expect("it builds");
+        assert!(run.end.is_some(), "seed {seed} never ended");
+        assert_eq!(run.declined, 0, "seed {seed} declined a fight");
+    }
+}

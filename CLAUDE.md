@@ -41,6 +41,8 @@ cargo run --release -p tactics_core --example balance -- --brains --brain-games 
 cargo run --release -p tactics_core --example balance -- --help  # every flag, with examples
 cargo run --release -p tactics_core --example campaign [seed [to]]  # whole campaigns, every side a machine
 cargo run --release -p tactics_core --example worldgen [seed]  # a generated world, drawn; -- --chunk q,r for one hex
+cargo run --release -p tactics_core --example campaign -- --map frontier_world  # the generated campaign
+STAHL_CAMPAIGN=frontier_world cargo run -p stahlsenshamädchen  # ...in the game
 
 # what does this number do that the old one did not?
 cargo run --release -p tactics_core --example balance -- \
@@ -514,6 +516,13 @@ and the seam tests in `tests/ground.rs`.
   it spoils decisions.
 - **Optional, like `command`.** No `worldgen` block is no generator, and
   every scenario and hand-drawn campaign plays as before.
+- **A campaign can stand on a generated world** (`"world"` in its map file;
+  `frontier_world`). Its campaign map is the chunks' summaries at the
+  chunks' coordinates — a campaign hex and the ground under it are one
+  address — and an army is placed by a named feature (`place`), never a
+  coordinate. The chunk lattice is turned about 29° against the plane, so
+  "toward the east" is resolved on the plane, and the campaign screen still
+  draws chunks in their own axes (W5).
 
 ### Reading ground
 

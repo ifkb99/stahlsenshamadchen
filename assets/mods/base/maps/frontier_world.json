@@ -1,0 +1,221 @@
+{
+  "id": "frontier_world",
+  "name": "The Frontier (generated)",
+  "kind": "overworld",
+  "world": {
+    "seed": 1
+  },
+  "palette": {},
+  "rows": [],
+  "sides": [
+    {
+      "name": "Kuhlmann Academy"
+    },
+    {
+      "name": "Iron Valkyries",
+      "ai": {
+        "planner": "utility",
+        "difficulty": 3,
+        "doctrine": "massed_armor"
+      }
+    }
+  ],
+  "victory": {
+    "hold": [
+      "factory"
+    ],
+    "hold_days": 3,
+    "decapitation": true
+  },
+  "armies": [
+    {
+      "place": {
+        "feature": "town",
+        "toward": "west",
+        "rank": 0
+      },
+      "side": 0,
+      "name": "1st Company",
+      "movement": 4,
+      "headquarters": true,
+      "units": [
+        {
+          "vehicle": "medium_tank",
+          "crew": [
+            "anka",
+            "juno",
+            "mina",
+            "rosa"
+          ]
+        },
+        {
+          "vehicle": "recon_car",
+          "crew": [
+            "elsa",
+            "ada"
+          ]
+        },
+        {
+          "vehicle": "light_tank",
+          "crew": [
+            "hanne",
+            "yuki",
+            "ilse"
+          ]
+        },
+        {
+          "vehicle": "apc",
+          "crew": [
+            "lore",
+            "nele"
+          ]
+        },
+        {
+          "vehicle": "rifle_platoon",
+          "crew": [
+            "sigrun",
+            "marlen"
+          ]
+        }
+      ]
+    },
+    {
+      "place": {
+        "feature": "town",
+        "toward": "west",
+        "rank": 1
+      },
+      "side": 0,
+      "name": "2nd Company",
+      "movement": 3,
+      "units": [
+        {
+          "vehicle": "artillery",
+          "crew": [
+            "katrin",
+            "doro",
+            "petra",
+            "emmi"
+          ]
+        },
+        {
+          "vehicle": "light_tank",
+          "crew": [
+            "vera",
+            "berit",
+            "lotte"
+          ]
+        },
+        {
+          "vehicle": "halftrack",
+          "crew": [
+            "wilma",
+            "ines"
+          ]
+        },
+        {
+          "vehicle": "rifle_platoon",
+          "crew": [
+            "traudl",
+            "ruth"
+          ]
+        }
+      ]
+    },
+    {
+      "place": {
+        "feature": "town",
+        "toward": "east",
+        "rank": 0
+      },
+      "side": 1,
+      "name": "Valkyrie Vanguard",
+      "movement": 4,
+      "headquarters": true,
+      "units": [
+        {
+          "vehicle": "medium_tank",
+          "crew": [
+            "irma",
+            "astrid",
+            "beatrix",
+            "franka"
+          ]
+        },
+        {
+          "vehicle": "light_tank",
+          "crew": [
+            "sofia",
+            "kira",
+            "rea"
+          ]
+        },
+        {
+          "vehicle": "recon_car",
+          "crew": [
+            "greta",
+            "runa"
+          ]
+        },
+        {
+          "vehicle": "apc",
+          "crew": [
+            "britta",
+            "malin"
+          ]
+        },
+        {
+          "vehicle": "rifle_platoon",
+          "crew": [
+            "zofia",
+            "marta"
+          ]
+        }
+      ]
+    },
+    {
+      "place": {
+        "feature": "town",
+        "toward": "east",
+        "rank": 1
+      },
+      "side": 1,
+      "name": "Valkyrie Reserve",
+      "movement": 3,
+      "units": [
+        {
+          "vehicle": "tank_destroyer",
+          "crew": [
+            "ingrid",
+            "selin",
+            "nadja"
+          ]
+        },
+        {
+          "vehicle": "heavy_tank",
+          "crew": [
+            "hedda",
+            "tamara",
+            "carmen",
+            "ludmila",
+            "odette"
+          ]
+        },
+        {
+          "vehicle": "halftrack",
+          "crew": [
+            "alma",
+            "cecile"
+          ]
+        },
+        {
+          "vehicle": "rifle_platoon",
+          "crew": [
+            "erika",
+            "sanna"
+          ]
+        }
+      ]
+    }
+  ]
+}
