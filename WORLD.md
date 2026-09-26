@@ -296,7 +296,16 @@ the determinism snapshot passes **unregenerated**.
       chunk-radius padding (20 tiles) dominates it — the reach term is slack
       today and will matter if chunks shrink. `forget_around` is not wired:
       nothing in a battle holds a `TerrainReader` across ticks yet.
-- [ ] **W1.6 Saves**: seed + skeleton + edit overlay; `SAVE_VERSION` bump.
+- [x] ~~**W1.6 Saves.**~~ **Done 2026-09-26.** A `GeneratedWorld` saves as
+      its seed, its rules (carried in the file, so a retuned mod cannot give
+      a loaded campaign different ground) and its chunk radius — under 4 kB
+      for 160,000 tiles — and regenerates on load. A window saves as that,
+      its resident chunks and an **edit overlay** (`World::edit`), which is
+      laid over a chunk every time it loads; `World::rebuilt` reloads the
+      resident chunks. A whole world still saves as its tiles, so no
+      existing save changed shape and `SAVE_VERSION` did not need to move.
+      A battle on a window forks through a real save file mid-fight and
+      fights on identically.
 
 ### W2 — campaign movement on real ground
 

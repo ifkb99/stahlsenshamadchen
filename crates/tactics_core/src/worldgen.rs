@@ -168,6 +168,38 @@ pub struct GeneratedWorld {
     index: HashMap<(i32, i32), ChunkFeatures>,
 }
 
+/// What a generated world is saved as: what it takes to make it again. The
+/// skeleton and every tile follow from these three, so a save carries a
+/// world of 160,000 tiles in a few hundred bytes (WORLD.md W1.6). The rules
+/// travel in the file rather than being read off the mods at load, so a
+/// retuned `worldgen` block cannot quietly give a loaded campaign different
+/// ground from the one it was fought on.
+#[derive(Serialize, Deserialize)]
+struct SavedGeneration {
+    seed: u64,
+    rules: WorldGen,
+    chunk_radius: u32,
+}
+
+impl Serialize for GeneratedWorld {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        SavedGeneration {
+            seed: self.seed,
+            rules: self.rules.clone(),
+            chunk_radius: self.chunk_radius,
+        }
+        .serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for GeneratedWorld {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let saved = SavedGeneration::deserialize(d)?;
+        Self::with_rules(saved.rules, saved.chunk_radius, saved.seed)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// Why a world could not be made.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum WorldGenError {
