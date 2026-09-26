@@ -106,6 +106,8 @@ fn extra_army(state: &mut OverworldState, side: u8, at: Hex) -> ArmyId {
         mission: None,
         headquarters: false,
         tile: None,
+        march: None,
+        marched_ticks: 0,
     });
     id
 }
@@ -1324,7 +1326,28 @@ fn a_generated_campaign_is_fought_to_an_end_without_declining_a_fight() {
     }
 }
 
-// --- marching on the ground (WORLD.md W2.1–W2.3) ---
+// --- marching on the ground (WORLD.md W2.1–W2.3), on the clock (W3.1) ---
+
+/// On the clock, an order sets a march and the day walks it: finish every
+/// side's orders and run the day, returning what it did — stopping at the
+/// first fight, as the clock does.
+fn run_the_day(reg: &DataRegistry, state: &mut OverworldState) -> Vec<OverworldEvent> {
+    let day = state.turn;
+    let mut all = Vec::new();
+    for _ in 0..8 {
+        let events = state
+            .apply(reg, &OverworldOrder::EndTurn)
+            .expect("end of turn");
+        let fight = events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::BattleTriggered { .. }));
+        all.extend(events);
+        if fight || state.turn > day {
+            break;
+        }
+    }
+    all
+}
 
 #[test]
 fn an_army_on_a_generated_world_stands_on_a_tile_inside_its_campaign_hex() {
@@ -1396,6 +1419,7 @@ fn an_army_sent_anywhere_its_reach_offers_arrives_there_that_day() {
         trial
             .apply(&reg, &OverworldOrder::MoveArmy { army, to })
             .unwrap_or_else(|e| panic!("the march to {to:?} was refused: {e:?}"));
+        run_the_day(&reg, &mut trial);
         let moved = trial.army(army).unwrap();
         assert_eq!(moved.pos, to, "offered {to:?}, stopped at {:?}", moved.pos);
         assert_eq!(
@@ -1427,9 +1451,10 @@ fn a_march_into_an_enemy_halts_on_the_border_of_his_ground_and_fights() {
         e.pos = enemy_at;
         e.tile = Some(tactics_core::world::chunk_centre(enemy_at, radius));
     }
-    let events = state
+    state
         .apply(&reg, &OverworldOrder::MoveArmy { army, to: enemy_at })
         .expect("an attack is an order like any other");
+    let events = run_the_day(&reg, &mut state);
     let moved = state.army(army).unwrap();
     assert_eq!(
         moved.pos.unsigned_distance_to(enemy_at),
@@ -1444,4 +1469,106 @@ fn a_march_into_an_enemy_halts_on_the_border_of_his_ground_and_fights() {
         )),
         "and the fight is on: {events:?}"
     );
+}
+
+#[test]
+fn a_campaign_on_the_clock_is_the_same_war_from_the_same_seed() {
+    let reg = registry();
+    let play = |seed| {
+        tactics_core::harness::campaign::play(
+            &reg,
+            "frontier_world",
+            seed,
+            &tactics_core::harness::campaign::CampaignOptions::default(),
+        )
+        .unwrap()
+    };
+    let (a, b) = (play(4), play(4));
+    assert_eq!(a.days, b.days);
+    assert_eq!(a.end, b.end);
+    assert_eq!(a.battles.len(), b.battles.len());
+}
+
+#[test]
+fn a_day_on_the_clock_goes_through_a_save_and_runs_on_the_same() {
+    // Mid-march, mid-day: the clock, every column's leg and what it has
+    // banked toward its next step are saved, and the rest of the day runs
+    // exactly as it would have.
+    let reg = registry();
+    let mut state = generated(&reg);
+    let army = state.armies[0].id;
+    let far = state
+        .reachable(&reg, army)
+        .into_iter()
+        .max_by_key(|(h, c)| (*c, h.x, h.y))
+        .map(|(h, _)| h)
+        .unwrap();
+    state
+        .apply(&reg, &OverworldOrder::MoveArmy { army, to: far })
+        .unwrap();
+    for _ in 0..4 {
+        let events = state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
+        if events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::TurnStarted { .. }))
+            && state.active_side == 1
+        {
+            break;
+        }
+    }
+    // Everybody has ordered; run the clock part of the way into the day, and
+    // on to a tick with movement banked toward the next step — saving on a
+    // step's boundary would not tell a file that kept it from one that lost
+    // it.
+    state.advance_clock(&reg, 1_500);
+    for _ in 0..24 {
+        if state
+            .army(army)
+            .unwrap()
+            .march
+            .as_ref()
+            .is_some_and(|m| m.banked > 0)
+        {
+            break;
+        }
+        state.advance_clock(&reg, 1);
+    }
+    assert!(
+        state
+            .army(army)
+            .unwrap()
+            .march
+            .as_ref()
+            .is_some_and(|m| m.banked > 0)
+    );
+    assert!(
+        state.army(army).unwrap().march.is_some(),
+        "the test wants a column still on the road"
+    );
+    let text = tactics_core::save::SaveGame::<tactics_core::battle::BattleState>::new(
+        &reg,
+        Some(state.clone()),
+        None,
+    )
+    .to_json()
+    .unwrap();
+    let mut back = tactics_core::save::SaveGame::from_json(&reg, &text)
+        .unwrap()
+        .0
+        .overworld
+        .unwrap();
+    assert_eq!(back.clock, state.clock);
+    // Tick by tick while the column is still on the road, so a fraction of a
+    // step lost in the file shows as a column a tile behind — compared every
+    // tick, because a tick's worth lost makes her one tick late, and a
+    // comparison every 25 ticks never landed on the one tick that showed it.
+    for _ in 0..1_000 {
+        let expected = state.advance_clock(&reg, 1);
+        let actual = back.advance_clock(&reg, 1);
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+        assert_eq!(
+            back.army(army).unwrap().tile,
+            state.army(army).unwrap().tile
+        );
+    }
 }
