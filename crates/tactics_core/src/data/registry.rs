@@ -91,6 +91,9 @@ pub struct DataRegistry {
     /// reason [`Self::command`] is: a game with no world generator is not a
     /// generator with timid numbers, it is the absence of one.
     pub worldgen: Option<super::WorldGen>,
+    /// How fast a column moves across a generated world. Defaulted, like
+    /// [`Self::planner`]: a column that marches has a pace.
+    pub march: super::March,
     /// The ladder of rank, lowest first ([`RankDef`]). Empty is no ranks at
     /// all: everybody is equal and command passes by arrival order.
     pub ranks: Vec<super::RankDef>,
@@ -178,6 +181,9 @@ impl DataRegistry {
             }
             if let Some(worldgen) = &manifest.worldgen {
                 registry.worldgen = Some(worldgen.clone());
+            }
+            if let Some(march) = &manifest.march {
+                registry.march = march.clone();
             }
             if let Some(ranks) = &manifest.ranks {
                 registry.ranks = ranks.clone();
@@ -1202,6 +1208,7 @@ mod tests {
                     morale: None,
                     command: None,
                     worldgen: None,
+                    march: None,
                     ranks: None,
                     dependencies: deps.iter().map(|s| s.to_string()).collect(),
                     scale: None,

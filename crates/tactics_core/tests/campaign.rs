@@ -105,6 +105,7 @@ fn extra_army(state: &mut OverworldState, side: u8, at: Hex) -> ArmyId {
         alive: true,
         mission: None,
         headquarters: false,
+        tile: None,
     });
     id
 }
@@ -1321,4 +1322,126 @@ fn a_generated_campaign_is_fought_to_an_end_without_declining_a_fight() {
         assert!(run.end.is_some(), "seed {seed} never ended");
         assert_eq!(run.declined, 0, "seed {seed} declined a fight");
     }
+}
+
+// --- marching on the ground (WORLD.md W2.1–W2.3) ---
+
+#[test]
+fn an_army_on_a_generated_world_stands_on_a_tile_inside_its_campaign_hex() {
+    let reg = registry();
+    let state = generated(&reg);
+    let radius = reg.scale.battle_map_radius();
+    for a in &state.armies {
+        let tile = a
+            .tile
+            .expect("an army on a generated world stands on a tile");
+        assert_eq!(
+            tactics_core::world::chunk_of(tile, radius),
+            a.pos,
+            "`{}`",
+            a.name
+        );
+    }
+    let drawn = frontier(&reg);
+    assert!(
+        drawn.armies.iter().all(|a| a.tile.is_none()),
+        "a drawn map has no tiles to stand on"
+    );
+}
+
+#[test]
+fn a_columns_day_is_its_slowest_vehicle_at_the_marchs_share() {
+    // The ruling is that a column is not a tank: it keeps the pace of the
+    // slowest thing that carries it, and a share of that, for the hours it is
+    // on the road.
+    let reg = registry();
+    let state = generated(&reg);
+    let army = &state.armies[0];
+    let slowest = army
+        .units
+        .iter()
+        .filter_map(|u| reg.vehicle(&u.vehicle))
+        .filter(|v| v.movement.class != tactics_core::data::MovementClass::Foot)
+        .map(|v| v.movement.points)
+        .min()
+        .unwrap();
+    let rounds_per_hour = (3600.0 / reg.scale.round_seconds).round() as u32;
+    assert_eq!(
+        state.day_budget(&reg, army.id),
+        reg.march.day_budget(slowest, rounds_per_hour)
+    );
+    assert!(state.day_budget(&reg, army.id) > 0);
+}
+
+#[test]
+fn an_army_sent_anywhere_its_reach_offers_arrives_there_that_day() {
+    // `reachable` is the coarse graph's estimate: tile-level passages between
+    // neighbouring campaign hexes' standing tiles. The march is the real
+    // route, which can only be as cheap or cheaper — so what `reachable`
+    // offers, a march delivers. This is what keeps the range the player is
+    // shown and the ground the planner picks honest.
+    let reg = registry();
+    let state = generated(&reg);
+    let radius = reg.scale.battle_map_radius();
+    let army = state.armies[0].id;
+    let mut offered: Vec<Hex> = state
+        .reachable(&reg, army)
+        .into_keys()
+        .filter(|h| *h != state.army(army).unwrap().pos)
+        .collect();
+    offered.sort_by_key(|h| (h.x, h.y));
+    assert!(offered.len() > 3, "a day's march reaches somewhere");
+    for to in offered.into_iter().step_by(3) {
+        let mut trial = state.clone();
+        trial
+            .apply(&reg, &OverworldOrder::MoveArmy { army, to })
+            .unwrap_or_else(|e| panic!("the march to {to:?} was refused: {e:?}"));
+        let moved = trial.army(army).unwrap();
+        assert_eq!(moved.pos, to, "offered {to:?}, stopped at {:?}", moved.pos);
+        assert_eq!(
+            tactics_core::world::chunk_of(moved.tile.unwrap(), radius),
+            moved.pos
+        );
+    }
+}
+
+#[test]
+fn a_march_into_an_enemy_halts_on_the_border_of_his_ground_and_fights() {
+    // Contact on a generated world, read at the tile: the column's route
+    // goes up to the enemy's campaign hex and stops at its edge, and the
+    // fight is there — the same rule the drawn campaign keeps hex by hex.
+    let reg = registry();
+    let mut state = generated(&reg);
+    let radius = reg.scale.battle_map_radius();
+    let army = state.armies[0].id;
+    let here = state.army(army).unwrap().pos;
+    let enemy_at = here + Hex::new(2, 0);
+    let enemy = state
+        .armies
+        .iter()
+        .find(|a| a.side != state.army(army).unwrap().side)
+        .unwrap()
+        .id;
+    {
+        let e = state.armies.iter_mut().find(|a| a.id == enemy).unwrap();
+        e.pos = enemy_at;
+        e.tile = Some(tactics_core::world::chunk_centre(enemy_at, radius));
+    }
+    let events = state
+        .apply(&reg, &OverworldOrder::MoveArmy { army, to: enemy_at })
+        .expect("an attack is an order like any other");
+    let moved = state.army(army).unwrap();
+    assert_eq!(
+        moved.pos.unsigned_distance_to(enemy_at),
+        1,
+        "it stops next to him"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            OverworldEvent::BattleTriggered { attacker, defender, .. }
+                if *attacker == army && *defender == enemy
+        )),
+        "and the fight is on: {events:?}"
+    );
 }

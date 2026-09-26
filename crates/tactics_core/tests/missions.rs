@@ -65,6 +65,7 @@ fn extra_army(state: &mut OverworldState, side: u8, name: &str, at: [i32; 2]) ->
         alive: true,
         mission: None,
         headquarters: false,
+        tile: None,
     });
     id
 }
