@@ -73,6 +73,13 @@ pub fn project_exact(hex: Hex, elevation: i32, rotation: u32, center: Hex) -> (V
     (pos, z)
 }
 
+/// The ground-level hex under a world-space point, ignoring elevation: where
+/// the camera is looking, for streaming ground in around it.
+pub fn hex_at(world: Vec2, rotation: u32, center: Hex) -> Hex {
+    let rotated = layout().world_pos_to_hex(hexx::Vec2::new(world.x, world.y));
+    rotated.rotate_ccw_around(center, rotation)
+}
+
 /// Inverse of [`project`]: which tile is under this world-space point?
 /// Elevated tiles are tested first (front-most wins).
 pub fn pick(map: &HexMap, world: Vec2, rotation: u32, center: Hex) -> Option<Hex> {
