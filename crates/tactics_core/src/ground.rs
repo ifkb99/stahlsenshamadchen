@@ -11,8 +11,9 @@
 //! small, closed, fully known map:
 //!
 //! - The reader asks the world four questions through [`Ground`] and nothing
-//!   else. A battle answers them today; [`Patch`] answers them for any number
-//!   of maps folded in at any offset, which is what a streamed world will be.
+//!   else. [`crate::world::World`] answers them — for one map or for any
+//!   number folded in at any offset, which is what a streamed world is — and
+//!   a battle answers by asking the world it stands on.
 //! - Readings are computed **lazily, a region at a time** ([`region_of`]),
 //!   cached per region and dropped per region ([`TerrainReader::forget_around`])
 //!   when a tile changes or its neighbours stream in. No whole-map pass is on
@@ -31,9 +32,8 @@
 //! coordinate only ever last, so a reading is mirror-symmetric wherever the
 //! ground is. `tests/ground.rs` holds it to that on the ridge arena.
 
-use crate::battle::{BattleState, MoveGrid, SightGrid};
+use crate::battle::BattleState;
 use crate::data::{DataRegistry, MovementClass};
-use crate::map::HexMap;
 use hexx::Hex;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
@@ -57,77 +57,20 @@ pub trait Ground {
     fn step_cost(&self, class: MovementClass, max_climb: i32, from: Hex, to: Hex) -> Option<u32>;
 }
 
+/// A battle is ground because it stands on a [`crate::world::World`], and it
+/// answers by asking it.
 impl Ground for BattleState {
     fn terrain_id(&self, hex: Hex) -> Option<&str> {
-        self.map.get(hex).map(|t| t.terrain)
+        self.world.terrain_id(hex)
     }
     fn elevation(&self, hex: Hex) -> Option<i32> {
-        self.map.get(hex).map(|t| t.elevation)
+        self.world.elevation(hex)
     }
     fn sight_clear(&self, from: Hex, to: Hex) -> bool {
-        self.sight.clear(from, to)
+        self.world.sight_clear(from, to)
     }
     fn step_cost(&self, class: MovementClass, max_climb: i32, from: Hex, to: Hex) -> Option<u32> {
-        self.moves.cost(class, max_climb, from, to)
-    }
-}
-
-/// Ground assembled from maps: one, or several folded in side by side.
-///
-/// The shape a streamed world will have — tiles arrive a map at a time, at an
-/// offset, and the sight and movement grids fold them in through the same
-/// `insert` the battle's own grids are built with — available today, so the
-/// reader can be held to working across a seam before there is a world to
-/// seam.
-#[derive(Default)]
-pub struct Patch {
-    tiles: HexMap,
-    sight: SightGrid,
-    moves: MoveGrid,
-}
-
-impl Patch {
-    /// Ground made of one map, where it lies.
-    pub fn of(registry: &DataRegistry, map: &HexMap) -> Self {
-        let mut patch = Self::default();
-        patch.add(registry, map, Hex::ZERO);
-        patch
-    }
-
-    /// Fold a map in, shifted by `offset`. A tile already known at a hex is
-    /// replaced, as a streamed region replaces what was known of it.
-    pub fn add(&mut self, registry: &DataRegistry, map: &HexMap, offset: Hex) {
-        for (hex, tile) in map.iter() {
-            let at = hex + offset;
-            self.sight.insert(registry, at, tile);
-            self.moves.insert(registry, at, tile);
-            self.tiles.insert(at, tile.terrain, tile.elevation);
-        }
-    }
-
-    /// How many tiles are known.
-    pub fn len(&self) -> usize {
-        self.tiles.len()
-    }
-
-    /// Whether nothing is known yet.
-    pub fn is_empty(&self) -> bool {
-        self.tiles.is_empty()
-    }
-}
-
-impl Ground for Patch {
-    fn terrain_id(&self, hex: Hex) -> Option<&str> {
-        self.tiles.get(hex).map(|t| t.terrain)
-    }
-    fn elevation(&self, hex: Hex) -> Option<i32> {
-        self.tiles.get(hex).map(|t| t.elevation)
-    }
-    fn sight_clear(&self, from: Hex, to: Hex) -> bool {
-        self.sight.clear(from, to)
-    }
-    fn step_cost(&self, class: MovementClass, max_climb: i32, from: Hex, to: Hex) -> Option<u32> {
-        self.moves.cost(class, max_climb, from, to)
+        self.world.step_cost(class, max_climb, from, to)
     }
 }
 

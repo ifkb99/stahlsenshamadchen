@@ -50,6 +50,7 @@ use crate::ai::AiConfig;
 use crate::data::{DataError, DataRegistry, ModuleEffect, ValidationReport};
 use crate::map::{Battlefield, HexMap, MapKind, Scenario, UnitPlacement};
 use crate::roster::{CadetId, Roster};
+use crate::world::World;
 use hexx::{EdgeDirection, Hex};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -695,25 +696,24 @@ pub struct Unbuilt;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(deserialize = "C: Default"))]
 pub struct Battle<C = Built> {
-    /// The ground: tiles, and nothing about the fight on them.
-    pub map: Arc<HexMap>,
+    /// The ground this battle stands on: its tiles and the two grids derived
+    /// from them — line of sight and step costs — with one owner and one door
+    /// a tile comes in by (WORLD.md, W0.3). Shared behind an `Arc` because
+    /// line of sight is the hottest thing the simulation does, terrain never
+    /// changes during a battle, and search planners clone the whole state
+    /// constantly.
+    ///
+    /// Saved as its tiles under the name the ground always had in a save,
+    /// `map`, so the file is byte for byte what it was; the grids are rebuilt
+    /// by [`SavedBattle::rehydrate`].
+    #[serde(rename = "map")]
+    pub world: Arc<World>,
     /// What this fight is about — objectives, formations, loss conditions,
     /// the victory score — kept apart from the ground because the two have
     /// different owners once the ground is one world (WORLD.md, W0.1).
     /// Immutable for the battle, and behind an `Arc` for the reason the map
     /// is: search planners clone the whole state constantly.
     pub scenario: Arc<Scenario>,
-    /// Sight heights for every tile, resolved once from the map and the
-    /// registry. Shared rather than recomputed because line of sight is the
-    /// hottest thing the simulation does and terrain never changes during a
-    /// battle. `Arc` keeps state cloning — which search planners do
-    /// constantly — cheap.
-    pub sight: Arc<SightGrid>,
-    /// Movement costs for every tile, resolved once from the map and the
-    /// registry. Shared for exactly the reasons [`Self::sight`] is: terrain
-    /// never changes during a battle, the searches ask for it per edge of
-    /// every tile they touch, and a planner clones the whole state to branch.
-    pub moves: Arc<MoveGrid>,
     pub sides: Vec<SideState>,
     /// The cadets crewing the vehicles in this battle.
     ///
@@ -802,10 +802,8 @@ impl SavedBattle {
     /// obligation `save::rehydrate` used to state in prose.
     pub fn rehydrate(self, registry: &DataRegistry) -> BattleState {
         let Battle {
-            map,
+            world,
             scenario,
-            sight,
-            moves,
             sides,
             roster,
             units,
@@ -822,21 +820,16 @@ impl SavedBattle {
             built: Unbuilt,
         } = self;
 
-        // Both grids are pure functions of the map and the terrain
+        // Both grids are pure functions of the tiles and the terrain
         // definitions. They are rebuilt rather than trusted because a save
         // written before a mod retuned its terrain would otherwise carry the
-        // old answer; `is_empty` is checked first only so that a caller who
-        // already holds a built grid — a fork inside the engine — pays
+        // old answer; `is_built` is checked first only so that a caller who
+        // already holds a built world — a fork inside the engine — pays
         // nothing.
-        let sight = if sight.is_empty() {
-            Arc::new(SightGrid::build(registry, &map))
+        let world = if world.is_built() {
+            world
         } else {
-            sight
-        };
-        let moves = if moves.is_empty() {
-            Arc::new(MoveGrid::build(registry, &map))
-        } else {
-            moves
+            Arc::new(Arc::unwrap_or_clone(world).rebuilt(registry))
         };
         // The fog's per-unit vision and per-side keys are skipped too, and the
         // key list is indexed by side during recompute, so an empty one panics
@@ -850,10 +843,8 @@ impl SavedBattle {
         score.resize(sides.len(), 0);
 
         Battle {
-            map,
+            world,
             scenario,
-            sight,
-            moves,
             sides,
             roster,
             units,
@@ -983,8 +974,6 @@ impl BattleState {
             .collect();
         let side_count = sides.len();
         let objective_count = scenario.objectives().len();
-        let sight = Arc::new(SightGrid::build(registry, &map));
-        let moves = Arc::new(MoveGrid::build(registry, &map));
         // Resolved before the map is moved into its `Arc`, and from the same
         // two things the units are spawned from, so membership cannot drift
         // from the roster it describes.
@@ -993,10 +982,8 @@ impl BattleState {
         // stamped fresh from mod data and forgotten afterwards.
         let (roster, crews) = Roster::stamp_for(registry, &file.units);
         let mut state = Self {
-            map: Arc::new(map),
+            world: Arc::new(World::build(registry, map)),
             scenario: Arc::new(scenario),
-            sight,
-            moves,
             sides,
             roster: Arc::new(roster),
             units: Vec::new(),
@@ -1061,8 +1048,6 @@ impl BattleState {
         }
         let side_count = sides.len();
         let objective_count = scenario.objectives().len();
-        let sight = Arc::new(SightGrid::build(registry, &map));
-        let moves = Arc::new(MoveGrid::build(registry, &map));
         // The formations travel with the scenario for exactly this reason: a
         // field battle the overworld assembles picks them up without this
         // signature growing, the same trip objectives already make. A
@@ -1070,10 +1055,8 @@ impl BattleState {
         // rather than carried empty — see `CommandState::from_placements`.
         let command = CommandState::from_placements(scenario.formations(), placements);
         let mut state = Self {
-            map: Arc::new(map),
+            world: Arc::new(World::build(registry, map)),
             scenario: Arc::new(scenario),
-            sight,
-            moves,
             sides,
             roster,
             units: Vec::new(),
@@ -1804,7 +1787,7 @@ impl BattleState {
     /// The terrain a unit is standing on, for checks that care where they
     /// happen — a lead foot is quick on a road and bogs in a field.
     pub fn terrain_at(&self, hex: Hex) -> Option<&str> {
-        self.map.get(hex).map(|t| t.terrain)
+        self.world.get(hex).map(|t| t.terrain)
     }
 
     pub fn alive_units(&self) -> impl Iterator<Item = &Unit> {

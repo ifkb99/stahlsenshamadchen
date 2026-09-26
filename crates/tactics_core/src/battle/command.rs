@@ -1455,7 +1455,7 @@ impl BattleState {
     fn radio_clear(&self, a: Hex, b: Hex) -> bool {
         /// Elevation levels of mast, granted to each end.
         const ANTENNA: f32 = 1.5;
-        let (Some(from), Some(to)) = (self.map.get(a), self.map.get(b)) else {
+        let (Some(from), Some(to)) = (self.world.get(a), self.world.get(b)) else {
             return false;
         };
         let h_a = from.elevation as f32 + ANTENNA;
@@ -1466,7 +1466,7 @@ impl BattleState {
             if *hex == a || *hex == b {
                 continue;
             }
-            let Some(tile) = self.map.get(*hex) else {
+            let Some(tile) = self.world.get(*hex) else {
                 // Off-map gaps in the line do not block a wave.
                 continue;
             };
@@ -1559,7 +1559,7 @@ impl BattleState {
             && self.radio_clear(s.pos, l.pos);
         let by_sight = rules.visual_range > 0
             && dist <= rules.visual_range as i32
-            && self.sight.clear(s.pos, l.pos);
+            && self.world.sight().clear(s.pos, l.pos);
         by_radio || by_sight
     }
 

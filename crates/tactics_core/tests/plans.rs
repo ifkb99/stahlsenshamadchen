@@ -257,7 +257,7 @@ fn once_the_word_is_given_the_plan_is_carried_through() {
     let exposed = target
         .all_neighbors()
         .into_iter()
-        .find(|h| state.map.contains(*h) && state.unit_at(*h).is_none())
+        .find(|h| state.world.contains(*h) && state.unit_at(*h).is_none())
         .expect("somewhere beside him");
     let going = Plan {
         fire_position: exposed,

@@ -1355,7 +1355,7 @@ fn with_nothing_found_she_searches_the_middle_by_a_slope_the_mod_sets() {
         "the stage needs no objectives, or the objective term would be reading the map \
          instead of this one"
     );
-    let center = state.map.center();
+    let center = state.world.center();
     let edge = state.unit(UnitId(0)).unwrap().pos;
     assert_ne!(
         center, edge,

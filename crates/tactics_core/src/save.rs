@@ -47,8 +47,9 @@
 //! Chosen over the two alternatives — a `Caches` struct owning the skipped
 //! fields, or a hand-written mirror of the saved shape — because both would
 //! have meant either a second copy of `BattleState`'s field list, which
-//! drifts, or renaming `state.sight` and `state.moves` at every call site in
-//! the engine. This costs one type parameter with a default, so every
+//! drifts, or renaming the grids at every call site in the engine. (The grids
+//! have since moved inside [`crate::world::World`], which keeps the same
+//! promise one level down: [`crate::world::World::rebuilt`] destructures it.) This costs one type parameter with a default, so every
 //! signature in the codebase still says `BattleState` and reads as it did.
 //!
 //! # Which mods were playing

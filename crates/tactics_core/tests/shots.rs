@@ -366,7 +366,7 @@ fn no_seam_of_the_hull_is_impenetrable() {
         .chain(center.all_neighbors().into_iter().map(|n| n + (n - center)))
         .collect();
     for post in ring {
-        if state.map.get(post).is_none() || state.unit_at(post).is_some() {
+        if state.world.get(post).is_none() || state.unit_at(post).is_some() {
             continue;
         }
         state.units[gunner.index()].pos = post;

@@ -105,33 +105,39 @@ fn round_trips_and_keeps_the_future_identical() {
 fn loading_rebuilds_the_sight_grid_that_the_save_leaves_out() {
     let reg = registry();
     let state = BattleState::from_map(&reg, "river_crossing", 3).expect("battle");
-    assert!(!state.sight.is_empty(), "a fresh battle has its sight grid");
+    assert!(
+        !state.world.sight().is_empty(),
+        "a fresh battle has its sight grid"
+    );
 
     let text = SaveGame::new(&reg, None, Some(state.clone()))
         .to_json()
         .unwrap();
-    // The sight grid serialises to an empty object because its only field is
-    // skipped. (Checking for "tiles" would not work: `HexMap` has a field by
-    // that name which genuinely is saved.)
+    // The world is saved as its tiles and nothing else, so neither grid has
+    // a key in the file at all. (Checking for "tiles" would not work:
+    // `HexMap` has a field by that name which genuinely is saved.)
     assert!(
-        text.contains("\"sight\": {}"),
-        "the sight grid should be empty in the file, not carried"
+        !text.contains("\"sight\"") && !text.contains("\"moves\""),
+        "the grids should be absent from the file, not carried"
     );
 
     let restored = SaveGame::from_json(&reg, &text).unwrap().0.battle.unwrap();
-    assert!(!restored.sight.is_empty(), "loading must rebuild it");
+    assert!(
+        !restored.world.sight().is_empty(),
+        "loading must rebuild it"
+    );
 
     // And it must be the *same* grid, not merely a non-empty one. Sampled
     // over a spread of pairs rather than every pair, which would be a million
     // line-of-sight tests on a 1261-tile map.
-    let mut hexes: Vec<_> = restored.map.iter().map(|(h, _)| h).collect();
+    let mut hexes: Vec<_> = restored.world.iter().map(|(h, _)| h).collect();
     hexes.sort_by_key(|h| (h.x, h.y));
     let mut checked = 0;
     for from in hexes.iter().step_by(37) {
         for to in hexes.iter().step_by(53) {
             assert_eq!(
-                restored.sight.clear(*from, *to),
-                state.sight.clear(*from, *to),
+                restored.world.sight().clear(*from, *to),
+                state.world.sight().clear(*from, *to),
                 "sight differs at {from:?} -> {to:?}"
             );
             checked += 1;
@@ -1344,35 +1350,41 @@ fn a_battle_off_a_save_file_cannot_be_asked_anything_until_its_caches_are_back()
     let raw: SavedGame = serde_json::from_str(&text).expect("the saved form reads");
     let raw_battle = raw.battle.expect("a battle is in there");
     assert!(
-        raw_battle.sight.is_empty(),
+        raw_battle.world.sight().is_empty(),
         "the sight grid is not carried in the file"
     );
     assert!(
-        raw_battle.moves.is_empty(),
+        raw_battle.world.moves().is_empty(),
         "the move grid is not carried either"
     );
 
     // Across the one bridge there is, and every question answers as it did
     // before the save.
     let restored = raw_battle.rehydrate(&reg);
-    let mut hexes: Vec<_> = restored.map.iter().map(|(h, _)| h).collect();
+    let mut hexes: Vec<_> = restored.world.iter().map(|(h, _)| h).collect();
     hexes.sort_by_key(|h| (h.x, h.y));
     let mut checked = 0;
     for from in hexes.iter().step_by(37) {
         for to in hexes.iter().step_by(53) {
             assert_eq!(
-                restored.sight.clear(*from, *to),
-                original.sight.clear(*from, *to),
+                restored.world.sight().clear(*from, *to),
+                original.world.sight().clear(*from, *to),
                 "sight differs at {from:?} -> {to:?}"
             );
             for next in from.all_neighbors() {
                 assert_eq!(
-                    restored
-                        .moves
-                        .cost(tactics_core::data::MovementClass::Tracked, 1, *from, next),
-                    original
-                        .moves
-                        .cost(tactics_core::data::MovementClass::Tracked, 1, *from, next),
+                    restored.world.moves().cost(
+                        tactics_core::data::MovementClass::Tracked,
+                        1,
+                        *from,
+                        next
+                    ),
+                    original.world.moves().cost(
+                        tactics_core::data::MovementClass::Tracked,
+                        1,
+                        *from,
+                        next
+                    ),
                     "the road out of {from:?} differs"
                 );
             }

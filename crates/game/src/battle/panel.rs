@@ -767,7 +767,7 @@ pub(super) fn format_tile(
     state: &BattleState,
     hex: Hex,
 ) -> String {
-    let Some(tile) = state.map.get(hex) else {
+    let Some(tile) = state.world.get(hex) else {
         return String::new();
     };
     let Some(terrain) = registry.terrain(tile.terrain) else {

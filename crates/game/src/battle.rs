@@ -756,17 +756,17 @@ fn setup_battle(
     // The view pivots on the map's centroid. Written through `Commands`
     // rather than a `ResMut` so this system can also take `View`, which reads
     // the same resource — two conflicting accesses would panic at runtime.
-    let center = state.map.center();
+    let center = state.world.center();
     commands.insert_resource(ViewCenter(center));
     map_render::spawn_map(
         &mut commands,
         &art,
-        &state.map,
+        state.world.tiles(),
         view.rotation(),
         true,
         BattleScope,
     );
-    commands.insert_resource(CurrentMap(state.map.clone()));
+    commands.insert_resource(CurrentMap(std::sync::Arc::new(state.world.tiles().clone())));
 
     // Objectives are drawn once and only ever recoloured, because which hexes
     // they cover cannot change during a battle. They are `HexOverlay`s, so
@@ -782,7 +782,7 @@ fn setup_battle(
                     ..default()
                 },
                 Transform::from_translation(overlay.translation(
-                    &state.map,
+                    state.world.tiles(),
                     view.rotation(),
                     center,
                 )),
@@ -1835,7 +1835,7 @@ fn handle_input(
         return;
     }
 
-    let hovered = view.hovered(&battle.state.map);
+    let hovered = view.hovered(battle.state.world.tiles());
 
     // Mission orders. These go through `Order::SetMission` — the same entry
     // point the commander brain speaks through — so the player's decisions
@@ -2494,7 +2494,7 @@ fn sync_units(
             Shown::Ghost(reported) => reported,
             _ => unit.pos,
         };
-        let elev = state.map.get(at).map(|t| t.elevation).unwrap_or(0);
+        let elev = state.world.get(at).map(|t| t.elevation).unwrap_or(0);
         let (pos, z) = iso::project(at, elev, view.rotation(), view.center());
         if !animating.contains(&unit.id) {
             transform.translation = Vec3::new(pos.x, pos.y + 10.0, z + 1.5);
@@ -2636,12 +2636,12 @@ fn update_highlights(
     existing: Query<Entity, HighlightFilter>,
     mut cursors: Cursors,
 ) {
-    let map = battle.state.map.clone();
-    let face_at = |hex: Hex| view.face_at(&map, hex);
+    let map = battle.state.world.clone();
+    let face_at = |hex: Hex| view.face_at(map.tiles(), hex);
 
     // Hover marker.
     if let Ok((mut transform, mut visibility)) = cursors.hover.single_mut() {
-        match view.hovered(&map) {
+        match view.hovered(map.tiles()) {
             Some(hex) => {
                 transform.translation = face_at(hex);
                 *visibility = Visibility::Inherited;
@@ -2739,7 +2739,11 @@ fn update_highlights(
                 color,
                 ..default()
             },
-            Transform::from_translation(overlay.translation(&map, view.rotation(), view.center())),
+            Transform::from_translation(overlay.translation(
+                map.tiles(),
+                view.rotation(),
+                view.center(),
+            )),
             overlay,
             MoveHighlight,
             BattleScope,
@@ -2787,7 +2791,7 @@ fn update_highlights(
                     ..default()
                 },
                 Transform::from_translation(overlay.translation(
-                    &map,
+                    map.tiles(),
                     view.rotation(),
                     view.center(),
                 )),
@@ -2805,7 +2809,7 @@ fn update_highlights(
                     ..default()
                 },
                 Transform::from_translation(overlay.translation(
-                    &map,
+                    map.tiles(),
                     view.rotation(),
                     view.center(),
                 )),
@@ -2849,7 +2853,11 @@ fn update_highlights(
                 color,
                 ..default()
             },
-            Transform::from_translation(overlay.translation(&map, view.rotation(), view.center())),
+            Transform::from_translation(overlay.translation(
+                map.tiles(),
+                view.rotation(),
+                view.center(),
+            )),
             overlay,
             PlanHighlight,
             BattleScope,
@@ -2947,7 +2955,7 @@ fn update_panel(
     let visible =
         |unit: &tactics_core::battle::Unit| shown_to(state, rules, view_side, unit) == Shown::Real;
 
-    let hovered_tile = view.hovered(&state.map);
+    let hovered_tile = view.hovered(state.world.tiles());
     let hovered_unit = hovered_tile
         .and_then(|hex| state.unit_at(hex))
         .filter(|u| visible(u))

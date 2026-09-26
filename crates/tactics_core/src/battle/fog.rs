@@ -509,7 +509,7 @@ pub fn los_clear(registry: &DataRegistry, map: &HexMap, from: Hex, to: Hex) -> b
 /// Every tile visible from `pos` at `range`, ignoring any cache.
 fn look(state: &BattleState, pos: Hex, range: u32) -> HashSet<Hex> {
     pos.range(range)
-        .filter(|hex| state.map.contains(*hex) && state.sight.clear(pos, *hex))
+        .filter(|hex| state.world.contains(*hex) && state.world.sight().clear(pos, *hex))
         .collect()
 }
 
@@ -544,8 +544,8 @@ pub(crate) fn sees(registry: &DataRegistry, state: &BattleState, id: UnitId, tar
         return tiles.contains(&target);
     }
     unit.pos.distance_to(target) <= range as i32
-        && state.map.contains(target)
-        && state.sight.clear(unit.pos, target)
+        && state.world.contains(target)
+        && state.world.sight().clear(unit.pos, target)
 }
 
 /// What it takes for one side to find one enemy this tick.
@@ -603,7 +603,7 @@ fn search(
         crate::battle::stats::fieldcraft(registry, &state.roster, unit, state.terrain_at(unit.pos)),
     );
     let terrain = state
-        .map
+        .world
         .get(unit.pos)
         .and_then(|t| registry.terrain(t.terrain));
     let covered = terrain.is_some_and(|t| t.cover >= 30);

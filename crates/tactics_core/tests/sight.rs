@@ -31,15 +31,15 @@ fn the_sight_grid_answers_exactly_what_the_reference_does() {
     // is allowed to be faster; it is not allowed to see anything different.
     let reg = registry();
     let state = BattleState::from_map(&reg, "river_crossing", 1).unwrap();
-    let mut hexes: Vec<_> = state.map.iter().map(|(h, _)| h).collect();
+    let mut hexes: Vec<_> = state.world.iter().map(|(h, _)| h).collect();
     hexes.sort_unstable_by_key(|h| (h.x, h.y));
 
     let mut checked = 0;
     for a in hexes.iter().step_by(29) {
         for b in hexes.iter().step_by(31) {
             assert_eq!(
-                state.sight.clear(*a, *b),
-                los_clear(&reg, &state.map, *a, *b),
+                state.world.sight().clear(*a, *b),
+                los_clear(&reg, state.world.tiles(), *a, *b),
                 "sight grid disagrees about {a:?} -> {b:?}"
             );
             checked += 1;
@@ -56,7 +56,7 @@ fn the_move_grid_answers_exactly_what_the_reference_does() {
     // price a single step differently, for any class, at any climb limit.
     let reg = registry();
     let state = BattleState::from_map(&reg, "river_crossing", 1).unwrap();
-    let mut hexes: Vec<_> = state.map.iter().map(|(h, _)| h).collect();
+    let mut hexes: Vec<_> = state.world.iter().map(|(h, _)| h).collect();
     hexes.sort_unstable_by_key(|h| (h.x, h.y));
 
     let mut checked = 0;
@@ -65,9 +65,14 @@ fn the_move_grid_answers_exactly_what_the_reference_does() {
             for class in MovementClass::ALL {
                 for climb in [0, 1, 2] {
                     assert_eq!(
-                        state.moves.cost(class, climb, *hex, next),
+                        state.world.moves().cost(class, climb, *hex, next),
                         tactics_core::battle::movement_edge_cost(
-                            &reg, &state.map, class, climb, *hex, next
+                            &reg,
+                            state.world.tiles(),
+                            class,
+                            climb,
+                            *hex,
+                            next
                         ),
                         "move grid disagrees about {hex:?} -> {next:?} for {class:?} at climb \
                          {climb}"
@@ -183,7 +188,7 @@ fn the_occupancy_index_answers_exactly_what_the_reference_does() {
     // The other direction, over hexes a step away, where her budget cannot be
     // what excluded them: anything the reference allows, the sweep offers.
     for next in her.pos.all_neighbors() {
-        if state.map.get(next).is_none() || destination_blocked(&reg, &state, her, next) {
+        if state.world.get(next).is_none() || destination_blocked(&reg, &state, her, next) {
             continue;
         }
         assert!(
@@ -201,13 +206,13 @@ fn a_sight_grid_folded_in_a_region_at_a_time_is_the_grid_of_the_whole_map() {
     // land in exactly the state a whole-map build would.
     let reg = registry();
     let whole = BattleState::from_map(&reg, "river_crossing", 1).unwrap();
-    let map = &whole.map;
+    let map = &whole.world;
 
     let mut streamed = tactics_core::battle::SightGrid::default();
     assert!(streamed.is_empty(), "and an unbuilt one knows it");
-    streamed.extend(&reg, map);
-    streamed.extend(&reg, map);
-    assert_eq!(streamed.len(), whole.sight.len());
+    streamed.extend(&reg, map.tiles());
+    streamed.extend(&reg, map.tiles());
+    assert_eq!(streamed.len(), whole.world.sight().len());
 
     let mut hexes: Vec<_> = map.iter().map(|(h, _)| h).collect();
     hexes.sort_unstable_by_key(|h| (h.x, h.y));
@@ -216,7 +221,7 @@ fn a_sight_grid_folded_in_a_region_at_a_time_is_the_grid_of_the_whole_map() {
         for b in hexes.iter().step_by(31) {
             assert_eq!(
                 streamed.clear(*a, *b),
-                whole.sight.clear(*a, *b),
+                whole.world.sight().clear(*a, *b),
                 "a streamed grid disagrees about {a:?} -> {b:?}"
             );
             checked += 1;
@@ -236,20 +241,23 @@ fn a_move_grid_folded_in_a_region_at_a_time_is_the_grid_of_the_whole_map() {
     // differently.
     let reg = registry();
     let whole = BattleState::from_map(&reg, "river_crossing", 1).unwrap();
-    let map = &whole.map;
+    let map = &whole.world;
 
     let mut streamed = tactics_core::battle::MoveGrid::default();
     assert!(streamed.is_empty(), "and an unbuilt one knows it");
-    streamed.extend(&reg, map);
-    streamed.extend(&reg, map);
-    assert_eq!(streamed.len(), whole.moves.len());
+    streamed.extend(&reg, map.tiles());
+    streamed.extend(&reg, map.tiles());
+    assert_eq!(streamed.len(), whole.world.moves().len());
 
     let mut checked = 0;
     for (hex, _) in map.iter() {
         for next in hex.all_neighbors() {
             assert_eq!(
                 streamed.cost(MovementClass::Tracked, 1, hex, next),
-                whole.moves.cost(MovementClass::Tracked, 1, hex, next),
+                whole
+                    .world
+                    .moves()
+                    .cost(MovementClass::Tracked, 1, hex, next),
                 "a streamed grid disagrees about {hex:?} -> {next:?}"
             );
             checked += 1;
@@ -782,7 +790,7 @@ fn movement_respects_water_and_reaches_bridge() {
     let tiles = reachable(&reg, &state, unit);
     assert!(!tiles.is_empty());
     for hex in tiles.keys() {
-        let tile = state.map.get(*hex).unwrap();
+        let tile = state.world.get(*hex).unwrap();
         assert_ne!(tile.terrain, "water", "tracked vehicles cannot enter water");
     }
 }
