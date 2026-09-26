@@ -1357,8 +1357,7 @@ fn pump_events(
                 // described as a tank crew on the way out.
                 let afoot = battle
                     .state
-                    .units
-                    .get(unit.index())
+                    .lookup(*unit)
                     .is_some_and(|u| u.troops(&mods.0).is_some());
                 log.push(traffic(
                     *unit,
@@ -1565,7 +1564,7 @@ fn pump_events(
                 // With the destination in the sentence when the order is a
                 // march: the player learns both that it got through and what
                 // will now happen across the coming rounds.
-                match battle.state.units.get(unit.index()).and_then(|u| u.march()) {
+                match battle.state.lookup(*unit).and_then(|u| u.march()) {
                     Some(march) => log.push(format!(
                         "{} has her orders and is on her way to {}.",
                         name(*unit),
@@ -2250,7 +2249,7 @@ fn commit_round(
     // off something she had been told to do, and the difference is the whole
     // reason the player is being told.
     for unit in drilled {
-        let Some(u) = state.units.get(unit.index()) else {
+        let Some(u) = state.lookup(unit) else {
             continue;
         };
         let name = u.name.clone();
@@ -2349,7 +2348,7 @@ fn aim_at(state: &BattleState, command_rules: bool, hex: Hex, side: u8) -> Aim {
         .picture(side)
         .iter()
         .find(|c| !c.fresh && c.at == hex)
-        .and_then(|c| Some((c, state.units.get(c.unit.index())?)))
+        .and_then(|c| Some((c, state.lookup(c.unit)?)))
     {
         Some((contact, unit)) => Aim::Ghost(format!(
             "{} was last reported here, {}. Nobody has eyes on her now - B blind-fires the hex.",

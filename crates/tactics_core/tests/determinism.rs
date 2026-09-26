@@ -42,7 +42,7 @@ use std::path::PathBuf;
 mod common;
 use common::registry;
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
-use tactics_core::battle::{BattleState, Order};
+use tactics_core::battle::{BattleState, Order, UnitId};
 use tactics_core::data::DataRegistry;
 
 /// Four seeds, matching what the fog rewrite was checked against. More would
@@ -96,6 +96,56 @@ fn two_runs_in_one_process_agree_with_each_other() {
     );
 }
 
+/// An id is a name, not a position (WORLD.md, W0.5). A vehicle that marches
+/// out of one engagement and into another keeps the name the world gave her,
+/// so a battle must not be able to tell a force numbered from zero from the
+/// same force numbered by anybody else — as long as the names rise in the
+/// same order, which is the one promise `Muster` asks for.
+///
+/// So the baseline is fought again with every unit renamed, the names mapped
+/// back, and the transcript required to be the same text. Anything still
+/// using an id as a position — a list indexed by it, a loop that counts to
+/// it — reads the wrong unit or none, and the transcript diverges.
+#[test]
+fn a_battle_fought_under_other_names_is_the_same_battle() {
+    let registry = registry();
+    let count = registry
+        .map("river_crossing")
+        .expect("the baseline map")
+        .units
+        .len();
+    let names: Vec<UnitId> = (0..count as u32).map(|i| UnitId(1000 + 7 * i)).collect();
+    for seed in SEEDS {
+        let plain = record(&registry, seed, None);
+        let renamed = record(&registry, seed, Some(&names));
+        assert_ne!(plain, renamed, "the renaming must show in the transcript");
+        let back = rename_back(&renamed, &names);
+        if plain != back {
+            panic!("seed {seed}: {}", describe_difference(&plain, &back));
+        }
+    }
+}
+
+/// Every `UnitId(n)` in `text` whose `n` is one of `names`, written as the
+/// position it was renamed from.
+fn rename_back(text: &str, names: &[UnitId]) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("UnitId(") {
+        let (head, tail) = rest.split_at(at + "UnitId(".len());
+        out.push_str(head);
+        let digits: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let n: u32 = digits.parse().expect("a UnitId prints a number");
+        match names.iter().position(|id| id.0 == n) {
+            Some(i) => out.push_str(&i.to_string()),
+            None => out.push_str(&digits),
+        }
+        rest = &tail[digits.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
 fn snapshot_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots/event_stream.txt")
 }
@@ -104,15 +154,16 @@ fn record_all(registry: &DataRegistry) -> String {
     let mut out = String::new();
     for seed in SEEDS {
         out.push_str(&format!("=== seed {seed} ===\n"));
-        out.push_str(&record(registry, seed));
+        out.push_str(&record(registry, seed, None));
     }
     out
 }
 
 /// Play `ROUNDS` rounds of `river_crossing` with both sides on the utility
 /// planner and write every event out in order.
-fn record(registry: &DataRegistry, seed: u64) -> String {
-    let mut state = BattleState::from_map(registry, "river_crossing", seed).expect("battle");
+fn record(registry: &DataRegistry, seed: u64, names: Option<&[UnitId]>) -> String {
+    let mut state =
+        BattleState::from_map_numbered(registry, "river_crossing", seed, names).expect("battle");
     let mut ai = AiDriver::new();
     ai.insert(0, planner(registry, seed, "massed_armor"));
     ai.insert(1, planner(registry, seed + 1, "elastic_defense"));

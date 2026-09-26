@@ -212,8 +212,7 @@ fn main() {
                     // `alive` and the accessor that filters on it would answer
                     // "not infantry" for exactly the platoon being wiped out.
                     let afoot = state
-                        .units
-                        .get(unit.index())
+                        .lookup(*unit)
                         .is_some_and(|u| u.troops(&registry).is_some());
                     if afoot {
                         println!(

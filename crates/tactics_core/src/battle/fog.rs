@@ -122,14 +122,17 @@ struct VisionCache {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FogMap {
     sides: Vec<SideFog>,
-    /// Per-unit vision, indexed by unit id.
+    /// Per-unit vision, by unit id, kept sorted by id so a lookup is a binary
+    /// search. Not a list indexed by id: an id is a name, not a position
+    /// (WORLD.md, W0.5), and a vehicle carrying world id 40,000 would size
+    /// the list to forty thousand entries — cloned with every playout.
     ///
     /// Not saved: it is a pure function of the map and each unit's position
     /// and range, so it rebuilds itself on the first recompute after a load.
     /// Writing it out would bloat a save with thousands of hexes that carry no
     /// information.
     #[serde(skip)]
-    vision: Vec<Option<VisionCache>>,
+    vision: Vec<(UnitId, VisionCache)>,
     /// The `(unit, pos, range)` list that produced each side's `visible` set.
     /// A side's visible set is a pure function of this list, so when the list
     /// is unchanged the union can be skipped outright — which is what makes
@@ -172,21 +175,21 @@ impl FogMap {
     /// This unit's cached vision, if it was computed for exactly this
     /// position and range.
     fn cached(&self, id: UnitId, pos: Hex, range: u32) -> Option<&Arc<HashSet<Hex>>> {
-        match self.vision.get(id.index()) {
-            Some(Some(c)) if c.pos == pos && c.range == range => Some(&c.tiles),
-            _ => None,
-        }
+        let i = self.vision.binary_search_by_key(&id, |(u, _)| *u).ok()?;
+        let c = &self.vision[i].1;
+        (c.pos == pos && c.range == range).then_some(&c.tiles)
     }
 
     fn store(&mut self, id: UnitId, pos: Hex, range: u32, tiles: HashSet<Hex>) {
-        if self.vision.len() <= id.index() {
-            self.vision.resize(id.index() + 1, None);
-        }
-        self.vision[id.index()] = Some(VisionCache {
+        let cache = VisionCache {
             pos,
             range,
             tiles: Arc::new(tiles),
-        });
+        };
+        match self.vision.binary_search_by_key(&id, |(u, _)| *u) {
+            Ok(i) => self.vision[i].1 = cache,
+            Err(i) => self.vision.insert(i, (id, cache)),
+        }
     }
 }
 

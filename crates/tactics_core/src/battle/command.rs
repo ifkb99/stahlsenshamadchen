@@ -961,7 +961,11 @@ impl CommandState {
     /// there the honest answer is that a formation nobody is in does not
     /// exist in this battle. Carrying it would mean a mission could later be
     /// issued to nobody and silently do nothing.
-    pub fn from_placements(defs: &[FormationDef], placements: &[UnitPlacement]) -> Self {
+    pub fn from_placements(
+        defs: &[FormationDef],
+        placements: &[UnitPlacement],
+        ids: &[UnitId],
+    ) -> Self {
         let formations = defs
             .iter()
             .filter_map(|def| {
@@ -972,7 +976,7 @@ impl CommandState {
                     .iter()
                     .enumerate()
                     .filter(|(_, p)| p.formation.as_deref() == Some(def.id.as_str()))
-                    .map(|(i, p)| (UnitId(i as u32), p))
+                    .map(|(i, p)| (ids[i], p))
                     .collect();
                 let leader = members
                     .iter()
@@ -2075,7 +2079,7 @@ impl BattleState {
                 if next.iter().any(|c| c.unit == old.unit) {
                     continue;
                 }
-                let gone = self.units.get(old.unit.index()).is_none_or(|u| !u.alive());
+                let gone = self.lookup(old.unit).is_none_or(|u| !u.alive());
                 if gone && old.fresh {
                     continue;
                 }

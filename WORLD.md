@@ -205,9 +205,18 @@ the determinism snapshot passes **unregenerated**.
       on a line crossing unloaded ground — the grid would read it as open
       sky. A chunked world refuses to serialise until W1.6 gives it a
       format.
-- [ ] **W0.5 World-stable unit ids.** `UnitId` is an index into
-      `BattleState::units` today (`battle/mod.rs:62`); merging bubbles needs
-      an id that means the same vehicle everywhere.
+- [x] ~~**W0.5 World-stable unit ids.**~~ **Done 2026-09-26.** An id is a
+      name, not a position: `units` is kept in id order, and
+      `BattleState::lookup` / `lookup_mut` / `slot_of` find a unit by a
+      look at the position her id names (a hit in every battle numbered
+      from zero) and then a binary search. Ids can be said rather than
+      counted — `from_map_numbered`, `from_muster` with a `Muster`,
+      `spawn_unit_as` — and must rise in placement order, so id order and
+      placement order stay one order. The fog's vision cache and the field
+      battle's `origins` are keyed by id rather than indexed by it.
+      `a_battle_fought_under_other_names_is_the_same_battle` fights the
+      determinism baseline with every unit renamed `1000 + 7i` and requires
+      the same transcript, mapped back, on all four seeds.
 - [ ] **W0.6 Dice per engagement.** The battle's rng seeded from `(world
       seed, engagement key)`; a single battle keeps its stream.
 - [ ] **W0.7 A closed map is a world with hard edges.** Scenarios, the

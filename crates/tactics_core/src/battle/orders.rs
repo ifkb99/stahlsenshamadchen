@@ -633,7 +633,7 @@ impl Event {
                 .find(|f| f.id == formation)
                 .is_none_or(|f| f.side == side)
         };
-        let own_unit = |unit: &UnitId| state.units.get(unit.index()).is_none_or(|u| u.side == side);
+        let own_unit = |unit: &UnitId| state.lookup(*unit).is_none_or(|u| u.side == side);
         match self {
             // The clock, and the end of it. Both sides fight the same battle.
             Event::RoundStarted { .. } | Event::TickStarted { .. } | Event::BattleEnded { .. } => {
@@ -2199,9 +2199,7 @@ impl BattleState {
         let losses: Vec<(u8, Hex)> = events
             .iter()
             .filter_map(|e| match e {
-                Event::UnitDestroyed { unit, at } => {
-                    self.units.get(unit.index()).map(|u| (u.side, *at))
-                }
+                Event::UnitDestroyed { unit, at } => self.lookup(*unit).map(|u| (u.side, *at)),
                 _ => None,
             })
             .collect();
@@ -2353,7 +2351,7 @@ impl BattleState {
             .map(|u| u.id)
             .collect();
         for id in ids {
-            let Some(unit) = self.units.get(id.index()) else {
+            let Some(unit) = self.lookup(id) else {
                 continue;
             };
             let Some(module) = unit
@@ -2373,7 +2371,7 @@ impl BattleState {
             if rand::RngExt::random_range(&mut self.rng, 0..100) >= chance {
                 continue;
             }
-            if let Some(unit) = self.units.get_mut(id.index())
+            if let Some(unit) = self.lookup_mut(id)
                 && let Some(hits) = unit.modules.get_mut(&module)
             {
                 *hits = 1;
@@ -2390,7 +2388,7 @@ impl BattleState {
         // throw at the worst moment.
         let ids: Vec<UnitId> = self.units.iter().map(|u| u.id).collect();
         for id in ids {
-            let level = self.units.get(id.index()).map(|u| {
+            let level = self.lookup(id).map(|u| {
                 self.roster.crew_skill(
                     registry,
                     registry.vehicle(&u.vehicle),
@@ -2442,7 +2440,7 @@ impl BattleState {
                 .map(|_| registry.morale.recovery_near_leader)
                 .unwrap_or(0);
             let shed = level.map(|l| registry.morale.recovered(l)).unwrap_or(0) + rallied;
-            if let Some(unit) = self.units.get_mut(id.index()) {
+            if let Some(unit) = self.lookup_mut(id) {
                 unit.pressure = unit.pressure.saturating_sub(shed);
             }
         }
@@ -2719,7 +2717,7 @@ impl BattleState {
             // here would turn every ordered withdrawal into a decapitation.
             // The two are different variants now rather than a flag and a
             // qualifier, so the wrong reading is at least visible.
-            let lost = |id: &UnitId| self.units.get(id.index()).is_some_and(|u| u.fate.lost());
+            let lost = |id: &UnitId| self.lookup(*id).is_some_and(|u| u.fate.lost());
             let fallen = match condition.when {
                 LossTrigger::LeaderLost => formation.founding_leader.iter().any(lost),
                 LossTrigger::Wiped => {
@@ -2727,7 +2725,7 @@ impl BattleState {
                         && formation
                             .members
                             .iter()
-                            .all(|id| self.units.get(id.index()).is_some_and(|u| !u.alive()))
+                            .all(|id| self.lookup(*id).is_some_and(|u| !u.alive()))
                 }
             };
             if fallen {

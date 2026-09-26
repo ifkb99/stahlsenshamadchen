@@ -175,8 +175,7 @@ fn the_ai_runs_a_platoon_across_the_map_and_puts_her_down_on_the_objective() {
     }
     assert!(mounted, "she never got aboard");
     let ended = state
-        .units
-        .get(riders.index())
+        .lookup(riders)
         .map(|u| u.pos.distance_to(goal))
         .expect("she is on the roll one way or another");
     assert!(

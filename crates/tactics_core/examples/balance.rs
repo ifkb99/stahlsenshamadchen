@@ -1545,7 +1545,7 @@ fn fight_one(reg: &DataRegistry, maps: &[&str], seed: u64) -> Tally {
                     // says who died, not who did it, because death is
                     // reaped at the end of a tick and may have several
                     // contributors.
-                    if let Some(a) = state.units.get(attacker.index()) {
+                    if let Some(a) = state.lookup(attacker) {
                         last_hit.insert(target, a.vehicle.clone());
                     }
                 }
@@ -1576,7 +1576,7 @@ fn fight_one(reg: &DataRegistry, maps: &[&str], seed: u64) -> Tally {
                     }
                 }
                 Event::UnitDestroyed { unit, .. } => {
-                    if let Some(u) = state.units.get(unit.index()) {
+                    if let Some(u) = state.lookup(unit) {
                         *t.deaths.entry(u.vehicle.clone()).or_default() += 1;
                         // Reap carries the destruction into `Fate::Destroyed`
                         // rather than discarding it, so the cause of death is
@@ -1935,8 +1935,7 @@ fn delegation_battle(
         for event in &state.resolve_round(reg) {
             if let Event::ShotFired { attacker, .. } = event
                 && state
-                    .units
-                    .get(attacker.index())
+                    .lookup(*attacker)
                     .is_some_and(|u| u.side == 0 && is_afoot(reg, u))
             {
                 d.foot_shots += 1;
