@@ -251,14 +251,34 @@ the determinism snapshot passes **unregenerated**.
       about 29° against the tile grid — chunk `(1, 0)` is centred on tile
       `(41, -20)` — so a chunk coordinate is a coordinate, and goes last in
       any tiebreak like every other.
-- [ ] **W1.2 The skeleton, generated**: a coarse heightfield, rivers down
-      it, towns, roads as least-cost paths between them, objectives on what
-      the towns hold. World size and every rate are parameters in the mod.
-- [ ] **W1.3 The per-tile generator** `f(seed, skeleton, hex)`, in Rust,
-      content-driven (terrain palette and rates in the mod).
-- [ ] **W1.4 `R`**: the campaign hex summary, cached, and the
-      `R(P(c)) == c` property test; a test that generation order and subset
-      never change a tile.
+- [x] ~~**W1.2 The skeleton, generated.**~~ **Done 2026-09-26.**
+      `worldgen::GeneratedWorld` makes it once: rivers are the
+      least-climbing path from a high source to the rim (or into an earlier
+      river), towns sit on flat low ground near water, spaced, the best
+      sites getting the factories, and roads join every town (Prim, plus
+      `extra_links`) by A* over the natural ground. Every number is the
+      `worldgen` block of `mod.json` (`data::WorldGen`), optional like
+      `command`; `validate-mods` checks it.
+- [x] ~~**W1.3 The per-tile generator.**~~ **Done 2026-09-26.**
+      `GeneratedWorld::tile(hex)` is a pure function of seed, rules,
+      skeleton and hex: value noise hashed from integers and blended with
+      `+` and `*` only; shares calibrated as quantiles of the world's own
+      noise (a guessed threshold gave 7.6% wood for 28% asked). Ties go to
+      a seeded lot, never the compass — coordinates first lined every
+      town up on the western edge. `chunk_tiles` feeds
+      `World::load_chunk`. The base mod's world is radius 6 (127 campaign
+      hexes, 160,147 tiles), made in ~110 ms, every tile generated and
+      summarised in ~20 ms. `examples/worldgen` draws it.
+- [x] ~~**W1.4 `R`**, the campaign hex summary.~~ **Done 2026-09-26.**
+      `GeneratedWorld::summary(chunk)`: the mod's `summary` rules, first
+      that holds (a skeleton feature, a mean elevation, a terrain's share),
+      and the land's mean level as its elevation — so the campaign's
+      vertical scale *is* the battle's, which retires "overworld elevation
+      is priced at the battle scale" once the campaign stands on a
+      generated world. Since the tiles are the truth there is no given
+      coarse state for `R(P(c)) == c` to check; what is pinned instead is
+      that the summary is read off the tiles and nothing else, and that
+      any order or subset of chunks gives the same tiles.
 - [ ] **W1.5 Residency**: load, cache and evict chunks from unit positions;
       `forget_around` for the terrain reader.
 - [ ] **W1.6 Saves**: seed + skeleton + edit overlay; `SAVE_VERSION` bump.

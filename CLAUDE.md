@@ -40,6 +40,7 @@ cargo run --release -p tactics_core --example balance -- --sim --points 100  # r
 cargo run --release -p tactics_core --example balance -- --brains --brain-games 64  # which planner
 cargo run --release -p tactics_core --example balance -- --help  # every flag, with examples
 cargo run --release -p tactics_core --example campaign [seed [to]]  # whole campaigns, every side a machine
+cargo run --release -p tactics_core --example worldgen [seed]  # a generated world, drawn; -- --chunk q,r for one hex
 
 # what does this number do that the old one did not?
 cargo run --release -p tactics_core --example balance -- \
@@ -483,6 +484,28 @@ and the seam tests in `tests/ground.rs`.
 - **Saved as its tiles, under the key `map`**, so a whole world's save is
   what a battle's always was. A chunked world refuses to serialise rather
   than come back whole with its unloaded ground suddenly outside.
+
+### Making a world
+
+`tactics_core::worldgen`, from the `worldgen` block of `mod.json`
+(WORLD.md W1.2–W1.4). Tests: `tests/worldgen.rs`. Look at one with
+`cargo run --release -p tactics_core --example worldgen [seed]`.
+
+- **The tiles are the truth.** A campaign hex is `summary(chunk)`, read off
+  its tiles by the mod's rules; nothing is decided at campaign scale and
+  pushed down.
+- **The skeleton is made once, the tiles on demand.** Rivers, towns and
+  roads are about other tiles, so they are laid when the world is made;
+  `tile(hex)` is a pure function of seed, rules, skeleton and hex, with no
+  chunk boundary inside it — which is why there is no seam to test for,
+  and the test is that any order of chunks gives the same ground.
+- **Noise is `+` and `*` over integer hashes**, and shares are quantiles of
+  the world's own noise, so "28% wood" is true of every world.
+- **A tie goes to a seeded lot (`lot`), never a coordinate.** Coordinates
+  first put every town on the western edge; the compass spoils maps the way
+  it spoils decisions.
+- **Optional, like `command`.** No `worldgen` block is no generator, and
+  every scenario and hand-drawn campaign plays as before.
 
 ### Reading ground
 

@@ -76,4 +76,10 @@ pub struct ModManifest {
     /// [`Self::scale`].
     #[serde(default)]
     pub planner: Option<PlannerRules>,
+    /// How a world is made (WORLD.md, W1). Optional in the registry as well
+    /// as here: a mod that declares none cannot generate a world, and plays
+    /// every scenario and hand-drawn campaign as it did. Same one-in-effect
+    /// rule as [`Self::scale`].
+    #[serde(default)]
+    pub worldgen: Option<super::WorldGen>,
 }

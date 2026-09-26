@@ -120,6 +120,26 @@
     "advance_slope": 0.3,
     "search_slope": 0.15
   },
+  "worldgen": {
+    "radius": 6,
+    "relief": { "scale": 48, "octaves": 3, "shares": [38, 24, 15, 10, 7, 4, 2] },
+    "cover": { "scale": 18, "wood_percent": 28, "hedge_percent": 9, "wet_percent": 20 },
+    "rivers": { "count": 2, "spacing": 3 },
+    "towns": { "count": 8, "spacing": 2, "radius": 3, "factories": 2 },
+    "roads": { "extra_links": 2 },
+    "terrain": {
+      "open": "grass", "wood": "forest", "hedge": "hedgerow", "wet": "mud",
+      "water": "water", "road": "road", "town": "town"
+    },
+    "summary": [
+      { "terrain": "factory", "feature": "factory" },
+      { "terrain": "city", "feature": "town" },
+      { "terrain": "mountains", "mean_elevation_tenths": 35 },
+      { "terrain": "deep_forest", "share": { "terrain": "forest", "percent": 40 } },
+      { "terrain": "highway", "feature": "road" },
+      { "terrain": "plains" }
+    ]
+  },
   "cores": [
     {
       "id": "strength",

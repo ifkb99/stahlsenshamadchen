@@ -35,6 +35,7 @@ pub mod overworld;
 pub mod roster;
 pub mod save;
 pub mod world;
+pub mod worldgen;
 
 pub use hexx;
 pub use hexx::{EdgeDirection, Hex};
