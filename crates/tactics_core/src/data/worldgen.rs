@@ -154,6 +154,12 @@ pub struct Towns {
     /// How many of them have a factory — the ground a campaign is fought
     /// over.
     pub factories: u32,
+    /// What a town is worth to a fight near it, as an objective's value
+    /// (WORLD.md W3.4), and what a factory town is.
+    pub worth: u32,
+    pub factory_worth: u32,
+    /// How near a fight a town has to be, in tiles, to be fought over.
+    pub contested_within: u32,
 }
 
 impl Default for Towns {
@@ -163,6 +169,9 @@ impl Default for Towns {
             spacing: 2,
             radius: 3,
             factories: 2,
+            worth: 2,
+            factory_worth: 4,
+            contested_within: 30,
         }
     }
 }

@@ -2055,3 +2055,73 @@ fn on_the_clock_an_army_ordered_onto_its_own_hex_holds_there() {
         "and it ends the march"
     );
 }
+
+#[test]
+fn a_fight_at_a_town_is_fought_over_the_town_and_whoever_holds_it_takes_it() {
+    // WORLD.md W3.4 and W2.5: the towns near a fight are objectives on their
+    // own tiles, and when the fight is over a town's campaign hex goes to
+    // whoever holds those tiles — capture read from the ground.
+    let reg = registry();
+    let mut state = generated(&reg);
+    let world = state.world.clone().unwrap();
+    let radius = world.chunk_radius;
+    let army = state.armies[0].id;
+    let here = state.army(army).unwrap().pos;
+    // The nearest town to Kuhlmann's first company that nobody stands in,
+    // with a Valkyrie army set down on its square.
+    let town = world
+        .skeleton
+        .towns
+        .iter()
+        .map(|t| (t, tactics_core::world::chunk_of(t.centre, radius)))
+        .filter(|(_, hex)| *hex != here && state.army_at(*hex).is_none())
+        .min_by_key(|(_, hex)| hex.unsigned_distance_to(here))
+        .map(|(t, hex)| (*t, hex))
+        .unwrap();
+    let (town, at) = town;
+    let enemy = state.armies.iter().find(|a| a.side == 1).unwrap().id;
+    {
+        let e = state.armies.iter_mut().find(|a| a.id == enemy).unwrap();
+        e.pos = at;
+        e.tile = Some(town.centre);
+    }
+    state
+        .apply(&reg, &OverworldOrder::MoveArmy { army, to: at })
+        .unwrap();
+    state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
+    let mut holder = None;
+    let mut fought_over = false;
+    for _ in 0..200_000 {
+        if let Some(e) = state.engagements.first() {
+            for (o, held) in e.battle().objectives() {
+                if o.id.starts_with("town-") && o.hexes.contains(&town.centre) {
+                    fought_over = true;
+                    holder = held;
+                }
+            }
+        }
+        let events = state.advance_clock(&reg, 1);
+        if events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::EngagementEnded { .. }))
+        {
+            break;
+        }
+    }
+    assert!(fought_over, "the fight at the town was not over the town");
+    if let Some(side) = holder {
+        assert_eq!(state.owners.get(&at), Some(&side), "its holder took it");
+    }
+    // Both sides' survivors often end in the town, the contest cancelling;
+    // the campaign keeps one army to a hex, so one of them has fallen back.
+    for a in state.armies.iter().filter(|a| a.alive) {
+        assert!(
+            !state
+                .armies
+                .iter()
+                .any(|o| o.alive && o.side != a.side && o.pos == a.pos),
+            "`{}` shares a hex with the enemy after the fight",
+            a.name
+        );
+    }
+}

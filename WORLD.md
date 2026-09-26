@@ -364,8 +364,9 @@ the determinism snapshot passes **unregenerated**.
       element to look ahead, which travels as its own coarse entity. The
       halt itself runs on the clock since W3.1 (the last minutes of every
       marching hour); what a commander does with one is still to build.
-- [ ] **W2.5 Capture and endings read tiles.** Folded into W3.4:
-      objectives come from the skeleton when fights are on the ground.
+- [x] ~~**W2.5 Capture and endings read tiles.**~~ **Done 2026-09-26**
+      with W3.4: a town fought over goes to whoever holds its tiles when
+      the fight ends.
 
 ### W3 — the world clock and the bubble
 
@@ -423,9 +424,17 @@ the determinism snapshot passes **unregenerated**.
       engagement's `over`, `score`, stalemate clock and `check_victory`
       *are* its battle's, used unchanged; there are no exits on the ground
       and armies arrive where they stand rather than being deployed from an
-      edge; the defender's ground is the fight's objective. *Still to do:*
-      towns and factories inside a fight as objectives of their own, from
-      the skeleton (and capture read from their tiles, W2.5).
+      edge; the defender's ground is the fight's objective. **Done
+      2026-09-26:** every town within `towns.contested_within` (30) tiles of
+      the fight is an objective on its own tiles, worth `towns.worth` (2) or
+      `factory_worth` (4), and when the fight ends each goes to whoever holds
+      its tiles. Found doing it: survivors of both sides often end in the
+      town they fought over, the contest cancelling — two hostile armies in
+      one campaign hex — so one falls back a hex: the loser, or with no
+      winner the attacker (tested; not moving it fails). The holder's
+      capture is exercised only when somebody holds the town at the end,
+      which the test's fight did not produce. `frontier_world` moved from
+      Valkyries 14–2 to 10–6.
 - [x] ~~**W3.5 Joining.**~~ **Done 2026-09-26** (merging two fights, and
       splitting one, still to do). A column whose next step enters the hex
       of an army already fighting — friend's or foe's — halts on its border
