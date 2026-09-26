@@ -1559,7 +1559,7 @@ impl BattleState {
             && self.radio_clear(s.pos, l.pos);
         let by_sight = rules.visual_range > 0
             && dist <= rules.visual_range as i32
-            && self.world.sight().clear(s.pos, l.pos);
+            && self.world.sight_clear(s.pos, l.pos);
         by_radio || by_sight
     }
 

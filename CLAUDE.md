@@ -445,6 +445,31 @@ json path through `harness::overrides`, a bare name being a `planner` field);
   neutral: −6 and +5 wins in 360 on the maps. PLANNING.md step 4 has why —
   tank against tank, the fire that would pin a crew kills her first.
 
+### The world
+
+`tactics_core::world` (WORLD.md, W0.3–W0.4, W1.1). Tests: `tests/world.rs`,
+and the seam tests in `tests/ground.rs`.
+
+- **One owner and one door.** `World` is the tiles, the `SightGrid` and the
+  `MoveGrid`; `World::insert` writes a tile and resolves it into both grids
+  in one call, and nothing writes a grid on its own. A battle holds
+  `world: Arc<World>`.
+- **The engine asks sight through `World::sight_clear`**, never the grid
+  directly, so a chunked world can refuse to answer wrongly: in a debug
+  build a line crossing an `Unloaded` hex panics, because the grid would
+  read it as open sky.
+- **Three answers, not two** (`World::presence`): `Known`, `Outside` (no
+  ground here, ever — open sky is right for a ray passing over it) and
+  `Unloaded` (ground not paged in — open sky is wrong). A world held
+  `Whole`, which is every battle today, never says unloaded.
+- **A campaign hex is a chunk**, radius 20 on `hexx`'s hexagon tiling,
+  computed in integers by `chunk_of`. The chunk lattice is rotated against
+  the tile grid, so a chunk coordinate is a coordinate: last in any
+  tiebreak.
+- **Saved as its tiles, under the key `map`**, so a whole world's save is
+  what a battle's always was. A chunked world refuses to serialise rather
+  than come back whole with its unloaded ground suddenly outside.
+
 ### Reading ground
 
 `tactics_core::ground` reads terrain the way a commander does — high

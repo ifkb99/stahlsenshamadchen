@@ -209,6 +209,11 @@ impl MoveGrid {
             .insert(hex, TileMove::of(tile, registry.terrain(tile.terrain)));
     }
 
+    /// Forget one tile.
+    pub fn remove(&mut self, hex: Hex) {
+        self.tiles.remove(&hex);
+    }
+
     /// Whether this grid has been built. A deserialized battle carries an
     /// empty one until [`crate::save`] refills it.
     pub fn is_empty(&self) -> bool {

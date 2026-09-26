@@ -195,9 +195,16 @@ the determinism snapshot passes **unregenerated**.
       its tiles under the old key `map`, so the file did not change and
       `SAVE_VERSION` did not move; `World::rebuilt` destructures by name
       the way `rehydrate` does. The two grids stayed two objects.
-- [ ] **W0.4 Unloaded is not absent.** A tile lookup answers known,
-      outside-the-world or not-resident; `sight_line_clear` treating an
-      unknown tile as transparent stays right only for the second.
+- [x] ~~**W0.4 Unloaded is not absent.**~~ **Done 2026-09-26**, with
+      W1.1. `World::presence` answers `Known`, `Outside` or `Unloaded`; a
+      world is held `Whole` (every battle today: a missing tile is outside)
+      or a chunk at a time (`World::chunked`, `load_chunk`, `unload_chunk`:
+      a hex in a resident chunk with no tile is outside, one in a chunk not
+      resident is unloaded). The engine asks every sight question through
+      `World::sight_clear`, which in a debug build of a chunked world panics
+      on a line crossing unloaded ground — the grid would read it as open
+      sky. A chunked world refuses to serialise until W1.6 gives it a
+      format.
 - [ ] **W0.5 World-stable unit ids.** `UnitId` is an index into
       `BattleState::units` today (`battle/mod.rs:62`); merging bubbles needs
       an id that means the same vehicle everywhere.
@@ -210,10 +217,16 @@ the determinism snapshot passes **unregenerated**.
 
 ### W1 — the ground, bottom up
 
-- [ ] **W1.1 Chunk geometry.** Decide the tiling of campaign hexes into
-      tiles (`hexx`'s radius-20 hexagons via `to_lower_res`, or another)
-      and what its rotation against the tile grid does to the compass
-      invariants.
+- [x] ~~**W1.1 Chunk geometry.**~~ **Done 2026-09-26.** A campaign hex is
+      a chunk of radius `Scale::battle_map_radius()` (20: the 1261-tile
+      hexagon a battle map already is) on `hexx`'s hexagons-of-hexagons
+      tiling, the one `ground::region_of` reads terrain in.
+      `world::chunk_of` is that tiling in integer arithmetic (hexx divides
+      in `f32`), held to hexx's answer over radius 300 at four chunk sizes;
+      `chunk_hexes` walks a chunk centre-out. The chunk lattice is turned
+      about 29° against the tile grid — chunk `(1, 0)` is centred on tile
+      `(41, -20)` — so a chunk coordinate is a coordinate, and goes last in
+      any tiebreak like every other.
 - [ ] **W1.2 The skeleton, generated**: a coarse heightfield, rivers down
       it, towns, roads as least-cost paths between them, objectives on what
       the towns hold. World size and every rate are parameters in the mod.
