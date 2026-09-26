@@ -12,10 +12,10 @@ key BracketRight
 key BracketRight
 key BracketRight
 key Space
-until log "A fight is waiting for your orders." 400
+until log "The fighting is waiting for your orders." 400
 wait 3.0
 shot /tmp/fight-01-opened.png
-press Enter until log "The fight is over." 500
+press Enter until log "The fighting is over." 500
 shot /tmp/fight-02-over.png
 # Back on the campaign screen, the clock stopped where the fight left it.
 until log "Clock" 30

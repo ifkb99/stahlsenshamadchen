@@ -15,6 +15,7 @@
 
 use hexx::Hex;
 use tactics_core::ai::{AiConfig, AiPlanner};
+use tactics_core::battle::{Destruction, Fate};
 use tactics_core::data::{DataRegistry, ValidationReport};
 use tactics_core::map::CampaignVictory;
 use tactics_core::overworld::{
@@ -108,7 +109,7 @@ fn extra_army(state: &mut OverworldState, side: u8, at: Hex) -> ArmyId {
         tile: None,
         march: None,
         marched_ticks: 0,
-        engaged: None,
+        fighting: false,
     });
     id
 }
@@ -1461,7 +1462,7 @@ fn a_march_into_an_enemy_halts_on_the_border_of_his_ground_and_fights() {
     // take it, and the day goes on.)
     let began = events
         .iter()
-        .position(|e| matches!(e, OverworldEvent::EngagementBegan { .. }))
+        .position(|e| matches!(e, OverworldEvent::ArmyEngaged { .. }))
         .expect("the fight began");
     let halted = events[..began]
         .iter()
@@ -1479,8 +1480,8 @@ fn a_march_into_an_enemy_halts_on_the_border_of_his_ground_and_fights() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            OverworldEvent::EngagementBegan { attacker, defender, at, .. }
-                if *attacker == army && *defender == enemy && *at == enemy_at
+            OverworldEvent::ArmyEngaged { army: a, against: Some(d), at }
+                if *a == army && *d == enemy && *at == enemy_at
         )),
         "and the fight is on, on his ground: {events:?}"
     );
@@ -1628,9 +1629,9 @@ fn contact_on_a_generated_world_is_a_fight_on_the_ground_there() {
     assert!(
         events.iter().any(|e| matches!(
             e,
-            OverworldEvent::EngagementBegan { attacker, defender, .. }
-                if *attacker == army && *defender == enemy
-        )) || !state.engagements.is_empty(),
+            OverworldEvent::ArmyEngaged { army: a, against: Some(d), .. }
+                if *a == army && *d == enemy
+        )) || state.front.is_some(),
         "contact opened no fight: {events:?}"
     );
     assert!(
@@ -1655,7 +1656,7 @@ fn a_fight_on_the_ground_ends_with_its_survivors_armies_again_where_they_stand()
     let mut last_seen: Vec<(ArmyId, Vec<Hex>)> = Vec::new();
     let mut ended = false;
     for _ in 0..60_000 {
-        if let Some(e) = state.engagements.first() {
+        if let Some(e) = state.front.as_ref() {
             last_seen = e
                 .armies()
                 .into_iter()
@@ -1673,7 +1674,7 @@ fn a_fight_on_the_ground_ends_with_its_survivors_armies_again_where_they_stand()
         let events = state.advance_clock(&reg, 1);
         if events
             .iter()
-            .any(|e| matches!(e, OverworldEvent::EngagementEnded { .. }))
+            .any(|e| matches!(e, OverworldEvent::FightingOver { .. }))
         {
             ended = true;
             break;
@@ -1691,12 +1692,12 @@ fn a_fight_on_the_ground_ends_with_its_survivors_armies_again_where_they_stand()
             a.name
         );
     }
-    assert!(state.engagements.is_empty());
+    assert!(state.front.is_none());
     let radius = reg.scale.battle_map_radius();
     let mut after = 0;
     for id in [army, enemy] {
         let Some(a) = state.army(id) else { continue };
-        assert_eq!(a.engaged, None, "`{}` is still fighting", a.name);
+        assert!(!a.fighting, "`{}` is still fighting", a.name);
         let tile = a.tile.unwrap();
         assert_eq!(tactics_core::world::chunk_of(tile, radius), a.pos);
         after += a.units.len();
@@ -1713,15 +1714,12 @@ fn a_campaign_in_the_middle_of_a_fight_goes_through_a_save_and_fights_on_the_sam
     // few minutes into it.
     state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
     for _ in 0..20_000 {
-        if !state.engagements.is_empty() {
+        if state.front.is_some() {
             break;
         }
         state.advance_clock(&reg, 1);
     }
-    assert!(
-        !state.engagements.is_empty(),
-        "the test wants a fight in progress"
-    );
+    assert!(state.front.is_some(), "the test wants a fight in progress");
     state.advance_clock(&reg, 40);
     let text = tactics_core::save::SaveGame::<tactics_core::battle::BattleState>::new(
         &reg,
@@ -1741,7 +1739,7 @@ fn a_campaign_in_the_middle_of_a_fight_goes_through_a_save_and_fights_on_the_sam
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
     }
     let positions = |s: &OverworldState| -> Vec<(u32, Hex)> {
-        s.engagements
+        s.front
             .iter()
             .flat_map(|e| e.battle().units.iter().map(|u| (u.id.0, u.pos)))
             .collect()
@@ -1778,17 +1776,13 @@ fn a_column_that_reaches_a_fight_in_progress_joins_it_on_its_own_side() {
     let (mut state, army, enemy) = about_to_meet(&reg);
     state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
     for _ in 0..20_000 {
-        if !state.engagements.is_empty() {
+        if state.front.is_some() {
             break;
         }
         state.advance_clock(&reg, 1);
     }
-    assert!(
-        !state.engagements.is_empty(),
-        "the test wants a fight in progress"
-    );
-    let fight = state.engagements[0].id;
-    let before = state.engagements[0].battle().units.len();
+    assert!(state.front.is_some(), "the test wants a fight in progress");
+    let before = state.front.as_ref().unwrap().battle().units.len();
     let enemy_side = state.army(enemy).unwrap().side;
     // The other Valkyrie army, set down on the border of the fight's hex —
     // a column moves a tile a minute and a fight here lasts about nine, so
@@ -1834,14 +1828,14 @@ fn a_column_that_reaches_a_fight_in_progress_joins_it_on_its_own_side() {
     let mut joined = false;
     for _ in 0..20_000 {
         let events = state.advance_clock(&reg, 1);
-        if events.iter().any(|e| {
-            matches!(e, OverworldEvent::EngagementJoined { engagement, army: a }
-                if *engagement == fight && *a == reserve)
-        }) {
+        if events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::ArmyEngaged { army: a, .. } if *a == reserve))
+        {
             joined = true;
             break;
         }
-        if state.engagements.is_empty() {
+        if state.front.is_none() {
             break;
         }
     }
@@ -1849,8 +1843,8 @@ fn a_column_that_reaches_a_fight_in_progress_joins_it_on_its_own_side() {
         joined,
         "the reserve never reached the fight, or the fight ended first"
     );
-    let e = &state.engagements[0];
-    assert_eq!(state.army(reserve).unwrap().engaged, Some(fight));
+    let e = state.front.as_ref().unwrap();
+    assert!(state.army(reserve).unwrap().fighting);
     assert!(e.battle().units.len() > before, "nobody arrived");
     let theirs: Vec<_> = e
         .battle()
@@ -1976,15 +1970,15 @@ fn a_fight_she_can_reach_waits_for_her_orders_and_one_she_cannot_is_fought_witho
     let mut waiting = None;
     for _ in 0..20_000 {
         let events = state.advance_clock(&reg, 1);
-        if let Some(OverworldEvent::EngagementAwaitsOrders { engagement, side }) = events
+        if let Some(OverworldEvent::FightAwaitsOrders { side }) = events
             .iter()
-            .find(|e| matches!(e, OverworldEvent::EngagementAwaitsOrders { .. }))
+            .find(|e| matches!(e, OverworldEvent::FightAwaitsOrders { .. }))
         {
-            waiting = Some((*engagement, *side));
+            waiting = Some(*side);
             break;
         }
     }
-    let (fight, side) = waiting.expect("her fight waits for her");
+    let side = waiting.expect("her fight waits for her");
     assert_eq!(side, 0);
     let clock = state.clock;
     let again = state.advance_clock(&reg, 50);
@@ -1992,15 +1986,11 @@ fn a_fight_she_can_reach_waits_for_her_orders_and_one_she_cannot_is_fought_witho
     assert!(
         again
             .iter()
-            .any(|e| matches!(e, OverworldEvent::EngagementAwaitsOrders { .. }))
+            .any(|e| matches!(e, OverworldEvent::FightAwaitsOrders { .. }))
     );
 
     state
-        .order_in_fight(
-            &reg,
-            fight,
-            &tactics_core::battle::Order::Commit { side: 0 },
-        )
+        .order_in_fight(&reg, &tactics_core::battle::Order::Commit { side: 0 })
         .expect("she commits");
     state.advance_clock(&reg, 5);
     assert!(state.clock > clock, "and the world goes on");
@@ -2015,12 +2005,12 @@ fn a_fight_she_can_reach_waits_for_her_orders_and_one_she_cannot_is_fought_witho
         assert!(
             !events
                 .iter()
-                .any(|e| matches!(e, OverworldEvent::EngagementAwaitsOrders { .. })),
+                .any(|e| matches!(e, OverworldEvent::FightAwaitsOrders { .. })),
             "a company she cannot reach does not wait for her"
         );
         if events
             .iter()
-            .any(|e| matches!(e, OverworldEvent::EngagementEnded { .. }))
+            .any(|e| matches!(e, OverworldEvent::FightingOver { .. }))
         {
             break;
         }
@@ -2092,7 +2082,7 @@ fn a_fight_at_a_town_is_fought_over_the_town_and_whoever_holds_it_takes_it() {
     let mut holder = None;
     let mut fought_over = false;
     for _ in 0..200_000 {
-        if let Some(e) = state.engagements.first() {
+        if let Some(e) = state.front.as_ref() {
             for (o, held) in e.battle().objectives() {
                 if o.id.starts_with("town-") && o.hexes.contains(&town.centre) {
                     fought_over = true;
@@ -2103,7 +2093,7 @@ fn a_fight_at_a_town_is_fought_over_the_town_and_whoever_holds_it_takes_it() {
         let events = state.advance_clock(&reg, 1);
         if events
             .iter()
-            .any(|e| matches!(e, OverworldEvent::EngagementEnded { .. }))
+            .any(|e| matches!(e, OverworldEvent::FightingOver { .. }))
         {
             break;
         }
@@ -2124,4 +2114,166 @@ fn a_fight_at_a_town_is_fought_over_the_town_and_whoever_holds_it_takes_it() {
             a.name
         );
     }
+}
+
+/// Two fights on a generated campaign, far enough apart that neither pair
+/// can see the other, begun together: each Kuhlmann army set on the border
+/// of its own hex, a Valkyrie army in the hex across it, and sent in, so
+/// contact is its first step. (Set down further off they meet minutes apart,
+/// and a fight here can be over before the other begins.) The clock is run
+/// until all four are fighting. Returns the pairs, Kuhlmann first.
+fn two_fights(reg: &DataRegistry) -> (OverworldState, Vec<(ArmyId, ArmyId)>) {
+    let mut state = generated(reg);
+    let world = state.world.clone().unwrap();
+    let radius = world.chunk_radius;
+    let kuhlmann: Vec<ArmyId> = state
+        .armies
+        .iter()
+        .filter(|a| a.side == 0)
+        .map(|a| a.id)
+        .collect();
+    let valkyries: Vec<ArmyId> = state
+        .armies
+        .iter()
+        .filter(|a| a.side == 1)
+        .map(|a| a.id)
+        .collect();
+    let mut pairs = Vec::new();
+    for (ours, theirs) in kuhlmann.iter().zip(&valkyries) {
+        let here = state.army(*ours).unwrap().pos;
+        let there = here
+            .all_neighbors()
+            .into_iter()
+            .find(|n| state.army_at(*n).is_none())
+            .unwrap();
+        let (from, to) = (world.stand_tile(reg, here), world.stand_tile(reg, there));
+        let border = from
+            .line_to(to)
+            .take_while(|t| tactics_core::world::chunk_of(*t, radius) == here)
+            .last()
+            .unwrap();
+        state
+            .armies
+            .iter_mut()
+            .find(|a| a.id == *ours)
+            .unwrap()
+            .tile = Some(border);
+        let e = state.armies.iter_mut().find(|a| a.id == *theirs).unwrap();
+        e.pos = there;
+        e.tile = Some(to);
+        state
+            .apply(
+                reg,
+                &OverworldOrder::MoveArmy {
+                    army: *ours,
+                    to: there,
+                },
+            )
+            .unwrap();
+        pairs.push((*ours, *theirs));
+    }
+    state.apply(reg, &OverworldOrder::EndTurn).unwrap();
+    for _ in 0..20_000 {
+        if state.front.as_ref().is_some_and(|f| f.armies().len() == 4) {
+            break;
+        }
+        state.advance_clock(reg, 1);
+    }
+    (state, pairs)
+}
+
+#[test]
+fn two_fights_in_different_places_are_one_battle() {
+    // The designer's ruling: no real separation between engagements, only
+    // different things happening on different parts of the map at once. Two
+    // contacts far apart are fought in one battle — the front — so there is
+    // nothing to merge when they drift together and nothing to split when
+    // they part.
+    let reg = registry();
+    let (state, pairs) = two_fights(&reg);
+    let front = state.front.as_ref().expect("the fighting began");
+    assert_eq!(
+        front.armies().len(),
+        4,
+        "both fights are in the one battle: {:?}",
+        front.armies()
+    );
+    let (a, b) = (
+        state.army(pairs[0].1).unwrap(),
+        state.army(pairs[1].1).unwrap(),
+    );
+    let apart = a.pos.unsigned_distance_to(b.pos);
+    assert!(
+        apart >= 2,
+        "the two fights are in different places ({apart} hexes apart)"
+    );
+    // One battle for the world's fighting is not a battle over the world's
+    // towns: a town is fought over while the fighting is near it, or a crew
+    // here would be pulled toward a factory a day's march off.
+    let world = state.world.as_ref().unwrap();
+    let within = world.rules.towns.contested_within;
+    let battle = front.battle();
+    let crews: Vec<Hex> = battle
+        .units
+        .iter()
+        .filter(|u| u.alive())
+        .map(|u| u.pos)
+        .collect();
+    let mut towns = 0;
+    for (objective, _) in battle.objectives() {
+        let Some(i) = objective.id.strip_prefix("town-") else {
+            continue;
+        };
+        let centre = world.skeleton.towns[i.parse::<usize>().unwrap()].centre;
+        assert!(
+            crews
+                .iter()
+                .any(|h| h.unsigned_distance_to(centre) <= within),
+            "{} is fought over with nobody within {within} tiles of it",
+            objective.id
+        );
+        towns += 1;
+    }
+    assert!(
+        towns < world.skeleton.towns.len(),
+        "not every town in the world is fought over"
+    );
+}
+
+#[test]
+fn a_fight_that_is_over_in_one_place_lets_its_army_go_while_another_goes_on() {
+    // The other half of the ruling: an army is not held in the fighting by
+    // somebody else's fight. The second pair's Valkyries are struck off the
+    // field, and the Kuhlmann company that was fighting them — nobody left
+    // within her reach — is a column again once the battle's own stalemate
+    // patience has run, while the first pair are still at it.
+    let reg = registry();
+    let (mut state, pairs) = two_fights(&reg);
+    let (winner, gone) = pairs[1];
+    let front = state.front.as_mut().expect("the fighting began");
+    for u in front.crews_of(gone) {
+        if let Some(unit) = front.battle_mut().units.iter_mut().find(|x| x.id == u) {
+            unit.fate = Fate::Destroyed(Destruction::Abandoned);
+        }
+    }
+    for _ in 0..20_000 {
+        if !state.army(winner).unwrap().fighting {
+            break;
+        }
+        state.advance_clock(&reg, 1);
+    }
+    assert!(
+        !state.army(winner).unwrap().fighting,
+        "she left the fighting"
+    );
+    let front = state
+        .front
+        .as_ref()
+        .expect("the other fight was still going on when she left");
+    assert!(
+        front.armies().contains(&pairs[0].0) && front.armies().contains(&pairs[0].1),
+        "and it is still in the battle: {:?}",
+        front.armies()
+    );
+    assert!(!front.armies().contains(&winner));
 }

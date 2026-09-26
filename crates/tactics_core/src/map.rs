@@ -783,6 +783,18 @@ impl Scenario {
         self
     }
 
+    /// Add `objective` after the ones this scenario has.
+    pub fn push_objective(&mut self, objective: Objective) {
+        self.objectives.push(objective);
+    }
+
+    /// Take away the objective called `id`, returning where it stood.
+    pub fn remove_objective(&mut self, id: &str) -> Option<usize> {
+        let index = self.objectives.iter().position(|o| o.id == id)?;
+        self.objectives.remove(index);
+        Some(index)
+    }
+
     /// The scenario a map file declares. Infallible: everything that can be
     /// wrong with it is a validation error with a better message, reported by
     /// [`MapFile::validate_into`].

@@ -1016,6 +1016,18 @@ impl CommandState {
         def: &FormationDef,
         members: &[(UnitId, bool)],
     ) -> Option<FormationId> {
+        // A company coming back to a fight it left is the same company: its
+        // new crews join the formation it already has.
+        if let Some(index) = self.formations.iter().position(|f| f.id == def.id) {
+            let f = &mut self.formations[index];
+            f.members.extend(members.iter().map(|(id, _)| *id));
+            f.members.sort_unstable();
+            f.members.dedup();
+            if let Some((first, _)) = members.iter().find(|(_, leads)| *leads).or(members.first()) {
+                f.leader = Some(*first);
+            }
+            return Some(FormationId(index as u32));
+        }
         let leader = members
             .iter()
             .find(|(_, leads)| *leads)

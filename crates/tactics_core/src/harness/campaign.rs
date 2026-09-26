@@ -224,20 +224,14 @@ pub fn play(
                 OverworldEvent::GameEnded { winner, reason } => {
                     run.end = Some((winner, reason));
                 }
-                // A fight on the ground, fought by the clock (WORLD.md W3.2):
-                // the campaign fought it, and says so when it ends.
-                OverworldEvent::EngagementEnded {
-                    attacker_side,
-                    winner,
-                    rounds,
-                    hulls_lost,
-                    ..
-                } => {
+                // The fighting on the ground, fought by the clock (WORLD.md
+                // W3.2, W3.8): when all of it is over, it counts as a battle.
+                OverworldEvent::FightingOver { rounds, hulls_lost } => {
                     run.battles.push(FieldResult {
                         day: state.turn,
                         map_id: "the ground".into(),
-                        attacker_side,
-                        winner,
+                        attacker_side: 0,
+                        winner: None,
                         rounds,
                         cut_off: false,
                         hulls_lost,

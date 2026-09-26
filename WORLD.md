@@ -390,7 +390,7 @@ the determinism snapshot passes **unregenerated**.
       today they are given in the dawn phases.
 - [x] ~~**W3.2 Refinement.**~~ **Done 2026-09-26**, at the contact rule the
       march already has (a column halts on the border of an enemy's hex): no
-      battle is sent anywhere. `open_engagement` lifts both armies' vehicles
+      battle is sent anywhere. `open_engagement` (now `enter_fighting`, W3.8) lifts both armies' vehicles
       onto the tiles round where each stands, gives the world its next unit
       ids, and fights an `engagement::Engagement` — a `BattleState` on a
       window onto the world — one battle tick per clock tick while every
@@ -402,7 +402,7 @@ the determinism snapshot passes **unregenerated**.
       fight in progress waits on the border.
 - [x] ~~**W3.3 Coarsening.**~~ **Done 2026-09-26**, by the battle's own end
       rules — elimination, or its stalemate clock after rounds with nobody
-      in contact, which is the hysteresis. `close_engagement` applies
+      in contact, which is the hysteresis. `close_engagement` (now `leave_fighting`) applies
       casualties and survivors through the same code a battle event uses
       (`apply_losses_and_survivors`, split out of `apply_battle_result`) and
       stands each army where its first surviving vehicle is (tested: a
@@ -435,24 +435,49 @@ the determinism snapshot passes **unregenerated**.
       capture is exercised only when somebody holds the town at the end,
       which the test's fight did not produce. `frontier_world` moved from
       Valkyries 14–2 to 10–6.
-- [x] ~~**W3.5 Joining.**~~ **Done 2026-09-26** (merging two fights, and
-      splitting one, still to do). A column whose next step enters the hex
+- [x] ~~**W3.5 Joining.**~~ **Done 2026-09-26** (merging and splitting
+      dissolved by W3.8: there is one fight). A column whose next step enters the hex
       of an army already fighting — friend's or foe's — halts on its border
-      and joins that fight (`join_engagement`, `BattleState::reinforce`,
+      and joins that fight (now `enter_fighting`, `BattleState::reinforce`,
       `CommandState::add_formation`): its vehicles lifted onto free tiles
       round it, named by the world, arriving as a formation of their own
       (last in seniority), assaulting the contested ground if it attacks
       and moving up onto it if not. A column moves a tile a minute and a
       fight lasts about nine, so a relief has to be close to arrive in time.
-- [x] ~~**W3.6 Work scales with the fight.**~~ **True by construction**
-      (2026-09-26): every engagement is its own `BattleState` holding only
-      its own units on its own window onto the world, so the fog,
-      `known_enemies`, `incoming` and a playout's clone never see beyond it.
+- [ ] **W3.6 Work scales with the fight.** *Reopened by W3.8.* It was
+      true by construction while every engagement was its own
+      `BattleState`; with one front for the world's fighting, the fog,
+      `known_enemies`, `incoming` and a playout's clone walk every crew
+      fighting anywhere, so two fights far apart pay for each other. Not a
+      problem at the campaign's size (16 generated campaigns in 3.7 s, about
+      what they took as separate engagements); the cure when it is one is a
+      spatial index under those walks, not separate battles.
 - [x] ~~**W3.7 `field.rs` replaced.**~~ **Done for generated campaigns**
       (2026-09-26): a clocked campaign never stages a `Clash`; the harness
       and `examples/campaign` run it on the clock and record each engagement
       as a battle. `field.rs` stays for the drawn campaign, which keeps its
       battles-as-events until it is retired.
+
+- [x] ~~**W3.8 One front.**~~ **Done 2026-09-26**, the fourth round's
+      ruling (below): there are no engagements, only the fighting.
+      `engagement::Front` is one `BattleState` on a window onto the world
+      holding every army in contact anywhere, each a formation. Contact, or
+      a column reaching the fighting, **enters** it; an army **leaves** when
+      none of its crews has had an enemy within reach for the battle's
+      stalemate patience, taking its own people's losses with it, while any
+      other fight goes on; the front is disbanded when it is empty. Merging
+      and splitting (left open by W3.5) are therefore not operations at all.
+      The towns fought over are those within `towns.contested_within` of
+      some crew in it, kept every round as crews move — with every town in
+      the world an objective, a crew was pulled at a factory a day off.
+      Events are `ArmyEngaged` / `ArmyDisengaged` per army and
+      `FightingOver` for the front. Three tests, each mutation-checked: two
+      fights far apart are one battle (and a fresh battle per contact fails
+      it); one can finish and its army go while the other goes on (never
+      leaving on staleness fails it); only nearby towns are fought over
+      (every town fails it). Determinism snapshot unregenerated; drawn
+      `frontier` unchanged at 24–7 over 32; `frontier_world` 5–11 over 16
+      (6–10 before, one fixed world, inside its noise).
 
 ### W4 — the player in the chain of command
 
@@ -574,3 +599,15 @@ The third round (2026-09-26, before W4):
    company's plan for that crew is dropped.
 6. **One level down, in a fight, is her companies**: an army is one
    formation in an engagement and she orders it; a crew is reaching down.
+
+The fourth round (2026-09-26, after W4):
+
+7. **There is no real separation between engagements** — only different
+   things happening on different parts of the map at once, or eventually
+   the same part. So there is one front, not fights to merge and split
+   (W3.8).
+8. **Detaching an element is the player's order only, for now** (W2.4);
+   the AI does not detach.
+9. **The generated campaign is the default**: the game opens on
+   `frontier_world`, and the drawn `frontier` is reached by
+   `STAHL_CAMPAIGN=frontier`.
