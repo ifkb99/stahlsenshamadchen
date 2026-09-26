@@ -267,6 +267,11 @@ pub struct Army {
     /// the first-declared army: what it always was.
     #[serde(default)]
     pub headquarters: bool,
+    /// Where on the ground an army on a generated world stands, to the tile
+    /// (WORLD.md W2.1); `pos` is always the campaign hex that tile lies in.
+    /// `None` on a drawn campaign map, which has no tiles.
+    #[serde(default)]
+    pub tile: Option<Hex>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -547,6 +552,41 @@ pub struct OverworldState {
     /// `None` for a drawn campaign.
     #[serde(default)]
     pub world: Option<Arc<GeneratedWorld>>,
+    /// The generated world's ground held whole, with its grids: what a march
+    /// is routed over. Built from `world` the first time a march needs it
+    /// (about 15 ms for the base mod's 160,000 tiles) and never saved — it is
+    /// a function of `world` and the terrain definitions.
+    #[serde(skip)]
+    ground: std::sync::OnceLock<Arc<crate::world::World>>,
+    /// What it costs a column of each kind to get from one campaign hex's
+    /// standing tile to a neighbour's, over the tiles of the two: the
+    /// campaign's coarse graph, filled in as marches ask (WORLD.md W2.2).
+    /// Shared by clones and never saved — every entry is a pure function of
+    /// the world, the terrain definitions and the column.
+    #[serde(skip)]
+    passages: Arc<std::sync::Mutex<HashMap<Passage, Option<u32>>>>,
+}
+
+/// The kind of column a march is priced for: which movement classes are in
+/// it (as a bit per [`MovementClass::index`]) and the climb its most cautious
+/// vehicle will take. Two armies of the same kind pay the same for every
+/// step, so the coarse graph is cached by it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ColumnKind {
+    classes: u8,
+    climb: i32,
+}
+
+/// One edge of the coarse graph: a column kind crossing from one campaign
+/// hex to a neighbour.
+type Passage = (ColumnKind, (i32, i32), (i32, i32));
+
+/// What a march needs to know about an army.
+#[derive(Debug, Clone, Copy)]
+struct Column {
+    kind: ColumnKind,
+    /// Movement points a round of its slowest vehicle.
+    points: u32,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -696,6 +736,7 @@ impl OverworldState {
                 alive: true,
                 mission: None,
                 headquarters: a.headquarters,
+                tile: world.as_ref().map(|w| w.stand_tile(registry, positions[i])),
             })
             .collect();
         let mut state = Self {
@@ -722,6 +763,8 @@ impl OverworldState {
             rng: ChaCha8Rng::seed_from_u64(seed),
             seed,
             world,
+            ground: std::sync::OnceLock::new(),
+            passages: Arc::default(),
         };
         // Who can hear whom on the morning of day one. The events are dropped
         // because nothing has *changed* yet — an army that starts the campaign
@@ -979,6 +1022,409 @@ impl OverworldState {
             .collect()
     }
 
+    /// The generated world's ground held whole, built the first time a march
+    /// needs it. `None` on a drawn campaign map.
+    fn ground(&self, registry: &DataRegistry) -> Option<&Arc<crate::world::World>> {
+        let world = self.world.as_ref()?;
+        Some(self.ground.get_or_init(|| {
+            let mut tiles = HexMap::default();
+            for chunk in world.chunks() {
+                for (hex, terrain, level) in world.chunk_tiles(chunk) {
+                    tiles.insert(hex, terrain, level);
+                }
+            }
+            Arc::new(crate::world::World::build(registry, tiles))
+        }))
+    }
+
+    /// What an army marches as. The vehicles that carry it set the pace: a
+    /// column with anything on wheels or tracks is priced by those, since its
+    /// infantry ride; a column on foot walks. Of those, the slowest sets the
+    /// speed and the most cautious the climb (WORLD.md W2.3).
+    fn column(registry: &DataRegistry, army: &Army) -> Column {
+        let vehicles: Vec<&crate::data::VehicleDef> = army
+            .units
+            .iter()
+            .filter_map(|u| registry.vehicle(&u.vehicle))
+            .collect();
+        let riding: Vec<&crate::data::VehicleDef> = vehicles
+            .iter()
+            .copied()
+            .filter(|v| v.movement.class != MovementClass::Foot)
+            .collect();
+        let pacing = if riding.is_empty() {
+            &vehicles
+        } else {
+            &riding
+        };
+        let classes = pacing
+            .iter()
+            .fold(0u8, |bits, v| bits | 1 << v.movement.class.index());
+        Column {
+            kind: ColumnKind {
+                classes: if classes == 0 {
+                    1 << ARMY_CLASS.index()
+                } else {
+                    classes
+                },
+                climb: pacing
+                    .iter()
+                    .map(|v| v.movement.max_climb)
+                    .min()
+                    .unwrap_or(ARMY_CLIMB),
+            },
+            points: pacing
+                .iter()
+                .map(|v| v.movement.points)
+                .min()
+                .unwrap_or(1)
+                .max(1),
+        }
+    }
+
+    /// What one step costs this kind of column: the dearest of its classes,
+    /// or `None` if any of them cannot make it — a column goes where all of
+    /// it can go.
+    fn column_step(
+        ground: &crate::world::World,
+        kind: ColumnKind,
+        from: Hex,
+        to: Hex,
+    ) -> Option<u32> {
+        MovementClass::ALL
+            .iter()
+            .filter(|c| kind.classes & (1 << c.index()) != 0)
+            .map(|c| ground.moves().cost(*c, kind.climb, from, to))
+            .try_fold(0u32, |dearest, cost| Some(dearest.max(cost?)))
+    }
+
+    /// The movement points this army's column spends in a day's march.
+    pub fn day_budget(&self, registry: &DataRegistry, id: ArmyId) -> u32 {
+        let Some(army) = self.army(id) else {
+            return 0;
+        };
+        let rounds_per_hour = (3600.0 / registry.scale.round_seconds).round() as u32;
+        registry
+            .march
+            .day_budget(Self::column(registry, army).points, rounds_per_hour)
+    }
+
+    /// The cheapest tile route for this kind of column from `from` to `to`,
+    /// by A*, over tiles `open` allows; `None` if there is none. Ties go to the
+    /// lower cost so far and then the coordinate, last.
+    fn tile_route(
+        ground: &crate::world::World,
+        kind: ColumnKind,
+        from: Hex,
+        to: Hex,
+        open: impl Fn(Hex) -> bool,
+    ) -> Option<(Vec<Hex>, u32)> {
+        let mut best: HashMap<Hex, u32> = HashMap::from([(from, 0)]);
+        let mut came: HashMap<Hex, Hex> = HashMap::new();
+        let mut heap = BinaryHeap::new();
+        heap.push(Reverse((
+            from.unsigned_distance_to(to),
+            0u32,
+            from.x,
+            from.y,
+        )));
+        while let Some(Reverse((_, cost, x, y))) = heap.pop() {
+            let at = Hex::new(x, y);
+            if at == to {
+                let mut path = vec![to];
+                let mut here = to;
+                while let Some(prev) = came.get(&here) {
+                    path.push(*prev);
+                    here = *prev;
+                }
+                path.reverse();
+                return Some((path, cost));
+            }
+            if best.get(&at).is_some_and(|b| *b < cost) {
+                continue;
+            }
+            for next in at.all_neighbors() {
+                if next != to && !open(next) {
+                    continue;
+                }
+                let Some(step) = Self::column_step(ground, kind, at, next) else {
+                    continue;
+                };
+                let total = cost + step;
+                if best.get(&next).is_none_or(|b| total < *b) {
+                    best.insert(next, total);
+                    came.insert(next, at);
+                    heap.push(Reverse((
+                        total + next.unsigned_distance_to(to),
+                        total,
+                        next.x,
+                        next.y,
+                    )));
+                }
+            }
+        }
+        None
+    }
+
+    /// What it costs `kind` to cross from campaign hex `a`'s standing tile
+    /// to neighbouring `b`'s, over the tiles of those two hexes alone: one
+    /// edge of the coarse graph `reachable` searches. Cached.
+    fn passage(
+        &self,
+        registry: &DataRegistry,
+        world: &GeneratedWorld,
+        ground: &crate::world::World,
+        kind: ColumnKind,
+        a: Hex,
+        b: Hex,
+    ) -> Option<u32> {
+        let key = (kind, (a.x, a.y), (b.x, b.y));
+        if let Some(cost) = self.passages.lock().expect("unpoisoned").get(&key) {
+            return *cost;
+        }
+        let radius = world.chunk_radius;
+        let cost = Self::tile_route(
+            ground,
+            kind,
+            world.stand_tile(registry, a),
+            world.stand_tile(registry, b),
+            |h| {
+                let c = crate::world::chunk_of(h, radius);
+                c == a || c == b
+            },
+        )
+        .map(|(_, cost)| cost);
+        self.passages.lock().expect("unpoisoned").insert(key, cost);
+        cost
+    }
+
+    /// The campaign hexes a march passes through from `from` to `to`, by A*
+    /// over the coarse graph, through hexes `open` allows. The heuristic is
+    /// the tile distance from a hex's standing tile to the goal's: a coarse
+    /// route is a chain of passages between standing tiles and a tile costs
+    /// at least a point, so it never over-estimates — and it is tight on open
+    /// ground, so the search prices only the passages near the line to the
+    /// goal. A Dijkstra priced a thousand of them (1,150 ms); a bound of
+    /// whole hexes between, too loose, several hundred (994 ms). Ties go to
+    /// the coordinate, last.
+    #[allow(clippy::too_many_arguments)]
+    fn coarse_route(
+        &self,
+        registry: &DataRegistry,
+        world: &GeneratedWorld,
+        ground: &crate::world::World,
+        kind: ColumnKind,
+        from: Hex,
+        to: Hex,
+        open: &dyn Fn(Hex) -> bool,
+    ) -> Option<Vec<Hex>> {
+        let goal = world.stand_tile(registry, to);
+        let floor = |h: Hex| world.stand_tile(registry, h).unsigned_distance_to(goal);
+        let mut best: HashMap<Hex, u32> = HashMap::from([(from, 0)]);
+        let mut came: HashMap<Hex, Hex> = HashMap::new();
+        let mut heap = BinaryHeap::new();
+        heap.push((Reverse((floor(from), 0u32)), from.x, from.y));
+        while let Some((Reverse((_, cost)), x, y)) = heap.pop() {
+            let hex = Hex::new(x, y);
+            if hex == to {
+                let mut path = vec![to];
+                let mut here = to;
+                while let Some(prev) = came.get(&here) {
+                    path.push(*prev);
+                    here = *prev;
+                }
+                path.reverse();
+                return Some(path);
+            }
+            if best.get(&hex).is_some_and(|&c| c < cost) {
+                continue;
+            }
+            for next in hex.all_neighbors() {
+                if !self.map.contains(next) || !open(next) {
+                    continue;
+                }
+                let Some(step) = self.passage(registry, world, ground, kind, hex, next) else {
+                    continue;
+                };
+                let total = cost + step;
+                if best.get(&next).is_none_or(|&c| total < c) {
+                    best.insert(next, total);
+                    came.insert(next, hex);
+                    heap.push((Reverse((total + floor(next), total)), next.x, next.y));
+                }
+            }
+        }
+        None
+    }
+
+    /// `reachable` on a generated world: the coarse graph of campaign hexes,
+    /// each edge the tile-level passage between neighbours, searched within
+    /// the day's march. An estimate of the march — the march itself cuts
+    /// corners the coarse graph cannot — and never an over-estimate of what
+    /// the route through the standing tiles would cost.
+    fn reachable_on_ground(&self, registry: &DataRegistry, army: &Army) -> HashMap<Hex, u32> {
+        let (Some(world), Some(ground)) = (self.world.as_ref(), self.ground(registry)) else {
+            return HashMap::new();
+        };
+        let kind = Self::column(registry, army).kind;
+        let budget = self.day_budget(registry, army.id);
+        let mut best: HashMap<Hex, u32> = HashMap::from([(army.pos, 0)]);
+        let mut heap = BinaryHeap::new();
+        heap.push((Reverse(0u32), army.pos.x, army.pos.y));
+        while let Some((Reverse(cost), x, y)) = heap.pop() {
+            let hex = Hex::new(x, y);
+            if best.get(&hex).is_some_and(|&c| c < cost) {
+                continue;
+            }
+            for next in hex.all_neighbors() {
+                if !self.map.contains(next)
+                    || self
+                        .army_at(next)
+                        .is_some_and(|other| other.side != army.side)
+                {
+                    continue;
+                }
+                let Some(step) = self.passage(registry, world, ground, kind, hex, next) else {
+                    continue;
+                };
+                let total = cost + step;
+                if total > budget {
+                    continue;
+                }
+                if best.get(&next).is_none_or(|&c| total < c) {
+                    best.insert(next, total);
+                    heap.push((Reverse(total), next.x, next.y));
+                }
+            }
+        }
+        best.retain(|hex, _| *hex == army.pos || self.army_at(*hex).is_none());
+        best
+    }
+
+    /// A march on a generated world: the army's route over the real ground,
+    /// tile by tile, from where it stands to the standing tile of `to`,
+    /// trimmed to the day's march (WORLD.md W2.1–W2.3). Returns the campaign
+    /// hexes it passed through, the tile it stopped on, and the enemy that
+    /// stopped it, if one did — the same three things the campaign-hex march
+    /// works out, so everything after them is shared.
+    ///
+    /// The rules are the campaign's, read at the tile: a hostile army's hex
+    /// is a wall to a march that means to avoid contact and the end of one
+    /// that does not, entered never — the column halts on its border and the
+    /// fight is there; a friend's hex is traffic, driven through and not
+    /// stopped in.
+    #[allow(clippy::type_complexity)]
+    fn march_on_ground(
+        &self,
+        registry: &DataRegistry,
+        army: &Army,
+        to: Hex,
+        engagement: Engagement,
+    ) -> Result<(Vec<Hex>, Hex, Option<(ArmyId, Hex)>), OverworldError> {
+        let (Some(world), Some(ground)) = (self.world.as_ref(), self.ground(registry)) else {
+            return Err(OverworldError::NoPath);
+        };
+        let radius = world.chunk_radius;
+        let column = Self::column(registry, army);
+        let start = army
+            .tile
+            .unwrap_or_else(|| world.stand_tile(registry, army.pos));
+        let hostile_hex = |c: Hex| self.army_at(c).is_some_and(|other| other.side != army.side);
+        let open_hex = |c: Hex| {
+            c == to || c == army.pos || engagement == Engagement::EnRoute || !hostile_hex(c)
+        };
+        let budget = self.day_budget(registry, army.id);
+
+        // Hierarchical, in two steps (WORLD.md W2.2). The coarse route: the
+        // campaign hexes to pass through, over the graph `reachable` reads.
+        // Then the fine one, over the tiles, aimed at the first hex on the
+        // coarse route beyond a day's march and confined to a corridor of
+        // the coarse route and its neighbours — the tiles a day can use,
+        // rather than every tile between here and a goal days away (208 ms
+        // for a march across the world, planned whole; the corridor is what
+        // a day needs). Every passage the coarse graph prices lies inside
+        // the corridor, so the fine route is never dearer than the coarse
+        // one: what `reachable` offers, the march delivers.
+        let coarse = self
+            .coarse_route(
+                registry,
+                world,
+                ground,
+                column.kind,
+                army.pos,
+                to,
+                &open_hex,
+            )
+            .ok_or(OverworldError::NoPath)?;
+        let mut spent = 0;
+        let mut waypoint = coarse.len() - 1;
+        for (i, pair) in coarse.windows(2).enumerate() {
+            spent += self
+                .passage(registry, world, ground, column.kind, pair[0], pair[1])
+                .unwrap_or(u32::MAX / 4);
+            if spent > budget {
+                waypoint = (i + 2).min(coarse.len() - 1);
+                break;
+            }
+        }
+        let goal_hex = coarse[waypoint];
+        let goal = world.stand_tile(registry, goal_hex);
+        let mut corridor: std::collections::HashSet<Hex> = std::collections::HashSet::new();
+        for c in &coarse[..=waypoint] {
+            corridor.insert(*c);
+            corridor.extend(c.all_neighbors());
+        }
+        let (route, _) = Self::tile_route(ground, column.kind, start, goal, |h| {
+            let c = crate::world::chunk_of(h, radius);
+            corridor.contains(&c) && open_hex(c)
+        })
+        .ok_or(OverworldError::NoPath)?;
+
+        let mut budget = budget;
+        let mut tile = start;
+        let mut walked = vec![army.pos];
+        let mut blocked_by = None;
+        // The last tile walked whose hex nobody else stands in: where the
+        // column falls back to if the day runs out inside a friend's.
+        let mut last_free = start;
+        for pair in route.windows(2) {
+            let Some(step) = Self::column_step(ground, column.kind, pair[0], pair[1]) else {
+                break;
+            };
+            let hex = crate::world::chunk_of(pair[1], radius);
+            if hex != army.pos
+                && let Some(other) = self.army_at(hex)
+                && other.side != army.side
+            {
+                blocked_by = Some((other.id, hex));
+                break;
+            }
+            if step > budget {
+                break;
+            }
+            budget -= step;
+            tile = pair[1];
+            if walked.last() != Some(&hex) {
+                walked.push(hex);
+            }
+            if hex == army.pos || self.army_at(hex).is_none() {
+                last_free = tile;
+            }
+        }
+        let tile = if crate::world::chunk_of(tile, radius) == army.pos
+            || self.army_at(crate::world::chunk_of(tile, radius)).is_none()
+        {
+            tile
+        } else {
+            last_free
+        };
+        let destination = crate::world::chunk_of(tile, radius);
+        while walked.len() > 1 && walked.last() != Some(&destination) {
+            walked.pop();
+        }
+        Ok((walked, tile, blocked_by))
+    }
+
     fn edge_cost(&self, registry: &DataRegistry, from: Hex, to: Hex) -> Option<u32> {
         crate::battle::movement_edge_cost(registry, &self.map, ARMY_CLASS, ARMY_CLIMB, from, to)
     }
@@ -1000,6 +1446,9 @@ impl OverworldState {
         let Some(army) = self.army(id) else {
             return HashMap::new();
         };
+        if self.world.is_some() {
+            return self.reachable_on_ground(registry, army);
+        }
         let mut best: HashMap<Hex, u32> = HashMap::new();
         let mut heap = BinaryHeap::new();
         best.insert(army.pos, 0);
@@ -1281,6 +1730,20 @@ impl OverworldState {
             return Err(OverworldError::AlreadyMoved);
         }
 
+        // On a generated world the march is over the real ground, tile by
+        // tile; it produces the same three things the march below does, and
+        // everything after them is shared.
+        if self.world.is_some() {
+            let army = self.army(id).expect("checked above").clone();
+            let (walked, tile, blocked_by) =
+                self.march_on_ground(registry, &army, to, engagement)?;
+            let destination = *walked.last().expect("a march starts where the army is");
+            if let Some(a) = self.army_mut(id) {
+                a.tile = Some(tile);
+            }
+            return Ok(self.arrive(registry, id, side, to, walked, destination, blocked_by));
+        }
+
         let path = hexx::algorithms::a_star(pos, to, |from, next| {
             if from == next {
                 return Some(0);
@@ -1353,7 +1816,23 @@ impl OverworldState {
             walked.pop();
         }
         let destination = *walked.last().expect("path starts at pos");
+        Ok(self.arrive(registry, id, side, to, walked, destination, blocked_by))
+    }
 
+    /// The end of a march, whichever kind: stand where it stopped, take what
+    /// is capturable there, and start the fight that stopped it or that it
+    /// was sent to have.
+    #[allow(clippy::too_many_arguments)]
+    fn arrive(
+        &mut self,
+        registry: &DataRegistry,
+        id: ArmyId,
+        side: u8,
+        to: Hex,
+        walked: Vec<Hex>,
+        destination: Hex,
+        blocked_by: Option<(ArmyId, Hex)>,
+    ) -> Vec<OverworldEvent> {
         let mut events = Vec::new();
         {
             let army = self.army_mut(id).expect("checked above");
@@ -1405,7 +1884,7 @@ impl OverworldState {
                 at: to,
             });
         }
-        Ok(events)
+        events
     }
 
     /// Carry out the standing orders of every army whose turn nobody spent by
@@ -1718,6 +2197,14 @@ impl OverworldState {
             return;
         }
         army.pos = to;
+        if let Some(world) = &self.world {
+            // Placed rather than marched — a withdrawal, a victor advancing —
+            // so it stands where a column stands on that hex.
+            let tile = world.stand_tile(registry, to);
+            if let Some(army) = self.armies.iter_mut().find(|a| a.id == id) {
+                army.tile = Some(tile);
+            }
+        }
         events.push(OverworldEvent::ArmyMoved {
             army: id,
             path: vec![from, to],

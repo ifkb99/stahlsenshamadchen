@@ -327,10 +327,39 @@ the determinism snapshot passes **unregenerated**.
       the shipped battle maps by terrain (W3 moves them onto the ground).
       The unused `map::MapGenerator` trait is retired: a world is not a
       map file.
-- [ ] **W2.1 Armies have a tile position.**
-- [ ] **W2.2 HPA\***: portals, crossing costs from the `MoveGrid`, abstract
-      search, local refinement.
-- [ ] **W2.3 A column's march rate** as data: spacing, halts, night.
+- [x] ~~**W2.1 Armies have a tile position.**~~ **Done 2026-09-26.**
+      `Army::tile` on a generated world (`pos` is always its chunk);
+      `GeneratedWorld::stand_tile` is where a column stands on a campaign
+      hex (a town's square, else the passable tile nearest the centre), and
+      placement, marches and `place_army` keep the two in step.
+- [x] ~~**W2.2 Hierarchical routing.**~~ **Done 2026-09-26**, as two levels
+      rather than portals. The coarse graph is campaign hexes, each edge the
+      tile-level passage between neighbours' standing tiles over those two
+      hexes, priced lazily and cached (`OverworldState::passages`, keyed by
+      the column's kind). `reachable` is Dijkstra on it within a day's
+      march; a march is a coarse A* to the goal, then a tile A* to the first
+      coarse hex beyond the day, confined to a corridor of the coarse route
+      and its neighbours — so a route cuts across hexes, and what
+      `reachable` offers the march delivers (tested; halving the march's
+      budget breaks it). Measured on the 417k-tile world: a march across
+      it planned whole at the tile level 208 ms; the corridor march 9 ms
+      warm, ~1 s the first time (it prices ~1,700 passages at 0.65 ms —
+      the coarse heuristic is admissible and so loose for a column that
+      pays 2–4 a tile in cover; a weighted one would break the reach
+      guarantee). `examples/perf` carries the rows.
+- [x] ~~**W2.3 A column's march rate.**~~ **Done 2026-09-26.** The `march`
+      block: `column_percent` (20) of the slowest carrier's speed,
+      `hours_per_day` (4), `halt_minutes_per_hour` (10) — about 200
+      movement points, 20 km of grass, a day for a tank column. A column
+      goes where all of its classes can and pays the dearest; infantry ride.
+      With it the base mod's world grew to radius 10 (331 campaign hexes,
+      417k tiles; 14 towns, 3 rivers): `frontier_world` now runs 3–12 days
+      where every seed had ended on day one at radius 6 and the old pace.
+      **Finding:** three seeds in sixteen never end — a headquarters reduced
+      to one hidden crew is attacked every day in a battle that stalemates
+      without contact, the loser keeps its hex, and nothing changes. Latent
+      in battle-as-event on any map; W3 dissolves it (a fight is a bubble
+      the attacker keeps searching) rather than a rule being added now.
 - [ ] **W2.4 Halts, and what a halt is for**: a commander may detach an
       element to look ahead, which travels as its own coarse entity.
 - [ ] **W2.5 Capture and endings read tiles.**

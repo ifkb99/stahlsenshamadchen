@@ -7,6 +7,7 @@ mod command;
 mod cores;
 mod defs;
 mod manifest;
+mod march;
 mod modules;
 mod morale;
 mod planner;
@@ -25,6 +26,7 @@ pub use cores::{
 };
 pub use defs::*;
 pub use manifest::ModManifest;
+pub use march::March;
 pub use modules::{ModuleDef, ModuleEffect, STANDARD_MODULES};
 pub use morale::{
     DefianceDef, DefianceResponse, MoraleRules, MoraleRung, RoundPressure, ShotFelt, holds_together,

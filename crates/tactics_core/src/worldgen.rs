@@ -414,6 +414,29 @@ impl GeneratedWorld {
         map
     }
 
+    /// Where a column stands when it stands on campaign hex `chunk`: the
+    /// square of a town centred in it, else the tile nearest its centre that
+    /// a tracked vehicle can stand on — never the middle of a river.
+    pub fn stand_tile(&self, registry: &DataRegistry, chunk: Hex) -> Hex {
+        if let Some(town) = self
+            .skeleton
+            .towns
+            .iter()
+            .find(|t| chunk_of(t.centre, self.chunk_radius) == chunk)
+        {
+            return town.centre;
+        }
+        chunk_hexes(chunk, self.chunk_radius)
+            .find(|h| {
+                self.tile(*h).is_some_and(|(t, _)| {
+                    registry
+                        .terrain(t)
+                        .is_some_and(|d| d.cost_for(crate::data::MovementClass::Tracked).is_some())
+                })
+            })
+            .unwrap_or_else(|| crate::world::chunk_centre(chunk, self.chunk_radius))
+    }
+
     /// The campaign hex each army begins on, resolving each [`Place`] against
     /// this world: the `rank`-th town (or factory town) furthest `toward`,
     /// and if another army already stands there, the nearest free campaign

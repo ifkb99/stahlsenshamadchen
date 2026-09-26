@@ -141,6 +141,78 @@ fn main() {
     } else {
         row("mcts order", "skipped", "pass --mcts; it takes minutes");
     }
+    campaign_rows(&registry);
+}
+
+/// The generated campaign's march (WORLD.md W2): what it costs to hold the
+/// world's ground, to ask how far a column reaches in a day, and to march
+/// one across the world. These are the numbers the hierarchical-routing
+/// question is answered with.
+fn campaign_rows(registry: &DataRegistry) {
+    use tactics_core::overworld::{OverworldOrder, OverworldState};
+    let time = |f: &mut dyn FnMut()| {
+        let t = std::time::Instant::now();
+        f();
+        t.elapsed().as_secs_f64() * 1e3
+    };
+    let mut state = None;
+    let made = time(&mut || {
+        state = Some(OverworldState::from_map(registry, "frontier_world", 1).expect("campaign"))
+    });
+    let state = state.unwrap();
+    let tiles = state.world.as_ref().map_or(0, |w| w.chunks().count()) * 1261;
+    row(
+        "campaign world made",
+        &format!("{made:.0} ms"),
+        &format!("frontier_world, {tiles} tiles, skeleton and summary"),
+    );
+    let army = state.armies[0].id;
+    let cold = time(&mut || {
+        state.reachable(registry, army);
+    });
+    row(
+        "campaign reach, cold",
+        &format!("{cold:.0} ms"),
+        "builds the ground and every passage it needs",
+    );
+    let warm = time(&mut || {
+        state.reachable(registry, army);
+    });
+    row(
+        "campaign reach, warm",
+        &format!("{warm:.2} ms"),
+        "passages cached",
+    );
+    let far = state
+        .map
+        .iter()
+        .map(|(h, _)| h)
+        .max_by_key(|h| {
+            (
+                h.unsigned_distance_to(state.army(army).unwrap().pos),
+                h.x,
+                h.y,
+            )
+        })
+        .unwrap();
+    let mut trial = state.clone();
+    let march = time(&mut || {
+        let _ = trial.apply(registry, &OverworldOrder::MoveArmy { army, to: far });
+    });
+    row(
+        "campaign march, across the world",
+        &format!("{march:.1} ms"),
+        "coarse A*, then tile A* to the next day's waypoint",
+    );
+    let mut again = state.clone();
+    let warm = time(&mut || {
+        let _ = again.apply(registry, &OverworldOrder::MoveArmy { army, to: far });
+    });
+    row(
+        "campaign march, warm",
+        &format!("{warm:.1} ms"),
+        "the same march again: passages cached, as a campaign runs",
+    );
 }
 
 fn row(label: &str, value: &str, notes: &str) {

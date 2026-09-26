@@ -82,4 +82,8 @@ pub struct ModManifest {
     /// rule as [`Self::scale`].
     #[serde(default)]
     pub worldgen: Option<super::WorldGen>,
+    /// How fast a column moves across a generated world (WORLD.md W2.3).
+    /// Same one-in-effect rule as [`Self::scale`].
+    #[serde(default)]
+    pub march: Option<super::March>,
 }

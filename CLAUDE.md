@@ -523,6 +523,15 @@ and the seam tests in `tests/ground.rs`.
   coordinate. The chunk lattice is turned about 29° against the plane, so
   "toward the east" is resolved on the plane, and the campaign screen still
   draws chunks in their own axes (W5).
+- **On a generated world an army stands on a tile and marches over the
+  ground** (`Army::tile`, `march_on_ground`), at the pace of its slowest
+  carrier times the `march` block, paying the dearest class in it.
+  `reachable` is Dijkstra over the coarse graph of passages between
+  neighbouring hexes' standing tiles; the march is coarse A* then tile A*
+  in a corridor, and is never dearer than what `reachable` offered —
+  `an_army_sent_anywhere_its_reach_offers_arrives_there_that_day`. A
+  heuristic that inflates would break that; the admissible one is loose
+  and a cold march prices ~1,700 passages (~1 s), a warm one 9 ms.
 
 ### Reading ground
 

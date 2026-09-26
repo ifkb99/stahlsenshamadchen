@@ -121,11 +121,11 @@
     "search_slope": 0.15
   },
   "worldgen": {
-    "radius": 6,
+    "radius": 10,
     "relief": { "scale": 48, "octaves": 3, "shares": [38, 24, 15, 10, 7, 4, 2] },
     "cover": { "scale": 18, "wood_percent": 28, "hedge_percent": 9, "wet_percent": 20 },
-    "rivers": { "count": 2, "spacing": 3 },
-    "towns": { "count": 8, "spacing": 2, "radius": 3, "factories": 2 },
+    "rivers": { "count": 3, "spacing": 4 },
+    "towns": { "count": 14, "spacing": 3, "radius": 3, "factories": 2 },
     "roads": { "extra_links": 2 },
     "terrain": {
       "open": "grass", "wood": "forest", "hedge": "hedgerow", "wet": "mud",
@@ -141,6 +141,7 @@
     ],
     "residency_margin": 4
   },
+  "march": { "column_percent": 20, "hours_per_day": 4, "halt_minutes_per_hour": 10 },
   "cores": [
     {
       "id": "strength",
