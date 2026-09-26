@@ -1882,7 +1882,7 @@ impl OverworldState {
         // clock ran out.
         let held = def.tile.unwrap_or(Hex::ZERO);
         let ground: Vec<Hex> = held.range(2).collect();
-        let scenario = crate::map::Scenario::with_formations(formations).with_objective(
+        let mut scenario = crate::map::Scenario::with_formations(formations).with_objective(
             crate::map::Objective {
                 id: format!("ground-{}", def.id.0),
                 name: format!("{}'s ground", def.name),
@@ -1892,6 +1892,37 @@ impl OverworldState {
                 side: None,
             },
         );
+        // Every town near the fight is fought over too, on its own tiles, and
+        // whoever holds them when the fight is over has taken it (WORLD.md
+        // W3.4, W2.5): capture read from the ground rather than from where an
+        // army's campaign hex happens to fall.
+        let towns = &world.rules.towns;
+        let from = att.tile.unwrap_or(held);
+        for (i, town) in world.skeleton.towns.iter().enumerate() {
+            let near = town
+                .centre
+                .unsigned_distance_to(held)
+                .min(town.centre.unsigned_distance_to(from));
+            if near > towns.contested_within {
+                continue;
+            }
+            scenario = scenario.with_objective(crate::map::Objective {
+                id: format!("town-{i}"),
+                name: if town.factory {
+                    "the factory".into()
+                } else {
+                    "the town".into()
+                },
+                hexes: town.centre.range(town.radius).collect(),
+                value: if town.factory {
+                    towns.factory_worth
+                } else {
+                    towns.worth
+                },
+                kind: crate::map::ObjectiveKind::Hold,
+                side: None,
+            });
+        }
         let battle = crate::battle::BattleState::from_muster_on(
             registry,
             crate::world::World::window_onto(world),
@@ -2237,7 +2268,19 @@ impl OverworldState {
                 stands.push((army, unit.pos));
             }
         }
+        // The towns the fight was over go to whoever holds their tiles now.
+        let taken: Vec<(u8, Hex)> = battle
+            .objectives()
+            .filter_map(|(o, holder)| {
+                let i: usize = o.id.strip_prefix("town-")?.parse().ok()?;
+                let town = self.world.as_ref()?.skeleton.towns.get(i)?;
+                Some((holder?, crate::world::chunk_of(town.centre, radius)))
+            })
+            .collect();
         let mut events = self.apply_losses_and_survivors(registry, &report);
+        for (side, hex) in taken {
+            events.extend(self.take_ground(registry, side, hex));
+        }
         for army_id in e.armies() {
             let side = self.army(army_id).map(|a| a.side);
             if let Some(army) = self.army_mut(army_id) {
@@ -2251,6 +2294,40 @@ impl OverworldState {
                 && self.army(army_id).is_some()
             {
                 events.extend(self.take_ground(registry, side, pos));
+            }
+        }
+        // Two sides' survivors can end a fight in one campaign hex — both in
+        // the town they were fighting over, the contest cancelling. The
+        // campaign keeps one army to a hex, so one falls back a hex: the
+        // loser, or with no winner the attacker, since the defender keeps
+        // his ground. The rule the drawn campaign's withdrawal already uses.
+        let mut armies = e.armies();
+        armies.sort_unstable();
+        for a in &armies {
+            let Some(army) = self.army(*a).filter(|x| x.alive).cloned() else {
+                continue;
+            };
+            let Some(other) = self
+                .armies
+                .iter()
+                .find(|o| o.alive && o.id != army.id && o.pos == army.pos && o.side != army.side)
+                .cloned()
+            else {
+                continue;
+            };
+            let yields = match report.winner {
+                Some(w) if w == army.side => other.id,
+                Some(_) => army.id,
+                None if army.id == e.attacker => army.id,
+                None => other.id,
+            };
+            let from = if yields == army.id {
+                other.pos
+            } else {
+                army.pos
+            };
+            if let Some(to) = self.fallback_hex(registry, yields, from) {
+                self.place_army(registry, yields, to, &mut events);
             }
         }
         events.push(OverworldEvent::EngagementEnded {

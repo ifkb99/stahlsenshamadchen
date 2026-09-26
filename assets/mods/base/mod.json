@@ -125,7 +125,10 @@
     "relief": { "scale": 48, "octaves": 3, "shares": [38, 24, 15, 10, 7, 4, 2] },
     "cover": { "scale": 18, "wood_percent": 28, "hedge_percent": 9, "wet_percent": 20 },
     "rivers": { "count": 3, "spacing": 4 },
-    "towns": { "count": 14, "spacing": 3, "radius": 3, "factories": 2 },
+    "towns": {
+      "count": 14, "spacing": 3, "radius": 3, "factories": 2,
+      "worth": 2, "factory_worth": 4, "contested_within": 30
+    },
     "roads": { "extra_links": 2 },
     "terrain": {
       "open": "grass", "wood": "forest", "hedge": "hedgerow", "wet": "mud",
