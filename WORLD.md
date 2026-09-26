@@ -229,10 +229,15 @@ the determinism snapshot passes **unregenerated**.
       unregenerated. The campaign table moved as dice do (23–9 over 52
       battles → 23–8 and one mutual decapitation over 36); the finding,
       day-two decapitation, did not.
-- [ ] **W0.7 A closed map is a world with hard edges.** Scenarios, the
-      arenas, `examples/mirror`, the `ground` and `skill` tables and the
-      determinism baseline keep running on it. This is the proof W0 moved
-      no rule.
+- [x] ~~**W0.7 A closed map is a world with hard edges.**~~ **Done
+      2026-09-26**, by construction: every battle stands on a `World` held
+      `Whole`, where a missing tile is outside. The proof W0 moved no rule:
+      the determinism snapshot passed unregenerated through W0.1–W0.6; the
+      ridge arena's `skill` and `ground` tables (`balance --sim --games 36
+      --only skill,ground --absolute --arena ridge_arena`, 288 battles) are
+      **byte-identical** at `5511560`, before W0, and after it; and
+      `examples/mirror --arena ridge_arena` returns four roots, all the
+      documented equal-key coin, none a different key.
 
 ### W1 — the ground, bottom up
 
