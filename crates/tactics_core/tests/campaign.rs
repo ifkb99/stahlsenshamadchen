@@ -1961,3 +1961,69 @@ fn on_the_clock_an_order_is_given_on_any_tick_and_a_newer_one_replaces_it() {
         reach[1]
     );
 }
+
+#[test]
+fn a_fight_she_can_reach_waits_for_her_orders_and_one_she_cannot_is_fought_without_her() {
+    // WORLD.md W4.4. With a person commanding Kuhlmann in person, the fight
+    // her company walks into stops the clock at its planning phase until she
+    // commits; the Valkyries' side is planned by the engine meanwhile. Her
+    // company off the net fights under its own leader and the clock does
+    // not wait.
+    let reg = registry();
+    let (mut state, army, _) = about_to_meet(&reg);
+    state.human_command = true;
+    state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
+    let mut waiting = None;
+    for _ in 0..20_000 {
+        let events = state.advance_clock(&reg, 1);
+        if let Some(OverworldEvent::EngagementAwaitsOrders { engagement, side }) = events
+            .iter()
+            .find(|e| matches!(e, OverworldEvent::EngagementAwaitsOrders { .. }))
+        {
+            waiting = Some((*engagement, *side));
+            break;
+        }
+    }
+    let (fight, side) = waiting.expect("her fight waits for her");
+    assert_eq!(side, 0);
+    let clock = state.clock;
+    let again = state.advance_clock(&reg, 50);
+    assert_eq!(state.clock, clock, "the clock waits with it");
+    assert!(
+        again
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::EngagementAwaitsOrders { .. }))
+    );
+
+    state
+        .order_in_fight(
+            &reg,
+            fight,
+            &tactics_core::battle::Order::Commit { side: 0 },
+        )
+        .expect("she commits");
+    state.advance_clock(&reg, 5);
+    assert!(state.clock > clock, "and the world goes on");
+
+    // The same fight with her company off the net: nobody waits.
+    let (mut off, army2, _) = about_to_meet(&reg);
+    off.human_command = true;
+    off.out_of_contact.push(army2);
+    off.apply(&reg, &OverworldOrder::EndTurn).unwrap();
+    for _ in 0..20_000 {
+        let events = off.advance_clock(&reg, 1);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, OverworldEvent::EngagementAwaitsOrders { .. })),
+            "a company she cannot reach does not wait for her"
+        );
+        if events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::EngagementEnded { .. }))
+        {
+            break;
+        }
+    }
+    let _ = army;
+}

@@ -958,7 +958,12 @@ impl BattleState {
         if let Some(fire) = fire {
             self.check_fire(registry, id, fire)?;
         }
-        if self.hears_orders(id) {
+        // An order that reaches down past her company's commander is held at
+        // the radio even when the crew can hear it, and lands at the top of
+        // the next round — a round late — detaching her from her company's
+        // plan when it does (WORLD.md W4.2). On a side nobody commands in
+        // person nothing reaches down, and this is the order it always was.
+        if self.hears_orders(id) && !self.reaches_down(id) {
             // The movement half is a standing personal destination, not a
             // one-round route: a commander's order does not expire for
             // naming ground beyond this round's driving. She marches toward

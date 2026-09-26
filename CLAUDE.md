@@ -551,6 +551,11 @@ and the seam tests in `tests/ground.rs`.
   vehicle its map flags `command`), her death under `victory.commander`
   ends the campaign, and while she is wounded `acting_commander` is the
   next senior fit cadet. On the clock an order is taken on any tick.
+- **A person's orders in a fight** (`human_command`, W4.2–W4.4): the clock
+  waits at the planning phase of a fight she can reach until she commits
+  through `order_in_fight`; an order to a crew outside her company reaches
+  down (`BattleState::reaches_down`) and lands a round late. Off, every side
+  is planned by the engine — the harness, and the game until W5.
 
 ### Reading ground
 
