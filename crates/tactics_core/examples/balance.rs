@@ -84,7 +84,7 @@ use tactics_core::harness::arena::{ARENAS, Arena, DEFAULT_ARENA, arena_named};
 use tactics_core::harness::overrides::{Override, configure};
 use tactics_core::harness::parallel::{JOBS, run_all, thread_budget};
 use tactics_core::harness::tally::Tally;
-use tactics_core::map::{Facing, HexMap, MapFile, MapKind, UnitPlacement};
+use tactics_core::map::{Battlefield, Facing, MapFile, MapKind, UnitPlacement};
 use tactics_core::overworld::CrewLoss;
 use tactics_core::roster::{
     CadetId, CasualtyRules, CrewFate, Roster, resolve_crew_fate, resolve_station_fate,
@@ -611,7 +611,7 @@ fn two_unit_field(
         "rows": [row, row, row],
     }))
     .ok()?;
-    let map = HexMap::from_map_file(&file).ok()?;
+    let map = Battlefield::from_map_file(&file).ok()?;
 
     let placements = vec![
         UnitPlacement {
@@ -3935,7 +3935,7 @@ struct Ground {
 /// is only who won.
 fn map_battle(reg: &DataRegistry, id: &str, seed: u64, swap: bool) -> Option<BattleState> {
     let file = reg.map(id)?;
-    let map = HexMap::from_map_file(file).ok()?;
+    let map = Battlefield::from_map_file(file).ok()?;
     let sides: Vec<SideState> = file
         .sides
         .iter()

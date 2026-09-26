@@ -178,10 +178,13 @@ DONE.md under the same heading.
 
 ### Objectives
 
-- **Objectives are map data, not battle state.** They live on `HexMap`; the
-  battle carries only `objective_held` and `score`. That split is why both
-  setup paths, `from_map` and the overworld's `from_placements`, get them
-  with no new arguments.
+- **Objectives are scenario data, not battle state, and not ground.** They
+  live on `map::Scenario` beside the formations, the loss conditions and the
+  victory score; the battle carries only `objective_held` and `score`.
+  `HexMap` is tiles and nothing else (WORLD.md, W0.1), because in one world
+  the ground is shared by every engagement and what a fight is about is
+  not. Both setup paths take a `Battlefield` — the two halves one map file
+  describes — and the battle keeps them apart as `map` and `scenario`.
 - **Control persists and contest cancels.** Points are paid once at the end
   of a round, never per tick, or the size of every score is an accident of
   `ticks_per_round`.
@@ -1267,13 +1270,15 @@ carries the same parameter; there is no route from a file to a playable battle
 that does not pass a registry. `Army::headquarters` and `OverworldState::victory` are `#[serde(default)]`
 to the benign value (nobody flagged, elimination only), which is a
 version-6 campaign exactly as it was, so the version did not move for
-them. `SAVE_VERSION` is 6, and **an older save is
+them. `SAVE_VERSION` is 7, and **an older save is
 refused, not migrated** (`SaveError::Version`): the two fields Phase 3
 introduced default to the benign value, so a version-3 file would open with
 every crew quietly back under her formation's mission and a version-4 file
 with every wreck fighting again; version 6 gave `Holding` its latitude and a
-version-5 `"holding"` no longer parses. Loud is right while there is no
-released build to migrate from.
+version-5 `"holding"` no longer parses; version 7 moved the scenario off
+the map, so a version-6 battle would open with no objectives and no
+formations. Loud is right while there is no released build to migrate
+from.
 
 ### Seeing the game without playing it
 

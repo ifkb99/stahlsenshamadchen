@@ -93,7 +93,7 @@
 //! is `|t| <= R`, `|s - t| <= 2R` and `|s + t| <= 2R`.
 
 use crate::Hex;
-use crate::map::{HexMap, MapFile};
+use crate::map::{Battlefield, MapFile};
 use std::collections::HashMap;
 
 /// One layer of terrain: the palette glyph, and every hex it covers. Layers
@@ -306,8 +306,8 @@ impl Arena {
         (self.objectives)(self)
     }
 
-    /// The map, built and checked.
-    pub fn map(&self) -> Option<HexMap> {
+    /// The map, built and checked: its ground and its scenario.
+    pub fn map(&self) -> Option<Battlefield> {
         self.map_with_formations(&[])
     }
 
@@ -315,7 +315,7 @@ impl Arena {
     /// ground with a chain of command on it, for the tables that measure
     /// what commanders do. Formations are declarations, not ground, so the
     /// mirror check is unaffected by them.
-    pub fn map_with_formations(&self, formations: &[(&str, u8)]) -> Option<HexMap> {
+    pub fn map_with_formations(&self, formations: &[(&str, u8)]) -> Option<Battlefield> {
         let centre = self.centre_hex();
         let radius = self.radius as i32;
 
@@ -392,9 +392,9 @@ impl Arena {
                 .collect::<Vec<_>>(),
         }))
         .ok()?;
-        let map = HexMap::from_map_file(&file).ok()?;
-        self.assert_is_mirrored(&map);
-        Some(map)
+        let field = Battlefield::from_map_file(&file).ok()?;
+        self.assert_is_mirrored(&field);
+        Some(field)
     }
 
     /// Refuse to hand back an arena that is not the mirror it claims to be.
@@ -413,8 +413,9 @@ impl Arena {
     /// level lower is worth a shot from one end of the map and not the other,
     /// which is the same confound as the sheared woods in a form nobody would
     /// see by reading the map.
-    pub fn assert_is_mirrored(&self, map: &HexMap) {
-        let tiles: HashMap<Hex, (&str, i32)> = map
+    pub fn assert_is_mirrored(&self, field: &Battlefield) {
+        let tiles: HashMap<Hex, (&str, i32)> = field
+            .terrain
             .iter()
             .map(|(h, t)| (h, (t.terrain.as_str(), t.elevation)))
             .collect();
@@ -430,7 +431,7 @@ impl Arena {
                     ),
                 }
             }
-            for objective in map.objectives() {
+            for objective in field.scenario.objectives() {
                 for hex in &objective.hexes {
                     assert!(
                         objective.hexes.contains(&image(self, *hex)),

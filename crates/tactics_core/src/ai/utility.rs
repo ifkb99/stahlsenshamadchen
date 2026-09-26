@@ -63,7 +63,7 @@ fn journey_end(state: &BattleState, unit: UnitId) -> Option<Hex> {
         };
     }
     state
-        .map
+        .scenario
         .objectives()
         .iter()
         .filter(|o| o.kind == crate::map::ObjectiveKind::Hold)
@@ -295,7 +295,7 @@ impl UtilityPlanner {
             let ride_threatened = crate::battle::threatened(registry, state, carrier);
             let at_the_objective = state.unit(carrier).is_some_and(|c| {
                 state
-                    .map
+                    .scenario
                     .objectives()
                     .iter()
                     .filter(|o| o.kind == crate::map::ObjectiveKind::Hold)

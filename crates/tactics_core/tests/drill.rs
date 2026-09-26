@@ -29,7 +29,7 @@ use tactics_core::battle::{
     PersonalOrder, SideState, UnitId,
 };
 use tactics_core::data::DataRegistry;
-use tactics_core::map::HexMap;
+use tactics_core::map::Battlefield;
 
 mod common;
 use common::{
@@ -521,7 +521,7 @@ fn bounding_stage(
         "formations": [ formation ],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -699,7 +699,7 @@ fn contact_stage(reg: &DataRegistry, seed: u64) -> (BattleState, FormationId) {
         "formations": [ { "id": "section", "name": "The Section", "side": 0 } ],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -902,7 +902,7 @@ fn an_order_held_on_the_wire_arrives_as_hard_as_it_was_meant() {
     reg.command = Some(command_rules(999, true, 2));
     let mut state = BattleState::from_map(&reg, "river_crossing", 5).expect("battle");
     let armor = formation_named(&state, "kuhlmann_armor");
-    let bridge = state.map.objectives()[0].anchor();
+    let bridge = state.scenario.objectives()[0].anchor();
 
     state
         .apply(
@@ -1072,7 +1072,7 @@ fn hardware_stage(reg: &DataRegistry, ridge: bool, forest: bool, seed: u64) -> B
         "formations": [ { "id": "net", "name": "The Net", "side": 0 } ],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -1224,7 +1224,7 @@ fn pulse_stage(reg: &DataRegistry, seed: u64) -> BattleState {
         "formations": [ { "id": "line", "name": "The Line", "side": 1 } ],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -1357,7 +1357,7 @@ fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
     let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 91).unwrap();
     let armor = formation_named(&state, "kuhlmann_armor");
-    let bridge = state.map.objectives()[0].anchor();
+    let bridge = state.scenario.objectives()[0].anchor();
     state
         .apply(
             &reg,
@@ -1418,7 +1418,7 @@ fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
     commit_all(&reg, &mut state);
     state.resolve_round(&reg);
     let ford = state
-        .map
+        .scenario
         .objectives()
         .iter()
         .find(|o| o.id == "north_ford")
@@ -1454,9 +1454,9 @@ fn a_personal_order_is_taken_back_whole_or_not_at_all() {
     let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 91).unwrap();
     let armor = formation_named(&state, "kuhlmann_armor");
-    let bridge = state.map.objectives()[0].anchor();
+    let bridge = state.scenario.objectives()[0].anchor();
     let ford = state
-        .map
+        .scenario
         .objectives()
         .iter()
         .find(|o| o.id == "north_ford")
@@ -1575,7 +1575,7 @@ fn base_of_fire_stage(reg: &DataRegistry, seed: u64) -> BattleState {
         ],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -1726,7 +1726,7 @@ fn a_plan_may_end_in_support_but_not_continue_past_it() {
     let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 8).unwrap();
     let recon = formation_named(&state, "kuhlmann_recon");
-    let ridge = state.map.objectives()[0].anchor();
+    let ridge = state.scenario.objectives()[0].anchor();
     state
         .apply(
             &reg,

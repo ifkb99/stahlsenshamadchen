@@ -16,7 +16,7 @@ use tactics_core::battle::{
     BattleState, Event as BattleEvent, FireIntent, FormationId, Latitude, Order, SideState, UnitId,
 };
 use tactics_core::data::{DataRegistry, RoundPressure};
-use tactics_core::map::{HexMap, UnitPlacement};
+use tactics_core::map::{Battlefield, UnitPlacement};
 
 /// Close every side's planning and play the round out.
 pub fn play_round(reg: &DataRegistry, state: &mut BattleState) -> Vec<BattleEvent> {
@@ -42,7 +42,7 @@ pub fn two_side_battle(
         "rows": rows,
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -125,7 +125,7 @@ pub fn objective_battle(
         "victory_score": victory_score,
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -291,7 +291,7 @@ pub fn scripted_battle(
     placements: Vec<UnitPlacement>,
 ) -> BattleState {
     let file: tactics_core::map::MapFile = serde_json::from_value(file).unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -517,7 +517,7 @@ pub fn taxi_run_stage(reg: &DataRegistry, walk: i32, seed: u64) -> BattleState {
         "objectives": [{ "id": "far_end", "name": "The Far End", "at": [[goal, 0]], "value": 3 }],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -587,7 +587,7 @@ pub fn crewed_stage(reg: &DataRegistry, crew: &[&str]) -> (BattleState, UnitId) 
         "rows": rows,
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let placements = vec![
         UnitPlacement {
             aboard_at: None,

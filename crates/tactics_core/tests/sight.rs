@@ -17,7 +17,7 @@ use tactics_core::battle::{
     BattleState, Order, SightGrid, UnitId, destination_blocked, los_clear, reachable,
 };
 use tactics_core::data::{DataRegistry, MovementClass};
-use tactics_core::map::HexMap;
+use tactics_core::map::Battlefield;
 
 mod common;
 use common::{play_round, registry, seen, two_side_battle, unit_at};
@@ -546,8 +546,8 @@ fn a_reflection_leaves_a_sight_line_alone() {
     let reg = registry();
     for arena in ARENAS {
         let map = arena.map().expect("the arena builds");
-        let sight = SightGrid::build(&reg, &map);
-        let hexes: Vec<_> = map.iter().map(|(hex, _)| hex).collect();
+        let sight = SightGrid::build(&reg, &map.terrain);
+        let hexes: Vec<_> = map.terrain.iter().map(|(hex, _)| hex).collect();
         assert!(
             hexes.len() > 300,
             "{} should be a proper battlefield, got {} tiles",
@@ -592,14 +592,23 @@ fn elevation_blocks_and_grants_line_of_sight() {
         }"##,
     )
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let a = tactics_core::offset_to_hex(0, 1);
     let b = tactics_core::offset_to_hex(4, 1);
     let peak = tactics_core::offset_to_hex(2, 1);
     // The ridge blocks sight across, but the peak sees both sides.
-    assert!(!los_clear(&reg, &map, a, b), "ridge should block flat LoS");
-    assert!(los_clear(&reg, &map, peak, a), "high ground sees down");
-    assert!(los_clear(&reg, &map, a, peak), "the peak itself is visible");
+    assert!(
+        !los_clear(&reg, &map.terrain, a, b),
+        "ridge should block flat LoS"
+    );
+    assert!(
+        los_clear(&reg, &map.terrain, peak, a),
+        "high ground sees down"
+    );
+    assert!(
+        los_clear(&reg, &map.terrain, a, peak),
+        "the peak itself is visible"
+    );
 }
 
 /// The hit clamp is data, so a mod can decide how much luck the game has.
@@ -663,13 +672,13 @@ fn a_mod_that_raises_the_cupola_sees_over_the_rise() {
         }"##,
     )
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let a = tactics_core::offset_to_hex(0, 0);
     let b = tactics_core::offset_to_hex(4, 0);
 
     assert_eq!(reg.balance.eye_height_cm, 250);
     assert!(
-        !los_clear(&reg, &map, a, b),
+        !los_clear(&reg, &map.terrain, a, b),
         "a 10 m rise blocks a 2.5 m cupola"
     );
 
@@ -677,11 +686,11 @@ fn a_mod_that_raises_the_cupola_sees_over_the_rise() {
     // and exactly the point: the number is the mod's to choose.
     reg.balance.eye_height_cm = 2500;
     assert!(
-        los_clear(&reg, &map, a, b),
+        los_clear(&reg, &map.terrain, a, b),
         "a 25 m cupola should see over a 10 m rise, or the field is not read"
     );
     assert!(
-        SightGrid::build(&reg, &map).clear(a, b),
+        SightGrid::build(&reg, &map.terrain).clear(a, b),
         "and the cached path must agree, or it is holding stale heights"
     );
 }
@@ -712,16 +721,16 @@ fn a_mod_that_flattens_a_level_flattens_the_skyline() {
         }"##,
     )
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let a = tactics_core::offset_to_hex(0, 1);
     let b = tactics_core::offset_to_hex(4, 1);
 
     // The base mod's 10 m a level: three levels is a 30 m ridge across a sight
     // line drawn between a 2.5 m cupola and a 2.0 m target, so it blocks.
     assert_eq!(reg.scale.elevation_meters, 10.0);
-    assert!(!los_clear(&reg, &map, a, b), "a 30 m ridge blocks");
+    assert!(!los_clear(&reg, &map.terrain, a, b), "a 30 m ridge blocks");
     assert!(
-        !SightGrid::build(&reg, &map).clear(a, b),
+        !SightGrid::build(&reg, &map.terrain).clear(a, b),
         "and the cached path agrees"
     );
 
@@ -730,11 +739,11 @@ fn a_mod_that_flattens_a_level_flattens_the_skyline() {
     // elevation digits, same terrain: only the scale moved.
     reg.scale.elevation_meters = 0.5;
     assert!(
-        los_clear(&reg, &map, a, b),
+        los_clear(&reg, &map.terrain, a, b),
         "a 1.5 m hummock does not, or the geometry is not reading the field"
     );
     assert!(
-        SightGrid::build(&reg, &map).clear(a, b),
+        SightGrid::build(&reg, &map.terrain).clear(a, b),
         "and the cached path agrees here too"
     );
 }
@@ -750,13 +759,16 @@ fn forests_block_sight_at_range() {
         }"##,
     )
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let a = tactics_core::offset_to_hex(0, 0);
     let b = tactics_core::offset_to_hex(4, 0);
-    assert!(!los_clear(&reg, &map, a, b), "forest curtain blocks sight");
+    assert!(
+        !los_clear(&reg, &map.terrain, a, b),
+        "forest curtain blocks sight"
+    );
     let edge = tactics_core::offset_to_hex(2, 0);
     assert!(
-        los_clear(&reg, &map, a, edge),
+        los_clear(&reg, &map.terrain, a, edge),
         "the forest tile itself is visible"
     );
 }
@@ -794,18 +806,18 @@ fn a_hedgerow_hides_a_hull_without_blinding_the_crew() {
         "rows": ["gggggggg", "ghhffggg", "gggggggg"],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let watcher = tactics_core::offset_to_hex(0, 1);
     let through_bank = tactics_core::offset_to_hex(3, 1);
     let through_wood = tactics_core::offset_to_hex(5, 1);
 
     assert!(
-        los_clear(&reg, &map, watcher, through_bank),
+        los_clear(&reg, &map.terrain, watcher, through_bank),
         "a bank is something to get behind, not something to hide the field \
          behind"
     );
     assert!(
-        !los_clear(&reg, &map, watcher, through_wood),
+        !los_clear(&reg, &map.terrain, watcher, through_wood),
         "the stage needs a wood that really does block, or the line above \
          proves nothing about hedgerows in particular"
     );

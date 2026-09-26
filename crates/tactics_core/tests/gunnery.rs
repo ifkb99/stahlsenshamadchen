@@ -16,7 +16,7 @@
 
 use tactics_core::battle::{BattleState, Order, SideState, UnitId, hit_breakdown, hit_chance};
 use tactics_core::data::{DataRegistry, WeaponDef};
-use tactics_core::map::{Facing, HexMap, MapFile, UnitPlacement};
+use tactics_core::map::{Battlefield, Facing, MapFile, UnitPlacement};
 use tactics_core::roster::Roster;
 
 mod common;
@@ -38,7 +38,7 @@ fn field(reg: &DataRegistry, attacker: &str, target: &str, dist: i32, seed: u64)
         "rows": [row.clone(), row.clone(), row],
     }))
     .expect("map parses");
-    let map = HexMap::from_map_file(&file).expect("map builds");
+    let map = Battlefield::from_map_file(&file).expect("map builds");
     let placements = vec![
         UnitPlacement {
             aboard_at: None,

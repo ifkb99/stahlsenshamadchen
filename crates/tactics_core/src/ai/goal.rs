@@ -177,7 +177,7 @@ pub fn candidates(
     // either an order (`Mission::Withdraw`) or a crew's own nerve failing
     // (`DefianceResponse::Flight`), and neither of those is a goal she
     // reasons her way to.
-    for objective in state.map.objectives() {
+    for objective in state.scenario.objectives() {
         if objective.kind != ObjectiveKind::Hold || !objective.open_to(me.side) {
             continue;
         }

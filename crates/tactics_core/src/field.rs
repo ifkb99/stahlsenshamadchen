@@ -23,7 +23,7 @@ use crate::battle::{
     formation_exit,
 };
 use crate::data::{DataRegistry, MovementClass};
-use crate::map::{HexMap, MapError, MapKind, ObjectiveKind, UnitPlacement};
+use crate::map::{Battlefield, MapError, MapKind, ObjectiveKind, UnitPlacement};
 use crate::overworld::{ArmyId, ArmyMission, ArmyUnit, BattleReport, CrewLoss, OverworldState};
 use crate::roster::{CadetId, Roster};
 use crate::{Hex, hex_to_offset};
@@ -192,18 +192,18 @@ impl Clash {
         let file = registry
             .map(&self.map_id)
             .ok_or_else(|| StagingError::MissingMap(self.map_id.clone()))?;
-        let map =
-            HexMap::from_map_file(file).map_err(|e| StagingError::Map(self.map_id.clone(), e))?;
+        let field = Battlefield::from_map_file(file)
+            .map_err(|e| StagingError::Map(self.map_id.clone(), e))?;
         let (placements, crews, origins) = deploy(
             registry,
             &self.roster,
-            &map,
+            &field,
             &self.forces,
             self.attacker_side,
         );
         let state = BattleState::from_placements(
             registry,
-            map,
+            field,
             self.sides.clone(),
             &placements,
             &crews,
@@ -383,10 +383,11 @@ impl FieldBattle {
 pub fn deploy(
     registry: &DataRegistry,
     roster: &Roster,
-    map: &HexMap,
+    field: &Battlefield,
     forces: &[BattleForce],
     attacker_side: u8,
 ) -> (Vec<UnitPlacement>, Vec<Vec<CadetId>>, Vec<ArmyId>) {
+    let map = &field.terrain;
     // Tiles a vehicle can actually sit on, nearest edge first. Taking spots
     // in this order lets a side deploy as deep inland as it needs to, so
     // three armies fit where one used to.
@@ -405,7 +406,9 @@ pub fn deploy(
             // be over before anyone saw an enemy. Nobody forms up on the road
             // home.
             .filter(|(hex, _)| {
-                !map.objectives()
+                !field
+                    .scenario
+                    .objectives()
                     .iter()
                     .any(|o| o.kind == ObjectiveKind::Exit && o.contains(*hex))
             })
@@ -420,14 +423,16 @@ pub fn deploy(
 
     // An army *is* a formation, which is what the design doc means by
     // "`ArmyPlacement` on the overworld maps naturally". The declarations
-    // themselves belong to the terrain map — that is where a battlefield's
+    // themselves belong to the battlefield's scenario — that is where its
     // order of battle is written — so an army fills the next-declared
     // formation of its own side, first army into the first-declared one, and
     // its first vehicle leads it. A map that declares none for a side leaves
     // that side the flat pool it has always been, so a field battle on a
     // formationless map is exactly the battle it was.
     let slots = |side: u8| -> Vec<String> {
-        map.formations()
+        field
+            .scenario
+            .formations()
             .iter()
             .filter(|f| f.side == side)
             .map(|f| f.id.clone())

@@ -13,7 +13,7 @@
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{BattleState, Event, Order, SideState};
 use tactics_core::data::{DataRegistry, MovementClass};
-use tactics_core::map::{HexMap, MapKind, UnitPlacement};
+use tactics_core::map::{Battlefield, MapKind, UnitPlacement};
 
 /// The battlefields added since `river_crossing`: the first two to stop the
 /// balance harness overfitting to one river, the second two so the campaign's
@@ -440,7 +440,7 @@ fn infantry_field(reg: &DataRegistry) -> BattleState {
         "rows": ["ggggg", "ggggg"],
     }))
     .expect("map file");
-    let map = HexMap::from_map_file(&file).expect("map");
+    let map = Battlefield::from_map_file(&file).expect("map");
     let placements = vec![
         UnitPlacement {
             aboard_at: None,
@@ -499,14 +499,14 @@ fn infantry_field(reg: &DataRegistry) -> BattleState {
 
 /// A scrap of grass, so a test can say what is wrong with a placement without
 /// also being a test of terrain.
-fn scrap_of_grass() -> HexMap {
+fn scrap_of_grass() -> Battlefield {
     let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
         "id": "scrap_of_grass",
         "palette": { "g": "grass" },
         "rows": ["ggggg", "ggggg"],
     }))
     .expect("map file");
-    HexMap::from_map_file(&file).expect("map")
+    Battlefield::from_map_file(&file).expect("map")
 }
 
 fn two_sides() -> Vec<SideState> {

@@ -19,7 +19,7 @@ use tactics_core::ai::{
 };
 use tactics_core::battle::{BattleState, Latitude, Mission, Order, SideState, UnitId};
 use tactics_core::data::DataRegistry;
-use tactics_core::map::{HexMap, UnitPlacement};
+use tactics_core::map::{Battlefield, UnitPlacement};
 
 mod common;
 use common::{
@@ -303,7 +303,7 @@ fn pressed_stage(reg: &DataRegistry, seed: u64) -> (BattleState, tactics_core::H
         "formations": [{ "id": "platoon", "name": "Platoon", "side": 0 }],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -927,7 +927,7 @@ fn a_withdrawing_crew_still_answers_a_shot_but_does_not_seek_one() {
         "formations": [{ "id": "platoon", "name": "Platoon", "side": 0 }],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -1351,7 +1351,7 @@ fn with_nothing_found_she_searches_the_middle_by_a_slope_the_mod_sets() {
          the empty map"
     );
     assert!(
-        state.map.objectives().is_empty(),
+        state.scenario.objectives().is_empty(),
         "the stage needs no objectives, or the objective term would be reading the map \
          instead of this one"
     );
@@ -1436,7 +1436,7 @@ fn ordered_against_the_ground_in(reg: &DataRegistry, vehicle: &str, seed: u64) -
         "formations": [{ "id": "platoon", "name": "Platoon", "side": 0 }],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -1495,7 +1495,7 @@ fn ordered_into_a_gun(reg: &DataRegistry, seed: u64) -> BattleState {
         "formations": [{ "id": "platoon", "name": "Platoon", "side": 0 }],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -1673,7 +1673,7 @@ fn objective_under_a_gun(reg: &DataRegistry, seed: u64) -> BattleState {
         ],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -2185,7 +2185,7 @@ fn goal_battle(
         "objectives": objectives,
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),

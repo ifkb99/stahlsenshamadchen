@@ -74,9 +74,10 @@ fn nobody_deploys_onto_their_own_way_off_the_map() {
 
     for id in ids {
         let file = reg.map(id).expect("shipped battle map");
-        let map = tactics_core::map::HexMap::from_map_file(file).expect("map parses");
+        let map = tactics_core::map::Battlefield::from_map_file(file).expect("map parses");
         assert!(
-            map.objectives()
+            map.scenario
+                .objectives()
                 .iter()
                 .any(|o| o.kind == ObjectiveKind::Exit),
             "battlefield `{id}` declares no exit, so nobody fighting on it can withdraw"
@@ -87,7 +88,7 @@ fn nobody_deploys_onto_their_own_way_off_the_map() {
         assert_eq!(placements.len(), 8, "everyone was placed on `{id}`");
         for placement in &placements {
             let hex = tactics_core::offset_to_hex(placement.at[0], placement.at[1]);
-            for objective in map.objectives() {
+            for objective in map.scenario.objectives() {
                 assert!(
                     !(objective.kind == ObjectiveKind::Exit
                         && objective.open_to(placement.side)
@@ -110,7 +111,7 @@ fn nobody_deploys_onto_their_own_way_off_the_map() {
 fn each_army_fills_one_of_the_maps_formations() {
     let reg = registry();
     let file = reg.map("river_crossing").expect("shipped battle map");
-    let map = tactics_core::map::HexMap::from_map_file(file).expect("map parses");
+    let map = tactics_core::map::Battlefield::from_map_file(file).expect("map parses");
     let forces: Vec<BattleForce> = (0..4)
         .map(|i| BattleForce {
             army: ArmyId(i),
@@ -132,7 +133,7 @@ fn each_army_fills_one_of_the_maps_formations() {
         .filter_map(|p| p.formation.as_deref())
         .collect();
     assert_eq!(named.len(), placements.len(), "nobody is left unattached");
-    for def in map.formations() {
+    for def in map.scenario.formations() {
         assert_eq!(
             named.iter().filter(|id| **id == def.id).count(),
             2,
@@ -156,7 +157,7 @@ fn an_army_is_led_onto_the_field_by_its_senior_cadet() {
         .map("river_crossing")
         .expect("shipped battle map")
         .clone();
-    let map = tactics_core::map::HexMap::from_map_file(&file).expect("map parses");
+    let map = tactics_core::map::Battlefield::from_map_file(&file).expect("map parses");
     for (captain, leader) in [(Some("mina"), 2usize), (None, 0)] {
         let mut reg = registry();
         for character in reg.characters.values_mut() {
@@ -801,8 +802,8 @@ fn every_terrain_the_campaign_fields_names_its_own_battlefield() {
     let file = reg
         .map("frontier")
         .expect("the base mod ships a campaign map");
-    let map = tactics_core::map::HexMap::from_map_file(file).expect("campaign map parses");
-    let mut terrains: Vec<String> = map.iter().map(|(_, t)| t.terrain.clone()).collect();
+    let map = tactics_core::map::Battlefield::from_map_file(file).expect("campaign map parses");
+    let mut terrains: Vec<String> = map.terrain.iter().map(|(_, t)| t.terrain.clone()).collect();
     terrains.sort();
     terrains.dedup();
     assert!(terrains.len() > 1, "a one-terrain campaign proves nothing");
