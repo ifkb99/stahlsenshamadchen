@@ -69,6 +69,51 @@ pub fn chunk_hexes(chunk: Hex, radius: u32) -> impl Iterator<Item = Hex> {
     chunk_centre(chunk, radius).spiral_range(0..=radius)
 }
 
+/// What names an engagement, for the purpose of rolling its dice
+/// (WORLD.md, W0.6): when it began, where, and between whom.
+///
+/// An engagement's dice are a pure function of its world's seed and this
+/// key, and of nothing else — not how many battles were fought before it,
+/// not what else is happening in the world, not what is loaded. Two fights
+/// running at once each draw from their own stream, and a campaign loaded
+/// from a save fights the battle it would have fought.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EngagementKey {
+    /// When it began: the campaign's day today, the world clock's tick once
+    /// there is one.
+    pub when: u64,
+    /// Where: the contested tile.
+    pub at: Hex,
+    /// Who: the side that attacked and the side that was attacked, by the
+    /// ids their armies carry.
+    pub attacker: u32,
+    pub defender: u32,
+}
+
+/// The seed an engagement's dice start from.
+///
+/// SplitMix64 folded over the key's fields, written out rather than going
+/// through `std::hash`, whose output the standard library does not promise
+/// to keep from one Rust release to the next — and a save that fights a
+/// different battle after a compiler upgrade is a determinism bug.
+pub fn engagement_seed(world_seed: u64, key: EngagementKey) -> u64 {
+    fn mix(state: u64, value: u64) -> u64 {
+        let mut z = (state ^ value).wrapping_add(0x9E37_79B9_7F4A_7C15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+    [
+        key.when,
+        key.at.x as u32 as u64,
+        key.at.y as u32 as u64,
+        key.attacker as u64,
+        key.defender as u64,
+    ]
+    .into_iter()
+    .fold(mix(0, world_seed), mix)
+}
+
 /// What a world can say about a hex.
 ///
 /// Three answers where there used to be two (WORLD.md, W0.4). A lookup that

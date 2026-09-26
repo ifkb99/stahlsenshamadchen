@@ -670,13 +670,20 @@ fn publish_script_facts(
 
 // --- setup ----------------------------------------------------------------
 
-fn seed() -> u64 {
-    // Dev tool: STAHL_SEED=<n> replays a battle shot for shot, which is
-    // what makes a misbehaving fight reproducible.
-    if let Some(seed) = std::env::var("STAHL_SEED")
+/// Dev tool: STAHL_SEED=<n> replays a battle shot for shot, which is what
+/// makes a misbehaving fight reproducible.
+fn seed_override() -> Option<u64> {
+    std::env::var("STAHL_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
-    {
+}
+
+/// A seed for a battle nothing else has seeded: the override, or the clock.
+/// A campaign's fights never come here — they carry their own seed, derived
+/// from the world's (`Clash::seed`), so a loaded campaign fights the battle
+/// it would have fought.
+fn seed() -> u64 {
+    if let Some(seed) = seed_override() {
         return seed;
     }
     std::time::SystemTime::now()
@@ -707,12 +714,18 @@ fn setup_battle(
             map_id: "river_crossing".into(),
         });
 
+    // One seed for the whole battle — the board's dice and every planner's —
+    // so a battle that is the same battle plays the same way.
+    let battle_seed = match &pending {
+        PendingBattle::Scenario { .. } => seed(),
+        PendingBattle::Field(clash) => seed_override().unwrap_or(clash.seed),
+    };
     let staged = match &pending {
-        PendingBattle::Scenario { map_id } => BattleState::from_map(registry, map_id, seed())
+        PendingBattle::Scenario { map_id } => BattleState::from_map(registry, map_id, battle_seed)
             .map(|state| (state, None))
             .map_err(StagingError::from),
         PendingBattle::Field(clash) => clash
-            .stage(registry, seed())
+            .stage(registry, battle_seed)
             .map(|(state, field)| (state, Some(field))),
     };
 
@@ -735,7 +748,7 @@ fn setup_battle(
             Some(cfg) => {
                 ai.insert(
                     i as u8,
-                    make_battle_planner(cfg, seed().wrapping_add(i as u64), registry),
+                    make_battle_planner(cfg, battle_seed.wrapping_add(i as u64), registry),
                 );
             }
             None if autoplay => {
@@ -746,7 +759,7 @@ fn setup_battle(
                 };
                 ai.insert(
                     i as u8,
-                    make_battle_planner(&cfg, seed().wrapping_add(i as u64), registry),
+                    make_battle_planner(&cfg, battle_seed.wrapping_add(i as u64), registry),
                 );
             }
             None => {}

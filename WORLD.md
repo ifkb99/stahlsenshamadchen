@@ -217,8 +217,18 @@ the determinism snapshot passes **unregenerated**.
       `a_battle_fought_under_other_names_is_the_same_battle` fights the
       determinism baseline with every unit renamed `1000 + 7i` and requires
       the same transcript, mapped back, on all four seeds.
-- [ ] **W0.6 Dice per engagement.** The battle's rng seeded from `(world
-      seed, engagement key)`; a single battle keeps its stream.
+- [x] ~~**W0.6 Dice per engagement.**~~ **Done 2026-09-26.**
+      `world::engagement_seed(world_seed, EngagementKey { when, at,
+      attacker, defender })`, SplitMix64 written out and pinned to the bit.
+      `OverworldState::seed` keeps the world's seed (saved, `serde(default)`
+      0); `Clash::muster` derives `Clash::seed`, and the harness and the game
+      stage with it and seed their planners from it. Before, the harness
+      seeded the n-th battle by n and the game by the wall clock, so no two
+      runs of a campaign — and no loaded save — met the same fight. A
+      scenario battle is unchanged: the determinism snapshot passed
+      unregenerated. The campaign table moved as dice do (23–9 over 52
+      battles → 23–8 and one mutual decapitation over 36); the finding,
+      day-two decapitation, did not.
 - [ ] **W0.7 A closed map is a world with hard edges.** Scenarios, the
       arenas, `examples/mirror`, the `ground` and `skill` tables and the
       determinism baseline keep running on it. This is the proof W0 moved

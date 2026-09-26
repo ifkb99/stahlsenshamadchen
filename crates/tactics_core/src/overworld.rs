@@ -533,6 +533,13 @@ pub struct OverworldState {
     /// Drives casualty resolution. Seeded, and consumed in a fixed order, so
     /// a campaign replays identically.
     pub rng: ChaCha8Rng,
+    /// The seed the world was made from, kept so every engagement can derive
+    /// its own dice from it (`world::engagement_seed`) rather than from how
+    /// many battles came before it or from the clock on the wall.
+    /// `#[serde(default)]`: a campaign saved before it existed fights its
+    /// battles from seed 0, which is still one fixed answer.
+    #[serde(default)]
+    pub seed: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -666,6 +673,7 @@ impl OverworldState {
             victory: file.victory.clone(),
             hold_streak: None,
             rng: ChaCha8Rng::seed_from_u64(seed),
+            seed,
         };
         // Who can hear whom on the morning of day one. The events are dropped
         // because nothing has *changed* yet — an army that starts the campaign

@@ -472,6 +472,14 @@ and the seam tests in `tests/ground.rs`.
   `from_map_numbered`, `spawn_unit_as`) and must rise in placement order.
   `a_battle_fought_under_other_names_is_the_same_battle` fights the baseline
   renamed and requires the same battle.
+- **An engagement's dice are its own** (`world::engagement_seed`): a pure
+  function of the world's seed (`OverworldState::seed`, saved) and an
+  `EngagementKey` — when, where, attacker, defender — hashed with SplitMix64
+  written out, never `std::hash`. `Clash::seed` carries it; the harness and
+  the game stage with it (the game's `STAHL_SEED` still overrides), so a
+  fight is the same fight whether it is the first or the fortieth and
+  whether it was reached by play or by a save. The value is pinned in
+  `tests/world.rs`; changing the hash changes every campaign battle.
 - **Saved as its tiles, under the key `map`**, so a whole world's save is
   what a battle's always was. A chunked world refuses to serialise rather
   than come back whole with its unloaded ground suddenly outside.
@@ -1547,7 +1555,10 @@ instrument's numbers.
   seeds on `frontier` end by decapitation after a single battle: each side's
   headquarters army is also its vanguard, the campaign planner prices the
   enemy's at `HEADQUARTERS_WORTH` (3.0) and fights at parity, and the two
-  headquarters meet on the second day. Kuhlmann wins 21 of 32. Not a
+  headquarters meet on the second day. Kuhlmann wins 21 of 32. (Since
+  W0.6 gave each fight its own dice, 2026-09-26: 28 of 32 end on day two,
+  every one by decapitation, Kuhlmann 23 and the Valkyries 8, one mutual;
+  `develop` the same morning read 23–9. The same finding.) Not a
   defect in any rule — the map's order of battle and an unruled number
   together — and a human commanding side 0 can decline the fight, but the
   Valkyries' headquarters will come straight for hers.

@@ -174,3 +174,83 @@ fn a_force_whose_names_do_not_rise_is_refused() {
     let short = &names[..count - 1];
     assert!(BattleState::from_map_numbered(&reg, "river_crossing", 1, Some(short)).is_err());
 }
+
+// --- dice per engagement (W0.6) ---
+
+use tactics_core::field::Clash;
+use tactics_core::overworld::OverworldState;
+use tactics_core::save::SaveGame;
+use tactics_core::world::{EngagementKey, engagement_seed};
+
+fn key(when: u64) -> EngagementKey {
+    EngagementKey {
+        when,
+        at: Hex::new(3, -2),
+        attacker: 0,
+        defender: 1,
+    }
+}
+
+#[test]
+fn an_engagement_draws_the_same_dice_on_every_machine_and_every_compiler() {
+    // Pinned to the bit. `engagement_seed` is written out rather than going
+    // through `std::hash` so that it cannot move under a toolchain upgrade;
+    // this is the check that it did not move under an edit either. A change
+    // here changes every campaign battle ever fought from a seed.
+    assert_eq!(engagement_seed(7, key(2)), engagement_seed(7, key(2)));
+    assert_eq!(engagement_seed(7, key(2)), 0x0e78_61b4_7a4c_71c9);
+}
+
+#[test]
+fn every_part_of_an_engagements_name_changes_its_dice() {
+    let base = engagement_seed(7, key(2));
+    let mut moved = key(2);
+    moved.at = Hex::new(3, -1);
+    let mut swapped = key(2);
+    (swapped.attacker, swapped.defender) = (1, 0);
+    for (what, other) in [
+        ("the world", engagement_seed(8, key(2))),
+        ("the day", engagement_seed(7, key(3))),
+        ("the place", engagement_seed(7, moved)),
+        ("who attacked", engagement_seed(7, swapped)),
+    ] {
+        assert_ne!(base, other, "{what} made no difference");
+    }
+}
+
+#[test]
+fn a_campaign_loaded_from_a_save_fights_the_battle_it_would_have_fought() {
+    // Before W0.6 the game seeded a campaign's battles from the wall clock
+    // and the harness from how many battles had come before, so neither a
+    // save nor a second campaign in the same process met the same fight.
+    let reg = registry();
+    let state = OverworldState::from_map(&reg, "frontier", 11).expect("campaign");
+    let (a, b) = (state.armies[0].id, state.armies[1].id);
+    let first = Clash::muster(&state, a, b, &[], &[], "river_crossing".into());
+
+    let text = SaveGame::<BattleState>::new(&reg, Some(state.clone()), None)
+        .to_json()
+        .expect("saves");
+    let loaded = SaveGame::from_json(&reg, &text)
+        .expect("loads")
+        .0
+        .overworld
+        .expect("the campaign came back");
+    let again = Clash::muster(&loaded, a, b, &[], &[], "river_crossing".into());
+    assert_eq!(first.seed, again.seed);
+
+    let at = state.army(b).unwrap().pos;
+    assert_eq!(
+        first.seed,
+        engagement_seed(
+            11,
+            EngagementKey {
+                when: state.turn as u64,
+                at,
+                attacker: a.0,
+                defender: b.0,
+            }
+        ),
+        "the fight's dice are its world's seed and its own name, nothing else"
+    );
+}
