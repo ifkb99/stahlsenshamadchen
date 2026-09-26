@@ -547,6 +547,10 @@ and the seam tests in `tests/ground.rs`.
   without it the AI had nothing to fight for and never closed. A column that
   reaches a fight in progress joins it on its own side
   (`BattleState::reinforce`), never a second battle.
+- **A side's commander is a cadet** (`OverworldSide::commander`, from the
+  vehicle its map flags `command`), her death under `victory.commander`
+  ends the campaign, and while she is wounded `acting_commander` is the
+  next senior fit cadet. On the clock an order is taken on any tick.
 
 ### Reading ground
 

@@ -447,15 +447,28 @@ the determinism snapshot passes **unregenerated**.
 
 ### W4 — the player in the chain of command
 
-- [ ] **W4.1 The player is a cadet** in a command vehicle with an HQ
-      platoon, at the root of the net; what she may order is derived from
-      `operational_commands`.
+- [x] ~~**W4.1 The player is a cadet.**~~ **Done 2026-09-26.** A campaign
+      map flags a vehicle `command` (the ruling: a flag on an existing
+      chassis); its senior cadet, by rank then enlistment, is
+      `OverworldSide::commander`, fixed when the campaign begins — after
+      that her command vehicle is whichever she rides in. `frontier` and
+      `frontier_world` flag the headquarters company's Panther (Anka Weiss;
+      Irma for the Valkyries). The net already roots at the headquarters
+      army she rides with.
 - [ ] **W4.2 One level down**, and reaching further allowed at a cost.
 - [ ] **W4.3 Calling anybody in reach**: reports and requests, distinct
       from orders.
 - [ ] **W4.4 The pause on news** (`Knower::Commander`), and planning more
-      than one engagement at one pause.
-- [ ] **W4.5 Her death ends the campaign**; a wound does not.
+      than one engagement at one pause. *Orders on any tick are done*
+      (2026-09-26): on a clocked campaign an order is taken from any side
+      at any time, and a newer one replaces the march in progress.
+- [x] ~~**W4.5 Her death ends the campaign; a wound does not.**~~ **Done
+      2026-09-26.** `victory.commander` (both campaigns declare it) makes a
+      dead commander a defeat, `CampaignEnd::CommanderKilled`;
+      `acting_commander` is her while she is fit and otherwise the most
+      senior fit cadet riding with the side, until she is back. It ends 3
+      of 32 `frontier` campaigns and 2 of 16 `frontier_world` ones
+      (`frontier` 24–7 over 35 battles, from 23–8 over 36).
 
 ### W5 — presentation
 

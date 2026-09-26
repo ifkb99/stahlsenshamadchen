@@ -25,7 +25,8 @@
       "factory"
     ],
     "hold_days": 3,
-    "decapitation": true
+    "decapitation": true,
+    "commander": true
   },
   "armies": [
     {
@@ -40,6 +41,7 @@
       "headquarters": true,
       "units": [
         {
+          "command": true,
           "vehicle": "medium_tank",
           "crew": [
             "anka",
@@ -134,6 +136,7 @@
       "headquarters": true,
       "units": [
         {
+          "command": true,
           "vehicle": "medium_tank",
           "crew": [
             "irma",

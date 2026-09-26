@@ -34,6 +34,11 @@ pub struct OverworldSide {
     pub name: String,
     /// `None` = human controlled.
     pub ai: Option<AiConfig>,
+    /// The cadet who commands this side (WORLD.md W4.1): the senior cadet of
+    /// the vehicle its campaign map flagged `command`, fixed when the
+    /// campaign begins. For the player's side, the player.
+    #[serde(default)]
+    pub commander: Option<CadetId>,
 }
 
 /// One crewed vehicle travelling with an army.
@@ -442,6 +447,8 @@ pub enum CampaignEnd {
     Elimination,
     /// Every other side has lost the army carrying its headquarters.
     Decapitation,
+    /// Every other side's commander is dead (WORLD.md W4.5).
+    CommanderKilled,
     /// One side held every tile the map said to hold when the day turned.
     Held,
 }
@@ -748,12 +755,13 @@ impl OverworldState {
                     (world.campaign_map(), Some(Arc::new(world)), positions)
                 }
             };
-        let sides = file
+        let mut sides: Vec<OverworldSide> = file
             .sides
             .iter()
             .map(|s| OverworldSide {
                 name: s.name.clone(),
                 ai: s.ai.clone(),
+                commander: None,
             })
             .collect();
         // Enlisting as the armies are built is what turns map data into
@@ -810,6 +818,28 @@ impl OverworldState {
                 engaged: None,
             })
             .collect();
+        // Who commands each side (WORLD.md W4.1): the senior cadet — by rank,
+        // then who enlisted first — of the first vehicle its map flags
+        // `command`. Read once; after this she is a cadet like any other, and
+        // her command vehicle is whichever vehicle she is riding in.
+        let armies: Vec<Army> = armies;
+        for (placement, army) in file.armies.iter().zip(&armies) {
+            for (up, unit) in placement.units.iter().zip(&army.units) {
+                let side = army.side as usize;
+                if !up.command || sides.get(side).is_none_or(|s| s.commander.is_some()) {
+                    continue;
+                }
+                let senior = unit.crew.iter().copied().max_by_key(|c| {
+                    (
+                        roster
+                            .get(*c)
+                            .and_then(|x| registry.rank_index(x.rank.as_deref())),
+                        Reverse(c.0),
+                    )
+                });
+                sides[side].commander = senior;
+            }
+        }
         let mut state = Self {
             map: Arc::new(map),
             sides,
@@ -921,6 +951,44 @@ impl OverworldState {
     pub fn defeated(&self, side: u8) -> bool {
         self.side_armies(side).next().is_none()
             || (self.victory.decapitation && self.decapitated(side))
+            || (self.victory.commander && self.commander_killed(side))
+    }
+
+    /// Whether `side`'s commander is dead — not wounded, not missing: a
+    /// wound is not a death (WORLD.md W4.5).
+    pub fn commander_killed(&self, side: u8) -> bool {
+        self.sides
+            .get(side as usize)
+            .and_then(|s| s.commander)
+            .and_then(|c| self.roster.get(c))
+            .is_some_and(|c| c.status == crate::roster::CadetStatus::Dead)
+    }
+
+    /// Who commands `side` today (WORLD.md W4.5): its commander, if she is
+    /// fit; while she is in the infirmary or walking back, the most senior
+    /// cadet of the side who is fit and riding with an army — by rank, then
+    /// who enlisted first — until she is back. `None` for a side nobody
+    /// commands, or with nobody left to.
+    pub fn acting_commander(&self, registry: &DataRegistry, side: u8) -> Option<CadetId> {
+        let commander = self.sides.get(side as usize)?.commander?;
+        if self
+            .roster
+            .get(commander)
+            .is_some_and(|c| c.status.is_ready())
+        {
+            return Some(commander);
+        }
+        self.side_armies(side)
+            .flat_map(|a| a.units.iter().flat_map(|u| u.crew.iter().copied()))
+            .filter(|c| self.roster.get(*c).is_some_and(|x| x.status.is_ready()))
+            .max_by_key(|c| {
+                (
+                    self.roster
+                        .get(*c)
+                        .and_then(|x| registry.rank_index(x.rank.as_deref())),
+                    Reverse(c.0),
+                )
+            })
     }
 
     /// How much of the ground the map says to hold `side` holds: `(held,
@@ -2245,7 +2313,7 @@ impl OverworldState {
         mission: ArmyMission,
     ) -> Result<Vec<OverworldEvent>, OverworldError> {
         let army = self.army(id).ok_or(OverworldError::NoSuchArmy)?;
-        if army.side != self.active_side {
+        if army.side != self.active_side && !self.clocked() {
             return Err(OverworldError::NotYourTurn);
         }
         match &mission {
@@ -2293,7 +2361,7 @@ impl OverworldState {
         }
         let giver = self.army(from).ok_or(OverworldError::NoSuchArmy)?;
         let taker = self.army(to).ok_or(OverworldError::NoSuchArmy)?;
-        if giver.side != self.active_side {
+        if giver.side != self.active_side && !self.clocked() {
             return Err(OverworldError::NotYourTurn);
         }
         if giver.side != taker.side || giver.pos.distance_to(taker.pos) > 1 {
@@ -2393,10 +2461,13 @@ impl OverworldState {
             let army = self.army(id).ok_or(OverworldError::NoSuchArmy)?;
             (army.side, army.pos, army.movement, army.moved)
         };
-        if side != self.active_side {
+        // On the clock an order is given on any tick (WORLD.md W4.4): there
+        // is no turn to be out of, and a newer order replaces the march in
+        // progress rather than being refused for it.
+        if side != self.active_side && !self.clocked() {
             return Err(OverworldError::NotYourTurn);
         }
-        if moved {
+        if moved && !self.clocked() {
             return Err(OverworldError::AlreadyMoved);
         }
 
@@ -2954,8 +3025,13 @@ impl OverworldState {
         let eliminated = (0..self.sides.len() as u8)
             .filter(|side| Some(*side) != winner)
             .all(|side| self.side_armies(side).next().is_none());
+        let commander = (0..self.sides.len() as u8)
+            .filter(|side| Some(*side) != winner)
+            .any(|side| self.victory.commander && self.commander_killed(side));
         let reason = if eliminated {
             CampaignEnd::Elimination
+        } else if commander {
+            CampaignEnd::CommanderKilled
         } else {
             CampaignEnd::Decapitation
         };

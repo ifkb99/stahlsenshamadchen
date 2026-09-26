@@ -104,6 +104,12 @@ impl From<Facing> for hexx::EdgeDirection {
 /// is told, the same way `planner.mission_weight` does.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArmyUnitPlacement {
+    /// This is the side's command vehicle, and its senior cadet is the
+    /// side's commander (WORLD.md W4.1, the designer's ruling: a flag on an
+    /// existing chassis). Read once, when the campaign begins; after that
+    /// the command vehicle is whichever vehicle she rides in.
+    #[serde(default)]
+    pub command: bool,
     pub vehicle: String,
     /// Who crews her, by character id. An empty list is an anonymous crew.
     #[serde(default)]
@@ -486,6 +492,13 @@ pub struct CampaignVictory {
     /// `validate-mods` says so.
     #[serde(default)]
     pub decapitation: bool,
+    /// Losing the side's commander — the senior cadet of the vehicle a
+    /// campaign map flags [`ArmyUnitPlacement::command`] — loses the
+    /// campaign (WORLD.md W4.5, the designer's ruling). Killed, that is: a
+    /// wound is not a death, and while she is in the infirmary the next
+    /// senior commands.
+    #[serde(default)]
+    pub commander: bool,
 }
 
 fn default_hold_days() -> u32 {
@@ -498,6 +511,7 @@ impl Default for CampaignVictory {
             hold: Vec::new(),
             hold_days: default_hold_days(),
             decapitation: false,
+            commander: false,
         }
     }
 }
@@ -505,7 +519,7 @@ impl Default for CampaignVictory {
 impl CampaignVictory {
     /// Whether the map declared any rule at all beyond elimination.
     pub fn is_empty(&self) -> bool {
-        self.hold.is_empty() && !self.decapitation
+        self.hold.is_empty() && !self.decapitation && !self.commander
     }
 }
 

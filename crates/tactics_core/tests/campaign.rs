@@ -1865,3 +1865,99 @@ fn a_column_that_reaches_a_fight_in_progress_joins_it_on_its_own_side() {
     );
     let _ = army;
 }
+
+// --- the player in the chain of command (WORLD.md W4) ---
+
+#[test]
+fn every_side_knows_its_commander_from_the_vehicle_its_map_flags() {
+    // `command` on a vehicle names the side's commander: its senior cadet.
+    // Kuhlmann's flagged Panther is Anka Weiss's; the Valkyries', Irma's.
+    let reg = registry();
+    for state in [frontier(&reg), generated(&reg)] {
+        for side in &state.sides {
+            let c = side
+                .commander
+                .expect("every side's map flags a command vehicle");
+            let cadet = state.roster.get(c).unwrap();
+            let in_a_flagged_crew = state
+                .armies
+                .iter()
+                .filter(|a| {
+                    a.side as usize
+                        == state
+                            .sides
+                            .iter()
+                            .position(|s| s.name == side.name)
+                            .unwrap()
+                })
+                .any(|a| a.units.iter().any(|u| u.crew.contains(&c)));
+            assert!(
+                in_a_flagged_crew,
+                "{} commands {} from outside it",
+                cadet.name, side.name
+            );
+        }
+    }
+}
+
+#[test]
+fn her_death_ends_the_campaign_and_her_wound_hands_command_to_the_next_senior() {
+    // The designer's rulings: her death ends the campaign; a wound is not a
+    // death, and while she is in the infirmary the next senior commands.
+    let reg = registry();
+    let mut state = frontier(&reg);
+    let commander = state.sides[0].commander.unwrap();
+    assert_eq!(state.acting_commander(&reg, 0), Some(commander));
+
+    state.roster.get_mut(commander).unwrap().status =
+        tactics_core::roster::CadetStatus::Wounded { days: 3 };
+    assert!(!state.defeated(0), "a wound is not a death");
+    let acting = state.acting_commander(&reg, 0).expect("somebody commands");
+    assert_ne!(
+        acting, commander,
+        "the next senior commands while she is out"
+    );
+
+    state.roster.get_mut(commander).unwrap().status = tactics_core::roster::CadetStatus::Dead;
+    assert!(state.defeated(0));
+    let events = end_turn(&reg, &mut state);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            OverworldEvent::GameEnded {
+                winner: Some(1),
+                reason: tactics_core::overworld::CampaignEnd::CommanderKilled,
+            }
+        )),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn on_the_clock_an_order_is_given_on_any_tick_and_a_newer_one_replaces_it() {
+    // No turn to be out of: the player can order a company in the middle of
+    // the day, while it is another side's phase, and a second order is the
+    // order — the march in progress is replaced, not the new one refused.
+    let reg = registry();
+    let mut state = generated(&reg);
+    let army = state.armies[0].id;
+    state.active_side = 1;
+    let reach: Vec<Hex> = {
+        let mut r: Vec<Hex> = state.reachable(&reg, army).into_keys().collect();
+        r.sort_by_key(|h| (h.x, h.y));
+        r.into_iter()
+            .filter(|h| *h != state.army(army).unwrap().pos)
+            .take(2)
+            .collect()
+    };
+    state
+        .apply(&reg, &OverworldOrder::MoveArmy { army, to: reach[0] })
+        .expect("an order out of turn, on the clock");
+    state
+        .apply(&reg, &OverworldOrder::MoveArmy { army, to: reach[1] })
+        .expect("and a second one");
+    assert_eq!(
+        state.army(army).unwrap().march.as_ref().unwrap().to,
+        reach[1]
+    );
+}
