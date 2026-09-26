@@ -296,6 +296,11 @@ impl SightGrid {
         );
     }
 
+    /// Forget one tile.
+    pub fn remove(&mut self, hex: Hex) {
+        self.tiles.remove(&hex);
+    }
+
     /// Whether this grid has been built. A deserialized battle carries an
     /// empty one until [`crate::save`] refills it.
     pub fn is_empty(&self) -> bool {
@@ -509,7 +514,7 @@ pub fn los_clear(registry: &DataRegistry, map: &HexMap, from: Hex, to: Hex) -> b
 /// Every tile visible from `pos` at `range`, ignoring any cache.
 fn look(state: &BattleState, pos: Hex, range: u32) -> HashSet<Hex> {
     pos.range(range)
-        .filter(|hex| state.world.contains(*hex) && state.world.sight().clear(pos, *hex))
+        .filter(|hex| state.world.contains(*hex) && state.world.sight_clear(pos, *hex))
         .collect()
 }
 
@@ -545,7 +550,7 @@ pub(crate) fn sees(registry: &DataRegistry, state: &BattleState, id: UnitId, tar
     }
     unit.pos.distance_to(target) <= range as i32
         && state.world.contains(target)
-        && state.world.sight().clear(unit.pos, target)
+        && state.world.sight_clear(unit.pos, target)
 }
 
 /// What it takes for one side to find one enemy this tick.

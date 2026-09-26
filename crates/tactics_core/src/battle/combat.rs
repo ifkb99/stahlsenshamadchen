@@ -1595,7 +1595,7 @@ pub fn best_weapon_from(
         if !(weapon.range[0] as i32..=weapon.range[1] as i32).contains(&dist) {
             continue;
         }
-        if !weapon.indirect && !state.world.sight().clear(from, at) {
+        if !weapon.indirect && !state.world.sight_clear(from, at) {
             continue;
         }
         let value = expected_shot(registry, state, attacker, from, weapon, target, at, false);
@@ -1746,7 +1746,7 @@ pub fn preview_attack(
     // attacker and own a loaded direct-fire weapon that reaches.
     let counter = {
         let can_see = state.fog.side(tgt.side).spotted.contains(&attacker)
-            && state.world.sight().clear(tgt.pos, att.pos);
+            && state.world.sight_clear(tgt.pos, att.pos);
         if can_see {
             tgt_vehicle
                 .weapons
@@ -2578,7 +2578,7 @@ fn shot_exists(
         // Indirect fire needs somebody watching, not its own eyes.
         spotted
     } else {
-        state.world.sight().clear(from, target_pos)
+        state.world.sight_clear(from, target_pos)
     }
 }
 

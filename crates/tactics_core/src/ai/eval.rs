@@ -288,7 +288,7 @@ impl Evaluator {
                         2 => -planner.crowding_near,
                         _ => 0.0,
                     };
-                    let supported = dist as f32 <= support && state.world.sight().clear(at, tile);
+                    let supported = dist as f32 <= support && state.world.sight_clear(at, tile);
                     let apart = if supported {
                         0.0
                     } else {

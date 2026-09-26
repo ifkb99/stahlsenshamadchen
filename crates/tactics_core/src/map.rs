@@ -804,6 +804,13 @@ impl HexMap {
         self.tiles.insert(hex, Cell { terrain, elevation });
     }
 
+    /// Forget the tile at `hex`, as an unloaded chunk forgets its ground. The
+    /// palette keeps the name: it is a handful of strings, and a chunk that
+    /// comes back will want it again.
+    pub fn remove(&mut self, hex: Hex) {
+        self.tiles.remove(&hex);
+    }
+
     fn view(&self, cell: &Cell) -> Tile<'_> {
         Tile {
             terrain: &self.palette[cell.terrain as usize],
