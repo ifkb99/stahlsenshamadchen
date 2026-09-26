@@ -918,6 +918,9 @@ fn campaign_over_line(
         CampaignEnd::Decapitation => {
             format!("Campaign over. The enemy headquarters is gone; {name} rules the frontier.")
         }
+        CampaignEnd::CommanderKilled => {
+            format!("Campaign over. The enemy's commander is dead; {name} rules the frontier.")
+        }
         CampaignEnd::Held => {
             let nights = state.victory.hold_days;
             let ground = state

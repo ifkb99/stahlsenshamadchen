@@ -39,7 +39,8 @@
     "victory": {
         "hold": ["factory"],
         "hold_days": 3,
-        "decapitation": true
+        "decapitation": true,
+        "commander": true
     },
     "armies": [
         {
@@ -49,7 +50,7 @@
             "movement": 4,
             "headquarters": true,
             "units": [
-                { "vehicle": "medium_tank", "crew": ["anka", "juno", "mina", "rosa"] },
+                { "command": true, "vehicle": "medium_tank", "crew": ["anka", "juno", "mina", "rosa"] },
                 { "vehicle": "recon_car", "crew": ["elsa", "ada"] },
                 { "vehicle": "light_tank", "crew": ["hanne", "yuki", "ilse"] },
                 { "vehicle": "apc", "crew": ["lore", "nele"] },
@@ -75,7 +76,7 @@
             "movement": 4,
             "headquarters": true,
             "units": [
-                { "vehicle": "medium_tank", "crew": ["irma", "astrid", "beatrix", "franka"] },
+                { "command": true, "vehicle": "medium_tank", "crew": ["irma", "astrid", "beatrix", "franka"] },
                 { "vehicle": "light_tank", "crew": ["sofia", "kira", "rea"] },
                 { "vehicle": "recon_car", "crew": ["greta", "runa"] },
                 { "vehicle": "apc", "crew": ["britta", "malin"] },
