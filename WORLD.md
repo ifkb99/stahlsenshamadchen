@@ -480,3 +480,14 @@ the second:
    nearest each side's edge", "every factory", and the generator resolves
    those against the world it made. A campaign is a seed, the generator's
    parameters and a scenario.
+
+The third round (2026-09-26, before W4):
+
+4. **The command vehicle is a flag on an existing chassis** — the HQ
+   platoon's lead vehicle — not new content, until a proper command variant
+   is designed.
+5. **Reaching down costs latency and a disrupted plan**: an order past her
+   companies travels the net and lands a round late, and the bypassed
+   company's plan for that crew is dropped.
+6. **One level down, in a fight, is her companies**: an army is one
+   formation in an engagement and she orders it; a crew is reaching down.
