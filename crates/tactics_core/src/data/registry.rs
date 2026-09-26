@@ -87,6 +87,10 @@ pub struct DataRegistry {
     /// coefficients must produce the same battle, and does; that is a pinned
     /// test rather than a hope.
     pub command: Option<CommandRules>,
+    /// How a world is made, or `None` when no mod says. Optional for the
+    /// reason [`Self::command`] is: a game with no world generator is not a
+    /// generator with timid numbers, it is the absence of one.
+    pub worldgen: Option<super::WorldGen>,
     /// The ladder of rank, lowest first ([`RankDef`]). Empty is no ranks at
     /// all: everybody is equal and command passes by arrival order.
     pub ranks: Vec<super::RankDef>,
@@ -171,6 +175,9 @@ impl DataRegistry {
             }
             if let Some(command) = &manifest.command {
                 registry.command = Some(command.clone());
+            }
+            if let Some(worldgen) = &manifest.worldgen {
+                registry.worldgen = Some(worldgen.clone());
             }
             if let Some(ranks) = &manifest.ranks {
                 registry.ranks = ranks.clone();
@@ -324,6 +331,7 @@ impl DataRegistry {
     /// Cross-reference every definition and record problems in `report`.
     pub fn validate_into(&self, report: &mut ValidationReport) {
         self.validate_scale(report);
+        self.validate_worldgen(report);
         // A rank the ladder does not have would put her at the bottom without
         // a word, which is a demotion nobody wrote.
         let mut ranked: Vec<&CharacterDef> = self.characters.values().collect();
@@ -751,6 +759,77 @@ impl DataRegistry {
     /// The battle-hexes-per-overworld-hex check is the one that earns its
     /// keep: the contract says an overworld hex *is* a battle map, and
     /// nothing else in the codebase would ever notice the two drifting apart.
+    /// A world generator that writes a terrain nobody declares makes a
+    /// world nobody can stand on; one whose relief shares do not add to a
+    /// hundred makes a world that is not the one its author described.
+    fn validate_worldgen(&self, report: &mut ValidationReport) {
+        let Some(wg) = &self.worldgen else {
+            return;
+        };
+        let p = &wg.terrain;
+        for (kind, id) in [
+            ("open", &p.open),
+            ("wood", &p.wood),
+            ("hedge", &p.hedge),
+            ("wet", &p.wet),
+            ("water", &p.water),
+            ("road", &p.road),
+            ("town", &p.town),
+        ] {
+            if self.terrain(id).is_none() {
+                report.error(format!(
+                    "worldgen terrain.{kind} is `{id}`, which no mod declares"
+                ));
+            }
+        }
+        for rule in &wg.summary {
+            if self.terrain(&rule.terrain).is_none() {
+                report.error(format!(
+                    "worldgen summary names `{}`, which no mod declares",
+                    rule.terrain
+                ));
+            }
+            if let Some(share) = &rule.share
+                && self.terrain(&share.terrain).is_none()
+            {
+                report.error(format!(
+                    "worldgen summary counts `{}`, which no mod declares",
+                    share.terrain
+                ));
+            }
+        }
+        if wg.summary.last().is_none_or(|r| {
+            r.feature.is_some() || r.mean_elevation_tenths.is_some() || r.share.is_some()
+        }) {
+            report.warn(
+                "worldgen summary does not end with a rule that always holds; a campaign hex no \
+                 rule names is called by terrain.open",
+            );
+        }
+        let shares = &wg.relief.shares;
+        if shares.is_empty() || shares.len() > 10 {
+            report.error(format!(
+                "worldgen relief.shares names {} levels; a world has 1 to 10",
+                shares.len()
+            ));
+        }
+        let total: u32 = shares.iter().sum();
+        if total != 100 {
+            report.error(format!("worldgen relief.shares adds to {total}, not 100"));
+        }
+        if wg.towns.factories > wg.towns.count {
+            report.error(format!(
+                "worldgen asks for {} factories in {} towns",
+                wg.towns.factories, wg.towns.count
+            ));
+        }
+        if wg.cover.wood_percent + wg.cover.hedge_percent > 100 {
+            report.error(
+                "worldgen cover: wood and hedge together are more than the land".to_string(),
+            );
+        }
+    }
+
     fn validate_scale(&self, report: &mut ValidationReport) {
         let s = &self.scale;
         for (field, value) in [
@@ -1122,6 +1201,7 @@ mod tests {
                     reaction: None,
                     morale: None,
                     command: None,
+                    worldgen: None,
                     ranks: None,
                     dependencies: deps.iter().map(|s| s.to_string()).collect(),
                     scale: None,

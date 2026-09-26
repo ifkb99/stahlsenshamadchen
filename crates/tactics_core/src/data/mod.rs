@@ -13,6 +13,7 @@ mod planner;
 mod registry;
 mod scale;
 mod templates;
+mod worldgen;
 
 pub use ammo::{AmmoClass, AmmoDef};
 pub use balance::{Balance, ReactionRules, RouteExposure};
@@ -32,3 +33,7 @@ pub use planner::PlannerRules;
 pub use registry::{DataError, DataRegistry, ValidationReport, parse_color};
 pub use scale::Scale;
 pub use templates::{FixAndFlank, TemplateDef, TemplateKind};
+pub use worldgen::{
+    Cover, GroundPalette, Relief, Rivers, Roads, SkeletonFeature, SummaryRule, TerrainShare, Towns,
+    WorldGen,
+};
