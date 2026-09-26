@@ -23,7 +23,7 @@
 
 use crate::battle::{BattleState, SavedBattle, UnitId};
 use crate::data::DataRegistry;
-use crate::overworld::ArmyId;
+use crate::overworld::ElementId;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// The front's battle: live, or just off disk and waiting for
@@ -59,10 +59,10 @@ pub struct Front {
     pub seed: u64,
     /// The army each crew in the fighting belongs to, by unit id, in id
     /// order. A crew whose army has left is no longer here.
-    pub origins: Vec<(UnitId, ArmyId)>,
+    pub origins: Vec<(UnitId, ElementId)>,
     /// Each army in the fighting and the last round any of its crews had an
     /// enemy within reach.
-    pub contact: Vec<(ArmyId, u32)>,
+    pub contact: Vec<(ElementId, u32)>,
     pub fight: Fight,
     /// What happened on the clock's latest tick — the AI's orders and the
     /// tick's events — for a screen that is watching. News, not state.
@@ -101,7 +101,7 @@ impl Front {
     }
 
     /// The army a crew in the fighting belongs to.
-    pub fn origin(&self, unit: UnitId) -> Option<ArmyId> {
+    pub fn origin(&self, unit: UnitId) -> Option<ElementId> {
         self.origins
             .binary_search_by_key(&unit, |(id, _)| *id)
             .ok()
@@ -109,15 +109,15 @@ impl Front {
     }
 
     /// Every army in the fighting, in id order.
-    pub fn armies(&self) -> Vec<ArmyId> {
-        let mut armies: Vec<ArmyId> = self.contact.iter().map(|(a, _)| *a).collect();
+    pub fn armies(&self) -> Vec<ElementId> {
+        let mut armies: Vec<ElementId> = self.contact.iter().map(|(a, _)| *a).collect();
         armies.sort_unstable();
         armies.dedup();
         armies
     }
 
     /// The crews of `army` in the fighting.
-    pub fn crews_of(&self, army: ArmyId) -> Vec<UnitId> {
+    pub fn crews_of(&self, army: ElementId) -> Vec<UnitId> {
         self.origins
             .iter()
             .filter(|(_, a)| *a == army)

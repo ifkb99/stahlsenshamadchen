@@ -7,6 +7,7 @@
 //! cargo run --release -p tactics_core --example campaign -- 3         # one seed, every battle
 //! cargo run --release -p tactics_core --example campaign -- 0 32      # seeds 0..32, summary only
 //! cargo run --release -p tactics_core --example campaign -- --map frontier 0 32  # the drawn one
+//! cargo run --release -p tactics_core --example campaign -- --trace 3  # ...and every event
 //! ```
 //!
 //! With no `--map` it plays the campaign the game opens on (`campaign` in
@@ -37,9 +38,10 @@ fn main() {
         .cloned()
         .or_else(|| registry.campaign.clone())
         .unwrap_or_else(|| MAP.to_string());
+    let trace = raw.iter().any(|a| a == "--trace");
     let args: Vec<u64> = raw
         .iter()
-        .filter(|a| *a != "--map" && **a != map)
+        .filter(|a| *a != "--map" && **a != map && *a != "--trace")
         .map(|a| a.parse().expect("seeds are numbers"))
         .collect();
     let map = map.as_str();
@@ -48,13 +50,23 @@ fn main() {
         [one] => (*one, *one + 1),
         [from, to, ..] => (*from, *to),
     };
-    let options = CampaignOptions::default();
+    let options = CampaignOptions {
+        trace,
+        ..CampaignOptions::default()
+    };
     let seeds: Vec<u64> = (from..to).collect();
     let started = std::time::Instant::now();
     let runs: Vec<CampaignRun> = run_all(&seeds, |seed| {
         play(&registry, map, *seed, &options).expect("the shipped campaign builds")
     });
     let elapsed = started.elapsed();
+    // Every event of every run, seed first: the check that a change to how
+    // the campaign is stored left what it does alone.
+    for (seed, run) in seeds.iter().zip(&runs) {
+        for event in &run.events {
+            println!("{seed} {event:?}");
+        }
+    }
 
     let names: Vec<String> = tactics_core::overworld::OverworldState::from_map(&registry, map, 0)
         .expect("the shipped campaign builds")

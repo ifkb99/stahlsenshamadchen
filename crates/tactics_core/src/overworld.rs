@@ -20,10 +20,12 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::sync::Arc;
 
+/// A node in a side's chain of command: the side itself, a company, a
+/// vehicle (see [`Element`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct ArmyId(pub u32);
+pub struct ElementId(pub u32);
 
-impl ArmyId {
+impl ElementId {
     pub fn index(self) -> usize {
         self.0 as usize
     }
@@ -237,58 +239,96 @@ pub enum ArmyMission {
     Withdraw { to: Hex },
 }
 
-/// A stack of units moving as one piece on the strategic map.
+/// One node of a side's chain of command (the designer's ruling,
+/// 2026-09-26: there is no separate state for a detachment, it all flows from
+/// the chain of command).
+///
+/// A side is one tree: its root is the side itself — the commander — with
+/// its companies beneath, and each company's vehicles beneath that, a leaf
+/// being one crewed vehicle. **What stands on the campaign map is not a kind
+/// of thing but a fact about a node**: an element with a [`Place`] stands
+/// there on its own, and every vehicle below it that does not stand on its
+/// own goes with it. Today that is every company. A company that sends one
+/// of its vehicles out gives *that node* a place; the vehicle is still the
+/// company's, in the tree, and nothing else about it changes.
+///
+/// [`Column`] is what the map shows of a node with a place: derived from the
+/// tree every time it is asked for, never stored.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Army {
-    pub id: ArmyId,
+pub struct Element {
+    pub id: ElementId,
+    pub side: u8,
+    pub name: String,
+    /// The node this one answers to; `None` for a side's root.
+    pub parent: Option<ElementId>,
+    /// The crewed vehicle this node is, for a leaf; `None` above that.
+    pub vehicle: Option<ArmyUnit>,
+    /// Whether this node carries the side's headquarters — the root of its
+    /// signals net, and under [`CampaignVictory::decapitation`] the one it
+    /// cannot afford to lose. Copied from [`crate::map::ArmyPlacement::headquarters`].
+    pub headquarters: bool,
+    /// Standing orders: what this node does with the time nobody spends on
+    /// it by hand. Standing in the strict sense the battle's formations use
+    /// — never cleared at the end of a day or when it is cut off.
+    /// `#[serde(default)]`: a file that says nothing gave no orders.
+    #[serde(default)]
+    pub mission: Option<ArmyMission>,
+    /// Where it stands, if it stands on its own (see the type's doc).
+    pub place: Option<Place>,
+    /// False once it is gone: destroyed, or a vehicle lost. Kept rather than
+    /// removed, because a destroyed headquarters is how a side is known to
+    /// have been decapitated and ids are never reused.
+    pub alive: bool,
+    /// Order among the nodes under the same column, which is the order a
+    /// column's vehicles muster in: the order they joined it.
+    pub seq: u32,
+}
+
+/// Where an element that stands on its own stands, and what it is doing
+/// there: what used to be the whole of an army's position.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Place {
+    pub pos: Hex,
+    /// Movement points a turn on a drawn campaign.
+    pub movement: u32,
+    pub moved: bool,
+    /// Where on the ground it stands on a generated world, to the tile
+    /// (WORLD.md W2.1); `pos` is always the campaign hex that tile lies in.
+    /// `None` on a drawn campaign map, which has no tiles.
+    pub tile: Option<Hex>,
+    /// Where it is marching, on a campaign that runs on the clock (W3.1).
+    pub march: Option<MarchOrder>,
+    /// Ticks spent on the march today, against the `march` block's hours;
+    /// reset at dawn.
+    pub marched_ticks: u32,
+    /// Whether it is in the fighting: its vehicles are crews on tiles in the
+    /// front, and it does not march until it leaves (W3.8).
+    pub fighting: bool,
+}
+
+/// What the campaign map shows of an element that stands on its own: the
+/// element, where it stands, and the vehicles that go with it. **Derived
+/// from the tree whenever it is asked for** ([`OverworldState::army`]) and
+/// never stored, so there is nothing about a column that can disagree with
+/// the chain of command it is read from. To change one, change the tree:
+/// [`OverworldState::place_mut`] for where it is, its element for its
+/// orders.
+#[derive(Debug, Clone)]
+pub struct Column {
+    pub id: ElementId,
     pub side: u8,
     pub name: String,
     pub pos: Hex,
     pub movement: u32,
     pub moved: bool,
-    /// Units that spawn into battles this army fights. Battle casualties
-    /// are written back here.
+    /// The vehicles that go with it, in the order they joined: every leaf
+    /// below it that does not stand on its own.
     pub units: Vec<ArmyUnit>,
-    pub alive: bool,
-    /// Standing orders: what this army does with the turns nobody spends on
-    /// it by hand.
-    ///
-    /// Standing in the strict sense the battle's formations already use — it
-    /// is never cleared, not at the end of a turn and not when the army is cut
-    /// off from its headquarters. An army told to advance on the bridge is
-    /// still advancing on the bridge tomorrow, which is the entire reason the
-    /// order is worth giving: it is what lets a campaign day be played by
-    /// delegation rather than by moving every counter.
-    ///
-    /// `#[serde(default)]` so a campaign saved before missions existed opens
-    /// as one whose armies have no orders, which is what it was.
-    #[serde(default)]
     pub mission: Option<ArmyMission>,
-    /// Whether this army carries the side's headquarters — the root of its
-    /// signals net, and under [`CampaignVictory::decapitation`] the army it
-    /// cannot afford to lose. Copied from [`crate::map::ArmyPlacement::headquarters`].
-    ///
-    /// `#[serde(default)]` so a campaign saved before the flag existed opens
-    /// with nobody flagged, which routes [`OverworldState::senior_army`] to
-    /// the first-declared army: what it always was.
-    #[serde(default)]
     pub headquarters: bool,
-    /// Where on the ground an army on a generated world stands, to the tile
-    /// (WORLD.md W2.1); `pos` is always the campaign hex that tile lies in.
-    /// `None` on a drawn campaign map, which has no tiles.
-    #[serde(default)]
     pub tile: Option<Hex>,
-    /// Where it is marching, on a campaign that runs on the clock
-    /// (WORLD.md W3.1): the order and the leg of tiles it is walking now.
-    #[serde(default)]
     pub march: Option<MarchOrder>,
-    /// Ticks spent on the march today — moving or halted — against the
-    /// `march` block's hours; reset at dawn.
-    #[serde(default)]
     pub marched_ticks: u32,
-    /// Whether it is in the fighting: its vehicles are crews on tiles in the
-    /// front, and it does not march until it leaves (WORLD.md W3.8).
-    #[serde(default)]
     pub fighting: bool,
 }
 
@@ -311,7 +351,7 @@ pub struct MarchOrder {
 pub enum OverworldOrder {
     /// Move toward `to`; moving onto a visible enemy army attacks it.
     MoveArmy {
-        army: ArmyId,
+        army: ElementId,
         to: Hex,
     },
     /// Give an army its standing orders, replacing whatever it was doing.
@@ -322,7 +362,7 @@ pub enum OverworldOrder {
     /// carry and a replaced brain cannot see. Replacement is silent —
     /// countermanding is the ordinary business of command.
     SetMission {
-        army: ArmyId,
+        army: ElementId,
         mission: ArmyMission,
     },
     /// Move one vehicle, crew and all, from one of a side's armies to
@@ -337,8 +377,8 @@ pub enum OverworldOrder {
     /// destroying your own company by administrative transfer is not a
     /// thing anybody means.
     TransferUnit {
-        from: ArmyId,
-        to: ArmyId,
+        from: ElementId,
+        to: ElementId,
         unit: usize,
     },
     EndTurn,
@@ -349,13 +389,13 @@ pub enum OverworldEvent {
     /// An army made contact and entered the fighting, at `at`, against the
     /// army named if it ran into one (WORLD.md W3.2, W3.8).
     ArmyEngaged {
-        army: ArmyId,
-        against: Option<ArmyId>,
+        army: ElementId,
+        against: Option<ElementId>,
         at: Hex,
     },
     /// An army left the fighting and is a column again.
     ArmyDisengaged {
-        army: ArmyId,
+        army: ElementId,
     },
     /// Nobody is fighting anywhere any more.
     FightingOver {
@@ -374,7 +414,7 @@ pub enum OverworldEvent {
         turn: u32,
     },
     ArmyMoved {
-        army: ArmyId,
+        army: ElementId,
         path: Vec<Hex>,
     },
     ObjectiveCaptured {
@@ -390,18 +430,18 @@ pub enum OverworldEvent {
     /// Two armies met; the game layer should run a battle and report the
     /// outcome back via [`OverworldState::apply_battle_result`].
     BattleTriggered {
-        attacker: ArmyId,
-        defender: ArmyId,
+        attacker: ElementId,
+        defender: ElementId,
         at: Hex,
     },
     ArmyDestroyed {
-        army: ArmyId,
+        army: ElementId,
     },
     /// An army was given standing orders. News in its own right: a mission is
     /// a decision somebody made, and the campaign log carries it beside the
     /// moves it will cause.
     ArmyMissionAssigned {
-        army: ArmyId,
+        army: ElementId,
         mission: ArmyMission,
     },
     /// This army can no longer be reached by its side's headquarters. It keeps
@@ -409,16 +449,16 @@ pub enum OverworldEvent {
     /// ignoring the player is indistinguishable from a bug, so it is said out
     /// loud the turn it happens.
     ArmyOutOfContact {
-        army: ArmyId,
+        army: ElementId,
     },
     ArmyContactRestored {
-        army: ArmyId,
+        army: ElementId,
     },
     /// A vehicle changed companies. Named by chassis so the log can say what
     /// moved without a second lookup.
     UnitTransferred {
-        from: ArmyId,
-        to: ArmyId,
+        from: ElementId,
+        to: ElementId,
         vehicle: String,
     },
     /// An order for this army could not be got to it and is waiting at
@@ -430,7 +470,7 @@ pub enum OverworldEvent {
     /// and it exists for the same reason: an order silently parked is as
     /// illegible as one silently dropped.
     ArmyOrdersWaiting {
-        army: ArmyId,
+        army: ElementId,
     },
     GameEnded {
         winner: Option<u8>,
@@ -465,8 +505,8 @@ pub enum CampaignEnd {
 /// campaign rule.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BattleReport {
-    pub attacker: ArmyId,
-    pub defender: ArmyId,
+    pub attacker: ElementId,
+    pub defender: ElementId,
     /// Who the battle went to, if anybody; the campaign only uses it for the
     /// headline, since what actually happened is in the rosters below.
     pub winner: Option<u8>,
@@ -475,7 +515,7 @@ pub struct BattleReport {
     /// Every army that took part, with the vehicles it still has. An army
     /// that lost everything is listed with none, so its destruction is
     /// reported rather than inferred from its absence.
-    pub survivors: Vec<(ArmyId, Vec<ArmyUnit>)>,
+    pub survivors: Vec<(ElementId, Vec<ArmyUnit>)>,
     /// Cadets who were aboard a vehicle that was destroyed, and cadets hurt
     /// at their station in one that came home.
     pub losses: Vec<CrewLoss>,
@@ -483,7 +523,7 @@ pub struct BattleReport {
     /// were not beaten and they are not where the battle was: the campaign
     /// puts them a hex back along the way they were going.
     #[serde(default)]
-    pub withdrew: Vec<ArmyId>,
+    pub withdrew: Vec<ElementId>,
 }
 
 impl BattleReport {
@@ -492,9 +532,9 @@ impl BattleReport {
     /// wants to say, and what every caller said before the report had more
     /// fields than that.
     pub fn of(
-        attacker: ArmyId,
-        defender: ArmyId,
-        survivors: Vec<(ArmyId, Vec<ArmyUnit>)>,
+        attacker: ElementId,
+        defender: ElementId,
+        survivors: Vec<(ElementId, Vec<ArmyUnit>)>,
         losses: Vec<CrewLoss>,
     ) -> Self {
         Self {
@@ -541,7 +581,7 @@ pub enum OverworldError {
 /// stands on the ground, who crews each, and the ids the battle will know
 /// them by.
 type Entering = (
-    Army,
+    Column,
     Vec<crate::map::UnitPlacement>,
     Vec<Vec<CadetId>>,
     Vec<UnitId>,
@@ -559,7 +599,10 @@ pub struct OverworldState {
     pub roster: Roster,
     /// Whether this campaign is willing to kill its characters.
     pub rules: CasualtyRules,
-    pub armies: Vec<Army>,
+    /// Every side's chain of command, every node of it, in id order (see
+    /// [`Element`]). The campaign's order of battle is this and nothing
+    /// else; what stands on the map is read off it.
+    pub elements: Vec<Element>,
     /// Owner side of each captured objective tile.
     #[serde(with = "crate::map::hex_keyed")]
     pub owners: HashMap<Hex, u8>,
@@ -578,7 +621,7 @@ pub struct OverworldState {
     /// that could change it is refused while it is cut off. Standing orders and
     /// carried orders are therefore the same thing here.
     #[serde(default)]
-    pub out_of_contact: Vec<ArmyId>,
+    pub out_of_contact: Vec<ElementId>,
     /// Missions given to armies nobody could reach, waiting at headquarters
     /// in army-id order — one slot each, because a newer order replaces an
     /// older one that never went out rather than queueing behind it.
@@ -589,7 +632,7 @@ pub struct OverworldState {
     /// Empty for the whole campaign where no mod declares command rules —
     /// everybody is in contact then, and an order given is an order received.
     #[serde(default)]
-    pub waiting_missions: Vec<(ArmyId, ArmyMission)>,
+    pub waiting_missions: Vec<(ElementId, ArmyMission)>,
     pub over: Option<Option<u8>>,
     /// What ends this campaign beyond running out of armies, copied from the
     /// map. `#[serde(default)]` is the empty rule, so a campaign saved before
@@ -673,9 +716,9 @@ struct ColumnKind {
 /// hex to a neighbour.
 type Passage = (ColumnKind, (i32, i32), (i32, i32));
 
-/// What a march needs to know about an army.
+/// What a march needs to know about a column: its pace.
 #[derive(Debug, Clone, Copy)]
-struct Column {
+struct Pace {
     kind: ColumnKind,
     /// Movement points a round of its slowest vehicle.
     points: u32,
@@ -800,62 +843,89 @@ impl OverworldState {
         // author will hear it.
         let mut roster = Roster::new();
         let mut taken: std::collections::HashSet<(u8, &str)> = std::collections::HashSet::new();
-        let armies = file
-            .armies
-            .iter()
-            .enumerate()
-            .map(|(i, a)| Army {
-                id: ArmyId(i as u32),
+        // The chain of command, numbered so that a company is still known by
+        // the number its army always had: the companies first, in the order
+        // the map declares them, then each side's root, then the vehicles,
+        // company by company.
+        let mut elements: Vec<Element> = Vec::new();
+        let companies = file.armies.len();
+        for (i, a) in file.armies.iter().enumerate() {
+            elements.push(Element {
+                id: ElementId(i as u32),
                 side: a.side,
                 name: a.name.clone(),
-                pos: positions[i],
-                movement: a.movement,
-                moved: false,
-                units: a
-                    .units
-                    .iter()
-                    .map(|u| ArmyUnit {
-                        vehicle: u.vehicle.clone(),
-                        crew: u
-                            .crew
-                            .iter()
-                            .filter(|def_id| taken.insert((a.side, def_id.as_str())))
-                            .filter_map(|def_id| {
-                                roster.enlist_from_registry(registry, a.side, def_id)
-                            })
-                            .collect(),
-                        name: u.name.clone(),
-                    })
-                    .collect(),
-                alive: true,
-                mission: None,
+                parent: Some(ElementId((companies + a.side as usize) as u32)),
+                vehicle: None,
                 headquarters: a.headquarters,
-                tile: world.as_ref().map(|w| w.stand_tile(registry, positions[i])),
-                march: None,
-                marched_ticks: 0,
-                fighting: false,
-            })
-            .collect();
+                mission: None,
+                place: Some(Place {
+                    pos: positions[i],
+                    movement: a.movement,
+                    moved: false,
+                    tile: world.as_ref().map(|w| w.stand_tile(registry, positions[i])),
+                    march: None,
+                    marched_ticks: 0,
+                    fighting: false,
+                }),
+                alive: true,
+                seq: i as u32,
+            });
+        }
+        for (side, s) in file.sides.iter().enumerate() {
+            let id = elements.len() as u32;
+            elements.push(Element {
+                id: ElementId(id),
+                side: side as u8,
+                name: s.name.clone(),
+                parent: None,
+                vehicle: None,
+                headquarters: false,
+                mission: None,
+                place: None,
+                alive: true,
+                seq: id,
+            });
+        }
         // Who commands each side (WORLD.md W4.1): the senior cadet — by rank,
         // then who enlisted first — of the first vehicle its map flags
         // `command`. Read once; after this she is a cadet like any other, and
         // her command vehicle is whichever vehicle she is riding in.
-        let armies: Vec<Army> = armies;
-        for (placement, army) in file.armies.iter().zip(&armies) {
-            for (up, unit) in placement.units.iter().zip(&army.units) {
-                let side = army.side as usize;
-                if !up.command || sides.get(side).is_none_or(|s| s.commander.is_some()) {
-                    continue;
+        for (i, a) in file.armies.iter().enumerate() {
+            for u in &a.units {
+                let unit = ArmyUnit {
+                    vehicle: u.vehicle.clone(),
+                    crew: u
+                        .crew
+                        .iter()
+                        .filter(|def_id| taken.insert((a.side, def_id.as_str())))
+                        .filter_map(|def_id| roster.enlist_from_registry(registry, a.side, def_id))
+                        .collect(),
+                    name: u.name.clone(),
+                };
+                let side = a.side as usize;
+                if u.command && sides.get(side).is_some_and(|s| s.commander.is_none()) {
+                    sides[side].commander = unit.crew.iter().copied().max_by_key(|c| {
+                        (
+                            roster
+                                .get(*c)
+                                .and_then(|x| registry.rank_index(x.rank.as_deref())),
+                            Reverse(c.0),
+                        )
+                    });
                 }
-                let senior = unit.crew.iter().copied().max_by_key(|c| {
-                    (
-                        roster
-                            .get(*c)
-                            .and_then(|x| registry.rank_index(x.rank.as_deref())),
-                        Reverse(c.0),
-                    )
+                let id = elements.len() as u32;
+                elements.push(Element {
+                    id: ElementId(id),
+                    side: a.side,
+                    name: unit.name.clone().unwrap_or_else(|| unit.vehicle.clone()),
+                    parent: Some(ElementId(i as u32)),
+                    vehicle: Some(unit),
+                    headquarters: false,
+                    mission: None,
+                    place: None,
+                    alive: true,
+                    seq: id,
                 });
-                sides[side].commander = senior;
             }
         }
         let mut state = Self {
@@ -870,7 +940,7 @@ impl OverworldState {
             rules: CasualtyRules {
                 permadeath: registry.casualties.permadeath,
             },
-            armies,
+            elements,
             owners: HashMap::new(),
             turn: 1,
             active_side: 0,
@@ -903,27 +973,236 @@ impl OverworldState {
         Ok(state)
     }
 
-    pub fn army(&self, id: ArmyId) -> Option<&Army> {
-        self.armies.get(id.index()).filter(|a| a.alive)
+    /// The node `id`, alive or not.
+    pub fn element(&self, id: ElementId) -> Option<&Element> {
+        self.elements.get(id.index())
     }
 
-    pub fn army_mut(&mut self, id: ArmyId) -> Option<&mut Army> {
-        self.armies.get_mut(id.index()).filter(|a| a.alive)
+    /// The node `id`, alive or not, to change.
+    pub fn element_mut(&mut self, id: ElementId) -> Option<&mut Element> {
+        self.elements.get_mut(id.index())
     }
 
-    pub fn army_at(&self, hex: Hex) -> Option<&Army> {
-        self.armies.iter().find(|a| a.alive && a.pos == hex)
+    /// The node a vehicle goes with on the map: itself if it stands on its
+    /// own, else the nearest node above it that does.
+    fn column_of(&self, id: ElementId) -> Option<ElementId> {
+        let mut at = self.element(id)?;
+        loop {
+            if at.place.is_some() {
+                return at.alive.then_some(at.id);
+            }
+            at = self.element(at.parent?)?;
+        }
     }
 
-    pub fn side_armies(&self, side: u8) -> impl Iterator<Item = &Army> {
-        self.armies
+    /// The living vehicles that go with the column `id`, in the order they
+    /// joined it.
+    fn members(&self, id: ElementId) -> Vec<ElementId> {
+        let mut leaves: Vec<&Element> = self
+            .elements
             .iter()
-            .filter(move |a| a.alive && a.side == side)
+            .filter(|e| e.alive && e.vehicle.is_some() && self.column_of(e.id) == Some(id))
+            .collect();
+        leaves.sort_by_key(|e| (e.seq, e.id));
+        leaves.into_iter().map(|e| e.id).collect()
+    }
+
+    /// What the map shows of `element`, if it stands on its own and lives.
+    fn view(&self, element: &Element) -> Option<Column> {
+        let place = element.place.as_ref().filter(|_| element.alive)?;
+        Some(Column {
+            id: element.id,
+            side: element.side,
+            name: element.name.clone(),
+            pos: place.pos,
+            movement: place.movement,
+            moved: place.moved,
+            units: self
+                .members(element.id)
+                .into_iter()
+                .filter_map(|m| self.element(m)?.vehicle.clone())
+                .collect(),
+            mission: element.mission.clone(),
+            headquarters: element.headquarters,
+            tile: place.tile,
+            march: place.march.clone(),
+            marched_ticks: place.marched_ticks,
+            fighting: place.fighting,
+        })
+    }
+
+    /// The column `id`: a living node that stands on its own, as the map
+    /// shows it. `None` for anything else.
+    pub fn army(&self, id: ElementId) -> Option<Column> {
+        self.view(self.element(id)?)
+    }
+
+    /// Every column on the map, in id order.
+    pub fn columns(&self) -> Vec<Column> {
+        self.elements.iter().filter_map(|e| self.view(e)).collect()
+    }
+
+    /// Where the column `id` stands, to change.
+    pub fn place_mut(&mut self, id: ElementId) -> Option<&mut Place> {
+        self.elements
+            .get_mut(id.index())
+            .filter(|e| e.alive)?
+            .place
+            .as_mut()
+    }
+
+    /// The first column, by id, standing on `hex`.
+    pub fn army_at(&self, hex: Hex) -> Option<Column> {
+        self.elements
+            .iter()
+            .find(|e| e.alive && e.place.as_ref().is_some_and(|p| p.pos == hex))
+            .and_then(|e| self.view(e))
+    }
+
+    /// `side`'s columns, in id order.
+    pub fn side_armies(&self, side: u8) -> impl Iterator<Item = Column> + '_ {
+        self.elements
+            .iter()
+            .filter(move |e| e.side == side)
+            .filter_map(|e| self.view(e))
+    }
+
+    /// The root of `side`'s chain of command: the side itself.
+    pub fn side_root(&self, side: u8) -> Option<ElementId> {
+        self.elements
+            .iter()
+            .find(|e| e.side == side && e.parent.is_none())
+            .map(|e| e.id)
+    }
+
+    /// Put a new company on the map for `side`, under its root, with these
+    /// vehicles: a node with a place, and a leaf under it for each vehicle.
+    /// What the campaign's content does at the start, and what a test that
+    /// wants a company of its own does.
+    pub fn add_company(
+        &mut self,
+        side: u8,
+        name: &str,
+        place: Place,
+        units: Vec<ArmyUnit>,
+        headquarters: bool,
+    ) -> ElementId {
+        let id = ElementId(self.elements.len() as u32);
+        let parent = self.side_root(side);
+        let seq = self.next_seq();
+        self.elements.push(Element {
+            id,
+            side,
+            name: name.to_string(),
+            parent,
+            vehicle: None,
+            headquarters,
+            mission: None,
+            place: Some(place),
+            alive: true,
+            seq,
+        });
+        for unit in units {
+            self.add_vehicle(id, unit);
+        }
+        id
+    }
+
+    /// Replace every vehicle of the column `id` with `units`: the ones it
+    /// had are gone and these join it, in this order. For setting up a
+    /// campaign's order of battle by hand; a fight hands survivors back
+    /// through its own matching, which keeps each vehicle's place.
+    pub fn set_vehicles(&mut self, id: ElementId, units: Vec<ArmyUnit>) {
+        for m in self.members(id) {
+            if let Some(e) = self.element_mut(m) {
+                e.alive = false;
+            }
+        }
+        for unit in units {
+            self.add_vehicle(id, unit);
+        }
+    }
+
+    /// A vehicle joins the node `under`, last.
+    pub fn add_vehicle(&mut self, under: ElementId, unit: ArmyUnit) -> ElementId {
+        let id = ElementId(self.elements.len() as u32);
+        let side = self.element(under).map_or(0, |e| e.side);
+        let seq = self.next_seq();
+        self.elements.push(Element {
+            id,
+            side,
+            name: unit.name.clone().unwrap_or_else(|| unit.vehicle.clone()),
+            parent: Some(under),
+            vehicle: Some(unit),
+            headquarters: false,
+            mission: None,
+            place: None,
+            alive: true,
+            seq,
+        });
+        id
+    }
+
+    /// The next place in joining order.
+    fn next_seq(&self) -> u32 {
+        self.elements.iter().map(|e| e.seq + 1).max().unwrap_or(0)
+    }
+
+    /// Hand the column `id` back the vehicles it has after a fight: each
+    /// survivor is matched to the vehicle it was — the next one along, in
+    /// joining order, with her chassis and her crew — and written over it,
+    /// and a vehicle nobody came back in is lost. A survivor matched to
+    /// nothing (which a report from the campaign's own fights never holds)
+    /// joins it last. Returns whether the column has anything left.
+    fn set_survivors(&mut self, id: ElementId, units: Vec<ArmyUnit>) -> bool {
+        let members = self.members(id);
+        let mut next = 0;
+        let mut kept = Vec::new();
+        let mut strays = Vec::new();
+        for unit in units {
+            let found = members[next..].iter().position(|m| {
+                self.element(*m)
+                    .and_then(|e| e.vehicle.as_ref())
+                    .is_some_and(|v| {
+                        v.vehicle == unit.vehicle && unit.crew.iter().all(|c| v.crew.contains(c))
+                    })
+            });
+            match found {
+                Some(offset) => {
+                    let m = members[next + offset];
+                    next += offset + 1;
+                    kept.push(m);
+                    if let Some(e) = self.element_mut(m) {
+                        e.vehicle = Some(unit);
+                    }
+                }
+                None => strays.push(unit),
+            }
+        }
+        for m in members {
+            if !kept.contains(&m)
+                && let Some(e) = self.element_mut(m)
+            {
+                e.alive = false;
+            }
+        }
+        let leaf = self.element(id).is_some_and(|e| e.vehicle.is_some());
+        for unit in strays {
+            if !leaf {
+                kept.push(self.add_vehicle(id, unit));
+            }
+        }
+        if kept.is_empty()
+            && let Some(e) = self.element_mut(id)
+        {
+            e.alive = false;
+        }
+        !kept.is_empty()
     }
 
     /// The army a side's signals net is rooted at: the one the map flagged as
-    /// [headquarters](Army::headquarters) while it lives, and otherwise its
-    /// first-declared living army, by [`ArmyId`].
+    /// [headquarters](Column::headquarters) while it lives, and otherwise its
+    /// first-declared living army, by [`ElementId`].
     ///
     /// The fallback is succession, the same rule a battle formation uses when
     /// its leader dies: somebody has to give the orders, and seniority is who.
@@ -939,7 +1218,7 @@ impl OverworldState {
     /// (TODO.md, Chain of Command: the command-unit item); when it does, it
     /// will live inside this army, and this function is the only thing that
     /// has to change.
-    pub fn senior_army(&self, side: u8) -> Option<ArmyId> {
+    pub fn senior_army(&self, side: u8) -> Option<ElementId> {
         self.headquarters(side)
             .or_else(|| self.side_armies(side).map(|a| a.id).min())
     }
@@ -948,7 +1227,7 @@ impl OverworldState {
     /// one and it is still on the map. `None` for a side that flagged nobody
     /// *and* for one whose headquarters has been destroyed; [`Self::decapitated`]
     /// tells those apart.
-    pub fn headquarters(&self, side: u8) -> Option<ArmyId> {
+    pub fn headquarters(&self, side: u8) -> Option<ElementId> {
         self.side_armies(side)
             .filter(|a| a.headquarters)
             .map(|a| a.id)
@@ -959,7 +1238,9 @@ impl OverworldState {
     /// on dead armies too, which is the point: a side that never flagged one
     /// cannot be decapitated, and a side whose flagged army is gone has been.
     pub fn decapitated(&self, side: u8) -> bool {
-        self.armies.iter().any(|a| a.side == side && a.headquarters)
+        self.elements
+            .iter()
+            .any(|e| e.side == side && e.headquarters)
             && self.headquarters(side).is_none()
     }
 
@@ -997,7 +1278,7 @@ impl OverworldState {
             return Some(commander);
         }
         self.side_armies(side)
-            .flat_map(|a| a.units.iter().flat_map(|u| u.crew.iter().copied()))
+            .flat_map(|a| a.units.into_iter().flat_map(|u| u.crew))
             .filter(|c| self.roster.get(*c).is_some_and(|x| x.status.is_ready()))
             .max_by_key(|c| {
                 (
@@ -1072,7 +1353,7 @@ impl OverworldState {
     /// block, and true for an army that no longer exists — the question a
     /// caller is asking is "will an order reach her", and one that cannot be
     /// given for some other reason is refused for that other reason.
-    pub fn in_contact(&self, army: ArmyId) -> bool {
+    pub fn in_contact(&self, army: ElementId) -> bool {
         !self.out_of_contact.contains(&army)
     }
 
@@ -1106,7 +1387,7 @@ impl OverworldState {
             return;
         };
         let radius = rules.overworld_radius as i32;
-        let mut heard: Vec<ArmyId> = Vec::new();
+        let mut heard: Vec<ElementId> = Vec::new();
         if let Some(root) = self.senior_army(side) {
             heard.push(root);
             let mut anchors = VecDeque::from([root]);
@@ -1131,7 +1412,7 @@ impl OverworldState {
             }
         }
 
-        let mut next: Vec<ArmyId> = self
+        let mut next: Vec<ElementId> = self
             .out_of_contact
             .iter()
             .copied()
@@ -1160,7 +1441,7 @@ impl OverworldState {
 
     /// Soft fog: an army is hidden from `observer` only while it sits in
     /// concealing terrain with no enemy army adjacent.
-    pub fn army_visible_to(&self, registry: &DataRegistry, army: &Army, observer: u8) -> bool {
+    pub fn army_visible_to(&self, registry: &DataRegistry, army: &Column, observer: u8) -> bool {
         if army.side == observer {
             return true;
         }
@@ -1176,10 +1457,10 @@ impl OverworldState {
             .any(|a| a.pos.distance_to(army.pos) <= 1)
     }
 
-    pub fn visible_armies<'s>(&'s self, registry: &DataRegistry, observer: u8) -> Vec<&'s Army> {
-        self.armies
-            .iter()
-            .filter(|a| a.alive && self.army_visible_to(registry, a, observer))
+    pub fn visible_armies(&self, registry: &DataRegistry, observer: u8) -> Vec<Column> {
+        self.columns()
+            .into_iter()
+            .filter(|a| self.army_visible_to(registry, a, observer))
             .collect()
     }
 
@@ -1202,7 +1483,7 @@ impl OverworldState {
     /// column with anything on wheels or tracks is priced by those, since its
     /// infantry ride; a column on foot walks. Of those, the slowest sets the
     /// speed and the most cautious the climb (WORLD.md W2.3).
-    fn column(registry: &DataRegistry, army: &Army) -> Column {
+    fn column(registry: &DataRegistry, army: &Column) -> Pace {
         let vehicles: Vec<&crate::data::VehicleDef> = army
             .units
             .iter()
@@ -1221,7 +1502,7 @@ impl OverworldState {
         let classes = pacing
             .iter()
             .fold(0u8, |bits, v| bits | 1 << v.movement.class.index());
-        Column {
+        Pace {
             kind: ColumnKind {
                 classes: if classes == 0 {
                     1 << ARMY_CLASS.index()
@@ -1260,14 +1541,14 @@ impl OverworldState {
     }
 
     /// The movement points this army's column spends in a day's march.
-    pub fn day_budget(&self, registry: &DataRegistry, id: ArmyId) -> u32 {
+    pub fn day_budget(&self, registry: &DataRegistry, id: ElementId) -> u32 {
         let Some(army) = self.army(id) else {
             return 0;
         };
         let rounds_per_hour = (3600.0 / registry.scale.round_seconds).round() as u32;
         registry
             .march
-            .day_budget(Self::column(registry, army).points, rounds_per_hour)
+            .day_budget(Self::column(registry, &army).points, rounds_per_hour)
     }
 
     /// The cheapest tile route for this kind of column from `from` to `to`,
@@ -1423,7 +1704,7 @@ impl OverworldState {
     /// the day's march. An estimate of the march — the march itself cuts
     /// corners the coarse graph cannot — and never an over-estimate of what
     /// the route through the standing tiles would cost.
-    fn reachable_on_ground(&self, registry: &DataRegistry, army: &Army) -> HashMap<Hex, u32> {
+    fn reachable_on_ground(&self, registry: &DataRegistry, army: &Column) -> HashMap<Hex, u32> {
         let (Some(world), Some(ground)) = (self.world.as_ref(), self.ground(registry)) else {
             return HashMap::new();
         };
@@ -1474,7 +1755,7 @@ impl OverworldState {
     fn plan_leg(
         &self,
         registry: &DataRegistry,
-        army: &Army,
+        army: &Column,
         to: Hex,
         engagement: Engagement,
     ) -> Result<Vec<Hex>, OverworldError> {
@@ -1589,10 +1870,10 @@ impl OverworldState {
             }
             self.clock += 1;
             events.extend(self.run_front(registry));
-            let marching: Vec<ArmyId> = self
-                .armies
-                .iter()
-                .filter(|a| a.alive && a.march.is_some() && !a.fighting)
+            let marching: Vec<ElementId> = self
+                .columns()
+                .into_iter()
+                .filter(|a| a.march.is_some() && !a.fighting)
                 .map(|a| a.id)
                 .collect();
             for id in marching {
@@ -1615,9 +1896,9 @@ impl OverworldState {
     /// One tick of one march: halt if this is the halt in the hour, rest if
     /// the day's hours are marched, else bank the tick's movement and walk
     /// what it pays for.
-    fn step_march(&mut self, registry: &DataRegistry, id: ArmyId) -> Vec<OverworldEvent> {
+    fn step_march(&mut self, registry: &DataRegistry, id: ElementId) -> Vec<OverworldEvent> {
         let mut events = Vec::new();
-        let Some(army) = self.army(id).cloned() else {
+        let Some(army) = self.army(id) else {
             return events;
         };
         let Some(mut order) = army.march.clone() else {
@@ -1632,16 +1913,16 @@ impl OverworldState {
         let per_hour = 60 * per_minute;
         let day = march.hours_per_day * per_hour;
         let in_friends_hex = self
-            .armies
+            .elements
             .iter()
-            .any(|a| a.alive && a.id != id && a.pos == army.pos);
+            .any(|e| e.alive && e.id != id && e.place.as_ref().is_some_and(|p| p.pos == army.pos));
         // Rest for the night once the day's hours are marched — unless that
         // would leave the column parked inside a friend's hex.
         if army.marched_ticks >= day && !in_friends_hex {
             return events;
         }
         let marched = army.marched_ticks + 1;
-        if let Some(a) = self.army_mut(id) {
+        if let Some(a) = self.place_mut(id) {
             a.marched_ticks = marched;
         }
         // The last minutes of every marching hour are the halt.
@@ -1665,7 +1946,7 @@ impl OverworldState {
                     finished = true;
                     break;
                 }
-                let here = Army {
+                let here = Column {
                     tile: Some(tile),
                     pos,
                     ..army.clone()
@@ -1694,13 +1975,13 @@ impl OverworldState {
                 // enters the fighting there (WORLD.md W3.2, W3.8). A friend's
                 // hex with a fight in it: she joins the fighting on her own
                 // side.
-                let ahead = self.army_at(hex).cloned();
+                let ahead = self.army_at(hex);
                 let against = ahead.as_ref().filter(|o| o.side != army.side).map(|o| o.id);
                 let joining = ahead
                     .as_ref()
                     .is_some_and(|o| o.side == army.side && o.fighting);
                 if against.is_some() || joining {
-                    if let Some(a) = self.army_mut(id) {
+                    if let Some(a) = self.place_mut(id) {
                         a.tile = Some(tile);
                         a.pos = pos;
                         a.march = None;
@@ -1728,7 +2009,7 @@ impl OverworldState {
                 events.extend(self.take_ground(registry, army.side, hex));
             }
         }
-        if let Some(a) = self.army_mut(id) {
+        if let Some(a) = self.place_mut(id) {
             a.tile = Some(tile);
             a.pos = pos;
             a.march = if finished { None } else { Some(order) };
@@ -1751,7 +2032,7 @@ impl OverworldState {
     fn lift(
         &self,
         registry: &DataRegistry,
-        army: &Army,
+        army: &Column,
         taken: &mut std::collections::HashSet<Hex>,
     ) -> Vec<(crate::map::UnitPlacement, Vec<CadetId>)> {
         let Some(ground) = self.ground(registry) else {
@@ -1795,7 +2076,7 @@ impl OverworldState {
     }
 
     /// The company an army is in the fighting.
-    fn company_of(&self, army: &Army) -> crate::map::FormationDef {
+    fn company_of(&self, army: &Column) -> crate::map::FormationDef {
         crate::map::FormationDef {
             id: format!("army-{}", army.id.0),
             name: army.name.clone(),
@@ -1814,7 +2095,7 @@ impl OverworldState {
     /// was sent at the one tile the defender occupied — which nobody can
     /// choose to stand on — and the two sat nine hexes apart until the
     /// stalemate clock ran out.
-    fn ground_of(army: &Army) -> crate::map::Objective {
+    fn ground_of(army: &Column) -> crate::map::Objective {
         let held = army.tile.unwrap_or(Hex::ZERO);
         crate::map::Objective {
             id: format!("ground-{}", army.id.0),
@@ -1887,17 +2168,17 @@ impl OverworldState {
     fn enter_fighting(
         &mut self,
         registry: &DataRegistry,
-        army: ArmyId,
-        against: Option<ArmyId>,
+        army: ElementId,
+        against: Option<ElementId>,
         at: Hex,
     ) -> Vec<OverworldEvent> {
         let Some(world) = self.world.clone() else {
             return Vec::new();
         };
-        let mut entering: Vec<Army> = Vec::new();
+        let mut entering: Vec<Column> = Vec::new();
         for id in [Some(army), against].into_iter().flatten() {
-            if let Some(a) = self.army(id).filter(|a| a.alive && !a.fighting) {
-                entering.push(a.clone());
+            if let Some(a) = self.army(id).filter(|a| !a.fighting) {
+                entering.push(a);
             }
         }
         if entering.is_empty() {
@@ -2013,7 +2294,7 @@ impl OverworldState {
             front.contact.push((a.id, round));
         }
         // The defender's ground is fought over for as long as he is here.
-        if let Some(def) = against.and_then(|d| self.army(d)).cloned() {
+        if let Some(def) = against.and_then(|d| self.army(d)) {
             let front = self.front.as_mut().expect("raised above");
             let objective = Self::ground_of(&def);
             if !front
@@ -2029,7 +2310,7 @@ impl OverworldState {
         self.contest_towns();
         // Orders: she assaults his ground; he holds it; a friend joining
         // moves up onto the nearest ground being fought over.
-        let attacker = self.army(army).cloned();
+        let attacker = self.army(army);
         let front = self.front.as_mut().expect("raised above");
         let battle = front.battle_mut();
         let from = attacker.as_ref().and_then(|a| a.tile).unwrap_or(at);
@@ -2047,7 +2328,7 @@ impl OverworldState {
             Some(d) => nearest_free(battle, Some(&format!("ground-{}", d.0))),
             None => nearest_free(battle, None),
         };
-        let formation_of = |battle: &crate::battle::BattleState, id: ArmyId| {
+        let formation_of = |battle: &crate::battle::BattleState, id: ElementId| {
             battle
                 .formations()
                 .iter()
@@ -2071,7 +2352,7 @@ impl OverworldState {
         }
         let mut events = Vec::new();
         for a in &entering {
-            if let Some(x) = self.army_mut(a.id) {
+            if let Some(x) = self.place_mut(a.id) {
                 x.fighting = true;
                 x.march = None;
             }
@@ -2173,7 +2454,7 @@ impl OverworldState {
     fn army_in_contact(
         registry: &DataRegistry,
         front: &crate::engagement::Front,
-        army: ArmyId,
+        army: ElementId,
     ) -> bool {
         let battle = front.battle();
         front.crews_of(army).into_iter().any(|id| {
@@ -2310,13 +2591,13 @@ impl OverworldState {
     /// is a column again, standing where its first surviving vehicle stands.
     /// Its ground is no longer fought over. If it ends in a hex with an enemy
     /// column, it falls back a hex — the campaign keeps one army to a hex.
-    fn leave_fighting(&mut self, registry: &DataRegistry, army: ArmyId) -> Vec<OverworldEvent> {
+    fn leave_fighting(&mut self, registry: &DataRegistry, army: ElementId) -> Vec<OverworldEvent> {
         let Some(front) = self.front.as_ref() else {
             return Vec::new();
         };
         let crews = front.crews_of(army);
         let battle = front.battle();
-        let origins: Vec<(UnitId, ArmyId)> = crews.iter().map(|u| (*u, army)).collect();
+        let origins: Vec<(UnitId, ElementId)> = crews.iter().map(|u| (*u, army)).collect();
         let field = crate::field::FieldBattle {
             attacker: army,
             defender: army,
@@ -2348,19 +2629,19 @@ impl OverworldState {
             front.contact.retain(|(a, _)| *a != army);
         }
         let side = self.army(army).map(|a| a.side);
-        if let Some(a) = self.army_mut(army) {
+        if let Some(a) = self.place_mut(army) {
             a.fighting = false;
             if let Some(tile) = stand {
                 a.tile = Some(tile);
                 a.pos = crate::world::chunk_of(tile, radius);
             }
         }
-        if let (Some(side), Some(a)) = (side, self.army(army).filter(|a| a.alive).cloned()) {
+        if let (Some(side), Some(a)) = (side, self.army(army)) {
             events.extend(self.take_ground(registry, side, a.pos));
             if self
-                .armies
+                .columns()
                 .iter()
-                .any(|o| o.alive && !o.fighting && o.id != army && o.pos == a.pos && o.side != side)
+                .any(|o| !o.fighting && o.id != army && o.pos == a.pos && o.side != side)
                 && let Some(to) = self.fallback_hex(registry, army, a.pos)
             {
                 self.place_army(registry, army, to, &mut events);
@@ -2411,9 +2692,14 @@ impl OverworldState {
         let mut events = Vec::new();
         self.turn += 1;
         self.roster.advance_day();
-        for army in self.armies.iter_mut().filter(|a| a.alive) {
-            army.moved = false;
-            army.marched_ticks = 0;
+        for place in self
+            .elements
+            .iter_mut()
+            .filter(|e| e.alive)
+            .filter_map(|e| e.place.as_mut())
+        {
+            place.moved = false;
+            place.marched_ticks = 0;
         }
         let side_count = self.sides.len() as u8;
         for side in 0..side_count {
@@ -2454,12 +2740,12 @@ impl OverworldState {
     /// stopped on. A visible enemy still blocks outright, because reaching one
     /// is a battle rather than a move and [`Self::attack_targets`] is what
     /// answers for that.
-    pub fn reachable(&self, registry: &DataRegistry, id: ArmyId) -> HashMap<Hex, u32> {
+    pub fn reachable(&self, registry: &DataRegistry, id: ElementId) -> HashMap<Hex, u32> {
         let Some(army) = self.army(id) else {
             return HashMap::new();
         };
         if self.world.is_some() {
-            return self.reachable_on_ground(registry, army);
+            return self.reachable_on_ground(registry, &army);
         }
         let mut best: HashMap<Hex, u32> = HashMap::new();
         let mut heap = BinaryHeap::new();
@@ -2501,14 +2787,14 @@ impl OverworldState {
 
     /// Visible enemy armies this army could engage this turn: those sitting
     /// next to a tile it can reach (or next to where it already stands).
-    pub fn attack_targets(&self, registry: &DataRegistry, id: ArmyId) -> Vec<ArmyId> {
+    pub fn attack_targets(&self, registry: &DataRegistry, id: ElementId) -> Vec<ElementId> {
         let Some(army) = self.army(id) else {
             return Vec::new();
         };
         let reach = self.reachable(registry, id);
-        self.armies
-            .iter()
-            .filter(|e| e.alive && e.side != army.side)
+        self.columns()
+            .into_iter()
+            .filter(|e| e.side != army.side)
             .filter(|e| self.army_visible_to(registry, e, army.side))
             .filter(|e| {
                 e.pos.distance_to(army.pos) == 1
@@ -2528,12 +2814,11 @@ impl OverworldState {
         &self,
         at: Hex,
         side: u8,
-        principal: ArmyId,
+        principal: ElementId,
         attacking: bool,
-    ) -> Vec<ArmyId> {
-        self.armies
-            .iter()
-            .filter(|a| a.alive && a.side == side && a.id != principal)
+    ) -> Vec<ElementId> {
+        self.side_armies(side)
+            .filter(|a| a.id != principal)
             .filter(|a| a.pos.distance_to(at) <= 1)
             .filter(|a| !attacking || !a.moved)
             .map(|a| a.id)
@@ -2541,9 +2826,9 @@ impl OverworldState {
     }
 
     /// Spend the turn of every army committed to a battle.
-    pub fn commit_to_battle(&mut self, armies: &[ArmyId]) {
+    pub fn commit_to_battle(&mut self, armies: &[ElementId]) {
         for id in armies {
-            if let Some(army) = self.army_mut(*id) {
+            if let Some(army) = self.place_mut(*id) {
                 army.moved = true;
             }
         }
@@ -2583,7 +2868,7 @@ impl OverworldState {
     /// does not check it. A mission is an intention, not a route.
     fn apply_set_mission(
         &mut self,
-        id: ArmyId,
+        id: ElementId,
         mission: ArmyMission,
     ) -> Result<Vec<OverworldEvent>, OverworldError> {
         let army = self.army(id).ok_or(OverworldError::NoSuchArmy)?;
@@ -2612,7 +2897,7 @@ impl OverworldState {
         // — or an army — holding two missions at once has no meaning anybody
         // could act on. What is news is that an order was given at all, and
         // that is the event.
-        self.army_mut(id).expect("checked above").mission = Some(mission.clone());
+        self.element_mut(id).expect("checked above").mission = Some(mission.clone());
         Ok(vec![OverworldEvent::ArmyMissionAssigned {
             army: id,
             mission,
@@ -2626,8 +2911,8 @@ impl OverworldState {
     /// [`OverworldOrder::TransferUnit`] for the rules.
     fn apply_transfer(
         &mut self,
-        from: ArmyId,
-        to: ArmyId,
+        from: ElementId,
+        to: ElementId,
         unit: usize,
     ) -> Result<Vec<OverworldEvent>, OverworldError> {
         if from == to {
@@ -2650,16 +2935,19 @@ impl OverworldState {
         if giver.units.len() <= 1 || unit >= giver.units.len() {
             return Err(OverworldError::NoTransfer);
         }
-        let vehicle = self
-            .army_mut(from)
-            .expect("checked above")
-            .units
-            .remove(unit);
-        let name = vehicle.vehicle.clone();
-        self.army_mut(to)
-            .expect("checked above")
-            .units
-            .push(vehicle);
+        // The vehicle goes under the other company, last in its order: the
+        // tree is the order of battle, so moving her is changing whom she
+        // answers to.
+        let leaf = self.members(from)[unit];
+        let seq = self.next_seq();
+        let moved = self.element_mut(leaf).expect("a member");
+        moved.parent = Some(to);
+        moved.seq = seq;
+        let name = moved
+            .vehicle
+            .as_ref()
+            .map(|v| v.vehicle.clone())
+            .unwrap_or_default();
         Ok(vec![OverworldEvent::UnitTransferred {
             from,
             to,
@@ -2667,7 +2955,7 @@ impl OverworldState {
         }])
     }
 
-    fn hold_mission(&mut self, id: ArmyId, mission: ArmyMission) {
+    fn hold_mission(&mut self, id: ElementId, mission: ArmyMission) {
         match self.waiting_missions.iter_mut().find(|(a, _)| *a == id) {
             Some(slot) => slot.1 = mission,
             None => {
@@ -2700,7 +2988,7 @@ impl OverworldState {
                 still_waiting.push((id, mission));
                 continue;
             }
-            self.army_mut(id).expect("checked above").mission = Some(mission.clone());
+            self.element_mut(id).expect("checked above").mission = Some(mission.clone());
             events.push(OverworldEvent::ArmyMissionAssigned { army: id, mission });
         }
         self.waiting_missions = still_waiting;
@@ -2718,7 +3006,7 @@ impl OverworldState {
     fn apply_move(
         &mut self,
         registry: &DataRegistry,
-        id: ArmyId,
+        id: ElementId,
         to: Hex,
     ) -> Result<Vec<OverworldEvent>, OverworldError> {
         self.move_army(registry, id, to, Engagement::Avoid)
@@ -2727,7 +3015,7 @@ impl OverworldState {
     fn move_army(
         &mut self,
         registry: &DataRegistry,
-        id: ArmyId,
+        id: ElementId,
         to: Hex,
         engagement: Engagement,
     ) -> Result<Vec<OverworldEvent>, OverworldError> {
@@ -2758,13 +3046,13 @@ impl OverworldState {
             // whatever march it was on. The campaign planner says "stay" this
             // way; refusing it spent the army's day and left it marching.
             if army.pos == to {
-                let a = self.army_mut(id).expect("checked above");
+                let a = self.place_mut(id).expect("checked above");
                 a.march = None;
                 a.moved = true;
                 return Ok(Vec::new());
             }
             let leg = self.plan_leg(registry, &army, to, engagement)?;
-            let a = self.army_mut(id).expect("checked above");
+            let a = self.place_mut(id).expect("checked above");
             a.march = Some(MarchOrder {
                 to,
                 engagement,
@@ -2815,7 +3103,7 @@ impl OverworldState {
         // could otherwise have stepped onto has made contact.
         let mut budget = movement;
         let mut walked = vec![pos];
-        let mut blocked_by: Option<(ArmyId, Hex)> = None;
+        let mut blocked_by: Option<(ElementId, Hex)> = None;
         for pair in path.windows(2) {
             let Some(step) = self.edge_cost(registry, pair[0], pair[1]) else {
                 break;
@@ -2857,16 +3145,16 @@ impl OverworldState {
     fn arrive(
         &mut self,
         registry: &DataRegistry,
-        id: ArmyId,
+        id: ElementId,
         side: u8,
         to: Hex,
         walked: Vec<Hex>,
         destination: Hex,
-        blocked_by: Option<(ArmyId, Hex)>,
+        blocked_by: Option<(ElementId, Hex)>,
     ) -> Vec<OverworldEvent> {
         let mut events = Vec::new();
         {
-            let army = self.army_mut(id).expect("checked above");
+            let army = self.place_mut(id).expect("checked above");
             army.pos = destination;
             army.moved = true;
         }
@@ -2961,10 +3249,9 @@ impl OverworldState {
         registry: &DataRegistry,
         side: u8,
     ) -> Vec<OverworldEvent> {
-        let ordered: Vec<(ArmyId, Hex, Engagement)> = self
-            .armies
-            .iter()
-            .filter(|a| a.alive && a.side == side && !a.moved)
+        let ordered: Vec<(ElementId, Hex, Engagement)> = self
+            .side_armies(side)
+            .filter(|a| !a.moved)
             .filter_map(|a| match a.mission.as_ref()? {
                 ArmyMission::Advance { to } => Some((a.id, *to, Engagement::EnRoute)),
                 ArmyMission::Withdraw { to } => Some((a.id, *to, Engagement::Avoid)),
@@ -3025,8 +3312,13 @@ impl OverworldState {
         }
         let dawn = next <= self.active_side;
         self.active_side = next;
-        for army in self.armies.iter_mut().filter(|a| a.alive && a.side == next) {
-            army.moved = false;
+        for place in self
+            .elements
+            .iter_mut()
+            .filter(|e| e.alive && e.side == next)
+            .filter_map(|e| e.place.as_mut())
+        {
+            place.moved = false;
         }
 
         events.push(OverworldEvent::TurnStarted {
@@ -3073,7 +3365,7 @@ impl OverworldState {
         // the army standing on the ground it just gave up, in contact with
         // the enemy it just broke contact with. In id order, because two
         // armies falling back onto one hex is settled by who moves first.
-        let mut withdrew: Vec<ArmyId> = report.withdrew.clone();
+        let mut withdrew: Vec<ElementId> = report.withdrew.clone();
         withdrew.sort_unstable();
         withdrew.dedup();
         for id in withdrew {
@@ -3192,12 +3484,8 @@ impl OverworldState {
             for unit in &mut units {
                 unit.crew.retain(|cadet| self.roster.get(*cadet).is_some());
             }
-            if let Some(army) = self.army_mut(id) {
-                army.units = units;
-                if army.units.is_empty() {
-                    army.alive = false;
-                    events.push(OverworldEvent::ArmyDestroyed { army: id });
-                }
+            if self.army(id).is_some() && !self.set_survivors(id, units) {
+                events.push(OverworldEvent::ArmyDestroyed { army: id });
             }
         }
 
@@ -3215,7 +3503,7 @@ impl OverworldState {
     /// (CLAUDE.md, the tiebreak invariant). `None` when there is nowhere to
     /// go — hemmed in by armies or the map edge — and the army stands where
     /// it was.
-    fn fallback_hex(&self, registry: &DataRegistry, id: ArmyId, enemy: Hex) -> Option<Hex> {
+    fn fallback_hex(&self, registry: &DataRegistry, id: ElementId, enemy: Hex) -> Option<Hex> {
         let army = self.army(id)?;
         let pos = army.pos;
         let free = |hex: Hex| self.army_at(hex).is_none();
@@ -3258,26 +3546,26 @@ impl OverworldState {
     fn place_army(
         &mut self,
         registry: &DataRegistry,
-        id: ArmyId,
+        id: ElementId,
         to: Hex,
         events: &mut Vec<OverworldEvent>,
     ) {
-        let Some(army) = self.army_mut(id) else {
+        let Some(side) = self.army(id).map(|a| a.side) else {
+            return;
+        };
+        // Placed rather than marched — a withdrawal, a victor advancing —
+        // so on a generated world it stands where a column stands on that hex.
+        let tile = self.world.as_ref().map(|w| w.stand_tile(registry, to));
+        let Some(army) = self.place_mut(id) else {
             return;
         };
         let from = army.pos;
-        let side = army.side;
         if from == to {
             return;
         }
         army.pos = to;
-        if let Some(world) = &self.world {
-            // Placed rather than marched — a withdrawal, a victor advancing —
-            // so it stands where a column stands on that hex.
-            let tile = world.stand_tile(registry, to);
-            if let Some(army) = self.armies.iter_mut().find(|a| a.id == id) {
-                army.tile = Some(tile);
-            }
+        if tile.is_some() {
+            army.tile = tile;
         }
         events.push(OverworldEvent::ArmyMoved {
             army: id,
@@ -3367,9 +3655,9 @@ pub fn ai_reinforcements(
     state: &OverworldState,
     at: Hex,
     side: u8,
-    principal: ArmyId,
+    principal: ElementId,
     attacking: bool,
-) -> Vec<ArmyId> {
+) -> Vec<ElementId> {
     state.reinforcement_candidates(at, side, principal, attacking)
 }
 
@@ -3427,7 +3715,7 @@ impl SimpleOverworldPlanner {
     /// movement plus one, since a march that stops beside a hex attacks it.
     /// Crow flight rather than the road, which is the same generosity the
     /// rest of this planner allows itself.
-    fn within_reach(enemies: &[&Army], hex: Hex) -> bool {
+    fn within_reach(enemies: &[&Column], hex: Hex) -> bool {
         enemies
             .iter()
             .any(|e| e.pos.distance_to(hex) <= e.movement as i32 + 1)
@@ -3435,7 +3723,7 @@ impl SimpleOverworldPlanner {
 
     /// Whether `enemy` outnumbers `army` in vehicles: the one measure of
     /// strength this planner has, and the one it already scores targets by.
-    fn stronger(enemy: &Army, army: &Army) -> bool {
+    fn stronger(enemy: &Column, army: &Column) -> bool {
         enemy.units.len() > army.units.len()
     }
 
@@ -3447,8 +3735,8 @@ impl SimpleOverworldPlanner {
     fn shelter(
         registry: &DataRegistry,
         state: &OverworldState,
-        army: &Army,
-        enemies: &[&Army],
+        army: &Column,
+        enemies: &[&Column],
     ) -> Hex {
         let mut options: Vec<(Hex, u32)> = state
             .reachable(registry, army.id)
@@ -3497,7 +3785,7 @@ pub fn plan_day(
             Ok(more) => events.extend(more),
             Err(_) => {
                 if let OverworldOrder::MoveArmy { army, .. } = order
-                    && let Some(a) = state.army_mut(army)
+                    && let Some(a) = state.place_mut(army)
                 {
                     a.moved = true;
                 } else {
@@ -3528,7 +3816,7 @@ pub fn step_planner(
         Ok(events) => events,
         Err(_) => {
             if let OverworldOrder::MoveArmy { army, .. } = order
-                && let Some(a) = state.army_mut(army)
+                && let Some(a) = state.place_mut(army)
             {
                 a.moved = true;
                 return Vec::new();
@@ -3550,11 +3838,12 @@ impl AiPlanner<OverworldState, OverworldOrder> for SimpleOverworldPlanner {
         let Some(army) = state.side_armies(side).find(|a| !a.moved) else {
             return OverworldOrder::EndTurn;
         };
-        let enemies: Vec<&Army> = state
+        let seen: Vec<Column> = state
             .visible_armies(registry, side)
             .into_iter()
             .filter(|e| e.side != side)
             .collect();
+        let enemies: Vec<&Column> = seen.iter().collect();
         let guarded = state.victory.decapitation && army.headquarters;
 
         // The headquarters, when losing it is losing, and a stronger force
@@ -3563,13 +3852,13 @@ impl AiPlanner<OverworldState, OverworldOrder> for SimpleOverworldPlanner {
         // planner that returned no order for an unmoved army would be asked
         // about the same army for ever.
         if guarded {
-            let stronger: Vec<&Army> = enemies
+            let stronger: Vec<&Column> = enemies
                 .iter()
                 .copied()
-                .filter(|e| Self::stronger(e, army))
+                .filter(|e| Self::stronger(e, &army))
                 .collect();
             if Self::within_reach(&stronger, army.pos) {
-                let to = Self::shelter(registry, state, army, &stronger);
+                let to = Self::shelter(registry, state, &army, &stronger);
                 return OverworldOrder::MoveArmy { army: army.id, to };
             }
         }
@@ -3579,7 +3868,7 @@ impl AiPlanner<OverworldState, OverworldOrder> for SimpleOverworldPlanner {
         // the one carrying the enemy's headquarters worth the campaign. A
         // guarded headquarters never picks a fight with a stronger army.
         for enemy in &enemies {
-            if guarded && Self::stronger(enemy, army) {
+            if guarded && Self::stronger(enemy, &army) {
                 continue;
             }
             let strength = enemy.units.len().max(1) as f32;

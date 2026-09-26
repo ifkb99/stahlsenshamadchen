@@ -19,8 +19,8 @@ use tactics_core::battle::{Destruction, Fate};
 use tactics_core::data::{DataRegistry, ValidationReport};
 use tactics_core::map::CampaignVictory;
 use tactics_core::overworld::{
-    Army, ArmyId, ArmyMission, BattleReport, CampaignEnd, OverworldEvent, OverworldOrder,
-    OverworldState, make_overworld_planner,
+    ArmyMission, ArmyUnit, BattleReport, CampaignEnd, ElementId, OverworldEvent, OverworldOrder,
+    OverworldState, Place, make_overworld_planner,
 };
 
 mod common;
@@ -45,8 +45,8 @@ fn tiles_of(state: &OverworldState, terrain: &str) -> Vec<Hex> {
 }
 
 /// A battle nobody was hurt in, reported with everybody's roster intact.
-fn bloodless(state: &OverworldState, attacker: ArmyId, defender: ArmyId) -> BattleReport {
-    let roster = |id: ArmyId| state.army(id).map(|a| a.units.clone()).unwrap_or_default();
+fn bloodless(state: &OverworldState, attacker: ElementId, defender: ElementId) -> BattleReport {
+    let roster = |id: ElementId| state.army(id).map(|a| a.units.clone()).unwrap_or_default();
     BattleReport::of(
         attacker,
         defender,
@@ -59,8 +59,8 @@ fn bloodless(state: &OverworldState, attacker: ArmyId, defender: ArmyId) -> Batt
 fn wipe(
     state: &mut OverworldState,
     reg: &DataRegistry,
-    winner: ArmyId,
-    loser: ArmyId,
+    winner: ElementId,
+    loser: ElementId,
 ) -> Vec<OverworldEvent> {
     let survivors = state
         .army(winner)
@@ -93,25 +93,23 @@ fn end_turn(reg: &DataRegistry, state: &mut OverworldState) -> Vec<OverworldEven
 
 /// A third army for a side, fielding nothing, standing somewhere. Used to
 /// hem an army in; what these tests weigh is where an army *is*.
-fn extra_army(state: &mut OverworldState, side: u8, at: Hex) -> ArmyId {
-    let id = ArmyId(state.armies.len() as u32);
-    state.armies.push(Army {
-        id,
+fn extra_army(state: &mut OverworldState, side: u8, at: Hex) -> ElementId {
+    let name = format!("Extra {}", state.elements.len());
+    state.add_company(
         side,
-        name: format!("Extra {}", id.0),
-        pos: at,
-        movement: 3,
-        moved: false,
-        units: Vec::new(),
-        alive: true,
-        mission: None,
-        headquarters: false,
-        tile: None,
-        march: None,
-        marched_ticks: 0,
-        fighting: false,
-    });
-    id
+        &name,
+        Place {
+            pos: at,
+            movement: 3,
+            moved: false,
+            tile: None,
+            march: None,
+            marched_ticks: 0,
+            fighting: false,
+        },
+        Vec::new(),
+        false,
+    )
 }
 
 // --- what the frontier says ------------------------------------------------
@@ -126,12 +124,12 @@ fn the_frontier_declares_what_winning_it_is() {
     assert!(state.victory.decapitation);
     assert_eq!(
         state.headquarters(0),
-        Some(ArmyId(0)),
+        Some(ElementId(0)),
         "1st Company carries headquarters"
     );
     assert_eq!(
         state.headquarters(1),
-        Some(ArmyId(2)),
+        Some(ElementId(2)),
         "the Vanguard carries the Valkyries'"
     );
     assert_eq!(state.victory.hold_days, 3);
@@ -173,7 +171,7 @@ fn a_campaign_that_declares_no_ending_is_fought_to_elimination() {
     );
 
     // The enemy headquarters wiped out: nothing, while the Reserve lives.
-    let events = wipe(&mut state, &reg, ArmyId(0), ArmyId(2));
+    let events = wipe(&mut state, &reg, ElementId(0), ElementId(2));
     assert_eq!(
         ended(&events),
         None,
@@ -186,7 +184,7 @@ fn a_campaign_that_declares_no_ending_is_fought_to_elimination() {
     );
 
     // The last army: the ending every campaign has always had.
-    let events = wipe(&mut state, &reg, ArmyId(0), ArmyId(3));
+    let events = wipe(&mut state, &reg, ElementId(0), ElementId(3));
     assert_eq!(ended(&events), Some((Some(0), CampaignEnd::Elimination)));
     assert_eq!(state.over, Some(Some(0)));
 }
@@ -199,7 +197,7 @@ fn a_campaign_that_declares_no_ending_is_fought_to_elimination() {
 fn losing_the_headquarters_army_loses_the_campaign() {
     let reg = registry_wireless();
     let mut state = frontier(&reg);
-    let events = wipe(&mut state, &reg, ArmyId(0), ArmyId(2));
+    let events = wipe(&mut state, &reg, ElementId(0), ElementId(2));
     assert_eq!(
         ended(&events),
         Some((Some(0), CampaignEnd::Decapitation)),
@@ -224,7 +222,7 @@ fn losing_the_headquarters_army_loses_the_campaign() {
 fn losing_an_ordinary_army_is_only_that() {
     let reg = registry_wireless();
     let mut state = frontier(&reg);
-    let events = wipe(&mut state, &reg, ArmyId(0), ArmyId(3));
+    let events = wipe(&mut state, &reg, ElementId(0), ElementId(3));
     assert_eq!(ended(&events), None, "{events:?}");
     assert!(!state.defeated(1));
     assert!(state.over.is_none());
@@ -347,20 +345,20 @@ fn the_ground_must_be_held_for_as_many_nights_running_as_the_map_asks() {
 fn the_net_roots_at_the_flagged_headquarters_and_seniority_succeeds_it() {
     let reg = registry();
     let mut state = frontier(&reg);
-    assert_eq!(state.senior_army(0), Some(ArmyId(0)));
+    assert_eq!(state.senior_army(0), Some(ElementId(0)));
 
     // Flag the 2nd Company instead: the net follows the flag.
-    state.armies[0].headquarters = false;
-    state.armies[1].headquarters = true;
-    assert_eq!(state.senior_army(0), Some(ArmyId(1)));
-    assert_eq!(state.headquarters(0), Some(ArmyId(1)));
+    state.element_mut(ElementId(0)).unwrap().headquarters = false;
+    state.element_mut(ElementId(1)).unwrap().headquarters = true;
+    assert_eq!(state.senior_army(0), Some(ElementId(1)));
+    assert_eq!(state.headquarters(0), Some(ElementId(1)));
     assert!(!state.decapitated(0));
 
     // She dies: somebody still has to give the orders.
-    state.armies[1].alive = false;
+    state.element_mut(ElementId(1)).unwrap().alive = false;
     assert_eq!(
         state.senior_army(0),
-        Some(ArmyId(0)),
+        Some(ElementId(0)),
         "seniority succeeds her"
     );
     assert_eq!(state.headquarters(0), None);
@@ -371,12 +369,12 @@ fn the_net_roots_at_the_flagged_headquarters_and_seniority_succeeds_it() {
 
     // A side that flagged nobody roots at seniority and can never be
     // decapitated, which is every map written before the flag existed.
-    for army in state.armies.iter_mut().filter(|a| a.side == 1) {
-        army.headquarters = false;
+    for e in state.elements.iter_mut().filter(|e| e.side == 1) {
+        e.headquarters = false;
     }
-    assert_eq!(state.senior_army(1), Some(ArmyId(2)));
+    assert_eq!(state.senior_army(1), Some(ElementId(2)));
     assert!(!state.decapitated(1));
-    state.armies[2].alive = false;
+    state.element_mut(ElementId(2)).unwrap().alive = false;
     assert!(!state.decapitated(1), "nothing flagged, nothing to lose");
 }
 
@@ -389,11 +387,11 @@ fn the_net_roots_at_the_flagged_headquarters_and_seniority_succeeds_it() {
 fn an_army_that_withdrew_falls_back_a_hex_and_the_victor_takes_the_ground() {
     let reg = registry_wireless();
     let mut state = frontier(&reg);
-    let (attacker, defender) = (ArmyId(0), ArmyId(2));
+    let (attacker, defender) = (ElementId(0), ElementId(2));
     let contested = tactics_core::offset_to_hex(6, 4);
     let from = tactics_core::offset_to_hex(5, 4);
-    state.army_mut(defender).unwrap().pos = contested;
-    state.army_mut(attacker).unwrap().pos = from;
+    state.place_mut(defender).unwrap().pos = contested;
+    state.place_mut(attacker).unwrap().pos = from;
 
     let mut report = bloodless(&state, attacker, defender);
     report.withdrew = vec![defender];
@@ -411,7 +409,7 @@ fn an_army_that_withdrew_falls_back_a_hex_and_the_victor_takes_the_ground() {
         contested,
         "the ground she gave up is the victor's"
     );
-    let moved: Vec<ArmyId> = events
+    let moved: Vec<ElementId> = events
         .iter()
         .filter_map(|e| match e {
             OverworldEvent::ArmyMoved { army, path } if path.len() == 2 => Some(*army),
@@ -435,14 +433,14 @@ fn an_army_that_withdrew_falls_back_a_hex_and_the_victor_takes_the_ground() {
 fn an_army_falling_back_under_orders_falls_back_along_them() {
     let reg = registry_wireless();
     let mut state = frontier(&reg);
-    let (attacker, defender) = (ArmyId(0), ArmyId(2));
+    let (attacker, defender) = (ElementId(0), ElementId(2));
     let contested = tactics_core::offset_to_hex(6, 4);
     // The enemy stands *east* of her, so "away" would be west; her orders
     // say east, back toward her own end of the map.
-    state.army_mut(defender).unwrap().pos = contested;
-    state.army_mut(attacker).unwrap().pos = tactics_core::offset_to_hex(5, 4);
+    state.place_mut(defender).unwrap().pos = contested;
+    state.place_mut(attacker).unwrap().pos = tactics_core::offset_to_hex(5, 4);
     let home = tactics_core::offset_to_hex(12, 4);
-    state.army_mut(defender).unwrap().mission = Some(ArmyMission::Withdraw { to: home });
+    state.element_mut(defender).unwrap().mission = Some(ArmyMission::Withdraw { to: home });
 
     let mut report = bloodless(&state, attacker, defender);
     report.withdrew = vec![defender];
@@ -462,11 +460,11 @@ fn an_army_falling_back_under_orders_falls_back_along_them() {
 fn an_attacker_who_withdrew_yields_her_claim() {
     let reg = registry_wireless();
     let mut state = frontier(&reg);
-    let (attacker, defender) = (ArmyId(0), ArmyId(2));
+    let (attacker, defender) = (ElementId(0), ElementId(2));
     let contested = tactics_core::offset_to_hex(6, 4);
     let from = tactics_core::offset_to_hex(5, 4);
-    state.army_mut(defender).unwrap().pos = contested;
-    state.army_mut(attacker).unwrap().pos = from;
+    state.place_mut(defender).unwrap().pos = contested;
+    state.place_mut(attacker).unwrap().pos = from;
 
     let mut report = bloodless(&state, attacker, defender);
     report.withdrew = vec![attacker];
@@ -492,7 +490,7 @@ fn an_attacker_who_withdrew_yields_her_claim() {
 fn a_withdrawn_army_with_nowhere_to_go_stands_where_it_was() {
     let reg = registry_wireless();
     let mut state = frontier(&reg);
-    let (attacker, defender) = (ArmyId(0), ArmyId(2));
+    let (attacker, defender) = (ElementId(0), ElementId(2));
     let corner = tactics_core::offset_to_hex(0, 0);
     let neighbours: Vec<Hex> = corner
         .all_neighbors()
@@ -500,8 +498,8 @@ fn a_withdrawn_army_with_nowhere_to_go_stands_where_it_was() {
         .filter(|h| state.map.get(*h).is_some())
         .collect();
     assert!(neighbours.len() <= 3, "a corner of the map");
-    state.army_mut(defender).unwrap().pos = corner;
-    state.army_mut(attacker).unwrap().pos = neighbours[0];
+    state.place_mut(defender).unwrap().pos = corner;
+    state.place_mut(attacker).unwrap().pos = neighbours[0];
     for hex in &neighbours[1..] {
         extra_army(&mut state, 0, *hex);
     }
@@ -530,15 +528,15 @@ fn a_withdrawn_army_with_nowhere_to_go_stands_where_it_was() {
 fn the_victor_advancing_onto_a_factory_captures_it() {
     let reg = registry_wireless();
     let mut state = frontier(&reg);
-    let (attacker, defender) = (ArmyId(0), ArmyId(2));
+    let (attacker, defender) = (ElementId(0), ElementId(2));
     let factory = tiles_of(&state, "factory")[1];
     let beside = factory
         .all_neighbors()
         .into_iter()
         .find(|h| state.map.get(*h).is_some() && state.army_at(*h).is_none())
         .expect("a factory has a neighbour");
-    state.army_mut(defender).unwrap().pos = factory;
-    state.army_mut(attacker).unwrap().pos = beside;
+    state.place_mut(defender).unwrap().pos = factory;
+    state.place_mut(attacker).unwrap().pos = beside;
     state.owners.insert(factory, 1);
 
     let events = wipe(&mut state, &reg, attacker, defender);
@@ -579,17 +577,17 @@ fn the_campaign_planner_hunts_the_enemy_headquarters_when_that_ends_the_war() {
     // Side 1 to move; its own headquarters has already spent its turn so the
     // Reserve is the army asked about.
     state.active_side = 1;
-    state.army_mut(ArmyId(2)).unwrap().moved = true;
+    state.place_mut(ElementId(2)).unwrap().moved = true;
     let hunter = tactics_core::offset_to_hex(7, 4);
-    state.army_mut(ArmyId(3)).unwrap().pos = hunter;
+    state.place_mut(ElementId(3)).unwrap().pos = hunter;
     // Equal strength, so nothing but the flag separates them.
-    let four = state.army(ArmyId(1)).unwrap().units.clone();
-    state.army_mut(ArmyId(0)).unwrap().units = four.clone();
-    state.army_mut(ArmyId(3)).unwrap().units = four;
+    let four = state.army(ElementId(1)).unwrap().units.clone();
+    state.set_vehicles(ElementId(0), four.clone());
+    state.set_vehicles(ElementId(3), four);
     let hq_at = tactics_core::offset_to_hex(3, 4);
     let other_at = tactics_core::offset_to_hex(4, 4);
-    state.army_mut(ArmyId(0)).unwrap().pos = hq_at;
-    state.army_mut(ArmyId(1)).unwrap().pos = other_at;
+    state.place_mut(ElementId(0)).unwrap().pos = hq_at;
+    state.place_mut(ElementId(1)).unwrap().pos = other_at;
     assert!(hunter.distance_to(hq_at) > hunter.distance_to(other_at));
     // Nothing left to capture, so the choice is between the two armies and
     // not between an army and a factory.
@@ -607,7 +605,7 @@ fn the_campaign_planner_hunts_the_enemy_headquarters_when_that_ends_the_war() {
     assert_eq!(
         order,
         OverworldOrder::MoveArmy {
-            army: ArmyId(3),
+            army: ElementId(3),
             to: hq_at
         },
         "the war is won on the headquarters"
@@ -618,7 +616,7 @@ fn the_campaign_planner_hunts_the_enemy_headquarters_when_that_ends_the_war() {
     assert_eq!(
         order,
         OverworldOrder::MoveArmy {
-            army: ArmyId(3),
+            army: ElementId(3),
             to: other_at
         },
         "with nothing riding on it, the nearer army"
@@ -634,17 +632,17 @@ fn the_campaign_headquarters_backs_away_from_a_stronger_force_that_can_reach_it(
     let reg = registry_wireless();
     let mut state = frontier(&reg);
     state.active_side = 1;
-    let hq = ArmyId(2);
+    let hq = ElementId(2);
     let hq_at = tactics_core::offset_to_hex(7, 4);
-    state.army_mut(hq).unwrap().pos = hq_at;
+    state.place_mut(hq).unwrap().pos = hq_at;
     let threat = tactics_core::offset_to_hex(5, 4);
-    state.army_mut(ArmyId(0)).unwrap().pos = threat;
+    state.place_mut(ElementId(0)).unwrap().pos = threat;
     assert!(
-        hq_at.distance_to(threat) <= state.army(ArmyId(0)).unwrap().movement as i32 + 1,
+        hq_at.distance_to(threat) <= state.army(ElementId(0)).unwrap().movement as i32 + 1,
         "in reach"
     );
     assert_eq!(
-        state.army(ArmyId(0)).unwrap().units.len(),
+        state.army(ElementId(0)).unwrap().units.len(),
         state.army(hq).unwrap().units.len(),
         "the frontier's two headquarters are matched"
     );
@@ -672,8 +670,8 @@ fn the_campaign_headquarters_backs_away_from_a_stronger_force_that_can_reach_it(
     );
 
     // One more tank on the other side and she does.
-    let extra = state.army(ArmyId(0)).unwrap().units[0].clone();
-    state.army_mut(ArmyId(0)).unwrap().units.push(extra);
+    let extra = state.army(ElementId(0)).unwrap().units[0].clone();
+    state.add_vehicle(ElementId(0), extra);
     let order = planner(5).next_order(&reg, &state, 1);
     let OverworldOrder::MoveArmy { army, to } = order else {
         panic!("the headquarters moves first and moves away: {order:?}");
@@ -706,7 +704,7 @@ fn a_headquarters_with_nowhere_better_to_be_spends_its_turn_standing() {
     let reg = registry_wireless();
     let mut state = frontier(&reg);
     state.active_side = 1;
-    let hq = ArmyId(2);
+    let hq = ElementId(2);
     let hq_at = state.army(hq).unwrap().pos;
     state
         .apply(
@@ -733,8 +731,12 @@ fn a_headquarters_with_nowhere_better_to_be_spends_its_turn_standing() {
     for hex in prizes {
         state.owners.insert(hex, 1);
     }
-    for army in state.armies.iter_mut().filter(|a| a.side == 0) {
-        army.alive = false;
+    for e in state
+        .elements
+        .iter_mut()
+        .filter(|e| e.side == 0 && e.place.is_some())
+    {
+        e.alive = false;
     }
     assert_eq!(
         planner(5).next_order(&reg, &state, 1),
@@ -751,10 +753,10 @@ fn a_headquarters_with_nowhere_better_to_be_spends_its_turn_standing() {
 fn a_vehicle_moves_between_companies_standing_side_by_side() {
     let reg = registry_wireless();
     let mut state = frontier(&reg);
-    let (giver, taker) = (ArmyId(0), ArmyId(1));
+    let (giver, taker) = (ElementId(0), ElementId(1));
     let beside = state.army(giver).unwrap().pos.all_neighbors()[0];
     assert!(state.map.get(beside).is_some());
-    state.army_mut(taker).unwrap().pos = beside;
+    state.place_mut(taker).unwrap().pos = beside;
     let before = (
         state.army(giver).unwrap().units.len(),
         state.army(taker).unwrap().units.len(),
@@ -797,7 +799,7 @@ fn a_transfer_is_refused_where_the_campaign_says_it_makes_no_sense() {
     use tactics_core::overworld::OverworldError;
     let reg = registry_wireless();
     let mut state = frontier(&reg);
-    let (giver, taker) = (ArmyId(0), ArmyId(1));
+    let (giver, taker) = (ElementId(0), ElementId(1));
     let order = |unit: usize| OverworldOrder::TransferUnit {
         from: giver,
         to: taker,
@@ -812,18 +814,18 @@ fn a_transfer_is_refused_where_the_campaign_says_it_makes_no_sense() {
 
     // Beside each other, but one of them has marched today.
     let beside = state.army(giver).unwrap().pos.all_neighbors()[0];
-    state.army_mut(taker).unwrap().pos = beside;
-    state.army_mut(taker).unwrap().moved = true;
+    state.place_mut(taker).unwrap().pos = beside;
+    state.place_mut(taker).unwrap().moved = true;
     assert_eq!(
         state.apply(&reg, &order(0)),
         Err(OverworldError::AlreadyMoved)
     );
-    state.army_mut(taker).unwrap().moved = false;
+    state.place_mut(taker).unwrap().moved = false;
 
     // The enemy's company, or the enemy's turn.
-    let enemy = ArmyId(2);
-    state.army_mut(enemy).unwrap().pos = beside;
-    state.army_mut(taker).unwrap().pos = beside.all_neighbors()[3];
+    let enemy = ElementId(2);
+    state.place_mut(enemy).unwrap().pos = beside;
+    state.place_mut(taker).unwrap().pos = beside.all_neighbors()[3];
     assert_eq!(
         state.apply(
             &reg,
@@ -848,14 +850,14 @@ fn a_transfer_is_refused_where_the_campaign_says_it_makes_no_sense() {
     );
 
     // A vehicle she does not have, and her last one.
-    state.army_mut(taker).unwrap().pos = beside;
-    state.army_mut(enemy).unwrap().pos = tactics_core::offset_to_hex(12, 1);
+    state.place_mut(taker).unwrap().pos = beside;
+    state.place_mut(enemy).unwrap().pos = tactics_core::offset_to_hex(12, 1);
     assert_eq!(
         state.apply(&reg, &order(99)),
         Err(OverworldError::NoTransfer)
     );
     let keep = state.army(giver).unwrap().units[0].clone();
-    state.army_mut(giver).unwrap().units = vec![keep];
+    state.set_vehicles(giver, vec![keep]);
     assert_eq!(
         state.apply(&reg, &order(0)),
         Err(OverworldError::NoTransfer),
@@ -1231,8 +1233,8 @@ fn a_generated_campaign_map_is_what_its_world_adds_up_to() {
         .expect("a generated campaign keeps its world");
     assert_eq!(*state.map, world.campaign_map());
     assert_eq!(state.map.len(), world.chunks().count());
-    let mut stands: Vec<Hex> = state.armies.iter().map(|a| a.pos).collect();
-    for a in &state.armies {
+    let mut stands: Vec<Hex> = state.columns().iter().map(|a| a.pos).collect();
+    for a in &state.columns() {
         assert!(
             state.map.contains(a.pos),
             "`{}` stands off the campaign map",
@@ -1243,7 +1245,7 @@ fn a_generated_campaign_map_is_what_its_world_adds_up_to() {
     stands.dedup();
     assert_eq!(
         stands.len(),
-        state.armies.len(),
+        state.columns().len(),
         "two armies were placed on one hex"
     );
 }
@@ -1262,7 +1264,7 @@ fn each_side_of_a_generated_campaign_begins_toward_its_own_edge() {
     };
     let mean = |side: u8| {
         let xs: Vec<f64> = state
-            .armies
+            .columns()
             .iter()
             .filter(|a| a.side == side)
             .map(|a| x(a.pos))
@@ -1356,7 +1358,7 @@ fn an_army_on_a_generated_world_stands_on_a_tile_inside_its_campaign_hex() {
     let reg = registry();
     let state = generated(&reg);
     let radius = reg.scale.battle_map_radius();
-    for a in &state.armies {
+    for a in &state.columns() {
         let tile = a
             .tile
             .expect("an army on a generated world stands on a tile");
@@ -1369,7 +1371,7 @@ fn an_army_on_a_generated_world_stands_on_a_tile_inside_its_campaign_hex() {
     }
     let drawn = frontier(&reg);
     assert!(
-        drawn.armies.iter().all(|a| a.tile.is_none()),
+        drawn.columns().iter().all(|a| a.tile.is_none()),
         "a drawn map has no tiles to stand on"
     );
 }
@@ -1381,7 +1383,7 @@ fn a_columns_day_is_its_slowest_vehicle_at_the_marchs_share() {
     // on the road.
     let reg = registry();
     let state = generated(&reg);
-    let army = &state.armies[0];
+    let army = &state.army(ElementId(0)).unwrap();
     let slowest = army
         .units
         .iter()
@@ -1408,7 +1410,7 @@ fn an_army_sent_anywhere_its_reach_offers_arrives_there_that_day() {
     let reg = registry();
     let state = generated(&reg);
     let radius = reg.scale.battle_map_radius();
-    let army = state.armies[0].id;
+    let army = ElementId(0);
     let mut offered: Vec<Hex> = state
         .reachable(&reg, army)
         .into_keys()
@@ -1439,17 +1441,17 @@ fn a_march_into_an_enemy_halts_on_the_border_of_his_ground_and_fights() {
     let reg = registry();
     let mut state = generated(&reg);
     let radius = reg.scale.battle_map_radius();
-    let army = state.armies[0].id;
+    let army = ElementId(0);
     let here = state.army(army).unwrap().pos;
     let enemy_at = here + Hex::new(2, 0);
     let enemy = state
-        .armies
+        .columns()
         .iter()
         .find(|a| a.side != state.army(army).unwrap().side)
         .unwrap()
         .id;
     {
-        let e = state.armies.iter_mut().find(|a| a.id == enemy).unwrap();
+        let e = state.place_mut(enemy).unwrap();
         e.pos = enemy_at;
         e.tile = Some(tactics_core::world::chunk_centre(enemy_at, radius));
     }
@@ -1512,7 +1514,7 @@ fn a_day_on_the_clock_goes_through_a_save_and_runs_on_the_same() {
     // exactly as it would have.
     let reg = registry();
     let mut state = generated(&reg);
-    let army = state.armies[0].id;
+    let army = ElementId(0);
     let far = state
         .reachable(&reg, army)
         .into_iter()
@@ -1593,21 +1595,21 @@ fn a_day_on_the_clock_goes_through_a_save_and_runs_on_the_same() {
 
 /// A generated campaign with the first Valkyrie army moved two campaign
 /// hexes from Kuhlmann's first, and Kuhlmann ordered onto it.
-fn about_to_meet(reg: &DataRegistry) -> (OverworldState, ArmyId, ArmyId) {
+fn about_to_meet(reg: &DataRegistry) -> (OverworldState, ElementId, ElementId) {
     let mut state = generated(reg);
     let radius = reg.scale.battle_map_radius();
-    let army = state.armies[0].id;
+    let army = ElementId(0);
     let here = state.army(army).unwrap().pos;
     let enemy_at = here + Hex::new(2, 0);
     let enemy = state
-        .armies
+        .columns()
         .iter()
         .find(|a| a.side != state.army(army).unwrap().side)
         .unwrap()
         .id;
     let world = state.world.clone().unwrap();
     {
-        let e = state.armies.iter_mut().find(|a| a.id == enemy).unwrap();
+        let e = state.place_mut(enemy).unwrap();
         e.pos = enemy_at;
         e.tile = Some(world.stand_tile(reg, enemy_at));
     }
@@ -1653,7 +1655,7 @@ fn a_fight_on_the_ground_ends_with_its_survivors_armies_again_where_they_stand()
     // Orders in, then the clock a tick at a time, keeping where each army's
     // vehicles stood in the fight on the last tick before it ended.
     state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
-    let mut last_seen: Vec<(ArmyId, Vec<Hex>)> = Vec::new();
+    let mut last_seen: Vec<(ElementId, Vec<Hex>)> = Vec::new();
     let mut ended = false;
     for _ in 0..60_000 {
         if let Some(e) = state.front.as_ref() {
@@ -1682,7 +1684,7 @@ fn a_fight_on_the_ground_ends_with_its_survivors_armies_again_where_they_stand()
     }
     assert!(ended, "the fight never ended");
     for (id, stood) in &last_seen {
-        let Some(a) = state.army(*id).filter(|a| a.alive) else {
+        let Some(a) = state.army(*id) else {
             continue;
         };
         let tile = a.tile.unwrap();
@@ -1788,7 +1790,7 @@ fn a_column_that_reaches_a_fight_in_progress_joins_it_on_its_own_side() {
     // a column moves a tile a minute and a fight here lasts about nine, so
     // one set down further off arrives after it is over — and sent in.
     let reserve = state
-        .armies
+        .columns()
         .iter()
         .find(|a| a.side == enemy_side && a.id != enemy)
         .unwrap()
@@ -1810,7 +1812,7 @@ fn a_column_that_reaches_a_fight_in_progress_joins_it_on_its_own_side() {
         })
         .expect("a free neighbouring hex");
     {
-        let r = state.armies.iter_mut().find(|a| a.id == reserve).unwrap();
+        let r = state.place_mut(reserve).unwrap();
         r.pos = start;
         r.tile = Some(border);
         r.moved = false;
@@ -1874,7 +1876,7 @@ fn every_side_knows_its_commander_from_the_vehicle_its_map_flags() {
                 .expect("every side's map flags a command vehicle");
             let cadet = state.roster.get(c).unwrap();
             let in_a_flagged_crew = state
-                .armies
+                .columns()
                 .iter()
                 .filter(|a| {
                     a.side as usize
@@ -1934,7 +1936,7 @@ fn on_the_clock_an_order_is_given_on_any_tick_and_a_newer_one_replaces_it() {
     // order — the march in progress is replaced, not the new one refused.
     let reg = registry();
     let mut state = generated(&reg);
-    let army = state.armies[0].id;
+    let army = ElementId(0);
     state.active_side = 1;
     let reach: Vec<Hex> = {
         let mut r: Vec<Hex> = state.reachable(&reg, army).into_keys().collect();
@@ -2026,7 +2028,7 @@ fn on_the_clock_an_army_ordered_onto_its_own_hex_holds_there() {
     // found when the Valkyries never moved in the game. It is a hold.
     let reg = registry();
     let mut state = generated(&reg);
-    let army = state.armies[0].id;
+    let army = ElementId(0);
     let here = state.army(army).unwrap().pos;
     let far = state
         .reachable(&reg, army)
@@ -2055,7 +2057,7 @@ fn a_fight_at_a_town_is_fought_over_the_town_and_whoever_holds_it_takes_it() {
     let mut state = generated(&reg);
     let world = state.world.clone().unwrap();
     let radius = world.chunk_radius;
-    let army = state.armies[0].id;
+    let army = ElementId(0);
     let here = state.army(army).unwrap().pos;
     // The nearest town to Kuhlmann's first company that nobody stands in,
     // with a Valkyrie army set down on its square.
@@ -2069,9 +2071,9 @@ fn a_fight_at_a_town_is_fought_over_the_town_and_whoever_holds_it_takes_it() {
         .map(|(t, hex)| (*t, hex))
         .unwrap();
     let (town, at) = town;
-    let enemy = state.armies.iter().find(|a| a.side == 1).unwrap().id;
+    let enemy = state.columns().iter().find(|a| a.side == 1).unwrap().id;
     {
-        let e = state.armies.iter_mut().find(|a| a.id == enemy).unwrap();
+        let e = state.place_mut(enemy).unwrap();
         e.pos = at;
         e.tile = Some(town.centre);
     }
@@ -2104,12 +2106,12 @@ fn a_fight_at_a_town_is_fought_over_the_town_and_whoever_holds_it_takes_it() {
     }
     // Both sides' survivors often end in the town, the contest cancelling;
     // the campaign keeps one army to a hex, so one of them has fallen back.
-    for a in state.armies.iter().filter(|a| a.alive) {
+    for a in state.columns().iter() {
         assert!(
             !state
-                .armies
+                .columns()
                 .iter()
-                .any(|o| o.alive && o.side != a.side && o.pos == a.pos),
+                .any(|o| o.side != a.side && o.pos == a.pos),
             "`{}` shares a hex with the enemy after the fight",
             a.name
         );
@@ -2122,18 +2124,18 @@ fn a_fight_at_a_town_is_fought_over_the_town_and_whoever_holds_it_takes_it() {
 /// contact is its first step. (Set down further off they meet minutes apart,
 /// and a fight here can be over before the other begins.) The clock is run
 /// until all four are fighting. Returns the pairs, Kuhlmann first.
-fn two_fights(reg: &DataRegistry) -> (OverworldState, Vec<(ArmyId, ArmyId)>) {
+fn two_fights(reg: &DataRegistry) -> (OverworldState, Vec<(ElementId, ElementId)>) {
     let mut state = generated(reg);
     let world = state.world.clone().unwrap();
     let radius = world.chunk_radius;
-    let kuhlmann: Vec<ArmyId> = state
-        .armies
+    let kuhlmann: Vec<ElementId> = state
+        .columns()
         .iter()
         .filter(|a| a.side == 0)
         .map(|a| a.id)
         .collect();
-    let valkyries: Vec<ArmyId> = state
-        .armies
+    let valkyries: Vec<ElementId> = state
+        .columns()
         .iter()
         .filter(|a| a.side == 1)
         .map(|a| a.id)
@@ -2152,13 +2154,8 @@ fn two_fights(reg: &DataRegistry) -> (OverworldState, Vec<(ArmyId, ArmyId)>) {
             .take_while(|t| tactics_core::world::chunk_of(*t, radius) == here)
             .last()
             .unwrap();
-        state
-            .armies
-            .iter_mut()
-            .find(|a| a.id == *ours)
-            .unwrap()
-            .tile = Some(border);
-        let e = state.armies.iter_mut().find(|a| a.id == *theirs).unwrap();
+        state.place_mut(*ours).unwrap().tile = Some(border);
+        let e = state.place_mut(*theirs).unwrap();
         e.pos = there;
         e.tile = Some(to);
         state
@@ -2305,4 +2302,111 @@ fn the_game_opens_on_the_generated_campaign_and_one_it_does_not_have_fails_valid
             report.errors
         );
     }
+}
+
+// --- the chain of command -----------------------------------------------------
+
+/// The living vehicles answering directly to `under`, as `(id, vehicle)`.
+fn vehicles_under(state: &OverworldState, under: ElementId) -> Vec<(ElementId, ArmyUnit)> {
+    let mut leaves: Vec<_> = state
+        .elements
+        .iter()
+        .filter(|e| e.alive && e.parent == Some(under))
+        .filter_map(|e| Some((e.seq, e.id, e.vehicle.clone()?)))
+        .collect();
+    leaves.sort_by_key(|(seq, id, _)| (*seq, *id));
+    leaves.into_iter().map(|(_, id, v)| (id, v)).collect()
+}
+
+#[test]
+fn a_campaigns_order_of_battle_is_each_sides_chain_of_command() {
+    // The designer's ruling (2026-09-26): no separate state for anything on
+    // the map; it all flows from the chain of command. Each side is one
+    // tree — the side, its companies, their vehicles — and what the map
+    // shows as a column is a node of it that stands on its own, carrying
+    // exactly the vehicles beneath it.
+    let reg = registry();
+    for state in [frontier(&reg), generated(&reg)] {
+        for side in 0..state.sides.len() as u8 {
+            let roots: Vec<ElementId> = state
+                .elements
+                .iter()
+                .filter(|e| e.side == side && e.parent.is_none())
+                .map(|e| e.id)
+                .collect();
+            assert_eq!(roots.len(), 1, "one root a side");
+            assert_eq!(state.side_root(side), Some(roots[0]));
+            let root = state.element(roots[0]).unwrap();
+            assert!(root.place.is_none() && root.vehicle.is_none());
+            for column in state.side_armies(side) {
+                let node = state.element(column.id).unwrap();
+                assert_eq!(node.parent, Some(roots[0]), "a company answers to its side");
+                let beneath: Vec<ArmyUnit> = vehicles_under(&state, column.id)
+                    .into_iter()
+                    .map(|(_, v)| v)
+                    .collect();
+                assert!(!beneath.is_empty());
+                assert_eq!(column.units, beneath, "a column is what is beneath it");
+            }
+        }
+        // Every vehicle answers to somebody on the map, and every company
+        // that stands on the map is a column.
+        for e in state.elements.iter().filter(|e| e.vehicle.is_some()) {
+            let parent = state.element(e.parent.unwrap()).unwrap();
+            assert!(parent.place.is_some(), "{} answers to a company", e.name);
+        }
+        let placed = state.elements.iter().filter(|e| e.place.is_some()).count();
+        assert_eq!(state.columns().len(), placed);
+    }
+}
+
+#[test]
+fn a_vehicle_keeps_her_place_in_the_chain_of_command_through_a_fight() {
+    // A fight hands each company back a list of what came home. Each
+    // survivor is the vehicle she was — the same node, under the same
+    // company — not a new one standing in for her, or a vehicle sent out on
+    // her own could never be recognised as the one that went.
+    let reg = registry();
+    let (mut state, army, enemy) = about_to_meet(&reg);
+    let before: Vec<(ElementId, Vec<ElementId>)> = [army, enemy]
+        .iter()
+        .map(|a| {
+            (
+                *a,
+                vehicles_under(&state, *a)
+                    .into_iter()
+                    .map(|(id, _)| id)
+                    .collect(),
+            )
+        })
+        .collect();
+    state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
+    let mut fought = false;
+    for _ in 0..60_000 {
+        fought |= state.front.is_some();
+        let events = state.advance_clock(&reg, 1);
+        if events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::FightingOver { .. }))
+        {
+            break;
+        }
+    }
+    assert!(fought && state.front.is_none(), "the fight was fought out");
+    let mut survivors = 0;
+    for (company, was) in before {
+        let Some(column) = state.army(company) else {
+            continue;
+        };
+        let now = vehicles_under(&state, company);
+        assert_eq!(column.units.len(), now.len());
+        for (id, _) in now {
+            assert!(
+                was.contains(&id),
+                "{id:?} came home a stranger to {company:?}"
+            );
+            survivors += 1;
+        }
+    }
+    assert!(survivors > 0, "somebody came home to be recognised");
 }

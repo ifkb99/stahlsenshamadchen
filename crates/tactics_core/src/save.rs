@@ -118,7 +118,12 @@ use serde::{Deserialize, Serialize};
 /// Version 8 stores a map's terrain as a palette of ids and an index per tile
 /// rather than a name per tile (WORLD.md, W0.2). A version-7 map has no
 /// palette and would not parse; this is the refusal that says so.
-pub const SAVE_VERSION: u32 = 8;
+///
+/// Version 9 keeps a campaign's order of battle as each side's chain of
+/// command (`elements`) rather than a list of armies: a version-8 campaign
+/// has no tree to read, and one read as empty would open with nobody on the
+/// map and end on its first check.
+pub const SAVE_VERSION: u32 = 9;
 
 /// Which mod, at which version, was loaded when a save was written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

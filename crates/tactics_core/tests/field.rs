@@ -23,7 +23,7 @@ use tactics_core::field::{BattleForce, Clash, FieldBattle, battlefield_for, depl
 use tactics_core::harness::campaign::{CampaignOptions, play};
 use tactics_core::map::{MapKind, ObjectiveKind};
 use tactics_core::overworld::{
-    ArmyId, ArmyMission, ArmyUnit, BattleReport, CrewLoss, OverworldEvent, OverworldState,
+    ArmyMission, ArmyUnit, BattleReport, CrewLoss, ElementId, OverworldEvent, OverworldState,
 };
 use tactics_core::roster::{CadetId, CadetStatus};
 
@@ -59,7 +59,7 @@ fn nobody_deploys_onto_their_own_way_off_the_map() {
     let forces: Vec<BattleForce> = [0u8, 1]
         .iter()
         .map(|side| BattleForce {
-            army: ArmyId(*side as u32),
+            army: ElementId(*side as u32),
             side: *side,
             units: (0..4)
                 .map(|_| ArmyUnit {
@@ -114,7 +114,7 @@ fn each_army_fills_one_of_the_maps_formations() {
     let map = tactics_core::map::Battlefield::from_map_file(file).expect("map parses");
     let forces: Vec<BattleForce> = (0..4)
         .map(|i| BattleForce {
-            army: ArmyId(i),
+            army: ElementId(i),
             side: (i % 2) as u8,
             units: (0..2)
                 .map(|_| ArmyUnit {
@@ -180,7 +180,7 @@ fn an_army_is_led_onto_the_field_by_its_senior_cadet() {
             })
             .collect();
         let forces = vec![BattleForce {
-            army: ArmyId(0),
+            army: ElementId(0),
             side: 0,
             units,
             mission: None,
@@ -209,7 +209,7 @@ fn a_withdrawing_army_hands_its_formations_the_way_out() {
     let forces: Vec<BattleForce> = [0u8, 1]
         .iter()
         .map(|side| BattleForce {
-            army: ArmyId(*side as u32),
+            army: ElementId(*side as u32),
             side: *side,
             units: (0..2)
                 .map(|_| ArmyUnit {
@@ -228,8 +228,8 @@ fn a_withdrawing_army_hands_its_formations_the_way_out() {
     let clash = Clash {
         map_id: "river_crossing".into(),
         roster: std::sync::Arc::new(tactics_core::roster::Roster::new()),
-        attacker: ArmyId(0),
-        defender: ArmyId(1),
+        attacker: ElementId(0),
+        defender: ElementId(1),
         sides: ["A", "B"]
             .map(|name| SideState {
                 name: name.into(),
@@ -284,7 +284,7 @@ struct Fought {
 
 impl Fought {
     /// The army a unit marched in with.
-    fn field_origin(&self, unit: tactics_core::battle::UnitId) -> Option<ArmyId> {
+    fn field_origin(&self, unit: tactics_core::battle::UnitId) -> Option<ElementId> {
         self.field.origin(unit)
     }
 }
@@ -299,8 +299,8 @@ fn fight(
     reg: &tactics_core::data::DataRegistry,
     campaign: &OverworldState,
     map_id: &str,
-    attacker: ArmyId,
-    defender: ArmyId,
+    attacker: ElementId,
+    defender: ElementId,
     seed: u64,
 ) -> Fought {
     // Through the campaign's own muster, with nobody joining and nobody
@@ -360,20 +360,20 @@ fn fight(
 fn every_cadet_who_marched_into_a_field_battle_is_accounted_for_when_it_ends() {
     let reg = registry();
     let mut base = campaign(&reg);
-    let (attacker, defender) = (ArmyId(0), ArmyId(2));
+    let (attacker, defender) = (ElementId(0), ElementId(2));
     // One vehicle nobody was assigned to, which is ordinary campaign
     // state — an army can hold a chassis it has no cadets for. The
     // battle crews it anonymously out of its *own* copy of the roster,
     // so this is what makes the "the campaign never enlisted her" check
     // below ask a real question rather than an empty one.
-    base.army_mut(attacker)
-        .expect("the attacker exists")
-        .units
-        .push(ArmyUnit {
+    base.add_vehicle(
+        attacker,
+        ArmyUnit {
             vehicle: "light_tank".into(),
             crew: Vec::new(),
             name: Some("Spare".into()),
-        });
+        },
+    );
 
     let mut winners = Vec::new();
     let mut station_wounds = 0;
@@ -460,7 +460,7 @@ fn every_cadet_who_marched_into_a_field_battle_is_accounted_for_when_it_ends() {
 
         for cadet in &marched {
             let aboard = after
-                .armies
+                .columns()
                 .iter()
                 .any(|a| a.units.iter().any(|u| u.crew.contains(cadet)));
             let reported: Vec<&CrewLoss> = fought
@@ -552,7 +552,7 @@ fn every_cadet_who_marched_into_a_field_battle_is_accounted_for_when_it_ends() {
         // The academy's rolls are the academy's: an anonymous crew
         // enlisted into the battle's own copy of the roster must not come
         // back holding a handle the campaign cannot resolve.
-        for army in &after.armies {
+        for army in &after.columns() {
             for unit in &army.units {
                 for cadet in &unit.crew {
                     assert!(
@@ -565,20 +565,19 @@ fn every_cadet_who_marched_into_a_field_battle_is_accounted_for_when_it_ends() {
         }
 
         // An army with nothing left is destroyed, and said to be.
-        for army in &after.armies {
-            if army.units.is_empty() && [attacker, defender].contains(&army.id) {
-                assert!(
-                    !army.alive,
+        for id in [attacker, defender] {
+            match after.army(id) {
+                Some(army) => assert!(
+                    !army.units.is_empty(),
                     "{} lost every vehicle and is still on the map",
                     army.name
-                );
-                assert!(
+                ),
+                None => assert!(
                     events.iter().any(
-                        |e| matches!(e, OverworldEvent::ArmyDestroyed { army: a } if *a == army.id)
+                        |e| matches!(e, OverworldEvent::ArmyDestroyed { army: a } if *a == id)
                     ),
-                    "{} was wiped out at seed {seed} and nobody was told",
-                    army.name
-                );
+                    "{id:?} was wiped out at seed {seed} and nobody was told",
+                ),
             }
         }
     }
@@ -611,7 +610,14 @@ fn the_same_battle_leaves_the_campaign_in_the_same_state_twice() {
     let reg = registry();
     let base = campaign(&reg);
     let apply = |seed: u64| -> String {
-        let fought = fight(&reg, &base, "battle_plains", ArmyId(0), ArmyId(2), seed);
+        let fought = fight(
+            &reg,
+            &base,
+            "battle_plains",
+            ElementId(0),
+            ElementId(2),
+            seed,
+        );
         let mut after = base.clone();
         after.apply_battle_result(&reg, &fought.outcome);
         serde_json::to_string(&after).expect("a campaign serialises")
@@ -634,7 +640,7 @@ fn a_crew_that_drives_off_the_map_comes_home_to_her_army() {
     let mut base = campaign(&reg);
     // Through the campaign's own order, so the mission is one an army
     // could really be carrying when it is caught.
-    let falling_back = ArmyId(0);
+    let falling_back = ElementId(0);
     base.apply(
         &reg,
         &tactics_core::overworld::OverworldOrder::SetMission {
@@ -654,7 +660,14 @@ fn a_crew_that_drives_off_the_map_comes_home_to_her_army() {
     // battle.
     let mut exited = 0;
     for seed in 0u64..48 {
-        let fought = fight(&reg, &base, "river_crossing", ArmyId(2), falling_back, seed);
+        let fought = fight(
+            &reg,
+            &base,
+            "river_crossing",
+            ElementId(2),
+            falling_back,
+            seed,
+        );
         for unit in fought.state.units.iter() {
             if !matches!(unit.fate, Fate::Exited) {
                 continue;
@@ -741,14 +754,14 @@ fn every_clash_the_campaign_map_can_produce_can_be_staged() {
     let state = OverworldState::from_map(&reg, "frontier", 5).expect("overworld");
     let terrain = state
         .map
-        .get(state.armies[0].pos)
+        .get(state.army(ElementId(0)).unwrap().pos)
         .map(|t| t.terrain)
         .unwrap_or_default();
     let map_id = battlefield_for(&reg, terrain).expect("the base mod ships a battle map");
 
     let mut clashes = 0;
-    for attacker in &state.armies {
-        for defender in state.armies.iter().filter(|d| d.side != attacker.side) {
+    for attacker in &state.columns() {
+        for defender in state.columns().iter().filter(|d| d.side != attacker.side) {
             let clash = Clash::muster(&state, attacker.id, defender.id, &[], &[], map_id.clone());
             assert_eq!(
                 clash.problem(&reg),

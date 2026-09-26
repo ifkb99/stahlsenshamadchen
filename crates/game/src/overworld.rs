@@ -17,7 +17,7 @@ use tactics_core::ai::AiPlanner;
 use tactics_core::field::{Clash, battlefield_for};
 use tactics_core::map::MapKind;
 use tactics_core::overworld::{
-    ArmyId, ArmyMission, ArmyUnit, CampaignEnd, OverworldEvent, OverworldOrder, OverworldState,
+    ArmyMission, ArmyUnit, CampaignEnd, ElementId, OverworldEvent, OverworldOrder, OverworldState,
     make_overworld_planner,
 };
 use tactics_core::roster::CadetId;
@@ -29,11 +29,11 @@ pub(crate) struct Overworld {
     planners: HashMap<u8, Box<dyn AiPlanner<OverworldState, OverworldOrder>>>,
     pub(crate) anim: VecDeque<OverworldEvent>,
     pace: Timer,
-    selected: Option<ArmyId>,
+    selected: Option<ElementId>,
     /// Tiles the selected army can reach, with the cost of getting there.
     move_range: HashMap<Hex, u32>,
     /// Enemy armies the selection could engage this turn.
-    attack_targets: Vec<ArmyId>,
+    attack_targets: Vec<ElementId>,
     /// Range highlights need respawning.
     range_dirty: bool,
     /// A triggered battle waiting on the player to pick reinforcements.
@@ -128,7 +128,7 @@ impl Overworld {
 struct OverworldScope;
 
 #[derive(Component)]
-struct ArmyMarker(ArmyId);
+struct ArmyMarker(ElementId);
 
 #[derive(Component)]
 struct OwnerDot(Hex);
@@ -144,7 +144,7 @@ struct OwHoverTile;
 /// the battle's leader chevron, and rooted at the same place the campaign's
 /// contact graph is: [`OverworldState::senior_army`].
 #[derive(Component)]
-struct ArmyChevron(ArmyId);
+struct ArmyChevron(ElementId);
 
 /// Signals green, the same wire colour the battle screen draws its ring in:
 /// the two scales are one system and a player who has learned the colour on
@@ -504,7 +504,7 @@ fn spawn_world(
     map_render::spawn_map(commands, art, &state.map, rotation, false, OverworldScope);
     commands.insert_resource(CurrentMap(state.map.clone()));
 
-    for army in state.armies.iter().filter(|a| a.alive) {
+    for army in state.columns() {
         commands
             .spawn((
                 Sprite {
@@ -890,7 +890,7 @@ fn pump_events(
             }
         }
         OverworldEvent::ArmyDestroyed { army } => {
-            log.push(format!("Army {} was destroyed.", army.0));
+            log.push(format!("Column {} was destroyed.", army.0));
         }
         OverworldEvent::ArmyMissionAssigned { army, mission } => {
             if ours(&overworld.state, *army) {
@@ -1016,7 +1016,7 @@ fn campaign_over_line(
 /// With no human side at all (`STAHL_AUTOPLAY`) everything is narrated: there
 /// is nobody to keep it from, and watching both chains of command is the
 /// entire point of that switch.
-fn ours(state: &OverworldState, army: ArmyId) -> bool {
+fn ours(state: &OverworldState, army: ElementId) -> bool {
     match state.sides.iter().position(|s| s.ai.is_none()) {
         Some(side) => state.army(army).is_none_or(|a| a.side == side as u8),
         None => true,
@@ -1024,13 +1024,13 @@ fn ours(state: &OverworldState, army: ArmyId) -> bool {
 }
 
 /// The army's name, or a neutral stand-in for one that has since been
-/// destroyed — an event about an army outlives the army, and "Army 3" in the
+/// destroyed — an event about an army outlives the army, and "Column 3" in the
 /// middle of a sentence reads as a bug.
-fn army_name(state: &OverworldState, army: ArmyId) -> String {
+fn army_name(state: &OverworldState, army: ElementId) -> String {
     state
         .army(army)
         .map(|a| a.name.clone())
-        .unwrap_or_else(|| format!("Army {}", army.0))
+        .unwrap_or_else(|| format!("Column {}", army.0))
 }
 
 /// A hex as the map file writes it, which is the pair of numbers a player
@@ -1077,7 +1077,7 @@ fn after_action(
     side: u8,
     headline: String,
     events: &[OverworldEvent],
-    survivors: &[(ArmyId, Vec<ArmyUnit>)],
+    survivors: &[(ElementId, Vec<ArmyUnit>)],
 ) -> AfterAction {
     use tactics_core::roster::CrewFate;
 
@@ -1158,15 +1158,15 @@ fn after_action(
 /// A triggered battle waiting for the player to pick reinforcements. While
 /// one exists the campaign is frozen: no events pump, no AI moves.
 struct Muster {
-    attacker: ArmyId,
-    defender: ArmyId,
+    attacker: ElementId,
+    defender: ElementId,
     /// The side the player is mustering for.
     side: u8,
     /// Whether that side is the attacker, which is what the wording and the
     /// eligibility rules hinge on.
     attacking: bool,
     /// Candidate armies and whether each is currently marked to join.
-    choices: Vec<(ArmyId, bool)>,
+    choices: Vec<(ElementId, bool)>,
     /// Cadets the player has put on the roll in spite of their condition.
     ///
     /// Kept as the answer rather than as a list of candidates, because who is
@@ -1175,7 +1175,7 @@ struct Muster {
     /// frame; this is only what she has said about it.
     called_up: Vec<CadetId>,
     /// Reinforcements the other side already committed.
-    ai_joiners: Vec<ArmyId>,
+    ai_joiners: Vec<ElementId>,
     map_id: String,
 }
 
@@ -1237,9 +1237,9 @@ fn launch_battle(
     next: &mut NextState<AppState>,
     log: &mut OwLogLines,
     registry: &tactics_core::data::DataRegistry,
-    attacker: ArmyId,
-    defender: ArmyId,
-    joiners: &[ArmyId],
+    attacker: ElementId,
+    defender: ElementId,
+    joiners: &[ElementId],
     called_up: &[CadetId],
     map_id: String,
 ) {
@@ -1399,7 +1399,7 @@ fn muster_page(
     state: &OverworldState,
     muster: &Muster,
 ) -> Vec<String> {
-    let name = |id: ArmyId| {
+    let name = |id: ElementId| {
         state
             .army(id)
             .map(|a| format!("{} ({} units)", a.name, a.units.len()))
@@ -1627,7 +1627,7 @@ fn roster_page(
     let mut posted: Vec<CadetId> = Vec::new();
     let mut sections: Vec<(String, Vec<String>)> = Vec::new();
 
-    for army in state.armies.iter().filter(|a| a.alive && a.side == side) {
+    for army in state.side_armies(side) {
         let mut lines: Vec<String> = Vec::new();
         for unit in &army.units {
             let vehicle = registry.vehicle(&unit.vehicle);
@@ -2270,7 +2270,7 @@ fn sync_armies(
             }
         };
         transform.translation = Vec3::new(pos.x, pos.y + 16.0, z + 1.5);
-        let seen = state.army_visible_to(&mods.0, army, view_side);
+        let seen = state.army_visible_to(&mods.0, &army, view_side);
         *visibility = if seen {
             Visibility::Inherited
         } else {
@@ -2290,7 +2290,7 @@ fn sync_armies(
     // and the enemy's shows only where her army marker is already drawn —
     // the chevron inherits its parent's visibility, so it cannot become a
     // way of finding an army the map is hiding.
-    let seniors: Vec<ArmyId> = (0..state.sides.len() as u8)
+    let seniors: Vec<ElementId> = (0..state.sides.len() as u8)
         .filter_map(|side| state.senior_army(side))
         .collect();
     for (chevron, mut visibility, mut sprite) in &mut chevrons {
@@ -2751,7 +2751,7 @@ mod tests {
 
         let reg = registry();
         let mut state = OverworldState::from_map(&reg, "frontier", 5).expect("overworld");
-        let armies: Vec<ArmyId> = state.side_armies(0).map(|a| a.id).collect();
+        let armies: Vec<ElementId> = state.side_armies(0).map(|a| a.id).collect();
         let (principal, other) = (armies[0], armies[1]);
         let defender = state.side_armies(1).next().expect("so has he").id;
 
@@ -2916,7 +2916,9 @@ mod tests {
             .map(|c| c.name.clone())
             .collect();
         assert!(!orphaned.is_empty(), "the first vehicle should be crewed");
-        state.army_mut(army).unwrap().units.remove(0);
+        let mut units = state.army(army).unwrap().units;
+        units.remove(0);
+        state.set_vehicles(army, units);
 
         let page = roster_page(&reg, &state, 0);
         let body = page.lines().join("\n");

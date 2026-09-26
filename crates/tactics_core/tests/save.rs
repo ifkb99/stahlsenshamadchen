@@ -439,19 +439,19 @@ fn a_campaign_keeps_its_standing_orders_and_its_silences() {
     overworld
         .remove("waiting_missions")
         .expect("field is saved");
-    for army in overworld
-        .get_mut("armies")
+    for element in overworld
+        .get_mut("elements")
         .and_then(|a| a.as_array_mut())
-        .expect("armies are a list")
+        .expect("the chain of command is a list")
     {
-        army.as_object_mut().unwrap().remove("mission");
+        element.as_object_mut().unwrap().remove("mission");
     }
     let older = SaveGame::from_json(&reg, &older.to_string())
         .expect("a save from before campaign missions must still load")
         .0
         .overworld
         .expect("campaign survives");
-    assert!(older.armies.iter().all(|a| a.mission.is_none()));
+    assert!(older.columns().iter().all(|a| a.mission.is_none()));
     assert!(older.out_of_contact.is_empty());
     assert!(older.waiting_missions.is_empty());
 }

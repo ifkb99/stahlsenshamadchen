@@ -24,7 +24,7 @@ use crate::battle::{
 };
 use crate::data::{DataRegistry, MovementClass};
 use crate::map::{Battlefield, MapError, MapKind, ObjectiveKind, UnitPlacement};
-use crate::overworld::{ArmyId, ArmyMission, ArmyUnit, BattleReport, CrewLoss, OverworldState};
+use crate::overworld::{ArmyMission, ArmyUnit, BattleReport, CrewLoss, ElementId, OverworldState};
 use crate::roster::{CadetId, Roster};
 use crate::{Hex, hex_to_offset};
 use std::collections::HashMap;
@@ -33,7 +33,7 @@ use std::sync::Arc;
 /// One army committed to a field battle.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BattleForce {
-    pub army: ArmyId,
+    pub army: ElementId,
     pub side: u8,
     pub units: Vec<ArmyUnit>,
     /// The standing orders this army was carrying when it was committed, so
@@ -53,8 +53,8 @@ pub struct Clash {
     /// The army that started it, and the one that was attacked. These two
     /// decide who advances onto the contested tile afterwards, and they are
     /// the only two whose standing orders reach the battle.
-    pub attacker: ArmyId,
-    pub defender: ArmyId,
+    pub attacker: ElementId,
+    pub defender: ElementId,
     pub sides: Vec<SideState>,
     pub attacker_side: u8,
     pub forces: Vec<BattleForce>,
@@ -88,14 +88,14 @@ pub enum StagingError {
 /// army each unit was drawn from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldBattle {
-    pub attacker: ArmyId,
-    pub defender: ArmyId,
+    pub attacker: ElementId,
+    pub defender: ElementId,
     /// The army each unit was drawn from, by the unit's id, in id order.
     ///
     /// Pairs rather than a list indexed by id, because an id is a name and
     /// not a position (WORLD.md, W0.5): a vehicle that keeps her world id
     /// into a battle is not unit number *n*.
-    pub origins: Vec<(crate::battle::UnitId, ArmyId)>,
+    pub origins: Vec<(crate::battle::UnitId, ElementId)>,
 }
 
 /// The battle map a clash on `terrain` is fought over.
@@ -147,9 +147,9 @@ impl Clash {
     /// back in the report and are applied to the campaign's own.
     pub fn muster(
         state: &OverworldState,
-        attacker: ArmyId,
-        defender: ArmyId,
-        joiners: &[ArmyId],
+        attacker: ElementId,
+        defender: ElementId,
+        joiners: &[ElementId],
         called_up: &[CadetId],
         map_id: String,
     ) -> Self {
@@ -331,7 +331,7 @@ impl FieldBattle {
         // Start every participating army at zero survivors so armies that
         // were wiped out are still reported, then hand each living unit
         // back to the army it marched in with.
-        let mut survivors: Vec<(ArmyId, Vec<ArmyUnit>)> = Vec::new();
+        let mut survivors: Vec<(ElementId, Vec<ArmyUnit>)> = Vec::new();
         let mut slot_of = HashMap::new();
         for (_, army) in &self.origins {
             slot_of.entry(*army).or_insert_with(|| {
@@ -364,7 +364,7 @@ impl FieldBattle {
         // everything has not withdrawn, whatever else it did, and neither has
         // one with a single vehicle still on the field — that one is still
         // standing on the ground.
-        let mut withdrew: Vec<ArmyId> = Vec::new();
+        let mut withdrew: Vec<ElementId> = Vec::new();
         for (army, units) in &survivors {
             let mut exited = 0;
             let mut on_field = 0;
@@ -397,7 +397,7 @@ impl FieldBattle {
     }
 
     /// The army a unit marched in with.
-    pub fn origin(&self, unit: crate::battle::UnitId) -> Option<ArmyId> {
+    pub fn origin(&self, unit: crate::battle::UnitId) -> Option<ElementId> {
         self.origins
             .binary_search_by_key(&unit, |(id, _)| *id)
             .ok()
@@ -415,7 +415,7 @@ pub fn deploy(
     field: &Battlefield,
     forces: &[BattleForce],
     attacker_side: u8,
-) -> (Vec<UnitPlacement>, Vec<Vec<CadetId>>, Vec<ArmyId>) {
+) -> (Vec<UnitPlacement>, Vec<Vec<CadetId>>, Vec<ElementId>) {
     let map = &field.terrain;
     // Tiles a vehicle can actually sit on, nearest edge first. Taking spots
     // in this order lets a side deploy as deep inland as it needs to, so

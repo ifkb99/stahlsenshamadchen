@@ -617,10 +617,10 @@ fn every_army_the_campaign_ships_can_be_put_on_a_battlefield() {
         .expect("the campaign map builds");
     let map = scrap_of_grass();
     assert!(
-        !campaign.armies.is_empty(),
+        !campaign.columns().is_empty(),
         "this test is meaningless without armies"
     );
-    for army in &campaign.armies {
+    for army in &campaign.columns() {
         let placements: Vec<UnitPlacement> = army
             .units
             .iter()

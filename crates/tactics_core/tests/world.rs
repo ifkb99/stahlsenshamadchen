@@ -225,7 +225,10 @@ fn a_campaign_loaded_from_a_save_fights_the_battle_it_would_have_fought() {
     // save nor a second campaign in the same process met the same fight.
     let reg = registry();
     let state = OverworldState::from_map(&reg, "frontier", 11).expect("campaign");
-    let (a, b) = (state.armies[0].id, state.armies[1].id);
+    let (a, b) = (
+        tactics_core::overworld::ElementId(0),
+        tactics_core::overworld::ElementId(1),
+    );
     let first = Clash::muster(&state, a, b, &[], &[], "river_crossing".into());
 
     let text = SaveGame::<BattleState>::new(&reg, Some(state.clone()), None)
