@@ -14,6 +14,9 @@ rules and DONE.md holds the evidence, the wrong first drafts and the numbers.
 [PLANNING.md](PLANNING.md) is the design memo for the AI planning layer
 (templates matched onto terrain, fluid levels of command, plans that change),
 written before any of it is built.
+[WORLD.md](WORLD.md) is the memo and checklist for one continuous world at
+two resolutions — the world clock, the contact bubble, ground generated
+bottom up — and the designer's rulings of 2026-09-26 that started it.
 [STRUCTURE.md](STRUCTURE.md) carries the seams that are in the wrong place —
 a rule living in the wrong crate, a contract asserted in prose that nothing
 checks — as against the rules that are wrong, which are here.
