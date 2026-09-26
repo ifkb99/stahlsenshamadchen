@@ -254,3 +254,171 @@ fn a_campaign_loaded_from_a_save_fights_the_battle_it_would_have_fought() {
         "the fight's dice are its world's seed and its own name, nothing else"
     );
 }
+
+// --- residency (W1.5) ---
+
+use std::sync::Arc;
+use tactics_core::ai::{AiConfig, AiDriver, make_battle_planner};
+use tactics_core::battle::{Muster, SideState};
+use tactics_core::data::WorldGen;
+use tactics_core::map::{HexMap, Scenario};
+use tactics_core::world::needed_chunks;
+use tactics_core::worldgen::GeneratedWorld;
+
+#[test]
+fn the_chunks_a_battle_needs_cover_every_tile_its_crews_can_reach() {
+    // Pure in its argument and conservative: every hex within `reach` of a
+    // position lies in a chunk the answer names, whatever order the
+    // positions come in.
+    let positions = [
+        (Hex::new(3, -40), 12),
+        (Hex::new(-55, 17), 30),
+        (Hex::new(0, 0), 0),
+        (Hex::new(41, -20), 25),
+    ];
+    let needed = needed_chunks(positions, R);
+    let mut reversed = positions;
+    reversed.reverse();
+    assert_eq!(needed, needed_chunks(reversed, R));
+    for (hex, reach) in positions {
+        for tile in hex.range(reach) {
+            let c = chunk_of(tile, R);
+            assert!(
+                needed.contains(&(c.x, c.y)),
+                "{tile:?} near {hex:?} is in no needed chunk"
+            );
+        }
+    }
+}
+
+/// Fight `river_crossing`'s armies, formations and objectives for `rounds`
+/// on generated ground, and write down everything that happened.
+/// Returns the transcript, the most chunks held at once, and how many rounds
+/// ended with a different set of chunks from the one they began with.
+fn fight_on(
+    reg: &tactics_core::data::DataRegistry,
+    world: World,
+    rounds: usize,
+) -> (String, usize, usize) {
+    let file = reg.map("river_crossing").expect("the baseline map");
+    let scenario = Scenario::from_map_file(file);
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(reg, &file.units);
+    let ids: Vec<tactics_core::battle::UnitId> = (0..file.units.len() as u32)
+        .map(tactics_core::battle::UnitId)
+        .collect();
+    let sides: Vec<SideState> = file
+        .sides
+        .iter()
+        .map(|s| SideState {
+            name: s.name.clone(),
+            ai: None,
+        })
+        .collect();
+    let mut state = BattleState::from_muster_on(
+        reg,
+        world,
+        scenario,
+        sides,
+        Muster {
+            placements: &file.units,
+            crews: &crews,
+            ids: &ids,
+        },
+        Arc::new(roster),
+        17,
+    )
+    .expect("the baseline's armies stand on generated ground");
+    let mut ai = AiDriver::new();
+    for (side, doctrine) in [(0u8, "massed_armor"), (1, "elastic_defense")] {
+        ai.insert(
+            side,
+            make_battle_planner(
+                &AiConfig {
+                    planner: "utility".into(),
+                    difficulty: 3,
+                    doctrine: Some(doctrine.into()),
+                },
+                17 + side as u64,
+                reg,
+            ),
+        );
+    }
+    let mut out = String::new();
+    let mut most = 0;
+    let mut paged = 0;
+    let held = |s: &BattleState| -> Vec<Hex> {
+        s.world
+            .resident_chunks()
+            .map_or(Vec::new(), |c| c.collect())
+    };
+    for _ in 0..rounds {
+        if state.is_over() {
+            break;
+        }
+        let before = held(&state);
+        ai.plan_round_with(reg, &mut state, |d| {
+            out.push_str(&format!("order {:?}\n", d.order))
+        });
+        for event in state.resolve_round(reg) {
+            out.push_str(&format!("{event:?}\n"));
+        }
+        let after = held(&state);
+        most = most.max(after.len());
+        paged += (before != after) as usize;
+    }
+    for unit in &state.units {
+        out.push_str(&format!(
+            "final {} {:?} {:?}\n",
+            unit.name, unit.pos, unit.fate
+        ));
+    }
+    (out, most, paged)
+}
+
+#[test]
+fn a_battle_on_a_window_of_the_world_is_the_battle_on_the_whole_of_it() {
+    // The residency rule, tested the only way that means anything: the same
+    // battle fought on the whole of a generated world and on a window onto
+    // it that loads and forgets chunks as the crews move. If any question a
+    // battle asks reached ground the window had not loaded, the two would
+    // come apart (and in a debug build a sight line would panic first).
+    let reg = registry();
+    let rules = WorldGen {
+        radius: 4,
+        ..reg.worldgen.clone().unwrap()
+    };
+    let made = Arc::new(GeneratedWorld::with_rules(rules, R, 9).unwrap());
+    let mut whole = HexMap::default();
+    for chunk in made.chunks() {
+        for (hex, terrain, level) in made.chunk_tiles(chunk) {
+            whole.insert(hex, terrain, level);
+        }
+    }
+    let total = made.chunks().count();
+    let (on_whole, _, _) = fight_on(&reg, World::build(&reg, whole), 12);
+    let (on_window, most, paged) = fight_on(&reg, World::window_onto(made), 12);
+    assert!(
+        most < total,
+        "the window held all {total} chunks at once, so it never paged anything"
+    );
+    assert!(
+        paged > 0,
+        "the crews never moved the window, so the rule was never exercised"
+    );
+    assert!(
+        on_window.contains("ShotHit"),
+        "a battle nobody hit anybody in proves little"
+    );
+    if on_whole != on_window {
+        let line = on_whole
+            .lines()
+            .zip(on_window.lines())
+            .position(|(a, b)| a != b)
+            .unwrap_or(0);
+        panic!(
+            "the battles part at line {line}:\n  whole:  {}\n  window: {}",
+            on_whole.lines().nth(line).unwrap_or(""),
+            on_window.lines().nth(line).unwrap_or("")
+        );
+    }
+}

@@ -38,6 +38,16 @@ pub struct WorldGen {
     /// that holds wins, so the last should hold always.
     #[serde(default = "default_summary")]
     pub summary: Vec<SummaryRule>,
+    /// How many tiles past the furthest any crew could see, shoot or plan a
+    /// march the world is kept loaded (WORLD.md W1.5). The rule is that no
+    /// question a battle asks may reach unloaded ground; this is the slack
+    /// for the questions nobody has counted.
+    #[serde(default = "default_residency_margin")]
+    pub residency_margin: u32,
+}
+
+fn default_residency_margin() -> u32 {
+    4
 }
 
 fn default_radius() -> u32 {
@@ -55,6 +65,7 @@ impl Default for WorldGen {
             roads: Roads::default(),
             terrain: GroundPalette::default(),
             summary: default_summary(),
+            residency_margin: default_residency_margin(),
         }
     }
 }

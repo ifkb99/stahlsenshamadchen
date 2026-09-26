@@ -28,9 +28,11 @@ use crate::battle::{MoveGrid, SightGrid};
 use crate::data::{DataRegistry, MovementClass};
 use crate::ground::Ground;
 use crate::map::{HexMap, Tile};
+use crate::worldgen::GeneratedWorld;
 use hexx::Hex;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 /// The chunk a hex belongs to, for chunks of `radius`: which campaign hex it
 /// lies under (WORLD.md, W1.1).
@@ -160,6 +162,39 @@ pub struct World {
     sight: SightGrid,
     moves: MoveGrid,
     residency: Residency,
+    /// Where a chunked world's ground comes from when a chunk is needed:
+    /// the generated world it is a window onto. `None` for a whole world,
+    /// and for a chunked one whose chunks are handed to it by hand.
+    source: Option<Arc<GeneratedWorld>>,
+}
+
+/// Every chunk whose ground any of `reaches` could touch: for each `(hex,
+/// reach)`, every chunk with a tile within `reach` of `hex`.
+///
+/// A pure function of its argument, which is what makes residency the same
+/// on every machine (WORLD.md W1.5): it is never a matter of what happened
+/// to be loaded before. Conservative by a chunk's radius — a chunk is kept
+/// when its centre is within `reach + radius` of the hex — because loading a
+/// chunk too many costs a fifth of a millisecond and loading one too few
+/// makes a sight line lie.
+pub fn needed_chunks(
+    reaches: impl IntoIterator<Item = (Hex, u32)>,
+    chunk_radius: u32,
+) -> BTreeSet<(i32, i32)> {
+    let mut needed = BTreeSet::new();
+    for (hex, reach) in reaches {
+        let home = chunk_of(hex, chunk_radius);
+        let span = reach + chunk_radius;
+        // A chunk's centres are at least `radius + 1` tiles apart, so the
+        // chunks within `span` of `hex` are within this many chunk steps.
+        let steps = span / (chunk_radius + 1) + 2;
+        for chunk in home.range(steps) {
+            if chunk_centre(chunk, chunk_radius).unsigned_distance_to(hex) <= span {
+                needed.insert((chunk.x, chunk.y));
+            }
+        }
+    }
+    needed
 }
 
 impl World {
@@ -197,10 +232,75 @@ impl World {
             sight: _,
             moves: _,
             residency,
+            source,
         } = self;
         Self {
             residency,
+            source,
             ..Self::build(registry, tiles)
+        }
+    }
+
+    /// An empty window onto a generated world, which loads its chunks from
+    /// it as [`Self::settle`] asks.
+    pub fn window_onto(source: Arc<GeneratedWorld>) -> Self {
+        Self {
+            source: Some(source.clone()),
+            ..Self::chunked(source.chunk_radius)
+        }
+    }
+
+    /// The generated world this one is a window onto, if it is one.
+    pub fn source(&self) -> Option<&Arc<GeneratedWorld>> {
+        self.source.as_ref()
+    }
+
+    /// Whether `hex` is ground this world holds or could load: a known tile,
+    /// or a hex its source has.
+    pub fn has_ground(&self, hex: Hex) -> bool {
+        self.contains(hex) || self.source.as_ref().is_some_and(|s| s.contains(hex))
+    }
+
+    /// Make the resident chunks exactly `needed`: load the ones missing from
+    /// the source, forget the rest. Returns whether anything changed. A
+    /// whole world, or one with no source, is left alone.
+    pub fn settle(&mut self, registry: &DataRegistry, needed: &BTreeSet<(i32, i32)>) -> bool {
+        let Some(source) = self.source.clone() else {
+            return false;
+        };
+        let Residency::Chunks { resident, .. } = &self.residency else {
+            return false;
+        };
+        if resident == needed {
+            return false;
+        }
+        let stale: Vec<Hex> = resident
+            .difference(needed)
+            .map(|&(x, y)| Hex::new(x, y))
+            .collect();
+        let fresh: Vec<Hex> = needed
+            .difference(resident)
+            .map(|&(x, y)| Hex::new(x, y))
+            .collect();
+        for chunk in stale {
+            self.unload_chunk(chunk);
+        }
+        for chunk in fresh {
+            self.load_chunk(registry, chunk, source.chunk_tiles(chunk));
+        }
+        true
+    }
+
+    /// Whether this world is held a chunk at a time.
+    pub fn is_chunked(&self) -> bool {
+        matches!(self.residency, Residency::Chunks { .. })
+    }
+
+    /// The radius of a chunk, for a world held a chunk at a time.
+    pub fn chunk_radius(&self) -> Option<u32> {
+        match self.residency {
+            Residency::Whole => None,
+            Residency::Chunks { radius, .. } => Some(radius),
         }
     }
 

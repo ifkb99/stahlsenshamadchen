@@ -1393,6 +1393,9 @@ impl BattleState {
         // recompute so she vanishes from (or reappears in) the enemy's
         // picture in the same slice of time she changed state.
         self.resolve_transport(registry, &mut events);
+        // Whoever moved may now be able to see, shoot or plan over ground
+        // that was not loaded; load it before anybody looks (WORLD.md W1.5).
+        self.settle_world(registry);
 
         // The shells fired one or more ticks ago come down here, AFTER
         // movement: a shell lands on whoever is standing on the hex once
