@@ -1199,6 +1199,53 @@ impl BattleState {
         Ok(state)
     }
 
+    /// Bring a formation onto the field in the middle of the battle: a column
+    /// arriving at a fight in progress (WORLD.md W3.5). Validated like any
+    /// setup; its ids must follow every id already on the field, which the
+    /// world's allocator guarantees. Its crews see and are seen from the
+    /// moment they arrive.
+    pub fn reinforce(
+        &mut self,
+        registry: &DataRegistry,
+        def: &crate::map::FormationDef,
+        muster: Muster<'_>,
+    ) -> Result<FormationId, BattleSetupError> {
+        let Muster {
+            placements,
+            crews,
+            ids,
+        } = muster;
+        check_ids(ids, placements.len())?;
+        let errors = validate_placements(
+            registry,
+            &self.world,
+            &self.sides,
+            placements,
+            crews,
+            &self.roster,
+        );
+        if !errors.is_empty() {
+            return Err(BattleSetupError::Invalid(errors));
+        }
+        let mut members = Vec::new();
+        for (i, placement) in placements.iter().enumerate() {
+            let id = self.spawn_unit_as(
+                registry,
+                placement,
+                crews.get(i).cloned().unwrap_or_default(),
+                ids[i],
+            )?;
+            members.push((id, placement.leads));
+        }
+        let formation = self
+            .command
+            .add_formation(def, &members)
+            .ok_or_else(|| BattleSetupError::Invalid(vec!["a formation of nobody".into()]))?;
+        self.settle_world(registry);
+        fog::recompute(registry, self);
+        Ok(formation)
+    }
+
     /// Pass up what the side can already see, before anybody plans round
     /// one.
     ///

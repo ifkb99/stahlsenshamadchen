@@ -708,6 +708,11 @@ fn pump_events(
                 log.push(format!("{} is in contact with {}.", att.name, def.name));
             }
         }
+        OverworldEvent::EngagementJoined { army, .. } => {
+            if let Some(a) = overworld.state.army(*army) {
+                log.push(format!("{} joins the fight.", a.name));
+            }
+        }
         OverworldEvent::EngagementEnded {
             winner,
             hulls_lost,

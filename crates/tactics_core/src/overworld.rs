@@ -349,6 +349,11 @@ pub enum OverworldEvent {
         defender: ArmyId,
         at: Hex,
     },
+    /// A column reached a fight in progress and joined it (WORLD.md W3.5).
+    EngagementJoined {
+        engagement: u32,
+        army: ArmyId,
+    },
     /// A fight on the ground is over, and its survivors are armies again.
     EngagementEnded {
         engagement: u32,
@@ -1578,25 +1583,29 @@ impl OverworldState {
             }
             let hex = crate::world::chunk_of(next, radius);
             if hex != pos {
+                // A fight in progress in the hex ahead — anybody's, friend's
+                // or foe's: the column halts on its border and joins it
+                // (WORLD.md W3.5), on its own side.
+                if let Some(fight) = self.army_at(hex).and_then(|o| o.engaged) {
+                    if let Some(a) = self.army_mut(id) {
+                        a.tile = Some(tile);
+                        a.pos = pos;
+                        a.march = None;
+                    }
+                    events.extend(self.join_engagement(registry, id, fight));
+                    return events;
+                }
                 if let Some(other) = self.army_at(hex).filter(|o| o.side != army.side) {
                     // Contact: the column halts on the border of his ground,
-                    // and the fight is there — on that ground, crews on
-                    // tiles, unless he is already fighting somebody else, in
-                    // which case she waits on the border (joining a fight in
-                    // progress is W3.5).
+                    // and the fight is there — on that ground, crews on tiles.
                     let defender = other.id;
-                    let busy = other.engaged.is_some();
-                    finished = true;
-                    if !busy {
-                        if let Some(a) = self.army_mut(id) {
-                            a.tile = Some(tile);
-                            a.pos = pos;
-                            a.march = None;
-                        }
-                        events.extend(self.open_engagement(registry, id, defender, hex));
-                        return events;
+                    if let Some(a) = self.army_mut(id) {
+                        a.tile = Some(tile);
+                        a.pos = pos;
+                        a.march = None;
                     }
-                    break;
+                    events.extend(self.open_engagement(registry, id, defender, hex));
+                    return events;
                 }
                 // Nobody finishes a march in a friend's hex: arriving there,
                 // the column stops on its border instead.
@@ -1845,6 +1854,98 @@ impl OverworldState {
             attacker,
             defender,
             at,
+        }]
+    }
+
+    /// A column reaches a fight in progress and joins it, on its own side
+    /// (WORLD.md W3.5): its vehicles are lifted onto the ground round where
+    /// it halted, clear of everybody already there, named by the world, and
+    /// arrive as a formation of their own — assaulting the contested ground
+    /// if it is on the attacking side, moving up onto it if not.
+    fn join_engagement(
+        &mut self,
+        registry: &DataRegistry,
+        id: ArmyId,
+        fight: u32,
+    ) -> Vec<OverworldEvent> {
+        let Some(army) = self.army(id).cloned() else {
+            return Vec::new();
+        };
+        let Some(index) = self.engagements.iter().position(|e| e.id == fight) else {
+            return Vec::new();
+        };
+        let attacker_side = self.army(self.engagements[index].attacker).map(|a| a.side);
+        let mut taken: std::collections::HashSet<Hex> = self.engagements[index]
+            .battle()
+            .units
+            .iter()
+            .filter(|u| u.alive())
+            .map(|u| u.pos)
+            .collect();
+        let lifted = self.lift(registry, &army, &mut taken);
+        if lifted.is_empty() {
+            return Vec::new();
+        }
+        let (placements, crews): (Vec<_>, Vec<_>) = lifted.into_iter().unzip();
+        let first = self.next_unit_id;
+        let ids: Vec<UnitId> = (0..placements.len() as u32)
+            .map(|i| UnitId(first + i))
+            .collect();
+        self.next_unit_id += placements.len() as u32;
+        let def = crate::map::FormationDef {
+            id: format!("army-{}", army.id.0),
+            name: army.name.clone(),
+            side: army.side,
+            doctrine: self
+                .sides
+                .get(army.side as usize)
+                .and_then(|s| s.ai.as_ref())
+                .and_then(|ai| ai.doctrine.clone()),
+        };
+        let from = army.tile.unwrap_or(Hex::ZERO);
+        let e = &mut self.engagements[index];
+        let battle = e.battle_mut();
+        let Ok(formation) = battle.reinforce(
+            registry,
+            &def,
+            crate::battle::Muster {
+                placements: &placements,
+                crews: &crews,
+                ids: &ids,
+            },
+        ) else {
+            return Vec::new();
+        };
+        let target = battle.scenario.objectives().first().and_then(|o| {
+            o.hexes
+                .iter()
+                .copied()
+                .filter(|h| battle.occupants(*h).next().is_none())
+                .min_by_key(|h| (h.unsigned_distance_to(from), h.x, h.y))
+        });
+        if let Some(to) = target {
+            let mission = if Some(army.side) == attacker_side {
+                crate::battle::Mission::Assault { to }
+            } else {
+                crate::battle::Mission::Advance { to }
+            };
+            let _ = battle.apply(
+                registry,
+                &crate::battle::Order::SetMission {
+                    formation,
+                    mission,
+                    latitude: crate::battle::Latitude::Delegated,
+                },
+            );
+        }
+        e.origins.extend(ids.iter().map(|u| (*u, id)));
+        if let Some(a) = self.army_mut(id) {
+            a.engaged = Some(fight);
+            a.march = None;
+        }
+        vec![OverworldEvent::EngagementJoined {
+            engagement: fight,
+            army: id,
         }]
     }
 
