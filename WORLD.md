@@ -419,16 +419,31 @@ the determinism snapshot passes **unregenerated**.
       factories); giving Kuhlmann the same doctrine in fights moves it only
       to 12 of 16. A world per campaign (`"seed"` omitted) would measure the
       rules rather than the map.
-- [ ] **W3.4 Engagements, not battles.** `over`, `score`, the stalemate
-      clock and `check_victory` become an engagement's; `Fate::Exited`
-      becomes leaving the bubble; `exit` objectives go; `deploy` becomes
-      arrival along the road.
-- [ ] **W3.5 Merge and split.**
-- [ ] **W3.6 Work scales with the fight.** `fog::recompute`,
-      `known_enemies`, `incoming` and `plan::known_world`'s playout clone are
-      limited to the engagement.
-- [ ] **W3.7 `field.rs` replaced** by the bubble; `harness::campaign` and
-      `examples/campaign` run on the clock.
+- [ ] **W3.4 Engagements, not battles.** *Partly done 2026-09-26:* an
+      engagement's `over`, `score`, stalemate clock and `check_victory`
+      *are* its battle's, used unchanged; there are no exits on the ground
+      and armies arrive where they stand rather than being deployed from an
+      edge; the defender's ground is the fight's objective. *Still to do:*
+      towns and factories inside a fight as objectives of their own, from
+      the skeleton (and capture read from their tiles, W2.5).
+- [x] ~~**W3.5 Joining.**~~ **Done 2026-09-26** (merging two fights, and
+      splitting one, still to do). A column whose next step enters the hex
+      of an army already fighting — friend's or foe's — halts on its border
+      and joins that fight (`join_engagement`, `BattleState::reinforce`,
+      `CommandState::add_formation`): its vehicles lifted onto free tiles
+      round it, named by the world, arriving as a formation of their own
+      (last in seniority), assaulting the contested ground if it attacks
+      and moving up onto it if not. A column moves a tile a minute and a
+      fight lasts about nine, so a relief has to be close to arrive in time.
+- [x] ~~**W3.6 Work scales with the fight.**~~ **True by construction**
+      (2026-09-26): every engagement is its own `BattleState` holding only
+      its own units on its own window onto the world, so the fog,
+      `known_enemies`, `incoming` and a playout's clone never see beyond it.
+- [x] ~~**W3.7 `field.rs` replaced.**~~ **Done for generated campaigns**
+      (2026-09-26): a clocked campaign never stages a `Clash`; the harness
+      and `examples/campaign` run it on the clock and record each engagement
+      as a battle. `field.rs` stays for the drawn campaign, which keeps its
+      battles-as-events until it is retired.
 
 ### W4 — the player in the chain of command
 

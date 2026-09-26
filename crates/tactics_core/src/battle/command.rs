@@ -1007,6 +1007,36 @@ impl CommandState {
         }
     }
 
+    /// A formation that arrived after the battle began — a column joining a
+    /// fight in progress (WORLD.md W3.5). It goes to the end of the list,
+    /// which is the seniority a late arrival has; `members` are in id order
+    /// and the first that `leads`, else the first, leads.
+    pub fn add_formation(
+        &mut self,
+        def: &FormationDef,
+        members: &[(UnitId, bool)],
+    ) -> Option<FormationId> {
+        let leader = members
+            .iter()
+            .find(|(_, leads)| *leads)
+            .or_else(|| members.first())
+            .map(|(id, _)| *id)?;
+        self.formations.push(Formation {
+            id: def.id.clone(),
+            side: def.side,
+            leader: Some(leader),
+            founding_leader: Some(leader),
+            members: members.iter().map(|(id, _)| *id).collect(),
+            doctrine: def.doctrine.clone(),
+            mission: None,
+            latitude: Latitude::default(),
+            plan: std::collections::VecDeque::new(),
+            incoming: None,
+            out_of_contact: Vec::new(),
+        });
+        Some(FormationId(self.formations.len() as u32 - 1))
+    }
+
     /// Every formation in this battle, in the order its map declared them.
     pub fn formations(&self) -> &[Formation] {
         &self.formations

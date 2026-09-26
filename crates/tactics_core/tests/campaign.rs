@@ -1767,3 +1767,101 @@ fn every_seed_of_the_generated_campaign_is_fought_to_an_end() {
         assert!(run.end.is_some(), "seed {seed} never ended");
     }
 }
+
+#[test]
+fn a_column_that_reaches_a_fight_in_progress_joins_it_on_its_own_side() {
+    // WORLD.md W3.5: the fight is on the ground, so an army marching into
+    // it arrives in it — vehicles on tiles beside the ones already there, a
+    // formation of its own, fighting for its own side — rather than a second
+    // battle being staged somewhere or the column waiting on the border.
+    let reg = registry();
+    let (mut state, army, enemy) = about_to_meet(&reg);
+    state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
+    for _ in 0..20_000 {
+        if !state.engagements.is_empty() {
+            break;
+        }
+        state.advance_clock(&reg, 1);
+    }
+    assert!(
+        !state.engagements.is_empty(),
+        "the test wants a fight in progress"
+    );
+    let fight = state.engagements[0].id;
+    let before = state.engagements[0].battle().units.len();
+    let enemy_side = state.army(enemy).unwrap().side;
+    // The other Valkyrie army, set down on the border of the fight's hex —
+    // a column moves a tile a minute and a fight here lasts about nine, so
+    // one set down further off arrives after it is over — and sent in.
+    let reserve = state
+        .armies
+        .iter()
+        .find(|a| a.side == enemy_side && a.id != enemy)
+        .unwrap()
+        .id;
+    let at = state.army(enemy).unwrap().pos;
+    let radius = reg.scale.battle_map_radius();
+    let (start, border) = at
+        .all_neighbors()
+        .into_iter()
+        .filter(|n| state.army_at(*n).is_none())
+        .find_map(|n| {
+            tactics_core::world::chunk_hexes(n, radius)
+                .find(|t| {
+                    t.all_neighbors()
+                        .iter()
+                        .any(|x| tactics_core::world::chunk_of(*x, radius) == at)
+                })
+                .map(|t| (n, t))
+        })
+        .expect("a free neighbouring hex");
+    {
+        let r = state.armies.iter_mut().find(|a| a.id == reserve).unwrap();
+        r.pos = start;
+        r.tile = Some(border);
+        r.moved = false;
+    }
+    // Orders are given at dawn in turn; set the march directly, as the
+    // Valkyries' planner would have.
+    let leg_order = OverworldOrder::MoveArmy {
+        army: reserve,
+        to: at,
+    };
+    state.active_side = enemy_side;
+    state
+        .apply(&reg, &leg_order)
+        .expect("the reserve is sent to the fight");
+    let mut joined = false;
+    for _ in 0..20_000 {
+        let events = state.advance_clock(&reg, 1);
+        if events.iter().any(|e| {
+            matches!(e, OverworldEvent::EngagementJoined { engagement, army: a }
+                if *engagement == fight && *a == reserve)
+        }) {
+            joined = true;
+            break;
+        }
+        if state.engagements.is_empty() {
+            break;
+        }
+    }
+    assert!(
+        joined,
+        "the reserve never reached the fight, or the fight ended first"
+    );
+    let e = &state.engagements[0];
+    assert_eq!(state.army(reserve).unwrap().engaged, Some(fight));
+    assert!(e.battle().units.len() > before, "nobody arrived");
+    let theirs: Vec<_> = e
+        .battle()
+        .units
+        .iter()
+        .filter(|u| e.origin(u.id) == Some(reserve))
+        .collect();
+    assert!(!theirs.is_empty());
+    assert!(
+        theirs.iter().all(|u| u.side == enemy_side),
+        "they fight for their own side"
+    );
+    let _ = army;
+}

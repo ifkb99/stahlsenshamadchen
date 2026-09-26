@@ -544,7 +544,9 @@ and the seam tests in `tests/ground.rs`.
   clock, its AI is planned inside the engine each round from the fight's
   own dice (so a save mid-fight is exact), and survivors fold back into
   armies where they stand. The defender's ground is the fight's objective;
-  without it the AI had nothing to fight for and never closed.
+  without it the AI had nothing to fight for and never closed. A column that
+  reaches a fight in progress joins it on its own side
+  (`BattleState::reinforce`), never a second battle.
 
 ### Reading ground
 
