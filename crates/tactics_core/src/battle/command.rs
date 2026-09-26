@@ -53,7 +53,7 @@ use std::collections::VecDeque;
 /// flap between two equally distant exits from one round to the next.
 pub fn nearest_exit(state: &BattleState, side: u8, from: Hex) -> Option<String> {
     let mut best: Option<(i32, &Objective)> = None;
-    for objective in state.map.objectives() {
+    for objective in state.scenario.objectives() {
         if objective.kind != ObjectiveKind::Exit || !objective.open_to(side) {
             continue;
         }
@@ -395,7 +395,8 @@ impl Goal {
         }
     }
 
-    /// How this reads over the radio, given a map that can name its ground.
+    /// How this reads over the radio, given a scenario that can name its
+    /// ground.
     ///
     /// A phrase rather than a sentence, and in the crew's own voice, because
     /// the log is traffic rather than narration: the presentation layer puts
@@ -403,10 +404,10 @@ impl Goal {
     /// name — "moving to the Great Glade" is what somebody would actually
     /// say, where a grid reference is what she falls back on when the ground
     /// has none.
-    pub fn describe(&self, map: &crate::map::HexMap) -> String {
+    pub fn describe(&self, scenario: &crate::map::Scenario) -> String {
         match self {
             Self::Hold => "holding here".to_string(),
-            Self::Take(hex) => match map.objectives().iter().find(|o| o.hexes.contains(hex)) {
+            Self::Take(hex) => match scenario.objectives().iter().find(|o| o.hexes.contains(hex)) {
                 Some(objective) => format!("moving to {}", objective.name),
                 None => {
                     let [col, row] = crate::hex_to_offset(*hex);

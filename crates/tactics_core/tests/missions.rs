@@ -22,7 +22,7 @@ use tactics_core::battle::{
     Mission, Order, SideState, UnitId, reachable,
 };
 use tactics_core::data::DataRegistry;
-use tactics_core::map::{HexMap, UnitPlacement};
+use tactics_core::map::{Battlefield, UnitPlacement};
 use tactics_core::overworld::{
     Army, ArmyId, ArmyMission, BattleReport, OverworldError, OverworldEvent, OverworldOrder,
     OverworldState,
@@ -581,7 +581,7 @@ fn a_hand_ordered_march_past_an_enemy_is_not_a_declaration_of_war() {
 fn a_withdrawing_army_fights_its_battle_toward_the_exit() {
     let reg = registry_wireless();
     let file = reg.map("river_crossing").expect("shipped battle map");
-    let map = HexMap::from_map_file(file).expect("map parses");
+    let map = Battlefield::from_map_file(file).expect("map parses");
 
     // Two companies facing each other along the trunk road, each one a
     // formation, exactly as the campaign's `deploy` assembles them.
@@ -662,7 +662,7 @@ fn a_withdrawing_army_fights_its_battle_toward_the_exit() {
         .expect("her own lane");
 
     let lane: Vec<tactics_core::Hex> = state
-        .map
+        .scenario
         .objectives()
         .iter()
         .find(|o| o.id == via)
@@ -1491,7 +1491,7 @@ fn a_map_that_names_no_objectives_is_fought_exactly_as_it_was_before() {
     // much a doctrine cares about objectives must not change a single score.
     let reg = registry();
     let state = standoff(&reg, 1);
-    assert!(state.map.objectives().is_empty());
+    assert!(state.scenario.objectives().is_empty());
     assert!(
         state.leader().is_none(),
         "nobody leads a battle with nothing to lead on"
@@ -1724,7 +1724,7 @@ fn setting_a_mission_stores_it_on_the_formation_and_says_so_out_loud() {
     let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 5).expect("battle");
     let armor = formation_named(&state, "kuhlmann_armor");
-    let bridge = state.map.objectives()[0].anchor();
+    let bridge = state.scenario.objectives()[0].anchor();
 
     let events = state
         .apply(
@@ -1778,7 +1778,7 @@ fn a_mission_is_a_standing_order_and_outlives_the_round_it_was_given_in() {
     let reg = registry();
     let mut state = BattleState::from_map(&reg, "river_crossing", 6).expect("battle");
     let recon = formation_named(&state, "kuhlmann_recon");
-    let ford = state.map.objectives()[1].anchor();
+    let ford = state.scenario.objectives()[1].anchor();
     state
         .apply(
             &reg,
@@ -3346,7 +3346,7 @@ fn an_officer_in_sight_settles_a_crew_faster() {
             "formations": [{ "id": "ours", "side": 0 }],
         }))
         .expect("fixture map");
-        let map = HexMap::from_map_file(&file).expect("map parses");
+        let map = Battlefield::from_map_file(&file).expect("map parses");
         let formed = |at: [i32; 2], name: &str, leads: bool| UnitPlacement {
             aboard_at: None,
             at,
@@ -3815,7 +3815,7 @@ fn a_formation_advances_on_the_ground_its_mission_names() {
     let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 5).unwrap();
     let bridge = state
-        .map
+        .scenario
         .objectives()
         .iter()
         .find(|o| o.id == "bridge")
@@ -3869,7 +3869,7 @@ fn an_ordered_withdrawal_needs_no_wounds() {
     reg.balance.route_exposure.withdraw = 0;
     let mut state = BattleState::from_map(&reg, "river_crossing", 13).unwrap();
     let lane = state
-        .map
+        .scenario
         .objectives()
         .iter()
         .find(|o| o.id == "west_road")
@@ -4055,13 +4055,13 @@ fn a_commander_sends_her_grenadiers_to_hold_the_covered_ground() {
         hexes.iter().sum::<i32>() / hexes.len() as i32
     };
     let held = state
-        .map
+        .scenario
         .objectives()
         .iter()
         .find(|o| o.anchor() == at)
         .expect("the anchor is an objective's");
     let best = state
-        .map
+        .scenario
         .objectives()
         .iter()
         .filter(|o| o.kind == tactics_core::map::ObjectiveKind::Hold)
@@ -4140,7 +4140,7 @@ fn an_executor_only_command_fills_gaps_without_issuing_missions() {
         "formations": [{ "id": "first", "name": "1st Platoon", "side": 0 }],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let placement =
         |col: i32, row: i32, name: &str, formation: Option<&str>, leads: bool| UnitPlacement {
             aboard_at: None,
@@ -4264,7 +4264,7 @@ fn initiative_moves_a_commander_on_and_obedience_does_not() {
     ai.plan_round(&reg, &mut state);
     let line = formation_named(&state, "valkyrie_line");
     let ford = state
-        .map
+        .scenario
         .objectives()
         .iter()
         .find(|o| o.id == "north_ford")
@@ -4297,7 +4297,7 @@ fn initiative_moves_a_commander_on_and_obedience_does_not() {
     );
     ai.plan_round(&reg, &mut state);
     let armor = formation_named(&state, "kuhlmann_armor");
-    let bridge = state.map.objectives()[0].anchor();
+    let bridge = state.scenario.objectives()[0].anchor();
     assert_eq!(
         state.formations()[armor.index()].mission,
         Some(Mission::Assault { to: bridge }),
@@ -4337,7 +4337,7 @@ fn an_aggressive_commander_orders_assaults_and_a_balanced_one_advances() {
     };
     let bridge = BattleState::from_map(&reg, "river_crossing", 33)
         .unwrap()
-        .map
+        .scenario
         .objectives()[0]
         .anchor();
     assert_eq!(

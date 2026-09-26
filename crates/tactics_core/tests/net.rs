@@ -25,7 +25,7 @@ use tactics_core::battle::{
     Mission, Order, SideState, UnitId,
 };
 use tactics_core::data::DataRegistry;
-use tactics_core::map::{HexMap, UnitPlacement};
+use tactics_core::map::{Battlefield, UnitPlacement};
 
 mod common;
 use common::{
@@ -47,7 +47,7 @@ fn orders_take_time_to_arrive_when_the_radio_says_so() {
     reg.command = Some(command_rules(999, true, 2));
     let mut state = BattleState::from_map(&reg, "river_crossing", 5).expect("battle");
     let armor = formation_named(&state, "kuhlmann_armor");
-    let bridge = state.map.objectives()[0].anchor();
+    let bridge = state.scenario.objectives()[0].anchor();
 
     let events = state
         .apply(
@@ -532,7 +532,7 @@ fn picture_stage(reg: &DataRegistry, seed: u64) -> BattleState {
         "formations": [ { "id": "net", "name": "The Net", "side": 0 } ],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -1366,7 +1366,7 @@ fn signal_stage(reg: &DataRegistry, forest: bool, seed: u64) -> BattleState {
         ],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -1458,7 +1458,7 @@ fn radio_stage(reg: &DataRegistry, seed: u64) -> BattleState {
         "formations": [ { "id": "net", "name": "The Net", "side": 0 } ],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),
@@ -1864,7 +1864,7 @@ fn nothing_follows_a_stand_fast_or_a_retreat() {
     let reg = registry_wireless();
     let mut state = BattleState::from_map(&reg, "river_crossing", 46).unwrap();
     let armor = formation_named(&state, "kuhlmann_armor");
-    let anywhere = state.map.objectives()[0].anchor();
+    let anywhere = state.scenario.objectives()[0].anchor();
 
     state
         .apply(
@@ -1937,7 +1937,7 @@ fn an_amendment_travels_the_wire_like_any_order() {
     strip_radios(&mut reg);
     let mut state = BattleState::from_map(&reg, "river_crossing", 47).unwrap();
     let armor = formation_named(&state, "kuhlmann_armor");
-    let bridge = state.map.objectives()[0].anchor();
+    let bridge = state.scenario.objectives()[0].anchor();
 
     state
         .apply(
@@ -2276,7 +2276,7 @@ fn being_found_is_not_something_the_found_crew_is_told() {
 fn a_formations_orders_are_not_overheard_by_the_enemy() {
     let reg = registry_wireless();
     let file = reg.map("river_crossing").expect("shipped battle map");
-    let map = HexMap::from_map_file(file).expect("map parses");
+    let map = Battlefield::from_map_file(file).expect("map parses");
     let placement = |col: i32, side: u8, formation: &str, leads: bool| UnitPlacement {
         aboard_at: None,
         at: [col, 20],

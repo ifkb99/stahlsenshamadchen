@@ -165,7 +165,7 @@ fn a_save_written_before_objectives_existed_still_opens() {
         .expect("battle survives");
     assert_eq!(
         restored.objective_held.len(),
-        restored.map.objectives().len(),
+        restored.scenario.objectives().len(),
         "control must be sized against the map it was loaded with"
     );
     assert_eq!(restored.score.len(), restored.sides.len());
@@ -178,7 +178,7 @@ fn a_battle_saved_mid_fight_remembers_who_holds_the_ground() {
     let mut state = BattleState::from_map(&reg, "river_crossing", 4).expect("battle");
     // Put someone on the bridge and let a round pay out, so there is control
     // and a score to lose rather than two empty vectors.
-    let bridge = state.map.objectives()[0].anchor();
+    let bridge = state.scenario.objectives()[0].anchor();
     let unit = state.units[0].id;
     state.unit_mut(unit).unwrap().pos = bridge;
     play(&reg, &mut state, 1, 4);
@@ -259,7 +259,7 @@ fn a_standing_mission_survives_being_saved_and_reloaded() {
             .position(|f| f.id == "kuhlmann_recon")
             .expect("river_crossing declares it") as u32,
     );
-    let bridge = state.map.objectives()[0].anchor();
+    let bridge = state.scenario.objectives()[0].anchor();
     state
         .apply(
             &reg,
@@ -572,7 +572,7 @@ fn a_mission_in_transit_survives_a_save() {
             .position(|f| f.id == "kuhlmann_armor")
             .expect("river_crossing declares it") as u32,
     );
-    let bridge = original.map.objectives()[0].anchor();
+    let bridge = original.scenario.objectives()[0].anchor();
     original
         .apply(
             &reg,
@@ -693,7 +693,7 @@ fn an_order_waiting_at_the_radio_survives_a_save() {
         .map(|u| u.id)
         .find(|id| !state.hears_orders(*id))
         .expect("a one-hex net leaves somebody outside it");
-    let bridge = state.map.objectives()[0].anchor();
+    let bridge = state.scenario.objectives()[0].anchor();
     state
         .apply(
             &reg,
@@ -777,7 +777,7 @@ fn scripted_battle(
     placements: Vec<tactics_core::map::UnitPlacement>,
 ) -> BattleState {
     let file: tactics_core::map::MapFile = serde_json::from_value(file).unwrap();
-    let map = tactics_core::map::HexMap::from_map_file(&file).unwrap();
+    let map = tactics_core::map::Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         tactics_core::battle::SideState {
             name: "West".into(),

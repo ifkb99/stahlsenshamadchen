@@ -48,7 +48,7 @@ pub use orders::{Event, FireIntent, Order, OrderError, UnitIntent};
 
 use crate::ai::AiConfig;
 use crate::data::{DataError, DataRegistry, ModuleEffect, ValidationReport};
-use crate::map::{HexMap, MapKind, UnitPlacement};
+use crate::map::{Battlefield, HexMap, MapKind, Scenario, UnitPlacement};
 use crate::roster::{CadetId, Roster};
 use hexx::{EdgeDirection, Hex};
 use rand::SeedableRng;
@@ -695,7 +695,14 @@ pub struct Unbuilt;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(bound(deserialize = "C: Default"))]
 pub struct Battle<C = Built> {
+    /// The ground: tiles, and nothing about the fight on them.
     pub map: Arc<HexMap>,
+    /// What this fight is about — objectives, formations, loss conditions,
+    /// the victory score — kept apart from the ground because the two have
+    /// different owners once the ground is one world (WORLD.md, W0.1).
+    /// Immutable for the battle, and behind an `Arc` for the reason the map
+    /// is: search planners clone the whole state constantly.
+    pub scenario: Arc<Scenario>,
     /// Sight heights for every tile, resolved once from the map and the
     /// registry. Shared rather than recomputed because line of sight is the
     /// hottest thing the simulation does and terrain never changes during a
@@ -796,6 +803,7 @@ impl SavedBattle {
     pub fn rehydrate(self, registry: &DataRegistry) -> BattleState {
         let Battle {
             map,
+            scenario,
             sight,
             moves,
             sides,
@@ -838,11 +846,12 @@ impl SavedBattle {
         // objective and by side — and scoring writes through those indices. A
         // save written before objectives existed carries neither, so size them
         // from the map and the sides rather than trusting the file to agree.
-        objective_held.resize(map.objectives().len(), None);
+        objective_held.resize(scenario.objectives().len(), None);
         score.resize(sides.len(), 0);
 
         Battle {
             map,
+            scenario,
             sight,
             moves,
             sides,
@@ -960,7 +969,10 @@ impl BattleState {
         if !report.is_ok() {
             return Err(BattleSetupError::Invalid(report.errors));
         }
-        let map = HexMap::from_map_file(file)?;
+        let Battlefield {
+            terrain: map,
+            scenario,
+        } = Battlefield::from_map_file(file)?;
         let sides: Vec<SideState> = file
             .sides
             .iter()
@@ -970,18 +982,19 @@ impl BattleState {
             })
             .collect();
         let side_count = sides.len();
-        let objective_count = map.objectives().len();
+        let objective_count = scenario.objectives().len();
         let sight = Arc::new(SightGrid::build(registry, &map));
         let moves = Arc::new(MoveGrid::build(registry, &map));
         // Resolved before the map is moved into its `Arc`, and from the same
         // two things the units are spawned from, so membership cannot drift
         // from the roster it describes.
-        let command = CommandState::from_placements(map.formations(), &file.units);
+        let command = CommandState::from_placements(scenario.formations(), &file.units);
         // A scenario battle has no campaign behind it, so its cadets are
         // stamped fresh from mod data and forgotten afterwards.
         let (roster, crews) = Roster::stamp_for(registry, &file.units);
         let mut state = Self {
             map: Arc::new(map),
+            scenario: Arc::new(scenario),
             sight,
             moves,
             sides,
@@ -1031,29 +1044,34 @@ impl BattleState {
     /// decline to start the battle.
     pub fn from_placements(
         registry: &DataRegistry,
-        map: HexMap,
+        field: Battlefield,
         sides: Vec<SideState>,
         placements: &[UnitPlacement],
         crews: &[Vec<CadetId>],
         roster: Arc<Roster>,
         seed: u64,
     ) -> Result<Self, BattleSetupError> {
+        let Battlefield {
+            terrain: map,
+            scenario,
+        } = field;
         let errors = validate_placements(registry, &map, &sides, placements, crews, &roster);
         if !errors.is_empty() {
             return Err(BattleSetupError::Invalid(errors));
         }
         let side_count = sides.len();
-        let objective_count = map.objectives().len();
+        let objective_count = scenario.objectives().len();
         let sight = Arc::new(SightGrid::build(registry, &map));
         let moves = Arc::new(MoveGrid::build(registry, &map));
-        // The formations travel on the map for exactly this reason: a field
-        // battle the overworld assembles picks them up without this signature
-        // growing, the same trip objectives already make. A declaration whose
-        // members are not among these placements is dropped rather than
-        // carried empty — see `CommandState::from_placements`.
-        let command = CommandState::from_placements(map.formations(), placements);
+        // The formations travel with the scenario for exactly this reason: a
+        // field battle the overworld assembles picks them up without this
+        // signature growing, the same trip objectives already make. A
+        // declaration whose members are not among these placements is dropped
+        // rather than carried empty — see `CommandState::from_placements`.
+        let command = CommandState::from_placements(scenario.formations(), placements);
         let mut state = Self {
             map: Arc::new(map),
+            scenario: Arc::new(scenario),
             sight,
             moves,
             sides,
@@ -1821,7 +1839,7 @@ impl BattleState {
 
     /// Every objective on this map paired with the side currently holding it.
     pub fn objectives(&self) -> impl Iterator<Item = (&crate::map::Objective, Option<u8>)> {
-        self.map
+        self.scenario
             .objectives()
             .iter()
             .enumerate()

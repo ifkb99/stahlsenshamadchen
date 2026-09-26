@@ -772,7 +772,7 @@ fn setup_battle(
     // they cover cannot change during a battle. They are `HexOverlay`s, so
     // `reposition_map` carries them through view rotation with everything
     // else.
-    for (index, objective) in state.map.objectives().iter().enumerate() {
+    for (index, objective) in state.scenario.objectives().iter().enumerate() {
         for hex in &objective.hexes {
             let overlay = HexOverlay::face(*hex);
             commands.spawn((
@@ -1458,7 +1458,7 @@ fn pump_events(
             } => {
                 let what = battle
                     .state
-                    .map
+                    .scenario
                     .objectives()
                     .iter()
                     .find(|o| &o.id == objective)
@@ -2867,7 +2867,7 @@ fn update_objective_markers(
     mut markers: Query<(&ObjectiveMarker, &mut Sprite)>,
 ) {
     for (marker, mut sprite) in &mut markers {
-        let objective = battle.state.map.objectives().get(marker.index);
+        let objective = battle.state.scenario.objectives().get(marker.index);
         // An exit is never held, so it would sit on the neutral colour
         // forever and read as ground nobody had bothered to take.
         if objective.is_some_and(|o| o.kind == ObjectiveKind::Exit) {
@@ -2922,14 +2922,14 @@ fn update_panel(
         // The score belongs next to the round, because on a map with
         // objectives it is the other clock the player is racing: a battle can
         // now be lost while winning the shooting.
-        if !state.map.objectives().is_empty() {
+        if !state.scenario.objectives().is_empty() {
             let scores: Vec<String> = state
                 .sides
                 .iter()
                 .enumerate()
                 .map(|(i, side)| format!("{} {}", side.name, state.score(i as u8)))
                 .collect();
-            text.0 = match state.map.victory_score() {
+            text.0 = match state.scenario.victory_score() {
                 Some(target) => format!("{}   |   {} (to {target})", text.0, scores.join("  -  ")),
                 None => format!("{}   |   {}", text.0, scores.join("  -  ")),
             };
@@ -3205,7 +3205,7 @@ mod tests {
             "rows": ["ggggggggggggg", "ggggggggggggg", "ggggggggggggg"],
         }))
         .unwrap();
-        let map = tactics_core::map::HexMap::from_map_file(&file).unwrap();
+        let map = tactics_core::map::Battlefield::from_map_file(&file).unwrap();
         let placement = |at: [i32; 2], side: u8, vehicle: &str| UnitPlacement {
             aboard_at: None,
             at,

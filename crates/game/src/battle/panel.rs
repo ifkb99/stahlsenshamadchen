@@ -30,7 +30,7 @@ use tactics_core::battle::{
 /// still named rather than silently anonymous.
 pub(super) fn formation_name(state: &BattleState, id: &str) -> String {
     state
-        .map
+        .scenario
         .formations()
         .iter()
         .find(|f| f.id == id)
@@ -329,7 +329,7 @@ pub(super) fn mission_sentence(state: &BattleState, mission: Option<&Mission>) -
         Some(Mission::Withdraw { via }) => format!(
             "withdraw by {}",
             state
-                .map
+                .scenario
                 .objectives()
                 .iter()
                 .find(|o| &o.id == via)
@@ -817,7 +817,7 @@ pub(super) fn format_tile(
 mod tests {
     use super::*;
     use tactics_core::battle::SideState;
-    use tactics_core::map::{HexMap, UnitPlacement};
+    use tactics_core::map::{Battlefield, UnitPlacement};
 
     fn registry() -> tactics_core::data::DataRegistry {
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
@@ -842,7 +842,7 @@ mod tests {
             "rows": ["gggggggg", "gggggggg", "gggggggg"],
         }))
         .expect("the stage parses");
-        let map = HexMap::from_map_file(&file).expect("the stage builds");
+        let map = Battlefield::from_map_file(&file).expect("the stage builds");
         let placements = vec![
             placement([0, 1], 0, "medium_tank", "Ours"),
             placement([3, 1], 1, "medium_tank", "Theirs"),

@@ -532,35 +532,41 @@ pub(crate) mod hex_keyed {
     }
 }
 
-/// A parsed, playable hex map.
+/// The ground of a map: tiles, and nothing that is about a fight on them.
+///
+/// It used to carry the scenario too — objectives, formations, loss
+/// conditions and a victory score — because both battle-setup paths already
+/// held a `HexMap` and anything riding on it reached both for free. That
+/// stopped being true the moment the ground became one world
+/// ([WORLD.md](../../../../WORLD.md), W0.1): terrain belongs to the world and
+/// is shared by every engagement fought on it, while what a fight is *about*
+/// belongs to that fight. The scenario is [`Scenario`] now, and the two
+/// travel together only as a [`Battlefield`], at setup.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct HexMap {
     #[serde(with = "hex_keyed")]
     tiles: HashMap<Hex, Tile>,
+}
+
+/// What a fight on some ground is about: the ground worth holding, who
+/// answers to whom, and what ends it short of elimination.
+///
+/// Immutable for the length of a battle, like the terrain, which is why a
+/// battle holds it behind an `Arc` — search planners clone the whole state
+/// constantly. It is split from [`HexMap`] because the two have different
+/// owners once the ground is one world: the world owns the tiles; an
+/// engagement, or the campaign that stages it, owns this.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Scenario {
     /// Ground worth fighting for, in the order the map file declared it.
     ///
-    /// These live on the map rather than on the battle because they are
-    /// immutable terrain-like facts: which hexes are the bridge does not
-    /// change during a fight, only who is standing on them. That split also
-    /// means both battle-setup paths — a scenario map and a field battle the
-    /// overworld assembles from placements — pick objectives up for free,
-    /// since both already carry a `HexMap`.
-    ///
-    /// `#[serde(default)]` so saves written before objectives existed still
-    /// load, as maps without them.
+    /// Declaration order is load bearing: it indexes the battle's control
+    /// and is walked when scoring, so it must not become a hash order.
     #[serde(default)]
     objectives: Vec<Objective>,
     #[serde(default)]
     victory_score: Option<u32>,
     /// Formations declared by the map file, in declaration order.
-    ///
-    /// These ride here for the same reason objectives do, and it is worth
-    /// stating because a formation is not a hex and this struct is mostly
-    /// hexes. `HexMap` is what *both* battle-setup paths already carry — a
-    /// scenario map and a field battle the overworld assembles from
-    /// placements — so anything that has to reach both without growing an
-    /// argument on every constructor travels here. `victory_score` set the
-    /// precedent; this follows it.
     ///
     /// Declaration order is load bearing: it is the order
     /// [`crate::battle::CommandState`] walks, and by the seniority rule it is
@@ -568,16 +574,91 @@ pub struct HexMap {
     /// order.
     #[serde(default)]
     formations: Vec<FormationDef>,
-    /// Stakes placed on those formations, in declaration order.
-    ///
-    /// Here for the same reason the formations are: both battle-setup paths
-    /// already carry a `HexMap`, so a rule that has to reach a field battle
-    /// the overworld assembles as well as a scenario travels on the map or
-    /// grows an argument on every constructor. It is also honest about what
-    /// these are — a fact about the scenario, fixed before the first shot,
-    /// which is exactly what the map is for.
+    /// Stakes placed on those formations, in declaration order — a fact
+    /// about the scenario, fixed before the first shot.
     #[serde(default)]
     loss_conditions: Vec<LossCondition>,
+}
+
+/// Ground and a scenario on it, as a battle is set up from them.
+///
+/// The pair a map file describes, and the one thing both setup paths —
+/// [`crate::battle::BattleState::from_map`] and `from_placements` — are
+/// handed. It exists only until the battle is built; the battle keeps the two
+/// halves apart.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Battlefield {
+    pub terrain: HexMap,
+    pub scenario: Scenario,
+}
+
+impl Battlefield {
+    /// Both halves of one map file.
+    pub fn from_map_file(file: &MapFile) -> Result<Self, MapError> {
+        Ok(Self {
+            terrain: HexMap::from_map_file(file)?,
+            scenario: Scenario::from_map_file(file),
+        })
+    }
+}
+
+impl Scenario {
+    /// The scenario a map file declares. Infallible: everything that can be
+    /// wrong with it is a validation error with a better message, reported by
+    /// [`MapFile::validate_into`].
+    pub fn from_map_file(file: &MapFile) -> Self {
+        let objectives = file
+            .objectives
+            .iter()
+            .map(|spec| Objective {
+                id: spec.id.clone(),
+                name: if spec.name.is_empty() {
+                    spec.id.clone()
+                } else {
+                    spec.name.clone()
+                },
+                hexes: spec
+                    .at
+                    .iter()
+                    .map(|at| crate::offset_to_hex(at[0], at[1]))
+                    .collect(),
+                value: spec.value,
+                kind: spec.kind,
+                side: spec.side,
+            })
+            .collect();
+        Self {
+            objectives,
+            victory_score: file.victory_score,
+            formations: file.formations.clone(),
+            loss_conditions: file.loss_conditions.clone(),
+        }
+    }
+
+    /// Ground worth fighting for, in map-file order. That order is load
+    /// bearing: it indexes the battle's control and is walked when scoring,
+    /// so it must not become a hash order.
+    pub fn objectives(&self) -> &[Objective] {
+        &self.objectives
+    }
+
+    /// Points that end the battle outright, if this scenario sets any.
+    pub fn victory_score(&self) -> Option<u32> {
+        self.victory_score
+    }
+
+    /// Formations this scenario declares, in declaration order — which is
+    /// the order a battle resolves them in and the seniority they succeed in.
+    pub fn formations(&self) -> &[FormationDef] {
+        &self.formations
+    }
+
+    /// What ends this battle short of elimination or points: the formations
+    /// whose loss a side cannot survive. Empty for every map that says
+    /// nothing, which is how a scenario opts out by omission.
+    pub fn loss_conditions(&self) -> &[LossCondition] {
+        &self.loss_conditions
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -632,58 +713,7 @@ impl HexMap {
                 );
             }
         }
-        let objectives = file
-            .objectives
-            .iter()
-            .map(|spec| Objective {
-                id: spec.id.clone(),
-                name: if spec.name.is_empty() {
-                    spec.id.clone()
-                } else {
-                    spec.name.clone()
-                },
-                hexes: spec
-                    .at
-                    .iter()
-                    .map(|at| crate::offset_to_hex(at[0], at[1]))
-                    .collect(),
-                value: spec.value,
-                kind: spec.kind,
-                side: spec.side,
-            })
-            .collect();
-        Ok(Self {
-            tiles,
-            objectives,
-            victory_score: file.victory_score,
-            formations: file.formations.clone(),
-            loss_conditions: file.loss_conditions.clone(),
-        })
-    }
-
-    /// Ground worth fighting for, in map-file order. That order is load
-    /// bearing: it indexes the battle's control and is walked when scoring,
-    /// so it must not become a hash order.
-    pub fn objectives(&self) -> &[Objective] {
-        &self.objectives
-    }
-
-    /// Points that end the battle outright, if this map sets any.
-    pub fn victory_score(&self) -> Option<u32> {
-        self.victory_score
-    }
-
-    /// Formations this map declares, in declaration order — which is the
-    /// order a battle resolves them in and the seniority they succeed in.
-    pub fn formations(&self) -> &[FormationDef] {
-        &self.formations
-    }
-
-    /// What ends this battle short of elimination or points: the formations
-    /// whose loss a side cannot survive. Empty for every map that says
-    /// nothing, which is how a scenario opts out by omission.
-    pub fn loss_conditions(&self) -> &[LossCondition] {
-        &self.loss_conditions
+        Ok(Self { tiles })
     }
 
     pub fn get(&self, hex: Hex) -> Option<&Tile> {
@@ -1319,8 +1349,12 @@ mod tests {
             }"##,
         )
         .unwrap();
-        let map = HexMap::from_map_file(&file).unwrap();
-        let names: Vec<&str> = map.formations().iter().map(|f| f.display_name()).collect();
+        let scenario = Scenario::from_map_file(&file);
+        let names: Vec<&str> = scenario
+            .formations()
+            .iter()
+            .map(|f| f.display_name())
+            .collect();
         assert_eq!(names, ["1st_platoon", "2nd Platoon"]);
     }
 

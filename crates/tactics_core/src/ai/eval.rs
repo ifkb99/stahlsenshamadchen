@@ -426,7 +426,7 @@ impl Evaluator {
             // a named piece of ground lies, and this is how hard the middle
             // of an empty map pulls a crew who has been given nothing. The
             // field says why folding them together would be wrong.
-            None if state.map.objectives().is_empty() => {
+            None if state.scenario.objectives().is_empty() => {
                 -(state.map.center().distance_to(tile) as f32)
                     * planner.search_slope
                     * doctrine.scouting
@@ -707,7 +707,7 @@ impl Evaluator {
             // ordered is exactly the permission it was standing in for.
             Mission::Withdraw { via } => {
                 let lane = state
-                    .map
+                    .scenario
                     .objectives()
                     .iter()
                     .find(|o| o.id == *via && o.kind == ObjectiveKind::Exit);
@@ -838,7 +838,7 @@ impl Evaluator {
             })
             .sum();
         let at_stake: f32 = state
-            .map
+            .scenario
             .objectives()
             .iter()
             .filter(|o| o.kind == ObjectiveKind::Hold)

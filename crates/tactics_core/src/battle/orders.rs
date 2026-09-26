@@ -810,7 +810,7 @@ impl BattleState {
                     vec![Event::SetOut {
                         unit: *unit,
                         goal: *goal,
-                        doing: goal.describe(&self.map),
+                        doing: goal.describe(&self.scenario),
                     }]
                 } else {
                     Vec::new()
@@ -1212,7 +1212,7 @@ impl BattleState {
                 // map's edge and sit in the open waiting for a way out that
                 // was never written down.
                 let usable = self
-                    .map
+                    .scenario
                     .objectives()
                     .iter()
                     .any(|o| o.id == *via && o.kind == ObjectiveKind::Exit && o.open_to(side));
@@ -2531,9 +2531,9 @@ impl BattleState {
     /// Objectives are walked in map-file order and units in id order, so what
     /// this emits cannot depend on hash iteration order.
     fn resolve_exits(&mut self, events: &mut Vec<Event>) -> bool {
-        let map = std::sync::Arc::clone(&self.map);
+        let scenario = std::sync::Arc::clone(&self.scenario);
         let mut any = false;
-        for objective in map
+        for objective in scenario
             .objectives()
             .iter()
             .filter(|o| o.kind == ObjectiveKind::Exit)
@@ -2576,10 +2576,10 @@ impl BattleState {
     /// Objectives are walked in map-file order and units in id order, so the
     /// events this emits cannot depend on hash iteration order.
     fn update_objective_control(&mut self, events: &mut Vec<Event>) {
-        // The map is shared behind an `Arc`, so taking a handle to it costs a
-        // refcount and frees `self` to be written to inside the loop.
-        let map = std::sync::Arc::clone(&self.map);
-        for (index, objective) in map.objectives().iter().enumerate() {
+        // The scenario is shared behind an `Arc`, so taking a handle to it
+        // costs a refcount and frees `self` to be written to inside the loop.
+        let scenario = std::sync::Arc::clone(&self.scenario);
+        for (index, objective) in scenario.objectives().iter().enumerate() {
             // An exit is not ground anyone holds — you pass through it, and
             // `resolve_exits` has already taken anyone who did. Its slot in
             // `objective_held` stays `None` for the whole battle.
@@ -2615,8 +2615,8 @@ impl BattleState {
     /// collecting two points a round is a running total, not news, and the
     /// log exists to carry the things that are.
     fn award_objective_points(&mut self) {
-        let map = std::sync::Arc::clone(&self.map);
-        for (index, objective) in map.objectives().iter().enumerate() {
+        let scenario = std::sync::Arc::clone(&self.scenario);
+        for (index, objective) in scenario.objectives().iter().enumerate() {
             let Some(side) = self.objective_held[index] else {
                 continue;
             };
@@ -2669,7 +2669,7 @@ impl BattleState {
         // A map that sets no `victory_score` cannot end this way at all,
         // which is what keeps objectives an additive rule: say nothing and
         // the battle is fought to the death exactly as it always was.
-        if let Some(target) = self.map.victory_score()
+        if let Some(target) = self.scenario.victory_score()
             && let Some(side) = self
                 .score
                 .iter()
@@ -2705,7 +2705,7 @@ impl BattleState {
     /// formation is dropped — can never fire, which is the right answer: the
     /// stake was placed on somebody who is not here.
     fn decapitated(&self) -> Option<u8> {
-        for condition in self.map.loss_conditions() {
+        for condition in self.scenario.loss_conditions() {
             let Some(formation) = self
                 .command
                 .formations()

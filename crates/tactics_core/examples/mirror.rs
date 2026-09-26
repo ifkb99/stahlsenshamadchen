@@ -91,7 +91,7 @@ use tactics_core::battle::UnitId;
 use tactics_core::battle::{BattleState, Goal, SideState};
 use tactics_core::data::DataRegistry;
 use tactics_core::harness::arena::{ARENAS, Arena, DEFAULT_ARENA, arena_named};
-use tactics_core::map::HexMap;
+use tactics_core::map::Battlefield;
 use tactics_core::map::UnitPlacement;
 use tactics_core::roster::Roster;
 
@@ -337,7 +337,7 @@ fn stage_map(
     seed: u64,
 ) -> (BattleState, Vec<(UnitId, UnitId)>) {
     let file = registry.map(id).expect("the map is in the registry");
-    let map = HexMap::from_map_file(file).expect("the map builds");
+    let map = Battlefield::from_map_file(file).expect("the map builds");
     let mut placements = file.units.clone();
     for p in &mut placements {
         p.crew.clear();

@@ -17,7 +17,7 @@ use tactics_core::ground::{
     firing_positions, region_of,
 };
 use tactics_core::harness::arena::{Arena, RIDGE_ARENA};
-use tactics_core::map::HexMap;
+use tactics_core::map::Battlefield;
 
 mod common;
 use common::registry;
@@ -25,7 +25,7 @@ use common::registry;
 fn ridge(reg: &DataRegistry) -> (&'static Arena, Patch) {
     let arena = &RIDGE_ARENA;
     let map = arena.map().expect("the ridge arena builds");
-    (arena, Patch::of(reg, &map))
+    (arena, Patch::of(reg, &map.terrain))
 }
 
 fn sorted(mut hexes: Vec<Hex>) -> Vec<Hex> {
@@ -97,10 +97,10 @@ fn a_plain_has_no_high_ground() {
         "rows": rows,
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
-    let patch = Patch::of(&reg, &map);
+    let map = Battlefield::from_map_file(&file).unwrap();
+    let patch = Patch::of(&reg, &map.terrain);
     let mut reader = TerrainReader::new(&reg);
-    let area = Area::of(map.iter().map(|(h, _)| h));
+    let area = Area::of(map.terrain.iter().map(|(h, _)| h));
     assert_eq!(reader.vantages(&reg, &patch, &area), Vec::new());
 }
 
@@ -271,13 +271,18 @@ fn two_maps_side_by_side_read_as_one_piece_of_ground() {
     let r = arena.radius as i32;
     let offset = Hex::new(2 * r + 1, -r);
 
-    let mut world = Patch::of(&reg, &map);
+    let mut world = Patch::of(&reg, &map.terrain);
     let single = world.len();
     // A seam: the second map touches the first without overlapping it.
     let seam: Vec<Hex> = map
+        .terrain
         .iter()
         .map(|(h, _)| h)
-        .filter(|h| h.all_neighbors().iter().any(|n| map.contains(*n - offset)))
+        .filter(|h| {
+            h.all_neighbors()
+                .iter()
+                .any(|n| map.terrain.contains(*n - offset))
+        })
         .collect();
     assert!(!seam.is_empty(), "the stage needs the maps to touch");
 
@@ -285,7 +290,7 @@ fn two_maps_side_by_side_read_as_one_piece_of_ground() {
     let edge = *seam.iter().min_by_key(|h| (h.x, h.y)).unwrap();
     let before = reader.tile(&reg, &world, edge).unwrap();
 
-    world.add(&reg, &map, offset);
+    world.add(&reg, &map.terrain, offset);
     assert_eq!(world.len(), 2 * single, "the maps do not overlap");
     let fresh = TerrainReader::new(&reg).tile(&reg, &world, edge).unwrap();
     assert!(

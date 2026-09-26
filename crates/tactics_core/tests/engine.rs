@@ -25,7 +25,7 @@ use tactics_core::ai::{AiConfig, AiDriver, make_battle_planner};
 use tactics_core::battle::{
     BattleState, EndReason, Event as BattleEvent, FireIntent, Order, SideState, UnitId,
 };
-use tactics_core::map::{HexMap, UnitPlacement};
+use tactics_core::map::{Battlefield, UnitPlacement};
 use tactics_core::overworld::{
     BattleReport, OverworldEvent, OverworldOrder, OverworldState, make_overworld_planner,
 };
@@ -103,15 +103,15 @@ fn a_battle_map_is_one_overworld_tile() {
     let file = reg.map("river_crossing").unwrap();
     assert_eq!(file.shape(), tactics_core::map::MapShape::Tile);
 
-    let map = HexMap::from_map_file(file).unwrap();
-    assert_eq!(map.len() as u32, reg.scale.battle_map_tiles());
-    let centre = map.center();
+    let map = Battlefield::from_map_file(file).unwrap();
+    assert_eq!(map.terrain.len() as u32, reg.scale.battle_map_tiles());
+    let centre = map.terrain.center();
     assert!(
-        map.contains(centre),
+        map.terrain.contains(centre),
         "a centroid that lands off-map would be a broken rotation pivot"
     );
     for hex in centre.range(reg.scale.battle_map_radius()) {
-        assert!(map.contains(hex), "hexagon has a hole at {hex:?}");
+        assert!(map.terrain.contains(hex), "hexagon has a hole at {hex:?}");
     }
 }
 
@@ -425,7 +425,7 @@ fn sides_that_can_see_each_other_are_never_called_off() {
         }"##,
     )
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let sides = vec![
         SideState {
             name: "West".into(),

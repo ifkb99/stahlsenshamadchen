@@ -657,7 +657,7 @@ pub fn trigger(registry: &DataRegistry, state: &BattleState, plan: &Plan) -> Vec
 /// (`planner.score_worth`).
 fn holding(registry: &DataRegistry, state: &BattleState, at: Hex) -> f32 {
     state
-        .map
+        .scenario
         .objectives()
         .iter()
         .filter(|o| o.kind == crate::map::ObjectiveKind::Hold && o.contains(at))

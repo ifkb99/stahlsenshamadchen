@@ -107,7 +107,13 @@ use serde::{Deserialize, Serialize};
 /// march arrived under. A version-5 `"holding"` is a bare string that no
 /// longer parses, and the honest refusal is this one rather than a serde
 /// error naming a byte offset.
-pub const SAVE_VERSION: u32 = 6;
+///
+/// Version 7 moved a battle's objectives, formations, loss conditions and
+/// victory score off its map and onto its own [`crate::map::Scenario`]
+/// (WORLD.md, W0.1). A version-6 battle carries them inside `map`, which no
+/// longer has anywhere to put them: it would open as a battle about nothing,
+/// every objective and every formation silently gone.
+pub const SAVE_VERSION: u32 = 7;
 
 /// Which mod, at which version, was loaded when a save was written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

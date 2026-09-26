@@ -166,10 +166,15 @@ the determinism snapshot passes **unregenerated**.
 
 ### W0 — seams, before anything moves (neutral)
 
-- [ ] **W0.1 Split `HexMap` into terrain and scenario.** Objectives,
-      `victory_score`, formations and `loss_conditions` ride on the map
-      (`map.rs:537`) only because both setup paths carry one. Terrain
-      becomes world data; the rest a scenario or an engagement.
+- [x] ~~**W0.1 Split `HexMap` into terrain and scenario.**~~ **Done
+      2026-09-26.** `HexMap` is tiles only; objectives, `victory_score`,
+      formations and `loss_conditions` are `map::Scenario`, held by the
+      battle as `scenario: Arc<Scenario>` beside `map`. Both setup paths and
+      `field::deploy` take a `Battlefield` (terrain + scenario, as one map
+      file describes them); `SAVE_VERSION` 6 → 7, because a version-6 battle
+      keeps its scenario inside `map` and would open about nothing.
+      Behaviour-neutral: the determinism snapshot passed unregenerated, 550
+      tests across 26 binaries.
 - [ ] **W0.2 Intern the terrain id** on `Tile` (STRUCTURE.md item 8's
       other half). 160k `String`s is the world's memory bill.
 - [ ] **W0.3 One owner for tiles and both grids.** `BattleState`'s `map`,

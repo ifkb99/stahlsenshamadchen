@@ -352,6 +352,7 @@ fn every_feature_of_every_arena_has_a_mirror() {
         let centre = arena.centre_hex();
 
         let tiles: std::collections::HashMap<_, _> = map
+            .terrain
             .iter()
             .map(|(h, t)| (h, (t.terrain.clone(), t.elevation)))
             .collect();

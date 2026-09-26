@@ -20,7 +20,7 @@ use tactics_core::battle::{
     Order, SideState, UnitId,
 };
 use tactics_core::data::DataRegistry;
-use tactics_core::map::{HexMap, UnitPlacement};
+use tactics_core::map::{Battlefield, UnitPlacement};
 use tactics_core::overworld::{
     ArmyId, ArmyMission, BattleReport, OverworldEvent, OverworldOrder, OverworldState,
     make_overworld_planner,
@@ -809,7 +809,7 @@ fn a_searching_planner_copes_with_missions_a_detachment_and_a_running_clock() {
     // panic.
     let reg = registry();
     let mut state = BattleState::from_map(&reg, "river_crossing", 7).expect("battle");
-    let bridge = state.map.objectives()[0].anchor();
+    let bridge = state.scenario.objectives()[0].anchor();
     for index in 0..state.formations().len() {
         state
             .apply(
@@ -1704,7 +1704,7 @@ fn stage_with_the_hurt(
         "rows": rows,
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let placements = vec![
         UnitPlacement {
             aboard_at: None,
@@ -2342,7 +2342,7 @@ fn a_fit_platoon_climbs_a_face_that_turns_a_tank_back() {
         "elevation": ["000", "030", "000"],
     }))
     .unwrap();
-    let map = HexMap::from_map_file(&file).unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
     let placements = vec![
         crewed(
             unit_at([0, 1], 0, "rifle_platoon", "Platoon"),
