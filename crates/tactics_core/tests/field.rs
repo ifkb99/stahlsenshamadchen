@@ -238,9 +238,10 @@ fn a_withdrawing_army_hands_its_formations_the_way_out() {
             .to_vec(),
         attacker_side: 0,
         forces,
+        seed: 9,
     };
     let (mut state, _) = clash
-        .stage(&reg, 9)
+        .stage(&reg, clash.seed)
         .expect("the staged placements are content the base mod ships");
     let lines = clash.inherit_missions(&reg, &mut state);
     // One army per side, so one formation per side exists: a declaration

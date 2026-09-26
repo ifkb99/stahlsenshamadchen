@@ -58,6 +58,12 @@ pub struct Clash {
     pub sides: Vec<SideState>,
     pub attacker_side: u8,
     pub forces: Vec<BattleForce>,
+    /// Where the dice of this fight start: `world::engagement_seed` of the
+    /// campaign's seed and this fight's own key — the day, the contested
+    /// tile, the two principals. Stage with it, and the battle is the same
+    /// one whether it is the first fight of the campaign or the fortieth,
+    /// and whether it was reached by playing or by loading a save.
+    pub seed: u64,
 }
 
 /// Why a battle could not be staged at all.
@@ -170,8 +176,22 @@ impl Clash {
                 });
             }
         }
+        let at = state
+            .army(defender)
+            .or_else(|| state.army(attacker))
+            .map_or(Hex::ZERO, |a| a.pos);
+        let seed = crate::world::engagement_seed(
+            state.seed,
+            crate::world::EngagementKey {
+                when: state.turn as u64,
+                at,
+                attacker: attacker.0,
+                defender: defender.0,
+            },
+        );
         Self {
             map_id,
+            seed,
             // `mustered` is the only thing that ever writes
             // `Cadet::called_up`, and it writes it here, so the answer for
             // this fight cannot still be standing at the next one.

@@ -165,9 +165,9 @@ pub fn play(
                         continue;
                     }
                     state.commit_to_battle(&joiners);
-                    let battle_seed = seed
-                        .wrapping_mul(0x9E37_79B9)
-                        .wrapping_add(run.battles.len() as u64);
+                    // The fight's own dice, not the n-th battle's: see
+                    // `Clash::seed`.
+                    let battle_seed = clash.seed;
                     let (mut battle, field) = clash
                         .stage(registry, battle_seed)
                         .expect("a clash `problem` passed stages");
