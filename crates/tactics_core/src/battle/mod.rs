@@ -1259,6 +1259,34 @@ impl BattleState {
         Ok(formation)
     }
 
+    /// Add ground worth fighting for, in the middle of the battle: nobody
+    /// holds it yet (WORLD.md W3.8).
+    pub fn add_objective(&mut self, objective: crate::map::Objective) {
+        Arc::make_mut(&mut self.scenario).push_objective(objective);
+        self.objective_held.push(None);
+    }
+
+    /// Take away the objective called `id`, and who held it with it.
+    pub fn remove_objective(&mut self, id: &str) {
+        if let Some(index) = Arc::make_mut(&mut self.scenario).remove_objective(id)
+            && index < self.objective_held.len()
+        {
+            self.objective_held.remove(index);
+        }
+    }
+
+    /// Take crews off the field without their being lost: a company leaving
+    /// the fighting to be a column again (WORLD.md W3.8).
+    pub fn lift_out(&mut self, ids: &[UnitId]) {
+        for id in ids {
+            if let Some(unit) = self.lookup_mut(*id)
+                && unit.alive()
+            {
+                unit.withdraw();
+            }
+        }
+    }
+
     /// Pass up what the side can already see, before anybody plans round
     /// one.
     ///

@@ -33,12 +33,13 @@ pub enum PendingBattle {
     /// Overworld armies clashing on a terrain-picked battle map. More than
     /// two can take part: neighbours on either side may reinforce.
     Field(Clash),
-    /// A fight on the ground of a clocked campaign (WORLD.md W5): the
-    /// screen is a view onto the campaign's own engagement, not a battle of
-    /// its own. It mirrors the fight, sends every order the player gives to
-    /// it, and resolves it by running the world clock — so the fight goes on
-    /// in lockstep with every march on the map.
-    Engagement { id: u32 },
+    /// The fighting on the ground of a clocked campaign (WORLD.md W5, W3.8):
+    /// the screen is a view onto the campaign's own front — all of the
+    /// fighting in the world, which is one battle — not a battle of its own.
+    /// It mirrors the front, sends every order the player gives to it, and
+    /// resolves it by running the world clock, in lockstep with every march
+    /// on the map.
+    Front,
 }
 
 /// Reported back to the overworld when a field battle ends: the engine's
@@ -106,8 +107,8 @@ struct Battle {
     mode: InputMode,
     /// Which overworld clash this battle resolves, if any.
     field: Option<FieldBattle>,
-    /// Which fight on the ground this screen is a view onto, if it is one.
-    engagement: Option<u32>,
+    /// Whether this screen is a view onto the campaign's front.
+    front: bool,
     /// Orders applied to the mirror and not yet sent to the fight itself.
     forward: Vec<Order>,
     /// Delay before leaving the battle screen once it's decided.
@@ -730,12 +731,9 @@ fn setup_battle(
     let battle_seed = match &pending {
         PendingBattle::Scenario { .. } => seed(),
         PendingBattle::Field(clash) => seed_override().unwrap_or(clash.seed),
-        PendingBattle::Engagement { .. } => 0,
+        PendingBattle::Front => 0,
     };
-    let engagement_id = match &pending {
-        PendingBattle::Engagement { id } => Some(*id),
-        _ => None,
-    };
+    let on_front = matches!(pending, PendingBattle::Front);
     let staged = match &pending {
         PendingBattle::Scenario { map_id } => BattleState::from_map(registry, map_id, battle_seed)
             .map(|state| (state, None))
@@ -745,11 +743,11 @@ fn setup_battle(
             .map(|(state, field)| (state, Some(field))),
         // The mirror of the campaign's own fight: nothing is staged, and the
         // fight's sides are planned by the campaign (the AI's) or by her.
-        PendingBattle::Engagement { id } => overworld
+        PendingBattle::Front => overworld
             .as_ref()
-            .and_then(|ow| ow.state.engagement(*id))
-            .map(|e| (e.battle().clone(), None))
-            .ok_or_else(|| StagingError::MissingMap(format!("fight {id}"))),
+            .and_then(|ow| ow.state.front())
+            .map(|f| (f.battle().clone(), None))
+            .ok_or_else(|| StagingError::MissingMap("the fighting".into())),
     };
 
     // Nothing has been spawned yet, so backing out is just declining to enter:
@@ -767,7 +765,7 @@ fn setup_battle(
     let autoplay = std::env::var("STAHL_AUTOPLAY").is_ok();
     let mut ai = AiDriver::new();
     for (i, side) in state.sides.iter().enumerate() {
-        if engagement_id.is_some() {
+        if on_front {
             break;
         }
         match &side.ai {
@@ -797,7 +795,7 @@ fn setup_battle(
     // the same resource — two conflicting accesses would panic at runtime.
     // A fight on the world has no map of its own to centre on: the view
     // pivots on the fighting instead.
-    let center = if engagement_id.is_some() {
+    let center = if on_front {
         let (n, sx, sy) = state
             .alive_units()
             .fold((0i64, 0i64, 0i64), |(n, x, y), u| {
@@ -909,7 +907,7 @@ fn setup_battle(
         range_dirty: false,
         mode: InputMode::Normal,
         field,
-        engagement: engagement_id,
+        front: on_front,
         forward: Vec::new(),
         exit_timer: None,
     });
@@ -1785,9 +1783,9 @@ fn advance_resolution(
     // once her side has committed the fight is resolved by running the world
     // clock a tick at a time — the fight in lockstep with every march on the
     // map — and the mirror is taken again from what the campaign now holds.
-    if let Some(id) = battle.engagement {
-        // Already leaving: the fight is over or another one needs her, and
-        // re-arming the exit every frame would keep her here for ever.
+    if battle.front {
+        // Already leaving: the fighting is over or has gone out of her reach,
+        // and re-arming the exit every frame would keep her here for ever.
         if battle.exit_timer.is_some() {
             return;
         }
@@ -1796,8 +1794,8 @@ fn advance_resolution(
         };
         let ow = &mut *ow;
         for order in battle.forward.drain(..) {
-            if let Err(e) = ow.state.order_in_fight(&mods.0, id, &order) {
-                log.push(format!("The order did not reach the fight: {e}"));
+            if let Err(e) = ow.state.order_in_fight(&mods.0, &order) {
+                log.push(format!("The order did not reach the fighting: {e}"));
             }
         }
         let side = battle.view_side();
@@ -1806,35 +1804,33 @@ fn advance_resolution(
             return;
         }
         let events = ow.state.advance_clock(&mods.0, 1);
-        let other_fight_waits = events.iter().any(|e| {
-            matches!(e, tactics_core::overworld::OverworldEvent::EngagementAwaitsOrders { engagement, .. }
-                if *engagement != id)
-        });
-        // This fight's own call for orders is answered here, on this screen;
-        // only the rest is news for the campaign.
+        // The fighting's call for her orders is answered here, on this
+        // screen; the rest is news for the campaign.
         ow.anim.extend(events.into_iter().filter(|e| {
-            !matches!(e, tactics_core::overworld::OverworldEvent::EngagementAwaitsOrders { engagement, .. }
-                if *engagement == id)
+            !matches!(
+                e,
+                tactics_core::overworld::OverworldEvent::FightAwaitsOrders { .. }
+            )
         }));
-        match ow.state.engagement(id) {
-            Some(e) => {
-                battle.state = e.battle().clone();
+        let still_hers = ow
+            .state
+            .front()
+            .is_some_and(|f| f.battle().units.iter().any(|u| u.alive() && u.side == side));
+        match ow.state.front() {
+            Some(f) if still_hers => {
+                battle.state = f.battle().clone();
                 battle.anim.extend(
-                    e.recent
+                    f.recent
                         .iter()
                         .filter(|ev| ev.heard_by(&battle.state, side))
                         .cloned(),
                 );
                 battle.range_dirty = true;
-                if other_fight_waits {
-                    log.push("Another of your fights needs you.".to_string());
-                    battle.exit_timer = Some(Timer::from_seconds(1.0, TimerMode::Once));
-                }
             }
-            None => {
-                // Over: the campaign has already folded the survivors back
-                // into their companies.
-                log.push("The fight is over.".to_string());
+            _ => {
+                // Over, or none of hers is fighting any more: the campaign has
+                // already folded the survivors back into their companies.
+                log.push("The fighting is over.".to_string());
                 battle.exit_timer = Some(Timer::from_seconds(1.5, TimerMode::Once));
             }
         }
@@ -2252,7 +2248,7 @@ fn set_intent(
         Ok(events) => {
             battle.anim.extend(events);
             battle.range_dirty = true;
-            if battle.engagement.is_some() {
+            if battle.front {
                 battle.forward.push(order.clone());
             }
         }
@@ -2283,7 +2279,7 @@ fn set_intent_saying(
             battle.anim.extend(events);
             battle.range_dirty = true;
             log.push(said);
-            if battle.engagement.is_some() {
+            if battle.front {
                 battle.forward.push(order.clone());
             }
         }
@@ -2310,7 +2306,7 @@ fn commit_round(
         match battle.state.apply(registry, &Order::Commit { side }) {
             Ok(events) => {
                 battle.anim.extend(events);
-                if battle.engagement.is_some() {
+                if battle.front {
                     battle.forward.push(Order::Commit { side });
                 }
             }
@@ -2318,7 +2314,7 @@ fn commit_round(
         }
         return;
     }
-    let in_fight = battle.engagement.is_some();
+    let in_fight = battle.front;
     let Battle {
         state,
         delegate,

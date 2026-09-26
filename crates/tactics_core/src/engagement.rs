@@ -1,28 +1,32 @@
-//! Contact bubbles: where a campaign's armies stop being armies and are crews
-//! on tiles, for as long as they are fighting (WORLD.md W3.2–W3.3).
+//! The front: where a campaign's armies stop being armies and are crews on
+//! tiles, for as long as they are fighting (WORLD.md W3.2–W3.3, W3.8).
 //!
-//! The designer's ruling is one world clock and a bubble that decides the
-//! resolution. Off contact an army is a column on the campaign clock; in
-//! contact its vehicles are placed on the real ground where it stands and
-//! fight a [`BattleState`] on a window onto the world, one battle tick per
-//! clock tick, while every other column goes on marching. When the fight is
-//! over — elimination, or the battle's own stalemate rule after rounds with
-//! nobody in contact — the survivors are folded back into their armies
-//! *where they are*, with what they have left.
+//! The designer's rulings: one world clock, a bubble that decides the
+//! resolution, and — asked whether two fights that drift together should be
+//! merged — **no real separation between engagements at all**, only different
+//! things happening on different parts of the map at once. So there is one
+//! tactical layer for the whole world: a single [`BattleState`] on a window
+//! onto the world, holding every army in contact anywhere. An army enters it
+//! when it makes contact and leaves it — folded back into a column where its
+//! vehicles stand — when it has had no enemy within reach for as long as the
+//! battle's own stalemate rule allows; the layer itself is disbanded when all
+//! the fighting everywhere has stopped. Two fights that drift into each other
+//! were always one battle, so there is nothing to merge; a fight whose sides
+//! part is two groups of crews that leave when they are out of reach, so
+//! there is nothing to split.
 //!
-//! **Nothing between rounds lives outside the battle.** An engagement's AI
-//! is planned inside the engine, every round, by planners seeded from the
-//! engagement's own dice and the round number, so there is no driver to keep
-//! and a save made mid-fight fights on the same. A side a human commands
-//! stops the clock for her orders once she can give them (W4); until then it
-//! is planned by a stand-in like everybody else.
+//! **Nothing between rounds lives outside the battle.** The front's AI is
+//! planned inside the engine, every round, by planners seeded from the
+//! front's dice and the round number, so a save made mid-fight fights on the
+//! same. A side a person commands, within her reach, is hers to order: the
+//! clock waits for her (W4.4).
 
 use crate::battle::{BattleState, SavedBattle, UnitId};
 use crate::data::DataRegistry;
 use crate::overworld::ArmyId;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// A battle in an engagement: live, or just off disk and waiting for
+/// The front's battle: live, or just off disk and waiting for
 /// [`crate::overworld::OverworldState::rehydrate`] to put its caches back —
 /// the same obligation a saved battle has, carried one level down.
 #[derive(Debug, Clone)]
@@ -46,39 +50,37 @@ impl<'de> Deserialize<'de> for Fight {
     }
 }
 
-/// One fight going on somewhere on the world.
+/// All the fighting in the world, as one battle.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Engagement {
-    pub id: u32,
-    /// The clock tick it began on.
+pub struct Front {
+    /// The clock tick the fighting began on.
     pub began: u64,
-    /// The army whose march ran into the other, and the one it ran into.
-    pub attacker: ArmyId,
-    pub defender: ArmyId,
-    /// The army each unit in the fight came from, by unit id, in id order.
-    pub origins: Vec<(UnitId, ArmyId)>,
-    /// Where its dice start: `world::engagement_seed` of the world's seed
-    /// and this fight's key. Its planners are seeded from it too.
+    /// Where its dice start, and its planners' seeds with them.
     pub seed: u64,
+    /// The army each crew in the fighting belongs to, by unit id, in id
+    /// order. A crew whose army has left is no longer here.
+    pub origins: Vec<(UnitId, ArmyId)>,
+    /// Each army in the fighting and the last round any of its crews had an
+    /// enemy within reach.
+    pub contact: Vec<(ArmyId, u32)>,
     pub fight: Fight,
-    /// What happened in it on the clock's latest tick — its AI's orders and
-    /// the tick's events — for a screen that is watching it (WORLD.md W5).
-    /// Not saved: it is news, not state.
+    /// What happened on the clock's latest tick — the AI's orders and the
+    /// tick's events — for a screen that is watching. News, not state.
     #[serde(skip)]
     pub recent: Vec<crate::battle::Event>,
 }
 
-impl Engagement {
+impl Front {
     /// The battle, live.
     ///
     /// # Panics
     ///
-    /// On an engagement read off disk and not yet rehydrated, which no
-    /// campaign loaded through `SaveGame::from_json` can be.
+    /// On a front read off disk and not yet rehydrated, which no campaign
+    /// loaded through `SaveGame::from_json` can be.
     pub fn battle(&self) -> &BattleState {
         match &self.fight {
             Fight::Live(b) => b,
-            Fight::OffDisk(_) => panic!("an engagement read off disk was never rehydrated"),
+            Fight::OffDisk(_) => panic!("a front read off disk was never rehydrated"),
         }
     }
 
@@ -86,7 +88,7 @@ impl Engagement {
     pub fn battle_mut(&mut self) -> &mut BattleState {
         match &mut self.fight {
             Fight::Live(b) => b,
-            Fight::OffDisk(_) => panic!("an engagement read off disk was never rehydrated"),
+            Fight::OffDisk(_) => panic!("a front read off disk was never rehydrated"),
         }
     }
 
@@ -98,7 +100,7 @@ impl Engagement {
         }
     }
 
-    /// The army a unit fought for.
+    /// The army a crew in the fighting belongs to.
     pub fn origin(&self, unit: UnitId) -> Option<ArmyId> {
         self.origins
             .binary_search_by_key(&unit, |(id, _)| *id)
@@ -106,11 +108,20 @@ impl Engagement {
             .map(|i| self.origins[i].1)
     }
 
-    /// Every army in the fight, in id order.
+    /// Every army in the fighting, in id order.
     pub fn armies(&self) -> Vec<ArmyId> {
-        let mut armies: Vec<ArmyId> = self.origins.iter().map(|(_, a)| *a).collect();
+        let mut armies: Vec<ArmyId> = self.contact.iter().map(|(a, _)| *a).collect();
         armies.sort_unstable();
         armies.dedup();
         armies
+    }
+
+    /// The crews of `army` in the fighting.
+    pub fn crews_of(&self, army: ArmyId) -> Vec<UnitId> {
+        self.origins
+            .iter()
+            .filter(|(_, a)| *a == army)
+            .map(|(u, _)| *u)
+            .collect()
     }
 }

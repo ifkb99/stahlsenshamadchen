@@ -68,7 +68,7 @@ fn extra_army(state: &mut OverworldState, side: u8, name: &str, at: [i32; 2]) ->
         tile: None,
         march: None,
         marched_ticks: 0,
-        engaged: None,
+        fighting: false,
     });
     id
 }

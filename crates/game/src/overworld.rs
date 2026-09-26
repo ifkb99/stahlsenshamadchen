@@ -750,49 +750,38 @@ fn pump_events(
                 CrewFate::Killed => format!("{name} did not make it."),
             });
         }
-        // A fight on the ground (WORLD.md W3.2): fought by the clock while
-        // the campaign goes on, and — until the player can command one (W4)
-        // — fought for both sides by their commanders' stand-ins. Said in
-        // the log, so the player knows where her companies are.
-        OverworldEvent::EngagementBegan {
-            attacker, defender, ..
-        } => {
-            if let (Some(att), Some(def)) = (
-                overworld.state.army(*attacker),
-                overworld.state.army(*defender),
-            ) {
-                log.push(format!("{} is in contact with {}.", att.name, def.name));
-            }
+        // The fighting on the ground (WORLD.md W3.2, W3.8): fought by the clock
+        // while the campaign goes on, and — within her reach — commanded by
+        // the player on the fight screen. Said in the log, so the player knows
+        // where her companies are.
+        OverworldEvent::ArmyEngaged { army, against, .. } => {
+            let name = army_name(&overworld.state, *army);
+            log.push(match against {
+                Some(other) => format!(
+                    "{name} is in contact with {}.",
+                    army_name(&overworld.state, *other)
+                ),
+                None => format!("{name} joins the fighting."),
+            });
         }
-        // Nothing sets `human_command` in the game yet — a fight has no screen
-        // of its own until W5 — so this is never raised here; said anyway so
-        // the log is honest the day it is.
-        OverworldEvent::EngagementAwaitsOrders { engagement, .. } => {
-            // Her company is in a fight she can reach: the clock has stopped,
-            // and the fight screen opens on it.
-            log.push("A fight is waiting for your orders.".to_string());
-            overworld.paused = true;
-            commands.insert_resource(PendingBattle::Engagement { id: *engagement });
-            next.set(AppState::Battle);
-        }
-        OverworldEvent::EngagementJoined { army, .. } => {
-            if let Some(a) = overworld.state.army(*army) {
-                log.push(format!("{} joins the fight.", a.name));
-            }
-        }
-        OverworldEvent::EngagementEnded {
-            winner,
-            hulls_lost,
-            rounds,
-            ..
-        } => {
-            let who = winner
-                .and_then(|w| overworld.state.sides.get(w as usize))
-                .map_or("nobody".to_string(), |s| s.name.clone());
+        OverworldEvent::ArmyDisengaged { army } => {
             log.push(format!(
-                "The fight is over after {rounds} minute(s): {who} holds the field; \
-                 vehicles lost {hulls_lost:?}."
+                "{} is out of contact.",
+                army_name(&overworld.state, *army)
             ));
+        }
+        OverworldEvent::FightingOver { rounds, hulls_lost } => {
+            log.push(format!(
+                "The fighting is over after {rounds} minute(s); vehicles lost {hulls_lost:?}."
+            ));
+        }
+        OverworldEvent::FightAwaitsOrders { .. } => {
+            // Her companies are fighting within her reach: the clock has
+            // stopped, and the fight screen opens on the fighting.
+            log.push("The fighting is waiting for your orders.".to_string());
+            overworld.paused = true;
+            commands.insert_resource(PendingBattle::Front);
+            next.set(AppState::Battle);
         }
         OverworldEvent::ObjectiveCaptured { at, side } => {
             let name = &overworld.state.sides[*side as usize].name;
@@ -1946,7 +1935,7 @@ fn run_world_clock(mods: Res<Mods>, time: Res<Time>, mut overworld: ResMut<Overw
     let events = ow.state.advance_clock(&mods.0, ticks as u64);
     if events
         .iter()
-        .any(|e| matches!(e, OverworldEvent::EngagementAwaitsOrders { .. }))
+        .any(|e| matches!(e, OverworldEvent::FightAwaitsOrders { .. }))
     {
         ow.paused = true;
     }

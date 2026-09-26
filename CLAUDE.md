@@ -539,14 +539,28 @@ and the seam tests in `tests/ground.rs`.
   runs the day. `advance_clock(ticks)` is the entry real time drives. A
   drawn campaign keeps its turns: nothing here runs for it.
 - **Contact on a clocked campaign is a fight on the ground, not a battle
-  event** (`engagement::Engagement`, W3.2–W3.3): the armies' vehicles are
-  lifted onto the tiles round where they stand, the battle ticks with the
-  clock, its AI is planned inside the engine each round from the fight's
-  own dice (so a save mid-fight is exact), and survivors fold back into
-  armies where they stand. The defender's ground is the fight's objective;
-  without it the AI had nothing to fight for and never closed. A column that
-  reaches a fight in progress joins it on its own side
-  (`BattleState::reinforce`), never a second battle.
+  event** (W3.2–W3.3): the armies' vehicles are lifted onto the tiles round
+  where they stand, the battle ticks with the clock, its AI is planned
+  inside the engine each round from the fight's own dice (so a save
+  mid-fight is exact), and survivors fold back into armies where they
+  stand. The defender's ground is an objective; without it the AI had
+  nothing to fight for and never closed.
+- **There is one front, not engagements** (`engagement::Front`,
+  `OverworldState::front`, W3.8; the designer's ruling that there is no
+  real separation between fights, only different things happening on
+  different parts of the map). Every army in contact anywhere is a
+  formation in one `BattleState` on a window onto the world; a second
+  contact, or a column reaching a fight, **joins** it (`enter_fighting`,
+  `BattleState::reinforce`), so two fights that drift together were always
+  one and there is nothing to merge. An army **leaves** on its own
+  (`leave_fighting`, `BattleState::lift_out`) when none of its crews has had
+  an enemy within reach for `balance.stalemate_rounds`, taking only its own
+  people's losses, while any other fight goes on; the front is disbanded
+  when nobody is left in it or the battle ends. **The towns it fights over
+  are the ones near it** (`contest_towns`, `towns.contested_within`, kept
+  every pulse as crews move): the whole world's towns in one battle pulled
+  crews at a factory a day off. Tests: `tests/campaign.rs`, three
+  mutation-checked (a fresh battle per contact, never leaving, every town).
 - **A side's commander is a cadet** (`OverworldSide::commander`, from the
   vehicle its map flags `command`), her death under `victory.commander`
   ends the campaign, and while she is wounded `acting_commander` is the
