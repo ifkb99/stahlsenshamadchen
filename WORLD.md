@@ -279,8 +279,23 @@ the determinism snapshot passes **unregenerated**.
       coarse state for `R(P(c)) == c` to check; what is pinned instead is
       that the summary is read off the tiles and nothing else, and that
       any order or subset of chunks gives the same tiles.
-- [ ] **W1.5 Residency**: load, cache and evict chunks from unit positions;
-      `forget_around` for the terrain reader.
+- [x] ~~**W1.5 Residency.**~~ **Done 2026-09-26.** `world::needed_chunks`
+      is a pure function of `(position, reach)` pairs, conservative by a
+      chunk's radius. A unit's `reach` is the greatest of her sight, her
+      longest gun and her movement over `planner.horizon_rounds + 1`, plus
+      `worldgen.residency_margin` (4). `World::window_onto(generated)` is a
+      chunked world with a source; `World::settle` loads what is needed and
+      forgets the rest, and a battle calls it at setup and after every
+      tick's movement (`from_muster_on` puts a battle on such a world).
+      `a_battle_on_a_window_of_the_world_is_the_battle_on_the_whole_of_it`
+      fights `river_crossing`'s armies and scenario for 12 rounds on a
+      generated world twice — held whole, and as a window that held at most
+      12 of 61 chunks and paged during play — and requires the same
+      transcript. Loading only each unit's own chunk trips the sight guard;
+      shrinking reach to a third of sight is *not* caught, because the
+      chunk-radius padding (20 tiles) dominates it — the reach term is slack
+      today and will matter if chunks shrink. `forget_around` is not wired:
+      nothing in a battle holds a `TerrainReader` across ticks yet.
 - [ ] **W1.6 Saves**: seed + skeleton + edit overlay; `SAVE_VERSION` bump.
 
 ### W2 — campaign movement on real ground

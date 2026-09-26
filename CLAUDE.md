@@ -481,6 +481,11 @@ and the seam tests in `tests/ground.rs`.
   fight is the same fight whether it is the first or the fortieth and
   whether it was reached by play or by a save. The value is pinned in
   `tests/world.rs`; changing the hash changes every campaign battle.
+- **Residency is a pure function of where everybody stands**
+  (`needed_chunks`, `BattleState::reach`, `settle_world` after every tick's
+  movement). What was loaded before never matters, which is what keeps two
+  machines holding the same ground. The proof is a battle fought on a whole
+  generated world and on a paging window onto it, transcript for transcript.
 - **Saved as its tiles, under the key `map`**, so a whole world's save is
   what a battle's always was. A chunked world refuses to serialise rather
   than come back whole with its unloaded ground suddenly outside.

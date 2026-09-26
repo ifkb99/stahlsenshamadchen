@@ -48,7 +48,7 @@ pub use orders::{Event, FireIntent, Order, OrderError, UnitIntent};
 
 use crate::ai::AiConfig;
 use crate::data::{DataError, DataRegistry, ModuleEffect, ValidationReport};
-use crate::map::{Battlefield, HexMap, MapKind, Scenario, UnitPlacement};
+use crate::map::{Battlefield, MapKind, Scenario, UnitPlacement};
 use crate::roster::{CadetId, Roster};
 use crate::world::World;
 use hexx::{EdgeDirection, Hex};
@@ -940,7 +940,7 @@ pub enum BattleSetupError {
 /// a player fixing content wants the whole list.
 fn validate_placements(
     registry: &DataRegistry,
-    map: &HexMap,
+    map: &World,
     sides: &[SideState],
     placements: &[UnitPlacement],
     crews: &[Vec<CadetId>],
@@ -949,7 +949,7 @@ fn validate_placements(
     let mut errors = Vec::new();
     for (i, placement) in placements.iter().enumerate() {
         let at = placement.at;
-        if !map.contains(crate::offset_to_hex(at[0], at[1])) {
+        if !map.has_ground(crate::offset_to_hex(at[0], at[1])) {
             errors.push(format!(
                 "placement at [{}, {}] is outside the map",
                 at[0], at[1]
@@ -1121,17 +1121,34 @@ impl BattleState {
         roster: Arc<Roster>,
         seed: u64,
     ) -> Result<Self, BattleSetupError> {
+        let Battlefield {
+            terrain: map,
+            scenario,
+        } = field;
+        let world = World::build(registry, map);
+        Self::from_muster_on(registry, world, scenario, sides, muster, roster, seed)
+    }
+
+    /// [`Self::from_muster`] on a world rather than a map: the path a battle
+    /// takes onto generated ground, where `world` is a window onto a
+    /// [`crate::worldgen::GeneratedWorld`] and loads the chunks its units
+    /// need (WORLD.md W1.5) — at setup, and again whenever anybody moves.
+    pub fn from_muster_on(
+        registry: &DataRegistry,
+        world: World,
+        scenario: Scenario,
+        sides: Vec<SideState>,
+        muster: Muster<'_>,
+        roster: Arc<Roster>,
+        seed: u64,
+    ) -> Result<Self, BattleSetupError> {
         let Muster {
             placements,
             crews,
             ids,
         } = muster;
         check_ids(ids, placements.len())?;
-        let Battlefield {
-            terrain: map,
-            scenario,
-        } = field;
-        let errors = validate_placements(registry, &map, &sides, placements, crews, &roster);
+        let errors = validate_placements(registry, &world, &sides, placements, crews, &roster);
         if !errors.is_empty() {
             return Err(BattleSetupError::Invalid(errors));
         }
@@ -1144,7 +1161,7 @@ impl BattleState {
         // rather than carried empty — see `CommandState::from_placements`.
         let command = CommandState::from_placements(scenario.formations(), placements, ids);
         let mut state = Self {
-            world: Arc::new(World::build(registry, map)),
+            world: Arc::new(world),
             scenario: Arc::new(scenario),
             sides,
             roster,
@@ -1171,6 +1188,9 @@ impl BattleState {
                 ids[i],
             )?;
         }
+        // Before anybody looks: the ground every crew can see or shoot over
+        // has to be there when the fog is first computed.
+        state.settle_world(registry);
         state.face_units_at_enemies(placements);
         state.board_mounted_starts(registry, placements);
         state.fog = FogMap::new(state.sides.len());
@@ -1581,6 +1601,65 @@ impl BattleState {
             u.ammo.insert(ammo.to_string(), count);
         }
         Ok(())
+    }
+
+    /// How far from where she stands a crew could ask the ground a question
+    /// this round: see, shoot, or plan a march (WORLD.md W1.5). The greatest
+    /// of her sight, her longest gun, and the ground the planner prices for
+    /// her — her movement over `planner.horizon_rounds` and one more.
+    pub fn reach(&self, registry: &DataRegistry, unit: &Unit) -> u32 {
+        let sight = stats::vision_range(registry, &self.roster, unit, None);
+        let Some(vehicle) = registry.vehicle(&unit.vehicle) else {
+            return sight;
+        };
+        let gun = vehicle
+            .weapons
+            .iter()
+            .filter_map(|w| registry.weapon(w))
+            .map(|w| w.range[1])
+            .max()
+            .unwrap_or(0);
+        let march = vehicle.movement.points * (registry.planner.horizon_rounds + 1);
+        sight.max(gun).max(march)
+    }
+
+    /// The chunks this battle's crews could ask about, with the mod's margin
+    /// on every reach; `None` for a battle on a world held whole.
+    pub fn needed_chunks(
+        &self,
+        registry: &DataRegistry,
+    ) -> Option<std::collections::BTreeSet<(i32, i32)>> {
+        let radius = self.world.chunk_radius()?;
+        let margin = registry.worldgen.as_ref().map_or(4, |w| w.residency_margin);
+        let reaches = self
+            .units
+            .iter()
+            .filter(|u| u.alive())
+            .map(|u| (u.pos, self.reach(registry, u) + margin));
+        Some(crate::world::needed_chunks(reaches, radius))
+    }
+
+    /// Load the ground this battle needs and forget the rest. Nothing for a
+    /// battle on a world held whole; for one on generated ground, a pure
+    /// function of where everybody stands, so every machine holds the same
+    /// ground.
+    pub(crate) fn settle_world(&mut self, registry: &DataRegistry) {
+        if self.world.source().is_none() {
+            return;
+        }
+        let Some(needed) = self.needed_chunks(registry) else {
+            return;
+        };
+        let current: std::collections::BTreeSet<(i32, i32)> = self
+            .world
+            .resident_chunks()
+            .into_iter()
+            .flatten()
+            .map(|h| (h.x, h.y))
+            .collect();
+        if current != needed {
+            Arc::make_mut(&mut self.world).settle(registry, &needed);
+        }
     }
 
     /// Where the unit called `id` stands in `units`.

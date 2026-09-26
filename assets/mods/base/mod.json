@@ -138,7 +138,8 @@
       { "terrain": "deep_forest", "share": { "terrain": "forest", "percent": 40 } },
       { "terrain": "highway", "feature": "road" },
       { "terrain": "plains" }
-    ]
+    ],
+    "residency_margin": 4
   },
   "cores": [
     {
