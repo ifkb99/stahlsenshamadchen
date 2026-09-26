@@ -33,7 +33,7 @@
 
 use crate::battle::{BattleState, MoveGrid, SightGrid};
 use crate::data::{DataRegistry, MovementClass};
-use crate::map::{HexMap, Tile};
+use crate::map::HexMap;
 use hexx::Hex;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
@@ -59,7 +59,7 @@ pub trait Ground {
 
 impl Ground for BattleState {
     fn terrain_id(&self, hex: Hex) -> Option<&str> {
-        self.map.get(hex).map(|t| t.terrain.as_str())
+        self.map.get(hex).map(|t| t.terrain)
     }
     fn elevation(&self, hex: Hex) -> Option<i32> {
         self.map.get(hex).map(|t| t.elevation)
@@ -81,7 +81,7 @@ impl Ground for BattleState {
 /// seam.
 #[derive(Default)]
 pub struct Patch {
-    tiles: HashMap<Hex, Tile>,
+    tiles: HexMap,
     sight: SightGrid,
     moves: MoveGrid,
 }
@@ -101,7 +101,7 @@ impl Patch {
             let at = hex + offset;
             self.sight.insert(registry, at, tile);
             self.moves.insert(registry, at, tile);
-            self.tiles.insert(at, tile.clone());
+            self.tiles.insert(at, tile.terrain, tile.elevation);
         }
     }
 
@@ -118,10 +118,10 @@ impl Patch {
 
 impl Ground for Patch {
     fn terrain_id(&self, hex: Hex) -> Option<&str> {
-        self.tiles.get(&hex).map(|t| t.terrain.as_str())
+        self.tiles.get(hex).map(|t| t.terrain)
     }
     fn elevation(&self, hex: Hex) -> Option<i32> {
-        self.tiles.get(&hex).map(|t| t.elevation)
+        self.tiles.get(hex).map(|t| t.elevation)
     }
     fn sight_clear(&self, from: Hex, to: Hex) -> bool {
         self.sight.clear(from, to)

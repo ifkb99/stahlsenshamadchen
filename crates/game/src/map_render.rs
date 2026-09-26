@@ -101,7 +101,7 @@ pub fn spawn_map<B: Bundle + Clone>(
     let center = map.center();
     for (hex, tile) in map.iter() {
         let (pos, z) = iso::project(hex, tile.elevation, rotation, center);
-        let image = art.tile(&tile.terrain, tile.elevation);
+        let image = art.tile(tile.terrain, tile.elevation);
         commands.spawn((
             Sprite {
                 image: image.clone(),

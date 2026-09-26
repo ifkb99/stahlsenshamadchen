@@ -34,7 +34,7 @@ fn terrain_at<'r>(
     state
         .map
         .get(pos)
-        .and_then(|tile| registry.terrain(&tile.terrain))
+        .and_then(|tile| registry.terrain(tile.terrain))
 }
 
 fn elevation_at(state: &BattleState, pos: Hex) -> i32 {

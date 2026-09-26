@@ -4046,7 +4046,7 @@ fn a_commander_sends_her_grenadiers_to_hold_the_covered_ground() {
             .hexes
             .iter()
             .filter_map(|h| state.map.get(*h))
-            .filter_map(|t| reg.terrain(&t.terrain))
+            .filter_map(|t| reg.terrain(t.terrain))
             .map(|def| def.cover)
             .collect();
         if hexes.is_empty() {

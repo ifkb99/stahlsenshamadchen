@@ -141,12 +141,8 @@ pub fn play(
                     defender,
                     at,
                 } => {
-                    let terrain = state
-                        .map
-                        .get(at)
-                        .map(|t| t.terrain.clone())
-                        .unwrap_or_default();
-                    let Some(map) = battlefield_for(registry, &terrain) else {
+                    let terrain = state.map.get(at).map(|t| t.terrain).unwrap_or_default();
+                    let Some(map) = battlefield_for(registry, terrain) else {
                         run.declined += 1;
                         continue;
                     };

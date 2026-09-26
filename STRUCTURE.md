@@ -452,6 +452,14 @@ table and what to read into it are in [DONE.md](DONE.md).
 This closes item 8's constants half entirely. Only the interning half remains,
 and the recommendation above stands.
 
+**Terrain on a tile is interned since 2026-09-26** (WORLD.md, W0.2) — for
+memory, not speed: a world is ~160,000 tiles and a `String` on each was most
+of what it cost to hold. It dodges the serde blocker above by interning *per
+map*: a `HexMap` carries its own palette, so a save names every terrain once
+and needs no registry to read. Terrain lookups still hash the name, and at 4%
+of a round that stays not worth changing; `SightGrid` and `MoveGrid` still
+hold the derived values. The other eleven kinds are untouched.
+
 <details><summary>The original finding</summary>
 
 The registry exposes twelve `&str`-keyed lookups (`terrain`, `vehicle`,

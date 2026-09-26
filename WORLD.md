@@ -175,8 +175,16 @@ the determinism snapshot passes **unregenerated**.
       keeps its scenario inside `map` and would open about nothing.
       Behaviour-neutral: the determinism snapshot passed unregenerated, 550
       tests across 26 binaries.
-- [ ] **W0.2 Intern the terrain id** on `Tile` (STRUCTURE.md item 8's
-      other half). 160k `String`s is the world's memory bill.
+- [x] ~~**W0.2 Intern the terrain id** on `Tile`.~~ **Done 2026-09-26.**
+      Per map, not per registry: a `HexMap` carries a palette of the ids
+      it uses and each tile an index into it, so a save stays
+      self-describing and needs no registry to read (the blocker
+      STRUCTURE.md item 8 names). A stored tile is 8 bytes and a map entry
+      16, where it was 40 plus a heap-allocated name per tile; `Tile<'_>` is
+      now a `Copy` view whose `terrain` borrows the palette, and
+      `HexMap::insert` is the one way ground gets in — the door a world
+      will fold chunks through. `SAVE_VERSION` 7 → 8. Neutral: snapshot
+      unregenerated, perf flat.
 - [ ] **W0.3 One owner for tiles and both grids.** `BattleState`'s `map`,
       `sight` and `moves` become one `Arc<World>` a chunk load extends;
       engine code asks through `ground::Ground`. `SightGrid` and `MoveGrid`

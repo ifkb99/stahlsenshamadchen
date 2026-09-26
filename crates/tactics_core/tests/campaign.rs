@@ -591,7 +591,7 @@ fn the_campaign_planner_hunts_the_enemy_headquarters_when_that_ends_the_war() {
     let prizes: Vec<Hex> = state
         .map
         .iter()
-        .filter(|(_, t)| reg.terrain(&t.terrain).is_some_and(|d| d.capturable))
+        .filter(|(_, t)| reg.terrain(t.terrain).is_some_and(|d| d.capturable))
         .map(|(h, _)| h)
         .collect();
     for hex in prizes {
@@ -648,7 +648,7 @@ fn the_campaign_headquarters_backs_away_from_a_stronger_force_that_can_reach_it(
     let prizes: Vec<Hex> = state
         .map
         .iter()
-        .filter(|(_, t)| reg.terrain(&t.terrain).is_some_and(|d| d.capturable))
+        .filter(|(_, t)| reg.terrain(t.terrain).is_some_and(|d| d.capturable))
         .map(|(h, _)| h)
         .collect();
     for hex in prizes {
@@ -722,7 +722,7 @@ fn a_headquarters_with_nowhere_better_to_be_spends_its_turn_standing() {
     let prizes: Vec<Hex> = state
         .map
         .iter()
-        .filter(|(_, t)| reg.terrain(&t.terrain).is_some_and(|d| d.capturable))
+        .filter(|(_, t)| reg.terrain(t.terrain).is_some_and(|d| d.capturable))
         .map(|(h, _)| h)
         .collect();
     for hex in prizes {
