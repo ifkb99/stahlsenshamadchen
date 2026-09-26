@@ -51,7 +51,24 @@ struct Overworld {
     /// who is wounded would be a roster that goes stale the moment a battle
     /// ends, which is precisely when the player opens it.
     roster: bool,
+    /// The world clock's speed, an index into [`CLOCK_SPEEDS`], and whether
+    /// the player has stopped it (WORLD.md W3.1, real time with speed
+    /// controls). Only a campaign on the clock reads them.
+    speed: usize,
+    paused: bool,
+    /// Ticks owed to the clock from frames too short to earn a whole one.
+    owed: f32,
+    /// The last day the AI sides gave their orders on: on the clock they
+    /// order once a dawn and the clock runs on its own.
+    planned_day: u32,
 }
+
+/// The world clock's speeds, in ticks a real second: a game minute, ten
+/// minutes, an hour and six hours a second. The speed is only how many ticks
+/// a second asks for, so it changes nothing a replay could see.
+const CLOCK_SPEEDS: [f32; 4] = [12.0, 120.0, 720.0, 4320.0];
+/// What each speed is called on the banner.
+const CLOCK_SPEED_NAMES: [&str; 4] = ["1 min/s", "10 min/s", "1 h/s", "6 h/s"];
 
 impl Overworld {
     /// Recompute what the selected army can do. Called whenever the
@@ -63,7 +80,9 @@ impl Overworld {
             self.attack_targets.clear();
             return;
         };
-        if army.moved {
+        // On the clock an ordered army can be ordered again, so its reach is
+        // always worth showing.
+        if army.moved && !self.state.clocked() {
             self.move_range.clear();
             self.attack_targets.clear();
             return;
@@ -165,7 +184,8 @@ impl Plugin for OverworldPlugin {
             )
             .add_systems(
                 Update,
-                drive_ai
+                (drive_ai, run_world_clock)
+                    .chain()
                     .in_set(ScreenSet::Simulate)
                     .run_if(in_state(AppState::Overworld)),
             )
@@ -414,6 +434,12 @@ fn enter_overworld(
         muster: None,
         debrief: None,
         roster: false,
+        speed: 1,
+        // A campaign on the clock opens paused: the player looks at the
+        // world before it starts moving.
+        paused: true,
+        owed: 0.0,
+        planned_day: 0,
     });
 }
 
@@ -1747,13 +1773,68 @@ fn drive_ai(mods: Res<Mods>, mut overworld: ResMut<Overworld>) {
     {
         return;
     }
-    let side = overworld.state.active_side;
     let ow = &mut *overworld;
+    // On the clock the AI sides give the day's orders at dawn, all of them,
+    // and nobody's turn ends: the clock runs on its own (`run_world_clock`).
+    if ow.state.clocked() {
+        if ow.planned_day == ow.state.turn {
+            return;
+        }
+        let mut sides: Vec<u8> = ow.planners.keys().copied().collect();
+        sides.sort_unstable();
+        for side in sides {
+            if let Some(planner) = ow.planners.get_mut(&side) {
+                let events = tactics_core::overworld::plan_day(
+                    planner.as_mut(),
+                    &mods.0,
+                    &mut ow.state,
+                    side,
+                );
+                ow.anim.extend(events);
+            }
+        }
+        ow.planned_day = ow.state.turn;
+        return;
+    }
+    let side = ow.state.active_side;
     let Some(planner) = ow.planners.get_mut(&side) else {
         return;
     };
     let events = tactics_core::overworld::step_planner(planner.as_mut(), &mods.0, &mut ow.state);
     ow.anim.extend(events);
+}
+
+/// The world clock, in real time (WORLD.md W3.1): while nothing is being
+/// shown, asked or animated, the clock runs at the chosen speed. It stops on
+/// its own when a fight waits for the player's orders.
+fn run_world_clock(mods: Res<Mods>, time: Res<Time>, mut overworld: ResMut<Overworld>) {
+    let ow = &mut *overworld;
+    if !ow.state.clocked()
+        || ow.paused
+        || ow.state.over.is_some()
+        || !ow.anim.is_empty()
+        || ow.muster.is_some()
+        || ow.debrief.is_some()
+        || ow.roster
+        || ow.planned_day != ow.state.turn
+    {
+        return;
+    }
+    ow.owed += time.delta_secs() * CLOCK_SPEEDS[ow.speed];
+    let ticks = ow.owed.floor();
+    if ticks < 1.0 {
+        return;
+    }
+    ow.owed -= ticks;
+    let events = ow.state.advance_clock(&mods.0, ticks as u64);
+    if events
+        .iter()
+        .any(|e| matches!(e, OverworldEvent::EngagementAwaitsOrders { .. }))
+    {
+        ow.paused = true;
+    }
+    ow.anim.extend(events);
+    ow.refresh_range(&mods.0);
 }
 
 // Save and load need to respawn the world, which means commands, art and the
@@ -1782,8 +1863,40 @@ fn handle_input(
         return;
     }
     let side = overworld.state.active_side;
-    if overworld.state.sides[side as usize].ai.is_some() {
+    // On the clock there is no turn to wait for: the player orders any
+    // company at any time, and the keys below run the clock.
+    if overworld.state.sides[side as usize].ai.is_some() && !overworld.state.clocked() {
         return;
+    }
+    if overworld.state.clocked() {
+        if keys.just_pressed(KeyCode::Space) {
+            overworld.paused = !overworld.paused;
+            let line = if overworld.paused {
+                "Clock stopped."
+            } else {
+                "Clock running."
+            };
+            log.push(line.to_string());
+            return;
+        }
+        if keys.just_pressed(KeyCode::BracketRight) {
+            overworld.speed = (overworld.speed + 1).min(CLOCK_SPEEDS.len() - 1);
+            return;
+        }
+        if keys.just_pressed(KeyCode::BracketLeft) {
+            overworld.speed = overworld.speed.saturating_sub(1);
+            return;
+        }
+        // Enter runs the clock to the next dawn — or to whatever stops it
+        // first.
+        if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::KeyT) {
+            overworld.clear_selection();
+            let ow = &mut *overworld;
+            let ticks = ow.state.ticks_to_dawn(&mods.0);
+            let events = ow.state.advance_clock(&mods.0, ticks);
+            ow.anim.extend(events);
+            return;
+        }
     }
 
     if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::KeyT) {
@@ -2190,6 +2303,7 @@ fn update_ui(
     map_render::warn_if_duplicated(hud.banner.iter().count(), "overworld banner", &mut warned);
 
     let state = &overworld.state;
+    let (ow_paused, ow_speed) = (overworld.paused, overworld.speed);
     if let Ok(mut text) = hud.banner.single_mut() {
         let side = &state.sides[state.active_side as usize];
         let controller = if side.ai.is_some() { "AI" } else { "You" };
@@ -2199,6 +2313,20 @@ fn update_ui(
         // is a rule she cannot play toward, and a campaign that has ended
         // says so here rather than only in a log line that scrolls away.
         let mut banner = format!("Day {} - {} ({controller})", state.turn, side.name);
+        // On the clock, the time of day, how fast it runs and whether it
+        // runs at all.
+        if state.clocked() {
+            let (h, m) = state.time_of_day(&mods.0);
+            let speed = if ow_paused {
+                "stopped (Space runs it)".to_string()
+            } else {
+                format!(
+                    "{} ([ ] to change, Space stops)",
+                    CLOCK_SPEED_NAMES[ow_speed]
+                )
+            };
+            banner = format!("Day {}, dawn +{h:02}:{m:02} - {speed}", state.turn);
+        }
         if let Some(line) = objective_line(state, &mods.0, state.active_side) {
             banner.push('\n');
             banner.push_str(&line);

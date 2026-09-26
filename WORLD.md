@@ -490,6 +490,17 @@ the determinism snapshot passes **unregenerated**.
 
 ### W5 — presentation
 
+- [x] ~~**W5.0 The clock in real time.**~~ **Done 2026-09-26** (added). On a
+      generated campaign the campaign screen runs the world clock every
+      frame at the chosen speed — a game minute, ten minutes, an hour or
+      six hours a second (`[` / `]`) — and Space stops and starts it; it
+      opens stopped. Enter runs it to the next dawn. The AI sides give the
+      day's orders at dawn (`overworld::plan_day`, which asks a planner
+      until it is done without ending anybody's turn), standing orders
+      set out at dawn for every side, and the player orders any company
+      at any time. The banner reads the time of day and the speed. A fight
+      waiting for her orders stops the clock. The `generated-campaign` tour
+      runs, stops and skips it.
 - [ ] **W5.1 Chunked rendering.** `map_render.rs` spawns an entity per
       tile, fine at 1261 and not at 160k.
 - [ ] **W5.2 Two zoom levels**, one camera.

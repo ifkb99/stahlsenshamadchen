@@ -18,11 +18,20 @@ click left
 wait 0.5
 shot /tmp/world-02-selected.png
 
+# The clock opens stopped; Space runs it, and a couple of seconds at ten
+# game minutes a second is most of an hour of marching; Space stops it.
 until idle 10
+key Space
+expect log "Clock running."
+wait 2.0
+shot /tmp/world-03-clock-running.png
+key Space
+expect log "Clock stopped."
+
+# Enter runs the clock to the next dawn.
 key Enter
-until turn >= 2 60
+until turn >= 2 120
 until idle 60
-expect log "Day 2"
-shot /tmp/world-03-next-day.png
+shot /tmp/world-04-next-day.png
 
 quit

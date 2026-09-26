@@ -42,7 +42,7 @@ cargo run --release -p tactics_core --example balance -- --help  # every flag, w
 cargo run --release -p tactics_core --example campaign [seed [to]]  # whole campaigns, every side a machine
 cargo run --release -p tactics_core --example worldgen [seed]  # a generated world, drawn; -- --chunk q,r for one hex
 cargo run --release -p tactics_core --example campaign -- --map frontier_world  # the generated campaign
-STAHL_CAMPAIGN=frontier_world cargo run -p stahlsenshamädchen  # ...in the game
+STAHL_CAMPAIGN=frontier_world cargo run -p stahlsenshamädchen  # ...in the game: Space runs the clock, [ ] its speed, Enter to dawn
 
 # what does this number do that the old one did not?
 cargo run --release -p tactics_core --example balance -- \
