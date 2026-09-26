@@ -1617,7 +1617,7 @@ fn a_personal_march_carries_across_rounds_and_ends_in_a_hold() {
     // Far up her own side of the river: several rounds' driving, no enemy
     // contact to muddy the march with drill moves.
     let far = start + tactics_core::Hex::new(3, -9);
-    assert!(state.map.contains(far));
+    assert!(state.world.contains(far));
     state
         .apply(
             &reg,

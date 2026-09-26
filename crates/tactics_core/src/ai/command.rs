@@ -1081,7 +1081,7 @@ impl SideCommand {
             let hexes: Vec<i32> = objective
                 .hexes
                 .iter()
-                .filter_map(|h| state.map.get(*h))
+                .filter_map(|h| state.world.get(*h))
                 .filter_map(|t| registry.terrain(t.terrain))
                 .map(|def| def.cover)
                 .collect();

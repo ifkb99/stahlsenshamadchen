@@ -1503,7 +1503,7 @@ fn a_map_that_names_no_objectives_is_fought_exactly_as_it_was_before() {
     greedy.objective_value = 25.0;
 
     let (a, b) = (Evaluator::new(indifferent), Evaluator::new(greedy));
-    for (tile, _) in state.map.iter() {
+    for (tile, _) in state.world.iter() {
         assert_eq!(
             a.score_tile(&reg, &state, UnitId(0), tile).score,
             b.score_tile(&reg, &state, UnitId(0), tile).score,
@@ -1918,7 +1918,7 @@ fn a_mission_that_names_ground_off_the_map_is_refused() {
     let mut state = BattleState::from_map(&reg, "river_crossing", 10).expect("battle");
     let armor = formation_named(&state, "kuhlmann_armor");
     let nowhere = tactics_core::offset_to_hex(500, 500);
-    assert!(!state.map.contains(nowhere));
+    assert!(!state.world.contains(nowhere));
     let not_on_map = Err(tactics_core::battle::OrderError::NotOnMap);
     for mission in [
         Mission::Advance { to: nowhere },
@@ -4045,7 +4045,7 @@ fn a_commander_sends_her_grenadiers_to_hold_the_covered_ground() {
         let hexes: Vec<i32> = objective
             .hexes
             .iter()
-            .filter_map(|h| state.map.get(*h))
+            .filter_map(|h| state.world.get(*h))
             .filter_map(|t| reg.terrain(t.terrain))
             .map(|def| def.cover)
             .collect();

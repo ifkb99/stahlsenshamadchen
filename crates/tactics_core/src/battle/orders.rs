@@ -965,7 +965,7 @@ impl BattleState {
             // it now and keeps marching each round until she arrives —
             // which also means a far destination is no longer a refusal.
             if let Some(to) = to {
-                if !self.map.contains(to) {
+                if !self.world.contains(to) {
                     return Err(OrderError::NotOnMap);
                 }
                 if let Some(unit) = self.unit_mut(id) {
@@ -1194,14 +1194,14 @@ impl BattleState {
     ) -> Result<(), OrderError> {
         match mission {
             Mission::Advance { to } | Mission::Assault { to } | Mission::Recon { toward: to } => {
-                if !self.map.contains(*to) {
+                if !self.world.contains(*to) {
                     return Err(OrderError::NotOnMap);
                 }
             }
             // `None` is "stand where you are", which needs no tile to exist.
             Mission::Hold { at } => {
                 if let Some(at) = at
-                    && !self.map.contains(*at)
+                    && !self.world.contains(*at)
                 {
                     return Err(OrderError::NotOnMap);
                 }
@@ -1310,7 +1310,7 @@ impl BattleState {
                 self.weapon_def(registry, id, weapon)?;
             }
             FireIntent::Area { at, weapon } => {
-                if !self.map.contains(at) {
+                if !self.world.contains(at) {
                     return Err(OrderError::NotOnMap);
                 }
                 self.weapon_def(registry, id, weapon)?;
@@ -1827,7 +1827,7 @@ impl BattleState {
         let tiles = tiles;
         let u = self.unit(unit)?;
         tiles.into_iter().find(|hex| {
-            self.map.contains(*hex)
+            self.world.contains(*hex)
                 && self.room_for(registry, u, *hex)
                 // Getting out where she already is costs no movement and needs
                 // no price; only a step to a neighbour does.
@@ -1930,7 +1930,7 @@ impl BattleState {
                 registry,
                 &roster,
                 unit,
-                self.map.get(unit.pos).map(|t| t.terrain),
+                self.world.get(unit.pos).map(|t| t.terrain),
             );
             {
                 let unit = self.unit_mut(id).expect("alive above");

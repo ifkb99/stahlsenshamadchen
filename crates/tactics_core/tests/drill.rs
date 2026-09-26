@@ -1372,7 +1372,7 @@ fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
     let start = state.unit(member).unwrap().pos;
     // Two hexes north, off the mission's axis: the commander's own spot.
     let post = start + tactics_core::Hex::new(0, -2);
-    assert!(state.map.contains(post));
+    assert!(state.world.contains(post));
     state
         .apply(
             &reg,
@@ -1470,7 +1470,7 @@ fn a_personal_order_is_taken_back_whole_or_not_at_all() {
     state.apply(&reg, &order(bridge)).unwrap();
     let member = state.formations()[armor.index()].members[0];
     let post = state.unit(member).unwrap().pos + tactics_core::Hex::new(0, -2);
-    assert!(state.map.contains(post));
+    assert!(state.world.contains(post));
     let send = |state: &mut BattleState| {
         state
             .apply(

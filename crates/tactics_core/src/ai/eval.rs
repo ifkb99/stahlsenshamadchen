@@ -246,7 +246,7 @@ impl Evaluator {
         // other evaluator weight is — see `planner.cover_prior`.
         let mut terrain_value = 0.0;
         if threat <= 0.0
-            && let Some(t) = state.map.get(tile)
+            && let Some(t) = state.world.get(tile)
         {
             terrain_value +=
                 t.elevation as f32 * planner.elevation_prior * doctrine.elevation_value;
@@ -288,7 +288,7 @@ impl Evaluator {
                         2 => -planner.crowding_near,
                         _ => 0.0,
                     };
-                    let supported = dist as f32 <= support && state.sight.clear(at, tile);
+                    let supported = dist as f32 <= support && state.world.sight().clear(at, tile);
                     let apart = if supported {
                         0.0
                     } else {
@@ -427,7 +427,7 @@ impl Evaluator {
             // of an empty map pulls a crew who has been given nothing. The
             // field says why folding them together would be wrong.
             None if state.scenario.objectives().is_empty() => {
-                -(state.map.center().distance_to(tile) as f32)
+                -(state.world.center().distance_to(tile) as f32)
                     * planner.search_slope
                     * doctrine.scouting
             }

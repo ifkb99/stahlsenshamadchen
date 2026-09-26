@@ -69,7 +69,7 @@ fn main() {
     let probe = BattleState::from_map(&registry, MAP, seeds[0]).expect("battle");
     println!(
         "map {MAP}: {} tiles, {} units",
-        probe.map.len(),
+        probe.world.len(),
         probe.units.len()
     );
     println!("seeds {seeds:?}\n");
@@ -279,7 +279,7 @@ fn bench_ground(registry: &DataRegistry, seeds: &[u64]) -> (Duration, Duration) 
     let (mut regions, mut wholes) = (Vec::new(), Vec::new());
     for &seed in seeds {
         let state = BattleState::from_map(registry, MAP, seed).expect("battle");
-        let centre = state.map.center();
+        let centre = state.world.center();
         const REPS: u32 = 5;
         let t = Instant::now();
         for _ in 0..REPS {
@@ -287,7 +287,7 @@ fn bench_ground(registry: &DataRegistry, seeds: &[u64]) -> (Duration, Duration) 
             std::hint::black_box(reader.tile(registry, &state, centre));
         }
         regions.push(t.elapsed() / REPS);
-        let area = Area::of(state.map.iter().map(|(h, _)| h));
+        let area = Area::of(state.world.iter().map(|(h, _)| h));
         let t = Instant::now();
         let mut reader = TerrainReader::new(registry);
         std::hint::black_box(reader.vantages(registry, &state, &area));

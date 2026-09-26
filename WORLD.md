@@ -185,10 +185,16 @@ the determinism snapshot passes **unregenerated**.
       `HexMap::insert` is the one way ground gets in — the door a world
       will fold chunks through. `SAVE_VERSION` 7 → 8. Neutral: snapshot
       unregenerated, perf flat.
-- [ ] **W0.3 One owner for tiles and both grids.** `BattleState`'s `map`,
-      `sight` and `moves` become one `Arc<World>` a chunk load extends;
-      engine code asks through `ground::Ground`. `SightGrid` and `MoveGrid`
-      probably become one object at the same time.
+- [x] ~~**W0.3 One owner for tiles and both grids.**~~ **Done
+      2026-09-26.** `world::World` is the tiles, the `SightGrid` and the
+      `MoveGrid`, and `World::insert` is the one door a tile comes in by —
+      it writes the tile and resolves it into both grids in one call.
+      `BattleState` holds `world: Arc<World>` in place of `map`, `sight` and
+      `moves`, and answers `Ground` by asking it. It is `ground::Patch`
+      promoted: the reader's tests stitch maps with it as before. Saved as
+      its tiles under the old key `map`, so the file did not change and
+      `SAVE_VERSION` did not move; `World::rebuilt` destructures by name
+      the way `rehydrate` does. The two grids stayed two objects.
 - [ ] **W0.4 Unloaded is not absent.** A tile lookup answers known,
       outside-the-world or not-resident; `sight_line_clear` treating an
       unknown tile as transparent stays right only for the second.

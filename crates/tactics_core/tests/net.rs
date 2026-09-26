@@ -467,7 +467,7 @@ fn contact_lost_is_said_once_and_restored_out_loud() {
         .expect("somebody to command");
     let beside = state.unit(leader).unwrap().pos + tactics_core::Hex::new(1, 0);
     let away = state.unit(leader).unwrap().pos + tactics_core::Hex::new(0, 8);
-    assert!(state.map.contains(beside) && state.map.contains(away));
+    assert!(state.world.contains(beside) && state.world.contains(away));
     assert!(state.unit_at(beside).is_none() && state.unit_at(away).is_none());
 
     // She starts alongside her commander, so the opening tick has nothing to
@@ -1806,7 +1806,7 @@ fn a_plan_advances_when_its_first_leg_is_done() {
     // round of driving completes it.
     let start = state.unit(leader).unwrap().pos;
     let near = start + tactics_core::Hex::new(2, 0);
-    assert!(state.map.contains(near));
+    assert!(state.world.contains(near));
     let hold_at = near;
     state
         .apply(

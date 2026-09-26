@@ -13,19 +13,20 @@ use tactics_core::Hex;
 use tactics_core::battle::{BattleState, SideState};
 use tactics_core::data::{DataRegistry, MovementClass};
 use tactics_core::ground::{
-    Area, FeatureKind, Ground, Patch, REGION_RADIUS, TerrainReader, covered_route, dead_ground,
+    Area, FeatureKind, Ground, REGION_RADIUS, TerrainReader, covered_route, dead_ground,
     firing_positions, region_of,
 };
 use tactics_core::harness::arena::{Arena, RIDGE_ARENA};
 use tactics_core::map::Battlefield;
+use tactics_core::world::World;
 
 mod common;
 use common::registry;
 
-fn ridge(reg: &DataRegistry) -> (&'static Arena, Patch) {
+fn ridge(reg: &DataRegistry) -> (&'static Arena, World) {
     let arena = &RIDGE_ARENA;
     let map = arena.map().expect("the ridge arena builds");
-    (arena, Patch::of(reg, &map.terrain))
+    (arena, World::build(reg, map.terrain))
 }
 
 fn sorted(mut hexes: Vec<Hex>) -> Vec<Hex> {
@@ -98,7 +99,7 @@ fn a_plain_has_no_high_ground() {
     }))
     .unwrap();
     let map = Battlefield::from_map_file(&file).unwrap();
-    let patch = Patch::of(&reg, &map.terrain);
+    let patch = World::build(&reg, map.terrain.clone());
     let mut reader = TerrainReader::new(&reg);
     let area = Area::of(map.terrain.iter().map(|(h, _)| h));
     assert_eq!(reader.vantages(&reg, &patch, &area), Vec::new());
@@ -271,7 +272,7 @@ fn two_maps_side_by_side_read_as_one_piece_of_ground() {
     let r = arena.radius as i32;
     let offset = Hex::new(2 * r + 1, -r);
 
-    let mut world = Patch::of(&reg, &map.terrain);
+    let mut world = World::build(&reg, map.terrain.clone());
     let single = world.len();
     // A seam: the second map touches the first without overlapping it.
     let seam: Vec<Hex> = map

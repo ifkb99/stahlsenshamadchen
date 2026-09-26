@@ -79,7 +79,7 @@ fn step_cost(
 ///
 /// This is the reference implementation and the one to reach for in a test,
 /// on the campaign map, or for any one-off query. Anything inside a search
-/// should go through [`BattleState::moves`] instead, which answers the same
+/// should go through the battle's [`crate::world::World::moves`] instead, which answers the same
 /// question without hashing a terrain id per step.
 pub fn edge_cost(
     registry: &DataRegistry,
@@ -268,7 +268,7 @@ pub fn edge_cost_for(
     to: Hex,
 ) -> Option<u32> {
     let (class, max_climb) = unit_movement(registry, state, unit);
-    state.moves.cost(class, max_climb, from, to)
+    state.world.moves().cost(class, max_climb, from, to)
 }
 
 /// Whether `unit` may pass through (not stop on) `hex`.
@@ -564,7 +564,7 @@ pub fn reachable(registry: &DataRegistry, state: &BattleState, id: UnitId) -> Ha
             {
                 continue;
             }
-            let Some(step) = state.moves.cost(class, max_climb, hex, next) else {
+            let Some(step) = state.world.moves().cost(class, max_climb, hex, next) else {
                 continue;
             };
             let total = cost + step;
@@ -684,7 +684,7 @@ fn to_go(state: &BattleState, watch: &Watch, destination: Hex) -> HashMap<Hex, u
         // whose watcher is charged.
         let enter = 1 + watch.price(state, hex);
         for next in hex.all_neighbors() {
-            if !state.map.contains(next) {
+            if !state.world.contains(next) {
                 continue;
             }
             let total = d + enter;
@@ -817,7 +817,7 @@ pub fn roads(registry: &DataRegistry, state: &BattleState, id: UnitId, rounds: u
             continue;
         }
         for next in hex.all_neighbors() {
-            let Some(step) = state.moves.cost(class, max_climb, hex, next) else {
+            let Some(step) = state.world.moves().cost(class, max_climb, hex, next) else {
                 continue;
             };
             let total = cost + step;
@@ -995,7 +995,7 @@ pub fn path_to(
             {
                 continue;
             }
-            let Some(step) = state.moves.cost(class, max_climb, hex, next) else {
+            let Some(step) = state.world.moves().cost(class, max_climb, hex, next) else {
                 continue;
             };
             let total = spent + step;

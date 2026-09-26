@@ -32,13 +32,13 @@ fn terrain_at<'r>(
     pos: Hex,
 ) -> Option<&'r TerrainDef> {
     state
-        .map
+        .world
         .get(pos)
         .and_then(|tile| registry.terrain(tile.terrain))
 }
 
 fn elevation_at(state: &BattleState, pos: Hex) -> i32 {
-    state.map.get(pos).map(|t| t.elevation).unwrap_or(0)
+    state.world.get(pos).map(|t| t.elevation).unwrap_or(0)
 }
 
 /// Hit chance percentage, clamped to `balance.min_hit ..= balance.max_hit`.
@@ -1595,7 +1595,7 @@ pub fn best_weapon_from(
         if !(weapon.range[0] as i32..=weapon.range[1] as i32).contains(&dist) {
             continue;
         }
-        if !weapon.indirect && !state.sight.clear(from, at) {
+        if !weapon.indirect && !state.world.sight().clear(from, at) {
             continue;
         }
         let value = expected_shot(registry, state, attacker, from, weapon, target, at, false);
@@ -1746,7 +1746,7 @@ pub fn preview_attack(
     // attacker and own a loaded direct-fire weapon that reaches.
     let counter = {
         let can_see = state.fog.side(tgt.side).spotted.contains(&attacker)
-            && state.sight.clear(tgt.pos, att.pos);
+            && state.world.sight().clear(tgt.pos, att.pos);
         if can_see {
             tgt_vehicle
                 .weapons
@@ -2578,7 +2578,7 @@ fn shot_exists(
         // Indirect fire needs somebody watching, not its own eyes.
         spotted
     } else {
-        state.sight.clear(from, target_pos)
+        state.world.sight().clear(from, target_pos)
     }
 }
 

@@ -68,7 +68,7 @@ fn every_battle_map_in_the_base_mod_is_the_regulation_hexagon() {
     for id in ids {
         let state = BattleState::from_map(&reg, id, 1).expect("battle map loads");
         assert_eq!(
-            state.map.len(),
+            state.world.len(),
             expected,
             "battle map `{id}` is not one overworld tile"
         );

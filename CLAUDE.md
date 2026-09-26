@@ -453,9 +453,10 @@ layer in PLANNING.md. **Nothing in the AI reads it yet.** Tests:
 `tests/ground.rs`, against the ridge arena's rule-built features.
 
 - **It asks the world four questions through `Ground` and nothing else**
-  (terrain id, elevation, sight line, step cost). `BattleState` answers
-  them; `Patch` answers them for any number of maps folded in at offsets.
-  A future streamed world is a third implementation, not a rewrite.
+  (terrain id, elevation, sight line, step cost). `world::World` answers
+  them, for one map or any number folded in at offsets, and `BattleState`
+  answers by asking the world it stands on (WORLD.md, W0.3). A streamed
+  world is that same type growing, not a rewrite.
 - **Lazy and per region.** `region_of` is `hexx`'s hexagonal tiling of the
   whole plane (radius 4, 61 tiles); a region is read the first time one of
   its hexes is asked about and cached in the `TerrainReader`, which the
@@ -900,8 +901,9 @@ its crew's nerve, and the route a crew drives is part of her order. Tests:
 `UtilityChooser` prices the road, the fire along it and who gets there first,
 all off one Dijkstra (`battle::roads`, `HORIZON` = `planner.horizon_rounds`).
 
-- **Every step is priced through `BattleState::moves`, a `MoveGrid`**,
-  `SightGrid`'s twin, rebuilt by `SavedBattle::rehydrate`. `movement::edge_cost` is
+- **Every step is priced through `state.world.moves()`, a `MoveGrid`**,
+  `SightGrid`'s twin; both live inside the battle's `World` and are rebuilt
+  by `SavedBattle::rehydrate` through `World::rebuilt`. `movement::edge_cost` is
   the reference and shares `step_cost` with it;
   `the_move_grid_answers_exactly_what_the_reference_does` pins them.
 - **`roads` has no occupancy at all.** A march takes rounds and the field
@@ -1257,8 +1259,9 @@ function over plain data.
 
 `tactics_core::save`; F5/F9 on the campaign map. The property that matters is
 that **the future round-trips**, which `tests/save.rs` pins by forking a battle
-through a save file. `SightGrid`, `MoveGrid` and the per-unit vision in
-`FogMap` are `#[serde(skip)]` caches — an empty sight grid answers wrongly
+through a save file. `SightGrid`, `MoveGrid` (both inside `World`, which
+saves as its tiles alone under the key `map`) and the per-unit vision in
+`FogMap` are caches left out of the file — an empty sight grid answers wrongly
 rather than loudly, an empty move grid says nobody can drive, an empty
 `visible_key` panics — and **rebuilding them is a type, not a duty**.
 `BattleState` is `Battle<Built>`; what serde produces is `Battle<Unbuilt>`
