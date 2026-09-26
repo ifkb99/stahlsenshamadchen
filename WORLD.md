@@ -387,10 +387,38 @@ the determinism snapshot passes **unregenerated**.
       planner's `EndTurn`) drive it unchanged. `frontier_world` now runs
       5–13 days. *Still to do:* orders at any tick from any side (W4.4) —
       today they are given in the dawn phases.
-- [ ] **W3.2 Refinement** with the one-coarse-step margin; reinforcements
-      arrive by their road.
-- [ ] **W3.3 Coarsening** with hysteresis; conservation asserted at every
-      crossing.
+- [x] ~~**W3.2 Refinement.**~~ **Done 2026-09-26**, at the contact rule the
+      march already has (a column halts on the border of an enemy's hex): no
+      battle is sent anywhere. `open_engagement` lifts both armies' vehicles
+      onto the tiles round where each stands, gives the world its next unit
+      ids, and fights an `engagement::Engagement` — a `BattleState` on a
+      window onto the world — one battle tick per clock tick while every
+      other column marches. Its AI is planned inside the engine each round
+      by planners seeded from the fight's dice and the round, so nothing
+      between rounds lives outside the battle and a save mid-fight fights on
+      the same (tested tick by tick). *Not yet:* the one-coarse-step margin
+      and reinforcements arriving by road (W3.5); an army that reaches a
+      fight in progress waits on the border.
+- [x] ~~**W3.3 Coarsening.**~~ **Done 2026-09-26**, by the battle's own end
+      rules — elimination, or its stalemate clock after rounds with nobody
+      in contact, which is the hysteresis. `close_engagement` applies
+      casualties and survivors through the same code a battle event uses
+      (`apply_losses_and_survivors`, split out of `apply_battle_result`) and
+      stands each army where its first surviving vehicle is (tested: a
+      survivor stands beside where its vehicles last were; not moving it
+      fails that). **It dissolved the hidden-headquarters loop**: all 16
+      seeds of `frontier_world` now end (6–26 days), where 3 ran past 60.
+      Found on the way: with no ground to fight for, the attacker was sent
+      at the one tile the defender occupied, which no crew can choose, and
+      the sides sat nine hexes apart until the stalemate clock ran out — so
+      an engagement's scenario holds **the defender's ground** as an
+      objective (radius 2, value 3) and the attacker assaults its nearest
+      free tile.
+      **Balance finding:** the Valkyries win 14 of 16 on `frontier_world`'s
+      one fixed world (seed 1, where their headquarters starts beside both
+      factories); giving Kuhlmann the same doctrine in fights moves it only
+      to 12 of 16. A world per campaign (`"seed"` omitted) would measure the
+      rules rather than the map.
 - [ ] **W3.4 Engagements, not battles.** `over`, `score`, the stalemate
       clock and `check_victory` become an engagement's; `Fate::Exited`
       becomes leaving the bubble; `exit` objectives go; `deploy` becomes

@@ -536,9 +536,15 @@ and the seam tests in `tests/ground.rs`.
   order sets a `MarchOrder`; the clock walks every march at once, tick by
   tick, in integer movement banked per tick, with the `march` block's halts
   and hours; the sides order in turn at dawn and the last side's end-of-turn
-  runs the day, stopping at the first contact. `advance_clock(ticks)` is the
-  entry real time drives. A drawn campaign keeps its turns: nothing here
-  runs for it.
+  runs the day. `advance_clock(ticks)` is the entry real time drives. A
+  drawn campaign keeps its turns: nothing here runs for it.
+- **Contact on a clocked campaign is a fight on the ground, not a battle
+  event** (`engagement::Engagement`, W3.2–W3.3): the armies' vehicles are
+  lifted onto the tiles round where they stand, the battle ticks with the
+  clock, its AI is planned inside the engine each round from the fight's
+  own dice (so a save mid-fight is exact), and survivors fold back into
+  armies where they stand. The defender's ground is the fight's objective;
+  without it the AI had nothing to fight for and never closed.
 
 ### Reading ground
 

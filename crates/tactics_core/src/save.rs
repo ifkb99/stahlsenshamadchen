@@ -244,7 +244,12 @@ impl SaveGame<BattleState> {
             Self {
                 version,
                 mods,
-                overworld,
+                // A campaign's fights on the ground are battles too, and
+                // come off disk as unbuilt as one does (WORLD.md W3.2).
+                overworld: overworld.map(|mut o| {
+                    o.rehydrate(registry);
+                    o
+                }),
                 battle: battle.map(|b| b.rehydrate(registry)),
             },
             warnings,

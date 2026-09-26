@@ -694,6 +694,34 @@ fn pump_events(
                 CrewFate::Killed => format!("{name} did not make it."),
             });
         }
+        // A fight on the ground (WORLD.md W3.2): fought by the clock while
+        // the campaign goes on, and — until the player can command one (W4)
+        // — fought for both sides by their commanders' stand-ins. Said in
+        // the log, so the player knows where her companies are.
+        OverworldEvent::EngagementBegan {
+            attacker, defender, ..
+        } => {
+            if let (Some(att), Some(def)) = (
+                overworld.state.army(*attacker),
+                overworld.state.army(*defender),
+            ) {
+                log.push(format!("{} is in contact with {}.", att.name, def.name));
+            }
+        }
+        OverworldEvent::EngagementEnded {
+            winner,
+            hulls_lost,
+            rounds,
+            ..
+        } => {
+            let who = winner
+                .and_then(|w| overworld.state.sides.get(w as usize))
+                .map_or("nobody".to_string(), |s| s.name.clone());
+            log.push(format!(
+                "The fight is over after {rounds} minute(s): {who} holds the field; \
+                 vehicles lost {hulls_lost:?}."
+            ));
+        }
         OverworldEvent::ObjectiveCaptured { at, side } => {
             let name = &overworld.state.sides[*side as usize].name;
             let terrain = overworld
