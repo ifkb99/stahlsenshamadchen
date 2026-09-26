@@ -273,21 +273,17 @@ the determinism snapshot passes **unregenerated**.
 
 ## Open questions
 
-Answered 2026-09-26 and folded into the rulings above: campaign pace (both),
-the skeleton (generated), reaching down (at a cost, from a command
-vehicle), the player's death (the end), the net (rooted at her) and the
-clock (real time with speed controls). Still open:
+All answered 2026-09-26. The first round (pace, skeleton, reaching down,
+the player's death, the net, the clock) is folded into the rulings above;
+the second:
 
-1. **Where an order takes effect.** Under a running clock an order can be
-   given on any tick. The recommendation is that it lands on any tick —
-   radio latency already delays it, and the 60-second round survives as the
-   AI's pulse and the unit every price is quoted in — rather than waiting
-   for the next round boundary.
-2. **A wounded player.** A wound is not a death, but while her cadet is in
-   the infirmary, does she still command — from the rear, over the net —
-   or does the next senior take the field until she is back?
-3. **What a generated campaign declares.** The world is generated; the
-   *scenario* — who starts where, which army is whose headquarters, what
-   ends it — still has to be said. Proposed: the scenario names features
-   ("the town nearest each side's edge") and the generator resolves them,
-   so a campaign is a seed, the generator's parameters and a scenario.
+1. **An order lands on the tick it is given**, then travels the net with its
+   usual latency. The 60-second round survives as the AI's planning pulse and
+   the unit every price is quoted in.
+2. **A wounded player hands over.** While her cadet is in the infirmary the
+   next senior takes the field by the existing succession rule, and the
+   player commands through *that* cadet until hers is back.
+3. **A generated campaign names features.** The scenario says "the town
+   nearest each side's edge", "every factory", and the generator resolves
+   those against the world it made. A campaign is a seed, the generator's
+   parameters and a scenario.
