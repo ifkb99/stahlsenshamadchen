@@ -6,17 +6,28 @@
 #     STAHL_SCRIPT=scripts/dev/generated-campaign.txt cargo run -p stahlsenshamädchen
 #
 # frontier_world's 1st Company resolves to the western town, which is the
-# campaign hex at axial (-6, 0) — a city, because its tiles hold a town.
+# campaign hex at axial (-3, -7) since the world grew to radius 10 — a city,
+# because its tiles hold a town.
 
 at 3.0
 log "generated campaign, day 1"
 shot /tmp/world-01-start.png
 
-hex -6,0
+hex -3,-7
 wait 0.3
 click left
 wait 0.5
 shot /tmp/world-02-selected.png
+
+# Z zooms onto the ground under the selected company, tile by tile, and Z
+# again comes back to the campaign map: one world, two levels.
+key KeyZ
+expect log "On the ground."
+wait 1.0
+shot /tmp/world-02b-ground.png
+key KeyZ
+expect log "Back to the campaign map."
+wait 0.5
 
 # The clock opens stopped; Space runs it, and a couple of seconds at ten
 # game minutes a second is most of an hour of marching; Space stops it.

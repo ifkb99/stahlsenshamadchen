@@ -61,7 +61,31 @@ pub(crate) struct Overworld {
     /// The last day the AI sides gave their orders on: on the clock they
     /// order once a dawn and the clock runs on its own.
     planned_day: u32,
+    /// Zoomed in onto the ground, if the player is (WORLD.md W5.2): the same
+    /// world, drawn tile by tile around where she is looking.
+    ground: Option<GroundView>,
 }
+
+/// The ground as the campaign screen draws it when zoomed in: every tile of
+/// the chunk under the camera and its neighbours, streamed in and out as the
+/// camera pans (WORLD.md W5.1). The view pivots on the tile it was opened at
+/// for as long as it is open, so streamed chunks land where they belong.
+struct GroundView {
+    /// The tile the view pivots on.
+    pivot: Hex,
+    /// The chunk the loaded ground is centred on.
+    centre: Hex,
+    /// The loaded tiles, for projection and elevation lookups.
+    tiles: tactics_core::map::HexMap,
+}
+
+/// A ground tile drawn by the zoomed-in view, tagged with its chunk so the
+/// chunk can be taken away again.
+#[derive(Component)]
+struct GroundTile(Hex);
+
+/// Chunks drawn round the one under the camera: that one and its ring.
+const GROUND_RING: u32 = 1;
 
 /// The world clock's speeds, in ticks a real second: a game minute, ten
 /// minutes, an hour and six hours a second. The speed is only how many ticks
@@ -213,7 +237,8 @@ impl Plugin for OverworldPlugin {
             )
             .add_systems(
                 Update,
-                sync_armies
+                (stream_ground, sync_armies)
+                    .chain()
                     .in_set(ScreenSet::Sync)
                     .run_if(in_state(AppState::Overworld)),
             )
@@ -444,6 +469,7 @@ fn enter_overworld(
         paused: true,
         owed: 0.0,
         planned_day: 0,
+        ground: None,
     });
 }
 
@@ -1813,6 +1839,88 @@ fn drive_ai(mods: Res<Mods>, mut overworld: ResMut<Overworld>) {
     ow.anim.extend(events);
 }
 
+/// Stream the ground in around the camera while zoomed in (WORLD.md W5.1):
+/// the chunk it is looking at and its ring are drawn, tile by tile, and a
+/// chunk that falls out of that set is taken away. The campaign's own map is
+/// hidden meanwhile, and shown again when the view zooms back out.
+#[allow(clippy::too_many_arguments)]
+fn stream_ground(
+    mut commands: Commands,
+    mods: Res<Mods>,
+    art: Res<ArtCache>,
+    mut overworld: ResMut<Overworld>,
+    focus: Res<CameraFocus>,
+    view: map_render::View,
+    drawn: Query<(Entity, &GroundTile)>,
+    mut campaign_tiles: Query<&mut Visibility, (With<map_render::MapTile>, Without<GroundTile>)>,
+) {
+    let ow = &mut *overworld;
+    let Some(world) = ow.state.world.clone() else {
+        return;
+    };
+    let Some(ground) = ow.ground.as_mut() else {
+        // Zoomed out: no ground drawn, and the campaign's map shown.
+        for (entity, _) in &drawn {
+            commands.entity(entity).despawn();
+        }
+        for mut v in &mut campaign_tiles {
+            *v = Visibility::Inherited;
+        }
+        return;
+    };
+    for mut v in &mut campaign_tiles {
+        *v = Visibility::Hidden;
+    }
+    let radius = world.chunk_radius;
+    let looking = iso::hex_at(focus.0, view.rotation(), ground.pivot);
+    let centre = tactics_core::world::chunk_of(looking, radius);
+    let wanted: std::collections::HashSet<(i32, i32)> =
+        centre.range(GROUND_RING).map(|c| (c.x, c.y)).collect();
+    let mut have: std::collections::HashSet<(i32, i32)> = std::collections::HashSet::new();
+    for (entity, tile) in &drawn {
+        let c = (tile.0.x, tile.0.y);
+        if wanted.contains(&c) {
+            have.insert(c);
+        } else {
+            commands.entity(entity).despawn();
+        }
+    }
+    if have.len() == wanted.len() && ground.centre == centre {
+        return;
+    }
+    ground.centre = centre;
+    let mut tiles = tactics_core::map::HexMap::default();
+    let mut ordered: Vec<(i32, i32)> = wanted.into_iter().collect();
+    ordered.sort_unstable();
+    for (x, y) in ordered {
+        let chunk = Hex::new(x, y);
+        let fresh = !have.contains(&(x, y));
+        for (hex, terrain, elevation) in world.chunk_tiles(chunk) {
+            tiles.insert(hex, terrain, elevation);
+            if fresh {
+                let (pos, z) = iso::project(hex, elevation, view.rotation(), ground.pivot);
+                commands.spawn((
+                    Sprite {
+                        image: art.tile(terrain, elevation).clone(),
+                        ..default()
+                    },
+                    Transform::from_translation(Vec3::new(
+                        pos.x,
+                        pos.y + map_render::prism_offset(elevation),
+                        z,
+                    )),
+                    map_render::MapTile { hex, elevation },
+                    GroundTile(chunk),
+                    OverworldScope,
+                ));
+            }
+        }
+    }
+    let _ = &mods;
+    commands.insert_resource(CurrentMap(std::sync::Arc::new(tiles.clone())));
+    ground.tiles = tiles;
+}
+
 /// The world clock, in real time (WORLD.md W3.1): while nothing is being
 /// shown, asked or animated, the clock runs at the chosen speed. It stops on
 /// its own when a fight waits for the player's orders.
@@ -1879,6 +1987,47 @@ fn handle_input(
     {
         return;
     }
+    // Z zooms onto the ground of a generated world and back out (WORLD.md
+    // W5.2): the same world, one camera, two levels.
+    if keys.just_pressed(KeyCode::KeyZ) && overworld.state.world.is_some() {
+        let ow = &mut *overworld;
+        if ow.ground.take().is_some() {
+            commands.insert_resource(ViewCenter(ow.state.map.center()));
+            commands.insert_resource(CurrentMap(ow.state.map.clone()));
+            center_camera(&mut focus, view.rotation(), ow.state.map.center());
+            let _ = &scoped;
+            log.push("Back to the campaign map.".to_string());
+        } else {
+            let world = ow.state.world.clone().expect("checked above");
+            let at = ow
+                .selected
+                .and_then(|id| ow.state.army(id))
+                .and_then(|a| a.tile)
+                .or_else(|| {
+                    view.hovered(&ow.state.map)
+                        .map(|hex| world.stand_tile(&mods.0, hex))
+                })
+                .unwrap_or_else(|| world.stand_tile(&mods.0, Hex::ZERO));
+            ow.ground = Some(GroundView {
+                pivot: at,
+                centre: tactics_core::world::chunk_of(at, world.chunk_radius),
+                tiles: tactics_core::map::HexMap::default(),
+            });
+            commands.insert_resource(ViewCenter(at));
+            let (pos, _) = iso::project(at, 0, view.rotation(), at);
+            focus.0 = pos;
+            log.push("On the ground. Z for the campaign map.".to_string());
+        }
+        return;
+    }
+    // Zoomed in, the map is for looking at: the clock keys still work, and
+    // orders are given from the campaign map.
+    if overworld.ground.is_some()
+        && (buttons.just_pressed(MouseButton::Left) || buttons.just_pressed(MouseButton::Right))
+    {
+        return;
+    }
+
     let side = overworld.state.active_side;
     // On the clock there is no turn to wait for: the player orders any
     // company at any time, and the keys below run the clock.
@@ -2115,8 +2264,18 @@ fn sync_armies(
             *visibility = Visibility::Hidden;
             continue;
         };
-        let elev = state.map.get(army.pos).map(|t| t.elevation).unwrap_or(0);
-        let (pos, z) = iso::project(army.pos, elev, view.rotation(), view.center());
+        // Zoomed in, an army stands on its tile; on the campaign map, on its
+        // hex. One world, two levels.
+        let (pos, z) = match (&overworld.ground, army.tile) {
+            (Some(ground), Some(tile)) => {
+                let elev = ground.tiles.get(tile).map(|t| t.elevation).unwrap_or(0);
+                iso::project(tile, elev, view.rotation(), view.center())
+            }
+            _ => {
+                let elev = state.map.get(army.pos).map(|t| t.elevation).unwrap_or(0);
+                iso::project(army.pos, elev, view.rotation(), view.center())
+            }
+        };
         transform.translation = Vec3::new(pos.x, pos.y + 16.0, z + 1.5);
         let seen = state.army_visible_to(&mods.0, army, view_side);
         *visibility = if seen {
@@ -2165,6 +2324,18 @@ fn update_range_highlights(
     existing: Query<Entity, With<OwRangeTile>>,
     mut hover: Query<(&mut Transform, &mut Visibility), With<OwHoverTile>>,
 ) {
+    // Zoomed in, the campaign's highlights are in the wrong frame: hidden,
+    // and drawn again when the view zooms back out.
+    if overworld.ground.is_some() {
+        if let Ok((_, mut visibility)) = hover.single_mut() {
+            *visibility = Visibility::Hidden;
+        }
+        for entity in &existing {
+            commands.entity(entity).despawn();
+        }
+        overworld.range_dirty = true;
+        return;
+    }
     let map = overworld.state.map.clone();
     let face_at = |hex: Hex| view.face_at(&map, hex);
 
@@ -2264,7 +2435,12 @@ fn update_owner_dots(
     mut dots: Query<(&OwnerDot, &mut Transform, &mut Sprite)>,
 ) {
     let state = &overworld.state;
+    let on_ground = overworld.ground.is_some();
     for (dot, mut transform, mut sprite) in &mut dots {
+        if on_ground {
+            sprite.color = Color::NONE;
+            continue;
+        }
         let elev = state.map.get(dot.0).map(|t| t.elevation).unwrap_or(0);
         let (pos, z) = iso::project(dot.0, elev, view.rotation(), view.center());
         transform.translation = Vec3::new(pos.x + 18.0, pos.y + 8.0, z + 1.2);

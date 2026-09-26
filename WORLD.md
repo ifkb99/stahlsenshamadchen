@@ -518,10 +518,25 @@ the determinism snapshot passes **unregenerated**.
       held the clock to the speed of the animation. The
       `fight-on-the-ground` tour runs the campaign until a fight opens,
       commits until it is over, and is back on the map.
-- [ ] **W5.1 Chunked rendering.** `map_render.rs` spawns an entity per
-      tile, fine at 1261 and not at 160k.
-- [ ] **W5.2 Two zoom levels**, one camera.
-- [ ] **W5.3 Tours** for the clock, the pause and the zoom.
+- [x] ~~**W5.1 Chunked rendering.**~~ **First version done 2026-09-26.**
+      Zoomed in, the campaign screen draws the ground a chunk at a time —
+      the chunk under the camera and its ring, ~9k tiles — straight from
+      the generator, and streams chunks in and out as the camera pans
+      (`stream_ground`). Still an entity a tile, which is fine at this
+      count; merged meshes would let the ring grow.
+- [x] ~~**W5.2 Two zoom levels, one camera.**~~ **First version done
+      2026-09-26.** Z on a generated campaign zooms from the campaign map
+      onto the ground under the selected company (or the hovered hex), with
+      every army standing on its own tile, and Z zooms back out. The view
+      pivots on the tile it opened at. Zoomed in, the map is for looking —
+      orders are given on the campaign map — and the campaign's highlights
+      and owner dots are hidden. *Not yet:* a continuous zoom, the campaign
+      hexes drawn at their true size and angle over the tiles, and the
+      side panel's movement line (still the drawn campaign's hexes a day).
+- [x] ~~**W5.3 Tours.**~~ **Done 2026-09-26.** `generated-campaign` runs
+      and stops the clock, zooms in and out, and skips to dawn;
+      `fight-on-the-ground` plays a fight on the ground from contact to the
+      end and back to the map.
 
 ## Open questions
 
