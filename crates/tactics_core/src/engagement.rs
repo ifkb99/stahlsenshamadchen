@@ -61,6 +61,11 @@ pub struct Engagement {
     /// and this fight's key. Its planners are seeded from it too.
     pub seed: u64,
     pub fight: Fight,
+    /// What happened in it on the clock's latest tick — its AI's orders and
+    /// the tick's events — for a screen that is watching it (WORLD.md W5).
+    /// Not saved: it is news, not state.
+    #[serde(skip)]
+    pub recent: Vec<crate::battle::Event>,
 }
 
 impl Engagement {

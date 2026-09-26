@@ -2027,3 +2027,31 @@ fn a_fight_she_can_reach_waits_for_her_orders_and_one_she_cannot_is_fought_witho
     }
     let _ = army;
 }
+
+#[test]
+fn on_the_clock_an_army_ordered_onto_its_own_hex_holds_there() {
+    // The campaign planner says "stay" by ordering an army onto the hex it
+    // stands on. On the clock that was refused as a march with no road,
+    // which spent the army's day and left it on whatever march it had —
+    // found when the Valkyries never moved in the game. It is a hold.
+    let reg = registry();
+    let mut state = generated(&reg);
+    let army = state.armies[0].id;
+    let here = state.army(army).unwrap().pos;
+    let far = state
+        .reachable(&reg, army)
+        .into_keys()
+        .find(|h| *h != here)
+        .unwrap();
+    state
+        .apply(&reg, &OverworldOrder::MoveArmy { army, to: far })
+        .unwrap();
+    assert!(state.army(army).unwrap().march.is_some());
+    state
+        .apply(&reg, &OverworldOrder::MoveArmy { army, to: here })
+        .expect("staying is an order");
+    assert!(
+        state.army(army).unwrap().march.is_none(),
+        "and it ends the march"
+    );
+}

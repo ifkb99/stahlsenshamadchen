@@ -643,6 +643,9 @@ fn parse_key(name: &str) -> Option<KeyCode> {
         "ArrowDown" | "Down" => Some(KeyCode::ArrowDown),
         "ArrowLeft" | "Left" => Some(KeyCode::ArrowLeft),
         "ArrowRight" | "Right" => Some(KeyCode::ArrowRight),
+        // The world clock's speed keys (WORLD.md W5.0).
+        "BracketLeft" | "[" => Some(KeyCode::BracketLeft),
+        "BracketRight" | "]" => Some(KeyCode::BracketRight),
         _ => None,
     }
 }

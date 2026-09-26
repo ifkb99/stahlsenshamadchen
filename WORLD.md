@@ -501,6 +501,23 @@ the determinism snapshot passes **unregenerated**.
       at any time. The banner reads the time of day and the speed. A fight
       waiting for her orders stops the clock. The `generated-campaign` tour
       runs, stops and skips it.
+- [x] ~~**W5.0b The fight screen.**~~ **Done 2026-09-26** (added). The
+      game turns `human_command` on for a clocked campaign, so W4 is in
+      play: when one of her companies makes contact within her reach, the
+      clock stops and the battle screen opens as a *view onto the
+      campaign's own fight* (`PendingBattle::Engagement`) — it mirrors the
+      fight's battle, sends every order she gives (and her staff's, at
+      commit) to the fight itself, and resolves it by running the world
+      clock a tick at a time, taking the mirror again after each and
+      playing the fight's own events (`Engagement::recent`). So the fight
+      is resolved in lockstep with every march on the map, and nothing is
+      staged. It hands back to the campaign when the fight is over, or when
+      another of her fights needs her. On the clock, the campaign screen no
+      longer queues a column's every hex crossing as a beat of animation —
+      the sprites follow the state, and at six hours a second the beats
+      held the clock to the speed of the animation. The
+      `fight-on-the-ground` tour runs the campaign until a fight opens,
+      commits until it is over, and is back on the map.
 - [ ] **W5.1 Chunked rendering.** `map_render.rs` spawns an entity per
       tile, fine at 1261 and not at 160k.
 - [ ] **W5.2 Two zoom levels**, one camera.

@@ -1,0 +1,24 @@
+# A fight on the ground: the generated campaign runs on the clock until one
+# of the player's companies makes contact, the fight screen opens on it, and
+# she commits minute after minute until it is over — the fight resolved by
+# the world clock, in lockstep with the campaign.
+#!env STAHL_CAMPAIGN=frontier_world
+#
+#   STAHL_CAMPAIGN=frontier_world STAHL_DEBUG=1 \
+#     STAHL_SCRIPT=scripts/dev/fight-on-the-ground.txt cargo run -p stahlsenshamädchen
+
+at 3.0
+key BracketRight
+key BracketRight
+key BracketRight
+key Space
+until log "A fight is waiting for your orders." 400
+wait 3.0
+shot /tmp/fight-01-opened.png
+press Enter until log "The fight is over." 500
+shot /tmp/fight-02-over.png
+# Back on the campaign screen, the clock stopped where the fight left it.
+until log "Clock" 30
+wait 2.0
+shot /tmp/fight-03-back.png
+quit
