@@ -361,16 +361,32 @@ the determinism snapshot passes **unregenerated**.
       in battle-as-event on any map; W3 dissolves it (a fight is a bubble
       the attacker keeps searching) rather than a rule being added now.
 - [ ] **W2.4 Halts, and what a halt is for**: a commander may detach an
-      element to look ahead, which travels as its own coarse entity.
-- [ ] **W2.5 Capture and endings read tiles.**
+      element to look ahead, which travels as its own coarse entity. The
+      halt itself runs on the clock since W3.1 (the last minutes of every
+      marching hour); what a commander does with one is still to build.
+- [ ] **W2.5 Capture and endings read tiles.** Folded into W3.4:
+      objectives come from the skeleton when fights are on the ground.
 
 ### W3 — the world clock and the bubble
 
-- [ ] **W3.1 The clock**, in whole ticks, real time with speed controls,
-      orders stamped with their tick. Sides act simultaneously; `active_side`,
-      `turn` and `Army::moved` go. Day-keyed rules move onto the clock —
-      `hold_days` at dawn, infirmary days, a transfer's "neither marched
-      today".
+- [x] ~~**W3.1 The clock.**~~ **Done 2026-09-26**, for generated
+      campaigns (a drawn one keeps its turns). `OverworldState::clock` counts
+      5-second ticks from the first dawn; `turn` is the day it falls in. An
+      order sets a `MarchOrder` (the target, whether to go round an enemy or
+      into him, the leg of tiles, movement banked in integer hundredths of
+      a tick's point) and the clock walks it: at dawn the sides give their
+      orders in turn, and when the last has, the day runs for everybody at
+      once — halting for the last `halt_minutes_per_hour` of every marching
+      hour, bivouacking once `hours_per_day` are marched, and stopping at
+      the first tick a column meets an enemy (it halts on the border and
+      the fight is there), after which the same end-of-turn runs the rest of
+      the day. Dawn heals, restores marching hours, walks every side's net,
+      sends held orders and checks the ground held. `advance_clock(ticks)`
+      is the entry real-time play will drive: speed is only how many ticks a
+      second asks for. The existing loops (the game's, the harness's, the
+      planner's `EndTurn`) drive it unchanged. `frontier_world` now runs
+      5–13 days. *Still to do:* orders at any tick from any side (W4.4) —
+      today they are given in the dawn phases.
 - [ ] **W3.2 Refinement** with the one-coarse-step margin; reinforcements
       arrive by their road.
 - [ ] **W3.3 Coarsening** with hysteresis; conservation asserted at every

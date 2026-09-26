@@ -532,6 +532,13 @@ and the seam tests in `tests/ground.rs`.
   `an_army_sent_anywhere_its_reach_offers_arrives_there_that_day`. A
   heuristic that inflates would break that; the admissible one is loose
   and a cold march prices ~1,700 passages (~1 s), a warm one 9 ms.
+- **A generated campaign runs on the world clock** (`clocked()`, W3.1). An
+  order sets a `MarchOrder`; the clock walks every march at once, tick by
+  tick, in integer movement banked per tick, with the `march` block's halts
+  and hours; the sides order in turn at dawn and the last side's end-of-turn
+  runs the day, stopping at the first contact. `advance_clock(ticks)` is the
+  entry real time drives. A drawn campaign keeps its turns: nothing here
+  runs for it.
 
 ### Reading ground
 

@@ -272,6 +272,29 @@ pub struct Army {
     /// `None` on a drawn campaign map, which has no tiles.
     #[serde(default)]
     pub tile: Option<Hex>,
+    /// Where it is marching, on a campaign that runs on the clock
+    /// (WORLD.md W3.1): the order and the leg of tiles it is walking now.
+    #[serde(default)]
+    pub march: Option<MarchOrder>,
+    /// Ticks spent on the march today — moving or halted — against the
+    /// `march` block's hours; reset at dawn.
+    #[serde(default)]
+    pub marched_ticks: u32,
+}
+
+/// A march in progress on the world clock.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarchOrder {
+    /// The campaign hex it is marching on.
+    pub to: Hex,
+    /// Whether it goes round an enemy in its road or into him.
+    pub engagement: Engagement,
+    /// The tiles of the leg it is walking, next first; re-planned when it
+    /// runs out short of `to`.
+    pub leg: Vec<Hex>,
+    /// Movement banked toward the next step, in hundredths of a tick's
+    /// worth of a movement point — an integer, so the march is exact.
+    pub banked: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -565,6 +588,12 @@ pub struct OverworldState {
     /// the world, the terrain definitions and the column.
     #[serde(skip)]
     passages: Arc<std::sync::Mutex<HashMap<Passage, Option<u32>>>>,
+    /// Ticks since the campaign's first dawn, on a campaign that runs on the
+    /// world clock (WORLD.md W3.1). Every march, halt and dawn is read off
+    /// it; `turn` is the day it falls in. Zero on a drawn campaign, which
+    /// runs on turns.
+    #[serde(default)]
+    pub clock: u64,
 }
 
 /// The kind of column a march is priced for: which movement classes are in
@@ -612,8 +641,9 @@ const ARMY_CLIMB: i32 = 9;
 /// that mission execution and the player's click can share
 /// [`OverworldState::move_army`] instead of the AI growing a second, subtly
 /// different mover of its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Engagement {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Engagement {
     /// Go round. Hostile armies are impassable except at the ordered
     /// destination, and halting short of one is just a day's march that ended.
     /// This is what a hand order means — the player's click on a patch of
@@ -737,6 +767,8 @@ impl OverworldState {
                 mission: None,
                 headquarters: a.headquarters,
                 tile: world.as_ref().map(|w| w.stand_tile(registry, positions[i])),
+                march: None,
+                marched_ticks: 0,
             })
             .collect();
         let mut state = Self {
@@ -765,6 +797,7 @@ impl OverworldState {
             world,
             ground: std::sync::OnceLock::new(),
             passages: Arc::default(),
+            clock: 0,
         };
         // Who can hear whom on the morning of day one. The events are dropped
         // because nothing has *changed* yet — an army that starts the campaign
@@ -1301,26 +1334,22 @@ impl OverworldState {
         best
     }
 
-    /// A march on a generated world: the army's route over the real ground,
-    /// tile by tile, from where it stands to the standing tile of `to`,
-    /// trimmed to the day's march (WORLD.md W2.1–W2.3). Returns the campaign
-    /// hexes it passed through, the tile it stopped on, and the enemy that
-    /// stopped it, if one did — the same three things the campaign-hex march
-    /// works out, so everything after them is shared.
+    /// The next leg of a march on a generated world: the tiles from where the
+    /// army stands toward the standing tile of `to`, as far as the first
+    /// coarse hex beyond a day's march (WORLD.md W2.1–W2.3). The clock walks
+    /// it (`step_march`) and asks for another when it runs out.
     ///
     /// The rules are the campaign's, read at the tile: a hostile army's hex
-    /// is a wall to a march that means to avoid contact and the end of one
-    /// that does not, entered never — the column halts on its border and the
-    /// fight is there; a friend's hex is traffic, driven through and not
-    /// stopped in.
-    #[allow(clippy::type_complexity)]
-    fn march_on_ground(
+    /// is a wall to a march that means to avoid contact; a march that does
+    /// not avoid it is routed through, and halts on its border when it gets
+    /// there — that is where the fight is.
+    fn plan_leg(
         &self,
         registry: &DataRegistry,
         army: &Army,
         to: Hex,
         engagement: Engagement,
-    ) -> Result<(Vec<Hex>, Hex, Option<(ArmyId, Hex)>), OverworldError> {
+    ) -> Result<Vec<Hex>, OverworldError> {
         let (Some(world), Some(ground)) = (self.world.as_ref(), self.ground(registry)) else {
             return Err(OverworldError::NoPath);
         };
@@ -1379,50 +1408,216 @@ impl OverworldState {
             corridor.contains(&c) && open_hex(c)
         })
         .ok_or(OverworldError::NoPath)?;
+        Ok(route.into_iter().skip(1).collect())
+    }
 
-        let mut budget = budget;
-        let mut tile = start;
-        let mut walked = vec![army.pos];
-        let mut blocked_by = None;
-        // The last tile walked whose hex nobody else stands in: where the
-        // column falls back to if the day runs out inside a friend's.
-        let mut last_free = start;
-        for pair in route.windows(2) {
-            let Some(step) = Self::column_step(ground, column.kind, pair[0], pair[1]) else {
-                break;
-            };
-            let hex = crate::world::chunk_of(pair[1], radius);
-            if hex != army.pos
-                && let Some(other) = self.army_at(hex)
-                && other.side != army.side
+    /// Whether this campaign runs on the world clock: a generated one does
+    /// (WORLD.md W3.1); a drawn one keeps its turns.
+    pub fn clocked(&self) -> bool {
+        self.world.is_some()
+    }
+
+    /// Ticks in a day, off the scale.
+    fn ticks_per_day(registry: &DataRegistry) -> u64 {
+        (86_400.0 / registry.scale.tick_seconds()).round() as u64
+    }
+
+    /// Run the clock toward the next dawn: every march walks, tick by tick,
+    /// all at once. Stops at the end of the first tick on which a column
+    /// ran into an enemy — the fight is somebody's to fight before the day
+    /// goes on — or at dawn, which it then keeps.
+    fn run_clock(&mut self, registry: &DataRegistry) -> Vec<OverworldEvent> {
+        self.advance_clock(registry, u64::MAX)
+    }
+
+    /// Run the clock on by at most `ticks`: every march walks, all at once.
+    /// Stops early at the end of a tick on which a column met an enemy, and
+    /// at dawn. What real-time play with speed controls drives: the speed is
+    /// only how many ticks a wall-clock second asks for, so how fast the
+    /// clock is run changes nothing a replay could see (WORLD.md W3.1).
+    pub fn advance_clock(&mut self, registry: &DataRegistry, ticks: u64) -> Vec<OverworldEvent> {
+        let per_day = Self::ticks_per_day(registry);
+        let mut events = Vec::new();
+        for _ in 0..ticks {
+            self.clock += 1;
+            let marching: Vec<ArmyId> = self
+                .armies
+                .iter()
+                .filter(|a| a.alive && a.march.is_some())
+                .map(|a| a.id)
+                .collect();
+            for id in marching {
+                events.extend(self.step_march(registry, id));
+            }
+            if self.clock.is_multiple_of(per_day) {
+                events.extend(self.dawn(registry));
+                return events;
+            }
+            if events
+                .iter()
+                .any(|e| matches!(e, OverworldEvent::BattleTriggered { .. }))
             {
-                blocked_by = Some((other.id, hex));
-                break;
-            }
-            if step > budget {
-                break;
-            }
-            budget -= step;
-            tile = pair[1];
-            if walked.last() != Some(&hex) {
-                walked.push(hex);
-            }
-            if hex == army.pos || self.army_at(hex).is_none() {
-                last_free = tile;
+                return events;
             }
         }
-        let tile = if crate::world::chunk_of(tile, radius) == army.pos
-            || self.army_at(crate::world::chunk_of(tile, radius)).is_none()
-        {
-            tile
-        } else {
-            last_free
+        events
+    }
+
+    /// One tick of one march: halt if this is the halt in the hour, rest if
+    /// the day's hours are marched, else bank the tick's movement and walk
+    /// what it pays for.
+    fn step_march(&mut self, registry: &DataRegistry, id: ArmyId) -> Vec<OverworldEvent> {
+        let mut events = Vec::new();
+        let Some(army) = self.army(id).cloned() else {
+            return events;
         };
-        let destination = crate::world::chunk_of(tile, radius);
-        while walked.len() > 1 && walked.last() != Some(&destination) {
-            walked.pop();
+        let Some(mut order) = army.march.clone() else {
+            return events;
+        };
+        let (Some(world), Some(ground)) = (self.world.clone(), self.ground(registry).cloned())
+        else {
+            return events;
+        };
+        let march = &registry.march;
+        let per_minute = (60.0 / registry.scale.tick_seconds()).round() as u32;
+        let per_hour = 60 * per_minute;
+        let day = march.hours_per_day * per_hour;
+        let in_friends_hex = self
+            .armies
+            .iter()
+            .any(|a| a.alive && a.id != id && a.pos == army.pos);
+        // Rest for the night once the day's hours are marched — unless that
+        // would leave the column parked inside a friend's hex.
+        if army.marched_ticks >= day && !in_friends_hex {
+            return events;
         }
-        Ok((walked, tile, blocked_by))
+        let marched = army.marched_ticks + 1;
+        if let Some(a) = self.army_mut(id) {
+            a.marched_ticks = marched;
+        }
+        // The last minutes of every marching hour are the halt.
+        if (marched - 1) % per_hour
+            >= per_hour.saturating_sub(march.halt_minutes_per_hour * per_minute)
+        {
+            return events;
+        }
+        let column = Self::column(registry, &army);
+        let per_round = registry.scale.ticks_per_round as u64;
+        order.banked += column.points as u64 * march.column_percent as u64;
+        let radius = world.chunk_radius;
+        let mut tile = army
+            .tile
+            .unwrap_or_else(|| world.stand_tile(registry, army.pos));
+        let mut pos = army.pos;
+        let mut finished = false;
+        loop {
+            if order.leg.is_empty() {
+                if pos == order.to {
+                    finished = true;
+                    break;
+                }
+                let here = Army {
+                    tile: Some(tile),
+                    pos,
+                    ..army.clone()
+                };
+                match self.plan_leg(registry, &here, order.to, order.engagement) {
+                    Ok(leg) if !leg.is_empty() => order.leg = leg,
+                    _ => {
+                        finished = true;
+                        break;
+                    }
+                }
+            }
+            let next = order.leg[0];
+            let Some(cost) = Self::column_step(&ground, column.kind, tile, next) else {
+                order.leg.clear();
+                continue;
+            };
+            let need = cost as u64 * 100 * per_round;
+            if order.banked < need {
+                break;
+            }
+            let hex = crate::world::chunk_of(next, radius);
+            if hex != pos {
+                if let Some(other) = self.army_at(hex).filter(|o| o.side != army.side) {
+                    // Contact: the column halts on the border of his ground,
+                    // and the fight is there.
+                    events.push(OverworldEvent::BattleTriggered {
+                        attacker: id,
+                        defender: other.id,
+                        at: hex,
+                    });
+                    finished = true;
+                    break;
+                }
+                // Nobody finishes a march in a friend's hex: arriving there,
+                // the column stops on its border instead.
+                if hex == order.to && self.army_at(hex).is_some_and(|o| o.id != id) {
+                    finished = true;
+                    break;
+                }
+            }
+            order.banked -= need;
+            order.leg.remove(0);
+            tile = next;
+            if hex != pos {
+                let from = pos;
+                pos = hex;
+                events.push(OverworldEvent::ArmyMoved {
+                    army: id,
+                    path: vec![from, hex],
+                });
+                events.extend(self.take_ground(registry, army.side, hex));
+            }
+        }
+        if let Some(a) = self.army_mut(id) {
+            a.tile = Some(tile);
+            a.pos = pos;
+            a.march = if finished { None } else { Some(order) };
+        }
+        events
+    }
+
+    /// Capture `hex` for `side` if it is capturable and not already hers.
+    fn take_ground(&mut self, registry: &DataRegistry, side: u8, hex: Hex) -> Vec<OverworldEvent> {
+        if let Some(tile) = self.map.get(hex)
+            && registry.terrain(tile.terrain).is_some_and(|t| t.capturable)
+            && self.owners.get(&hex) != Some(&side)
+        {
+            self.owners.insert(hex, side);
+            return vec![OverworldEvent::ObjectiveCaptured { at: hex, side }];
+        }
+        Vec::new()
+    }
+
+    /// Dawn on the clock: a new day for everybody at once — wounds heal, the
+    /// day's marching hours are restored, the net is walked for every side,
+    /// held orders go out, whoever held the ground through the night has
+    /// held it, and the first side with an army begins the day's orders.
+    fn dawn(&mut self, registry: &DataRegistry) -> Vec<OverworldEvent> {
+        let mut events = Vec::new();
+        self.turn += 1;
+        self.roster.advance_day();
+        for army in self.armies.iter_mut().filter(|a| a.alive) {
+            army.moved = false;
+            army.marched_ticks = 0;
+        }
+        let side_count = self.sides.len() as u8;
+        for side in 0..side_count {
+            self.recompute_contact(registry, side, &mut events);
+            events.extend(self.transmit_waiting_missions(side));
+        }
+        let first = (0..side_count)
+            .find(|s| self.side_armies(*s).next().is_some())
+            .unwrap_or(0);
+        self.active_side = first;
+        events.push(OverworldEvent::TurnStarted {
+            side: first,
+            turn: self.turn,
+        });
+        self.check_held(registry, &mut events);
+        events
     }
 
     fn edge_cost(&self, registry: &DataRegistry, from: Hex, to: Hex) -> Option<u32> {
@@ -1733,15 +1928,25 @@ impl OverworldState {
         // On a generated world the march is over the real ground, tile by
         // tile; it produces the same three things the march below does, and
         // everything after them is shared.
+        //
+        // And it is carried out by the clock (WORLD.md W3.1): the order sets
+        // the march, and the day walks it, tick by tick, simultaneously with
+        // everybody else's — see `run_clock`.
         if self.world.is_some() {
             let army = self.army(id).expect("checked above").clone();
-            let (walked, tile, blocked_by) =
-                self.march_on_ground(registry, &army, to, engagement)?;
-            let destination = *walked.last().expect("a march starts where the army is");
-            if let Some(a) = self.army_mut(id) {
-                a.tile = Some(tile);
+            if army.pos == to {
+                return Err(OverworldError::NoPath);
             }
-            return Ok(self.arrive(registry, id, side, to, walked, destination, blocked_by));
+            let leg = self.plan_leg(registry, &army, to, engagement)?;
+            let a = self.army_mut(id).expect("checked above");
+            a.march = Some(MarchOrder {
+                to,
+                engagement,
+                leg,
+                banked: 0,
+            });
+            a.moved = true;
+            return Ok(Vec::new());
         }
 
         let path = hexx::algorithms::a_star(pos, to, |from, next| {
@@ -1949,6 +2154,25 @@ impl OverworldState {
         // Before the day turns over, everybody who was told what to do and not
         // told otherwise does it.
         let mut events = self.run_standing_missions(registry);
+        // On the clock the sides give their orders in turn at dawn, and when
+        // the last has, the day runs for everybody at once — until dawn, or
+        // until a column meets an enemy, when the fight is fought and the
+        // same end-of-turn runs the rest of the day.
+        if self.clocked() {
+            let side_count = self.sides.len() as u8;
+            let later =
+                (self.active_side + 1..side_count).find(|s| self.side_armies(*s).next().is_some());
+            if let Some(next) = later {
+                self.active_side = next;
+                events.push(OverworldEvent::TurnStarted {
+                    side: next,
+                    turn: self.turn,
+                });
+                return events;
+            }
+            events.extend(self.run_clock(registry));
+            return events;
+        }
         let side_count = self.sides.len() as u8;
         let mut next = self.active_side;
         for _ in 0..side_count {
