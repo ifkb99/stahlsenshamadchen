@@ -43,8 +43,7 @@ pub(super) fn formation_name(state: &BattleState, id: &str) -> String {
 /// this is it rather than a third copy inside a key branch.
 pub(super) fn unit_name(state: &BattleState, unit: UnitId) -> String {
     state
-        .units
-        .get(unit.index())
+        .lookup(unit)
         .map(|u| u.name.clone())
         .unwrap_or_else(|| "???".into())
 }
@@ -75,8 +74,7 @@ pub(super) fn format_formation(
 ) -> String {
     let name = |id: UnitId| {
         state
-            .units
-            .get(id.index())
+            .lookup(id)
             .map(|u| u.name.clone())
             .unwrap_or_else(|| "???".into())
     };
@@ -136,7 +134,7 @@ pub(super) fn format_formation(
     lines.push(String::new());
     lines.push("Members:".into());
     for id in &formation.members {
-        let Some(unit) = state.units.get(id.index()) else {
+        let Some(unit) = state.lookup(*id) else {
             continue;
         };
         // Gone is gone, and the panel says which kind: a crew that drove off
@@ -181,7 +179,7 @@ pub(super) fn format_formation(
         }
         // A passenger is in the formation and not on the map, which reads as
         // a missing cadet unless the roll call says where she went.
-        if let Some(carrier) = unit.aboard.and_then(|c| state.units.get(c.index())) {
+        if let Some(carrier) = unit.aboard.and_then(|c| state.lookup(c)) {
             tags.push(format!("riding in {}", carrier.name));
         }
         let tag = if tags.is_empty() {
@@ -344,8 +342,7 @@ pub(super) fn mission_sentence(state: &BattleState, mission: Option<&Mission>) -
 pub(super) fn format_contact(state: &BattleState, contact: &Contact) -> String {
     let name = |id: UnitId| {
         state
-            .units
-            .get(id.index())
+            .lookup(id)
             .map(|u| u.name.clone())
             .unwrap_or_else(|| "???".into())
     };

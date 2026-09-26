@@ -84,9 +84,12 @@ pub enum StagingError {
 pub struct FieldBattle {
     pub attacker: ArmyId,
     pub defender: ArmyId,
-    /// The army each unit was drawn from, indexed by unit index. Units are
-    /// spawned in placement order, so this lines up with `UnitId`.
-    pub origins: Vec<ArmyId>,
+    /// The army each unit was drawn from, by the unit's id, in id order.
+    ///
+    /// Pairs rather than a list indexed by id, because an id is a name and
+    /// not a position (WORLD.md, W0.5): a vehicle that keeps her world id
+    /// into a battle is not unit number *n*.
+    pub origins: Vec<(crate::battle::UnitId, ArmyId)>,
 }
 
 /// The battle map a clash on `terrain` is fought over.
@@ -210,6 +213,9 @@ impl Clash {
             self.roster.clone(),
             seed,
         )?;
+        // Units are spawned in placement order, so the n-th unit came from
+        // the n-th placement's army, whatever she is called.
+        let origins = state.units.iter().map(|u| u.id).zip(origins).collect();
         Ok((
             state,
             FieldBattle {
@@ -307,7 +313,7 @@ impl FieldBattle {
         // back to the army it marched in with.
         let mut survivors: Vec<(ArmyId, Vec<ArmyUnit>)> = Vec::new();
         let mut slot_of = HashMap::new();
-        for army in &self.origins {
+        for (_, army) in &self.origins {
             slot_of.entry(*army).or_insert_with(|| {
                 survivors.push((*army, Vec::new()));
                 survivors.len() - 1
@@ -317,10 +323,10 @@ impl FieldBattle {
         // by an exit is off the board but came home, and reading `alive` here
         // would hand the campaign a withdrawal as a burnt-out vehicle.
         for unit in state.surviving_units() {
-            let Some(army) = self.origins.get(unit.id.index()) else {
+            let Some(army) = self.origin(unit.id) else {
                 continue;
             };
-            let Some(&slot) = slot_of.get(army) else {
+            let Some(&slot) = slot_of.get(&army) else {
                 continue;
             };
             survivors[slot].1.push(ArmyUnit {
@@ -343,7 +349,7 @@ impl FieldBattle {
             let mut exited = 0;
             let mut on_field = 0;
             for unit in state.units.iter() {
-                if self.origins.get(unit.id.index()) != Some(army) {
+                if self.origin(unit.id) != Some(*army) {
                     continue;
                 }
                 match unit.fate {
@@ -372,7 +378,10 @@ impl FieldBattle {
 
     /// The army a unit marched in with.
     pub fn origin(&self, unit: crate::battle::UnitId) -> Option<ArmyId> {
-        self.origins.get(unit.index()).copied()
+        self.origins
+            .binary_search_by_key(&unit, |(id, _)| *id)
+            .ok()
+            .map(|i| self.origins[i].1)
     }
 }
 

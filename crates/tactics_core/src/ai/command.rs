@@ -1140,7 +1140,7 @@ impl SideCommand {
         // pull the formation toward beaten exactly as they always did.
         let (mut have, mut max) = (0i64, 0i64);
         for id in &formation.members {
-            let Some(unit) = state.units.get(id.index()) else {
+            let Some(unit) = state.lookup(*id) else {
                 continue;
             };
             let (h, t) = state.substance(registry, unit);

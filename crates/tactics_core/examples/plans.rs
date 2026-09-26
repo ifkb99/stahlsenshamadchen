@@ -329,7 +329,7 @@ fn battle(reg: &DataRegistry, row: &Row, a_force: Force, b_force: Force, seed: u
                 let flank = facing != ArmorFacing::Front;
                 t.hits += 1;
                 t.flank_hits += flank as u32;
-                if state.units.get(attacker.index()).map(|u| u.side) == Some(a_side) {
+                if state.lookup(attacker).map(|u| u.side) == Some(a_side) {
                     t.a_hits += 1;
                     t.a_flank_hits += flank as u32;
                 }

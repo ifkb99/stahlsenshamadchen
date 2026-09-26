@@ -2521,10 +2521,9 @@ pub fn reap(registry: &DataRegistry, state: &mut BattleState, events: &mut Vec<E
         .collect();
     for (id, at) in done {
         let brewed = state
-            .units
-            .get(id.index())
+            .lookup(id)
             .is_some_and(|u| u.destruction() == Some(Destruction::BrewedUp));
-        if let Some(unit) = state.units.get_mut(id.index()) {
+        if let Some(unit) = state.lookup_mut(id) {
             // `destroy` is the one door from `Fighting` to `Destroyed`, and
             // it carries the doom she took with her — or `CrewSpent`, which
             // is the case this loop's second clause found and which nothing
@@ -2545,8 +2544,8 @@ pub fn reap(registry: &DataRegistry, state: &mut BattleState, events: &mut Vec<E
             let survivor = state
                 .unit(rider)
                 .is_some_and(|u| !u.crew.is_empty() && state.fighting_crew(u) > 0);
-            let ground = state.units.get(id.index()).map(|c| c.pos).unwrap_or(at);
-            if let Some(u) = state.units.get_mut(rider.index()) {
+            let ground = state.lookup(id).map(|c| c.pos).unwrap_or(at);
+            if let Some(u) = state.lookup_mut(rider) {
                 u.aboard = None;
                 u.dismounting = false;
                 u.pos = ground;

@@ -361,10 +361,7 @@ fn a_fought_battle_leaves_broken_modules_behind() {
         "six rounds of real guns should break something aboard somebody"
     );
     for (unit, module) in &reported {
-        let u = state
-            .units
-            .get(unit.index())
-            .expect("units are never removed");
+        let u = state.lookup(*unit).expect("units are never removed");
         let hits = u.modules.get(module).copied().unwrap_or(u32::MAX);
         let toughness = reg.module(module).map(|m| m.toughness).unwrap_or(1);
         assert!(

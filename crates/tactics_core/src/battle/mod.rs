@@ -59,13 +59,58 @@ use std::sync::Arc;
 
 /// Stable handle to a unit. Units are never removed from the roster, only
 /// marked dead, so ids stay valid for the whole battle.
+///
+/// **An id is a name, not a position** (WORLD.md, W0.5). A battle keeps its
+/// units in id order, and one set up from nothing numbers them from zero, so
+/// the id and the position agree — but a vehicle that marches from one
+/// engagement into another keeps the name the world gave her, and two
+/// engagements that merge keep both sets of names. Ask for a unit by id
+/// through [`Battle::lookup`], never by indexing `units` with it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct UnitId(pub u32);
 
 impl UnitId {
+    /// The id as a number, for arithmetic that wants one (seeding, sorting).
+    /// **Not** a position in `units`: see [`Battle::lookup`].
     pub fn index(self) -> usize {
         self.0 as usize
     }
+}
+
+/// A force to put on a field: each placement, the cadets aboard it, and the
+/// id it will answer to — all three in placement order.
+///
+/// The ids must rise strictly, because a battle keeps its units in id order
+/// and walks them in that order wherever determinism is at stake; placement
+/// order and id order are therefore the same order, and nothing a battle
+/// does can tell a force numbered from zero from one numbered by the world.
+#[derive(Debug, Clone, Copy)]
+pub struct Muster<'a> {
+    pub placements: &'a [UnitPlacement],
+    pub crews: &'a [Vec<CadetId>],
+    pub ids: &'a [UnitId],
+}
+
+/// The ids a battle set up from nothing gives its units: zero upward.
+fn numbered_from_zero(count: usize) -> Vec<UnitId> {
+    (0..count as u32).map(UnitId).collect()
+}
+
+/// Refuse ids that do not line up with the placements or do not rise.
+fn check_ids(ids: &[UnitId], placements: usize) -> Result<(), BattleSetupError> {
+    if ids.len() != placements {
+        return Err(BattleSetupError::Invalid(vec![format!(
+            "{} unit ids for {placements} placements",
+            ids.len()
+        )]));
+    }
+    if let Some(pair) = ids.windows(2).find(|w| w[0] >= w[1]) {
+        return Err(BattleSetupError::Invalid(vec![format!(
+            "unit ids must rise in placement order: {:?} comes before {:?}",
+            pair[0], pair[1]
+        )]));
+    }
+    Ok(())
 }
 
 /// One side (faction) in a battle.
@@ -949,6 +994,19 @@ impl BattleState {
         map_id: &str,
         seed: u64,
     ) -> Result<Self, BattleSetupError> {
+        Self::from_map_numbered(registry, map_id, seed, None)
+    }
+
+    /// [`Self::from_map`], with the units answering to `ids` (one per
+    /// placement, rising) rather than to zero upward. `None` is zero upward.
+    /// What a battle does must not depend on which: `tests/determinism.rs`
+    /// fights the baseline under other names and requires the same battle.
+    pub fn from_map_numbered(
+        registry: &DataRegistry,
+        map_id: &str,
+        seed: u64,
+        ids: Option<&[UnitId]>,
+    ) -> Result<Self, BattleSetupError> {
         let file = registry
             .map(map_id)
             .ok_or_else(|| BattleSetupError::MissingMap(map_id.to_string()))?;
@@ -960,6 +1018,11 @@ impl BattleState {
         if !report.is_ok() {
             return Err(BattleSetupError::Invalid(report.errors));
         }
+        let ids = match ids {
+            Some(ids) => ids.to_vec(),
+            None => numbered_from_zero(file.units.len()),
+        };
+        check_ids(&ids, file.units.len())?;
         let Battlefield {
             terrain: map,
             scenario,
@@ -977,7 +1040,7 @@ impl BattleState {
         // Resolved before the map is moved into its `Arc`, and from the same
         // two things the units are spawned from, so membership cannot drift
         // from the roster it describes.
-        let command = CommandState::from_placements(scenario.formations(), &file.units);
+        let command = CommandState::from_placements(scenario.formations(), &file.units, &ids);
         // A scenario battle has no campaign behind it, so its cadets are
         // stamped fresh from mod data and forgotten afterwards.
         let (roster, crews) = Roster::stamp_for(registry, &file.units);
@@ -1001,13 +1064,13 @@ impl BattleState {
             command,
             built: Built(()),
         };
-        for (placement, crew) in file.units.iter().zip(&crews) {
+        for ((placement, crew), id) in file.units.iter().zip(&crews).zip(&ids) {
             // `validate_into` above has already said these placements name
             // content this registry has, so this cannot fail here. It is still
             // a `?` rather than an `expect`, because the day somebody adds a
             // check to `spawn_unit` that validation does not make, the error
             // should reach the caller rather than the player's screen.
-            state.spawn_unit(registry, placement, crew.clone())?;
+            state.spawn_unit_as(registry, placement, crew.clone(), *id)?;
         }
         state.face_units_at_enemies(&file.units);
         state.board_mounted_starts(registry, &file.units);
@@ -1038,6 +1101,32 @@ impl BattleState {
         roster: Arc<Roster>,
         seed: u64,
     ) -> Result<Self, BattleSetupError> {
+        let ids = numbered_from_zero(placements.len());
+        let muster = Muster {
+            placements,
+            crews,
+            ids: &ids,
+        };
+        Self::from_muster(registry, field, sides, muster, roster, seed)
+    }
+
+    /// [`Self::from_placements`], with the ids the units answer to said
+    /// rather than counted — the path a world takes, whose vehicles keep
+    /// their names from one engagement to the next.
+    pub fn from_muster(
+        registry: &DataRegistry,
+        field: Battlefield,
+        sides: Vec<SideState>,
+        muster: Muster<'_>,
+        roster: Arc<Roster>,
+        seed: u64,
+    ) -> Result<Self, BattleSetupError> {
+        let Muster {
+            placements,
+            crews,
+            ids,
+        } = muster;
+        check_ids(ids, placements.len())?;
         let Battlefield {
             terrain: map,
             scenario,
@@ -1053,7 +1142,7 @@ impl BattleState {
         // signature growing, the same trip objectives already make. A
         // declaration whose members are not among these placements is dropped
         // rather than carried empty — see `CommandState::from_placements`.
-        let command = CommandState::from_placements(scenario.formations(), placements);
+        let command = CommandState::from_placements(scenario.formations(), placements, ids);
         let mut state = Self {
             world: Arc::new(World::build(registry, map)),
             scenario: Arc::new(scenario),
@@ -1075,10 +1164,11 @@ impl BattleState {
             built: Built(()),
         };
         for (i, placement) in placements.iter().enumerate() {
-            state.spawn_unit(
+            state.spawn_unit_as(
                 registry,
                 placement,
                 crews.get(i).cloned().unwrap_or_default(),
+                ids[i],
             )?;
         }
         state.face_units_at_enemies(placements);
@@ -1131,7 +1221,9 @@ impl BattleState {
                 continue;
             };
             let carrier_pos = crate::offset_to_hex(coords[0], coords[1]);
-            let rider = UnitId(i as u32);
+            // Units were spawned in placement order, so the placement's unit
+            // is the one in the same position — whatever she is called.
+            let rider = self.units[i].id;
             let Some(carrier) = self
                 .units
                 .iter()
@@ -1150,7 +1242,7 @@ impl BattleState {
                 .is_some_and(|v| v.movement.class == crate::data::MovementClass::Foot);
             if fits && on_foot {
                 let pos = self.unit(carrier).map(|c| c.pos).unwrap_or(carrier_pos);
-                if let Some(u) = self.units.get_mut(rider.index()) {
+                if let Some(u) = self.lookup_mut(rider) {
                     u.aboard = Some(carrier);
                     u.pos = pos;
                 }
@@ -1220,7 +1312,26 @@ impl BattleState {
         placement: &UnitPlacement,
         crew: Vec<CadetId>,
     ) -> Result<UnitId, BattleSetupError> {
-        let id = UnitId(self.units.len() as u32);
+        let id = self.units.last().map_or(UnitId(0), |u| UnitId(u.id.0 + 1));
+        self.spawn_unit_as(registry, placement, crew, id)
+    }
+
+    /// [`Self::spawn_unit`] under a name the caller chose. It must come after
+    /// every id already on the field, which is what keeps `units` in id order.
+    pub fn spawn_unit_as(
+        &mut self,
+        registry: &DataRegistry,
+        placement: &UnitPlacement,
+        crew: Vec<CadetId>,
+        id: UnitId,
+    ) -> Result<UnitId, BattleSetupError> {
+        if let Some(last) = self.units.last().map(|u| u.id)
+            && id <= last
+        {
+            return Err(BattleSetupError::Invalid(vec![format!(
+                "unit {id:?} would be spawned after {last:?}; ids must rise"
+            )]));
+        }
         let vehicle = registry.vehicle(&placement.vehicle).ok_or_else(|| {
             BattleSetupError::Invalid(vec![format!(
                 "placement at [{}, {}] references missing vehicle `{}`",
@@ -1472,12 +1583,37 @@ impl BattleState {
         Ok(())
     }
 
-    pub fn unit(&self, id: UnitId) -> Option<&Unit> {
-        self.units.get(id.index()).filter(|u| u.alive())
+    /// Where the unit called `id` stands in `units`.
+    ///
+    /// `units` is kept in id order, so this is a binary search — after a
+    /// first look at the position the id names, which is where she is in
+    /// every battle numbered from zero and costs nothing when it hits.
+    pub fn slot_of(&self, id: UnitId) -> Option<usize> {
+        let guess = id.index();
+        if self.units.get(guess).is_some_and(|u| u.id == id) {
+            return Some(guess);
+        }
+        self.units.binary_search_by_key(&id, |u| u.id).ok()
     }
 
+    /// The unit called `id`, whatever became of her.
+    pub fn lookup(&self, id: UnitId) -> Option<&Unit> {
+        self.slot_of(id).map(|i| &self.units[i])
+    }
+
+    /// The unit called `id`, whatever became of her, to change.
+    pub fn lookup_mut(&mut self, id: UnitId) -> Option<&mut Unit> {
+        self.slot_of(id).map(|i| &mut self.units[i])
+    }
+
+    /// The unit called `id`, if she is still on the field.
+    pub fn unit(&self, id: UnitId) -> Option<&Unit> {
+        self.lookup(id).filter(|u| u.alive())
+    }
+
+    /// The unit called `id`, if she is still on the field, to change.
     pub fn unit_mut(&mut self, id: UnitId) -> Option<&mut Unit> {
-        self.units.get_mut(id.index()).filter(|u| u.alive())
+        self.lookup_mut(id).filter(|u| u.alive())
     }
 
     pub fn unit_at(&self, hex: Hex) -> Option<&Unit> {

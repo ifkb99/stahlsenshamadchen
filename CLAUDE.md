@@ -466,6 +466,12 @@ and the seam tests in `tests/ground.rs`.
   computed in integers by `chunk_of`. The chunk lattice is rotated against
   the tile grid, so a chunk coordinate is a coordinate: last in any
   tiebreak.
+- **A unit id is a name, not a position.** `units` is kept in id order and
+  a unit is found by `lookup(id)` / `slot_of(id)`, never by indexing
+  `units` with `id.index()`. Ids may be given (`from_muster`,
+  `from_map_numbered`, `spawn_unit_as`) and must rise in placement order.
+  `a_battle_fought_under_other_names_is_the_same_battle` fights the baseline
+  renamed and requires the same battle.
 - **Saved as its tiles, under the key `map`**, so a whole world's save is
   what a battle's always was. A chunked world refuses to serialise rather
   than come back whole with its unloaded ground suddenly outside.

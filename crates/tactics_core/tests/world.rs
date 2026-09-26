@@ -156,3 +156,21 @@ fn a_world_held_a_chunk_at_a_time_is_not_saved_as_if_it_were_whole() {
     world.load_chunk(&reg, Hex::ZERO, grass(Hex::ZERO));
     assert!(serde_json::to_string(&world).is_err());
 }
+
+#[test]
+fn a_force_whose_names_do_not_rise_is_refused() {
+    // A battle keeps its units in id order and walks them in that order
+    // wherever determinism is at stake. Names that do not rise with the
+    // placements would make id order a different order from placement
+    // order, so the setup refuses them rather than quietly re-sorting.
+    use tactics_core::battle::UnitId;
+    let reg = registry();
+    let count = reg.map("river_crossing").unwrap().units.len();
+    let mut names: Vec<UnitId> = (0..count as u32).map(|i| UnitId(10 * i)).collect();
+    names.swap(0, 1);
+    let err = BattleState::from_map_numbered(&reg, "river_crossing", 1, Some(&names))
+        .expect_err("names out of order");
+    assert!(err.to_string().contains("rise"), "{err}");
+    let short = &names[..count - 1];
+    assert!(BattleState::from_map_numbered(&reg, "river_crossing", 1, Some(short)).is_err());
+}
