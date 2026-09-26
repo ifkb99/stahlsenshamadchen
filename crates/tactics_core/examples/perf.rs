@@ -166,7 +166,7 @@ fn campaign_rows(registry: &DataRegistry) {
         &format!("{made:.0} ms"),
         &format!("frontier_world, {tiles} tiles, skeleton and summary"),
     );
-    let army = state.armies[0].id;
+    let army = tactics_core::overworld::ElementId(0);
     let cold = time(&mut || {
         state.reachable(registry, army);
     });

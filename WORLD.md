@@ -522,6 +522,23 @@ the determinism snapshot passes **unregenerated**.
       of 32 `frontier` campaigns and 2 of 16 `frontier_world` ones
       (`frontier` 24–7 over 35 battles, from 23–8 over 36).
 
+- [x] ~~**W4.6a One chain of command, stored.**~~ **Done 2026-09-26.** The
+      campaign's armies are gone as stored state: `OverworldState::elements`
+      is each side's tree (root, companies, vehicles), an element with a
+      `Place` is what stands on the map, and `Column` — what `army(id)`
+      returns — is derived from the tree on every read. Neutral: the full
+      event traces of 32 drawn and 16 generated campaigns were
+      byte-identical before and after, and so was the determinism snapshot.
+      Survivors of a fight are matched back to the vehicles they were, so a
+      vehicle keeps her node (tested, mutation-checked). Save version 9.
+- [ ] **W4.6b Detachment as a place in the tree** (W2.4, rulings 8, 10,
+      11): the player gives an order to any node below her companies — a
+      vehicle — and that node takes a place of its own and marches; it is
+      still her company's, holds on arrival until recalled, and a recall
+      marches it back until it stands with its company, when its place is
+      dropped and it is part of the column again. No new army, no rejoin
+      order.
+
 ### W5 — presentation
 
 - [x] ~~**W5.0 The clock in real time.**~~ **Done 2026-09-26** (added). On a
@@ -612,3 +629,9 @@ The fourth round (2026-09-26, after W4):
    `frontier_world`, and the drawn `frontier` is reached by
    `STAHL_CAMPAIGN=frontier`. **Done 2026-09-26**: `campaign` in `mod.json`
    names it, validated; the game and `examples/campaign` both read it.
+10. **There is no separate state for a detachment; it all flows from the
+    chain of command.** Asked how far: **one tree a side, and no `Army`
+    type** — the side, its companies, their vehicles, and what the map
+    shows is a view of the tree (W4.6).
+11. **A detached element holds where she was sent until recalled**, as a
+    crew's march in battle becomes a hold at the same latitude.

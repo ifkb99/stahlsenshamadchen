@@ -569,6 +569,23 @@ and the seam tests in `tests/ground.rs`.
   every pulse as crews move): the whole world's towns in one battle pulled
   crews at a factory a day off. Tests: `tests/campaign.rs`, three
   mutation-checked (a fresh battle per contact, never leaving, every town).
+- **The order of battle is each side's chain of command, and nothing
+  else** (`OverworldState::elements`, the designer's ruling of 2026-09-26:
+  no separate state for a detachment, it all flows from the chain of
+  command). One tree a side — the side's root, its companies, their
+  vehicles, a leaf being one crewed vehicle — and **what stands on the map
+  is a fact about a node, not a kind of thing**: an `Element` with a
+  `Place` stands there, carrying every vehicle beneath it that does not
+  stand on its own. `Column` is what the map shows of one, **derived by
+  `army(id)` / `columns()` on every read and never stored**; change the
+  tree instead (`place_mut`, `element_mut`, `add_company`, `add_vehicle`,
+  `set_vehicles`). A transfer is a change of parent. Companies are numbered
+  first, in map order, so a company keeps the id its army had; the event
+  traces of 32 drawn and 16 generated campaigns (`examples/campaign
+  --trace`) were byte-identical across the change. **A survivor is the
+  vehicle she was**: a fight's survivors are matched back to their nodes
+  in joining order by chassis and crew (`set_survivors`), never replaced
+  by new ones — `a_vehicle_keeps_her_place_in_the_chain_of_command_through_a_fight`.
 - **A side's commander is a cadet** (`OverworldSide::commander`, from the
   vehicle its map flags `command`), her death under `victory.commander`
   ends the campaign, and while she is wounded `acting_commander` is the
@@ -1404,10 +1421,10 @@ The one door between them is `SavedBattle::rehydrate(&registry)`, which
 destructures every field, so a cache added tomorrow stops the build until
 somebody says whether it travels in the file or is rebuilt on load. `SaveGame`
 carries the same parameter; there is no route from a file to a playable battle
-that does not pass a registry. `Army::headquarters` and `OverworldState::victory` are `#[serde(default)]`
+that does not pass a registry. `Element::mission` and `OverworldState::victory` are `#[serde(default)]`
 to the benign value (nobody flagged, elimination only), which is a
 version-6 campaign exactly as it was, so the version did not move for
-them. `SAVE_VERSION` is 8, and **an older save is
+them. `SAVE_VERSION` is 9, and **an older save is
 refused, not migrated** (`SaveError::Version`): the two fields Phase 3
 introduced default to the benign value, so a version-3 file would open with
 every crew quietly back under her formation's mission and a version-4 file
@@ -1415,7 +1432,9 @@ with every wreck fighting again; version 6 gave `Holding` its latitude and a
 version-5 `"holding"` no longer parses; version 7 moved the scenario off
 the map, so a version-6 battle would open with no objectives and no
 formations; version 8 stores a map's terrain as a palette and an index per
-tile, and a version-7 map has no palette to parse. Loud is right while there is no released build to migrate
+tile, and a version-7 map has no palette to parse; version 9 keeps a
+campaign's order of battle as a chain of command, and a version-8 campaign
+has no tree to read. Loud is right while there is no released build to migrate
 from.
 
 ### Seeing the game without playing it

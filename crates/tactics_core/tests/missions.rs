@@ -24,8 +24,8 @@ use tactics_core::battle::{
 use tactics_core::data::DataRegistry;
 use tactics_core::map::{Battlefield, UnitPlacement};
 use tactics_core::overworld::{
-    Army, ArmyId, ArmyMission, BattleReport, OverworldError, OverworldEvent, OverworldOrder,
-    OverworldState,
+    ArmyMission, BattleReport, ElementId, OverworldError, OverworldEvent, OverworldOrder,
+    OverworldState, Place,
 };
 
 mod common;
@@ -52,25 +52,22 @@ fn registry_with_net(radius: u32, relay: bool) -> DataRegistry {
 /// Give a side a third company, so a chain of armies can be strung out across
 /// the map. It fields nothing: what these tests weigh is where an army *is*,
 /// and a battle is not one of the things that can happen to it.
-fn extra_army(state: &mut OverworldState, side: u8, name: &str, at: [i32; 2]) -> ArmyId {
-    let id = ArmyId(state.armies.len() as u32);
-    state.armies.push(Army {
-        id,
+fn extra_army(state: &mut OverworldState, side: u8, name: &str, at: [i32; 2]) -> ElementId {
+    state.add_company(
         side,
-        name: name.into(),
-        pos: tactics_core::offset_to_hex(at[0], at[1]),
-        movement: 3,
-        moved: false,
-        units: Vec::new(),
-        alive: true,
-        mission: None,
-        headquarters: false,
-        tile: None,
-        march: None,
-        marched_ticks: 0,
-        fighting: false,
-    });
-    id
+        name,
+        Place {
+            pos: tactics_core::offset_to_hex(at[0], at[1]),
+            movement: 3,
+            moved: false,
+            tile: None,
+            march: None,
+            marched_ticks: 0,
+            fighting: false,
+        },
+        Vec::new(),
+        false,
+    )
 }
 
 /// Push the campaign round to the next turn of `side`, so contact is
@@ -218,7 +215,7 @@ fn an_army_mission_out_of_range_waits_and_then_transmits() {
     // Closing up is what fixes it, and the campaign says so when it does —
     // then the order transmits, in that order, as an ordinary assignment.
     let beside = state.army(senior).unwrap().pos + hexx::Hex::new(1, 0);
-    state.army_mut(junior).unwrap().pos = beside;
+    state.place_mut(junior).unwrap().pos = beside;
     let events = next_turn_of(&reg, &mut state, 0);
     let restored = events
         .iter()
@@ -263,7 +260,7 @@ fn relay_carries_orders_through_a_chain_of_armies() {
     let build = |reg: &DataRegistry| {
         let mut state = OverworldState::from_map(reg, "frontier", 1).unwrap();
         let senior = state.senior_army(0).unwrap();
-        state.army_mut(senior).unwrap().pos = tactics_core::offset_to_hex(1, 1);
+        state.place_mut(senior).unwrap().pos = tactics_core::offset_to_hex(1, 1);
         let middle = extra_army(&mut state, 0, "3rd Company", [4, 1]);
         let far = extra_army(&mut state, 0, "4th Company", [7, 1]);
         // Recomputed at the top of a turn, so give it one.
@@ -420,12 +417,12 @@ fn a_hand_moved_army_is_not_second_guessed_by_its_mission() {
 ///
 /// Wireless, because what is being weighed is what an order *does*, not whether
 /// headquarters could get it out.
-fn blocked_road(reg: &DataRegistry) -> (OverworldState, ArmyId, ArmyId, hexx::Hex) {
+fn blocked_road(reg: &DataRegistry) -> (OverworldState, ElementId, ElementId, hexx::Hex) {
     let mut state = OverworldState::from_map(reg, "frontier", 1).unwrap();
     let army = state.senior_army(0).unwrap();
     let blocker = state.senior_army(1).unwrap();
-    state.army_mut(army).unwrap().pos = tactics_core::offset_to_hex(2, 2);
-    state.army_mut(blocker).unwrap().pos = tactics_core::offset_to_hex(5, 2);
+    state.place_mut(army).unwrap().pos = tactics_core::offset_to_hex(2, 2);
+    state.place_mut(blocker).unwrap().pos = tactics_core::offset_to_hex(5, 2);
     (state, army, blocker, tactics_core::offset_to_hex(9, 2))
 }
 
@@ -906,8 +903,8 @@ fn an_army_drives_past_a_friend_and_stops_beyond_her() {
         .expect("frontier gives her two tiles of room somewhere");
 
     // Exactly enough fuel for the straight line and not a point more.
-    state.army_mut(follower).unwrap().movement = through;
-    state.army_mut(ahead).unwrap().pos = step;
+    state.place_mut(follower).unwrap().movement = through;
+    state.place_mut(ahead).unwrap().pos = step;
 
     let reach = state.reachable(&reg, follower);
     assert!(!reach.contains_key(&step), "she may not park on her friend");

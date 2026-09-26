@@ -431,7 +431,7 @@ pub fn unit_image(color: [u8; 3]) -> Image {
     make_image(w, h, data)
 }
 
-/// Army banner for the overworld: a pennant on a pole.
+/// Column banner for the overworld: a pennant on a pole.
 pub fn army_image(color: [u8; 3]) -> Image {
     let (w, h) = (30u32, 40u32);
     let mut data = vec![0u8; (w * h * 4) as usize];

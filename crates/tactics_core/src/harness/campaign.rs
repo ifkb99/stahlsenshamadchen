@@ -38,6 +38,11 @@ pub struct CampaignOptions {
     /// stalemate clock ends every battle long before this in practice;
     /// reaching it is reported per battle so it cannot pass silently.
     pub max_rounds: u32,
+    /// Keep every campaign event in [`CampaignRun::events`]. Off by default:
+    /// a run's events are the instrument for asking whether a change to how
+    /// the campaign is *stored* changed what it *does*, and nothing else
+    /// needs them.
+    pub trace: bool,
 }
 
 impl Default for CampaignOptions {
@@ -50,6 +55,7 @@ impl Default for CampaignOptions {
             },
             max_days: 60,
             max_rounds: 100,
+            trace: false,
         }
     }
 }
@@ -87,6 +93,9 @@ pub struct CampaignRun {
     pub killed: Vec<u32>,
     /// Cadets wounded or walking back, the same way.
     pub hurt: Vec<u32>,
+    /// Every campaign event, in the order the run read them, when
+    /// [`CampaignOptions::trace`] asked for it; empty otherwise.
+    pub events: Vec<OverworldEvent>,
 }
 
 /// Play `map_id` from day one to its ending, every side a machine.
@@ -121,6 +130,7 @@ pub fn play(
         declined: 0,
         killed: vec![0; sides],
         hurt: vec![0; sides],
+        events: Vec::new(),
     };
     let side_of = |state: &OverworldState, cadet| {
         state
@@ -135,6 +145,9 @@ pub fn play(
         let events = step_planner(planners[side].as_mut(), registry, &mut state);
         let mut queue: std::collections::VecDeque<OverworldEvent> = events.into();
         while let Some(event) = queue.pop_front() {
+            if options.trace {
+                run.events.push(event.clone());
+            }
             match event {
                 OverworldEvent::BattleTriggered {
                     attacker,

@@ -533,7 +533,7 @@ fn mcts_planner_produces_legal_orders() {
 fn an_army_takes_the_ground_it_stands_on_and_keeps_it_overnight() {
     let reg = registry();
     let mut state = OverworldState::from_map(&reg, "frontier", 1).unwrap();
-    assert_eq!(state.armies.len(), 4);
+    assert_eq!(state.columns().len(), 4);
 
     // March 1st Company onto the nearby city and check capture.
     let army = state.side_armies(0).next().unwrap().id;
@@ -574,7 +574,7 @@ fn overworld_reachability_respects_budget_and_blockers() {
         "no tile should cost more than the movement budget"
     );
     // Tiles holding an army can be neither crossed nor parked on.
-    for other in state.armies.iter().filter(|a| a.id != army.id) {
+    for other in state.columns().iter().filter(|a| a.id != army.id) {
         assert!(
             !reach.contains_key(&other.pos),
             "{} should not be a valid destination",
@@ -602,13 +602,13 @@ fn reinforcements_are_adjacent_and_attackers_must_be_fresh() {
     // battle fought where the first one stands.
     let at = state.army(principal).unwrap().pos;
     let adjacent = at.all_neighbors()[0];
-    state.army_mut(neighbour).unwrap().pos = adjacent;
+    state.place_mut(neighbour).unwrap().pos = adjacent;
 
     let defending = state.reinforcement_candidates(at, 0, principal, false);
     assert_eq!(defending, vec![neighbour]);
 
     // A spent army can still defend, but cannot join an assault.
-    state.army_mut(neighbour).unwrap().moved = true;
+    state.place_mut(neighbour).unwrap().moved = true;
     assert_eq!(
         state.reinforcement_candidates(at, 0, principal, false),
         vec![neighbour],
@@ -622,9 +622,9 @@ fn reinforcements_are_adjacent_and_attackers_must_be_fresh() {
     );
 
     // Out of reach is out of the fight.
-    state.army_mut(neighbour).unwrap().moved = false;
+    state.place_mut(neighbour).unwrap().moved = false;
     let far = at + hexx::Hex::new(4, 0);
-    state.army_mut(neighbour).unwrap().pos = far;
+    state.place_mut(neighbour).unwrap().pos = far;
     assert!(
         state
             .reinforcement_candidates(at, 0, principal, true)

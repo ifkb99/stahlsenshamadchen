@@ -22,7 +22,7 @@ use tactics_core::battle::{
 use tactics_core::data::DataRegistry;
 use tactics_core::map::{Battlefield, UnitPlacement};
 use tactics_core::overworld::{
-    ArmyId, ArmyMission, BattleReport, OverworldEvent, OverworldOrder, OverworldState,
+    ArmyMission, BattleReport, ElementId, OverworldEvent, OverworldOrder, OverworldState,
     make_overworld_planner,
 };
 
@@ -1478,7 +1478,12 @@ fn a_campaign_run_by_standing_orders_and_planners_plays_itself_out() {
     // A battle resolved the cheap way — the defender loses her leading
     // vehicle — but through the real feedback path, so army destruction,
     // crew fates and the victor taking the tile all happen as they would.
-    fn resolve(reg: &DataRegistry, state: &mut OverworldState, attacker: ArmyId, defender: ArmyId) {
+    fn resolve(
+        reg: &DataRegistry,
+        state: &mut OverworldState,
+        attacker: ElementId,
+        defender: ElementId,
+    ) {
         let attacking = state
             .army(attacker)
             .map(|a| a.units.clone())
@@ -2159,7 +2164,7 @@ fn nobody_crews_two_vehicles_at_once() {
     // placement that named nobody always has.
     let crewless = state
         .side_armies(0)
-        .flat_map(|a| a.units.iter())
+        .flat_map(|a| a.units)
         .filter(|u| u.crew.is_empty())
         .count();
     assert_eq!(
@@ -2189,7 +2194,7 @@ fn every_seat_in_the_campaign_belongs_to_a_cadet_of_her_own() {
     let reg = registry();
     let state = OverworldState::from_map(&reg, "frontier", 13).expect("overworld");
 
-    for army in &state.armies {
+    for army in &state.columns() {
         for unit in &army.units {
             let vehicle = reg.vehicle(&unit.vehicle).expect("known chassis");
             assert_eq!(
