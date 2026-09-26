@@ -212,7 +212,7 @@ impl Heights {
     /// the reference path and the cached one cannot disagree about what an
     /// elevation digit is worth any more than they can about a sight line.
     fn of(
-        tile: &crate::map::Tile,
+        tile: crate::map::Tile<'_>,
         terrain: Option<&crate::data::TerrainDef>,
         scale: &Scale,
     ) -> Self {
@@ -288,11 +288,11 @@ impl SightGrid {
     }
 
     /// Resolve one tile.
-    pub fn insert(&mut self, registry: &DataRegistry, hex: Hex, tile: &crate::map::Tile) {
+    pub fn insert(&mut self, registry: &DataRegistry, hex: Hex, tile: crate::map::Tile<'_>) {
         self.eyes = Some(Eyes::of(&registry.balance));
         self.tiles.insert(
             hex,
-            Heights::of(tile, registry.terrain(&tile.terrain), &registry.scale),
+            Heights::of(tile, registry.terrain(tile.terrain), &registry.scale),
         );
     }
 
@@ -498,7 +498,7 @@ pub fn los_clear(registry: &DataRegistry, map: &HexMap, from: Hex, to: Hex) -> b
     sight_line_clear(
         |hex| {
             map.get(hex)
-                .map(|tile| Heights::of(tile, registry.terrain(&tile.terrain), &registry.scale))
+                .map(|tile| Heights::of(tile, registry.terrain(tile.terrain), &registry.scale))
         },
         Eyes::of(&registry.balance),
         from,
@@ -605,7 +605,7 @@ fn search(
     let terrain = state
         .map
         .get(unit.pos)
-        .and_then(|t| registry.terrain(&t.terrain));
+        .and_then(|t| registry.terrain(t.terrain));
     let covered = terrain.is_some_and(|t| t.cover >= 30);
     let hidden = if covered {
         concealment.saturating_mul(2).min(95)

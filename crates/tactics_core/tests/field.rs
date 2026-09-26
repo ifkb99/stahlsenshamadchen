@@ -741,9 +741,9 @@ fn every_clash_the_campaign_map_can_produce_can_be_staged() {
     let terrain = state
         .map
         .get(state.armies[0].pos)
-        .map(|t| t.terrain.clone())
+        .map(|t| t.terrain)
         .unwrap_or_default();
-    let map_id = battlefield_for(&reg, &terrain).expect("the base mod ships a battle map");
+    let map_id = battlefield_for(&reg, terrain).expect("the base mod ships a battle map");
 
     let mut clashes = 0;
     for attacker in &state.armies {
@@ -803,7 +803,11 @@ fn every_terrain_the_campaign_fields_names_its_own_battlefield() {
         .map("frontier")
         .expect("the base mod ships a campaign map");
     let map = tactics_core::map::Battlefield::from_map_file(file).expect("campaign map parses");
-    let mut terrains: Vec<String> = map.terrain.iter().map(|(_, t)| t.terrain.clone()).collect();
+    let mut terrains: Vec<String> = map
+        .terrain
+        .iter()
+        .map(|(_, t)| t.terrain.to_string())
+        .collect();
     terrains.sort();
     terrains.dedup();
     assert!(terrains.len() > 1, "a one-terrain campaign proves nothing");

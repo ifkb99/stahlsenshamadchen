@@ -354,7 +354,7 @@ fn every_feature_of_every_arena_has_a_mirror() {
         let tiles: std::collections::HashMap<_, _> = map
             .terrain
             .iter()
-            .map(|(h, t)| (h, (t.terrain.clone(), t.elevation)))
+            .map(|(h, t)| (h, (t.terrain, t.elevation)))
             .collect();
         assert!(!tiles.is_empty(), "{} has tiles at all", arena.id);
 

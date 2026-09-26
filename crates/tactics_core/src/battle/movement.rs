@@ -95,7 +95,7 @@ pub fn edge_cost(
                 (
                     tile.elevation,
                     registry
-                        .terrain(&tile.terrain)
+                        .terrain(tile.terrain)
                         .and_then(|t| t.cost_for(class)),
                 )
             })
@@ -125,7 +125,7 @@ struct TileMove {
 impl TileMove {
     /// Resolve one tile against the registry. **The one place this module
     /// reads a terrain definition.**
-    fn of(tile: &crate::map::Tile, terrain: Option<&crate::data::TerrainDef>) -> Self {
+    fn of(tile: crate::map::Tile<'_>, terrain: Option<&crate::data::TerrainDef>) -> Self {
         let mut cost = [None; MovementClass::ALL.len()];
         for class in MovementClass::ALL {
             cost[class.index()] = terrain.and_then(|t| t.cost_for(class));
@@ -204,9 +204,9 @@ impl MoveGrid {
     }
 
     /// Resolve one tile.
-    pub fn insert(&mut self, registry: &DataRegistry, hex: Hex, tile: &crate::map::Tile) {
+    pub fn insert(&mut self, registry: &DataRegistry, hex: Hex, tile: crate::map::Tile<'_>) {
         self.tiles
-            .insert(hex, TileMove::of(tile, registry.terrain(&tile.terrain)));
+            .insert(hex, TileMove::of(tile, registry.terrain(tile.terrain)));
     }
 
     /// Whether this grid has been built. A deserialized battle carries an

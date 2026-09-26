@@ -1804,7 +1804,7 @@ impl BattleState {
     /// The terrain a unit is standing on, for checks that care where they
     /// happen — a lead foot is quick on a road and bogs in a field.
     pub fn terrain_at(&self, hex: Hex) -> Option<&str> {
-        self.map.get(hex).map(|t| t.terrain.as_str())
+        self.map.get(hex).map(|t| t.terrain)
     }
 
     pub fn alive_units(&self) -> impl Iterator<Item = &Unit> {

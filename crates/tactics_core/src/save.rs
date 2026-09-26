@@ -113,7 +113,11 @@ use serde::{Deserialize, Serialize};
 /// (WORLD.md, W0.1). A version-6 battle carries them inside `map`, which no
 /// longer has anywhere to put them: it would open as a battle about nothing,
 /// every objective and every formation silently gone.
-pub const SAVE_VERSION: u32 = 7;
+///
+/// Version 8 stores a map's terrain as a palette of ids and an index per tile
+/// rather than a name per tile (WORLD.md, W0.2). A version-7 map has no
+/// palette and would not parse; this is the refusal that says so.
+pub const SAVE_VERSION: u32 = 8;
 
 /// Which mod, at which version, was loaded when a save was written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

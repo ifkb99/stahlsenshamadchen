@@ -1930,7 +1930,7 @@ impl BattleState {
                 registry,
                 &roster,
                 unit,
-                self.map.get(unit.pos).map(|t| t.terrain.as_str()),
+                self.map.get(unit.pos).map(|t| t.terrain),
             );
             {
                 let unit = self.unit_mut(id).expect("alive above");

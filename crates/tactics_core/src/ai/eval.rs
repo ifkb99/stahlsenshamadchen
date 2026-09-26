@@ -250,7 +250,7 @@ impl Evaluator {
         {
             terrain_value +=
                 t.elevation as f32 * planner.elevation_prior * doctrine.elevation_value;
-            if let Some(def) = registry.terrain(&t.terrain) {
+            if let Some(def) = registry.terrain(t.terrain) {
                 terrain_value += def.cover as f32 * planner.cover_prior * doctrine.cover_value;
             }
         }

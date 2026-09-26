@@ -478,10 +478,7 @@ fn spawn_world(
         OverworldScope,
     ));
     for (hex, tile) in state.map.iter() {
-        if registry
-            .terrain(&tile.terrain)
-            .is_some_and(|t| t.capturable)
-        {
+        if registry.terrain(tile.terrain).is_some_and(|t| t.capturable) {
             commands.spawn((
                 Sprite {
                     color: Color::srgba(1.0, 1.0, 1.0, 0.0),
@@ -693,7 +690,7 @@ fn pump_events(
                 .state
                 .map
                 .get(*at)
-                .and_then(|t| registry.terrain(&t.terrain))
+                .and_then(|t| registry.terrain(t.terrain))
                 .map(|t| t.name.clone())
                 .unwrap_or_default();
             log.push(format!("{name} captured a {terrain}."));
@@ -715,9 +712,9 @@ fn pump_events(
                 .state
                 .map
                 .get(*at)
-                .map(|t| t.terrain.clone())
+                .map(|t| t.terrain)
                 .unwrap_or_default();
-            let Some(map_id) = battlefield_for(registry, &terrain) else {
+            let Some(map_id) = battlefield_for(registry, terrain) else {
                 log.push("No battle map is loaded, so the fight cannot be staged.");
                 return;
             };
@@ -2304,8 +2301,8 @@ fn describe_tile(
     let Some(tile) = state.map.get(hex) else {
         return String::new();
     };
-    let Some(terrain) = registry.terrain(&tile.terrain) else {
-        return tile.terrain.clone();
+    let Some(terrain) = registry.terrain(tile.terrain) else {
+        return tile.terrain.to_string();
     };
     let mut lines = vec![format!("{} (elev {})", terrain.name, tile.elevation)];
     match terrain.cost_for(tactics_core::data::MovementClass::Tracked) {

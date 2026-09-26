@@ -396,7 +396,7 @@ pub fn deploy(
             .iter()
             .filter(|(_, tile)| {
                 registry
-                    .terrain(&tile.terrain)
+                    .terrain(tile.terrain)
                     .is_some_and(|t| t.cost_for(MovementClass::Tracked).is_some())
             })
             // A side deploys at the shallowest tiles of its own edge, which

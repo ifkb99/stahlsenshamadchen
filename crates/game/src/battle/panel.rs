@@ -770,8 +770,8 @@ pub(super) fn format_tile(
     let Some(tile) = state.map.get(hex) else {
         return String::new();
     };
-    let Some(terrain) = registry.terrain(&tile.terrain) else {
-        return tile.terrain.clone();
+    let Some(terrain) = registry.terrain(tile.terrain) else {
+        return tile.terrain.to_string();
     };
     let scale = &registry.scale;
     let mut lines = vec![format!(

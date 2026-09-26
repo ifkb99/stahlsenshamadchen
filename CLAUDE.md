@@ -1270,14 +1270,15 @@ carries the same parameter; there is no route from a file to a playable battle
 that does not pass a registry. `Army::headquarters` and `OverworldState::victory` are `#[serde(default)]`
 to the benign value (nobody flagged, elimination only), which is a
 version-6 campaign exactly as it was, so the version did not move for
-them. `SAVE_VERSION` is 7, and **an older save is
+them. `SAVE_VERSION` is 8, and **an older save is
 refused, not migrated** (`SaveError::Version`): the two fields Phase 3
 introduced default to the benign value, so a version-3 file would open with
 every crew quietly back under her formation's mission and a version-4 file
 with every wreck fighting again; version 6 gave `Holding` its latitude and a
 version-5 `"holding"` no longer parses; version 7 moved the scenario off
 the map, so a version-6 battle would open with no objectives and no
-formations. Loud is right while there is no released build to migrate
+formations; version 8 stores a map's terrain as a palette and an index per
+tile, and a version-7 map has no palette to parse. Loud is right while there is no released build to migrate
 from.
 
 ### Seeing the game without playing it
@@ -1378,7 +1379,9 @@ through it.
 **A battle map is a hexagon, not a rectangle.** `Scale::battle_map_radius()`
 derives radius 20 from 4 km ÷ 100 m (41 across, 1261 tiles); `MapKind::Battle`
 implies `MapShape::Tile` and validation rejects anything else. A scenario map
-sets `"shape": "free"`. `HexMap` is a sparse `HashMap<Hex, Tile>` and a space
+sets `"shape": "free"`. `HexMap` is a sparse map from `Hex` to an index into
+the map's own palette of terrain ids (so a tile is 8 bytes, not a `String`,
+and a save still names its terrain without a registry), and a space
 in a row means "no tile here".
 
 **A map that declares an `elevation` grid must give every tile a level**, and

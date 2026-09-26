@@ -491,13 +491,28 @@ pub struct MapFile {
     pub victory: CampaignVictory,
 }
 
-/// One tile of a parsed map.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Tile {
+/// One tile of a map, as anybody reading it sees it: which terrain, and how
+/// high.
+///
+/// A view rather than what the map stores, and `Copy`: the terrain id
+/// borrows the map's palette. A map keeps an index into that palette per tile
+/// instead of a `String` (WORLD.md, W0.2), because a world is about 160,000
+/// tiles and a heap-allocated name on every one of them was most of what the
+/// ground cost to hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Tile<'a> {
     /// Terrain definition id.
-    pub terrain: String,
+    pub terrain: &'a str,
     /// Elevation level, 0-9.
     pub elevation: i32,
+}
+
+/// What a map stores for one tile: its terrain as an index into the map's
+/// own palette, and its level. Eight bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct Cell {
+    terrain: u16,
+    elevation: i32,
 }
 
 /// Serialising a map keyed by [`Hex`].
@@ -542,10 +557,66 @@ pub(crate) mod hex_keyed {
 /// is shared by every engagement fought on it, while what a fight is *about*
 /// belongs to that fight. The scenario is [`Scenario`] now, and the two
 /// travel together only as a [`Battlefield`], at setup.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+///
+/// **Terrain ids are interned per map, not per registry.** Each map carries
+/// its own palette — the ids it uses, in the order it first met them — and a
+/// tile holds an index into it. Interning against the registry instead was
+/// the obvious design and has the blocker STRUCTURE.md item 8 names: a map is
+/// serialised in every save, and serde cannot turn a registry index back into
+/// a name without a registry in hand. A palette of the map's own keeps the
+/// file self-describing — the names are in it, once each — and needs nothing
+/// at load. It is also what folding maps together wants: a world interns
+/// into its palette the same way one map does, through [`HexMap::insert`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(try_from = "RawHexMap")]
 pub struct HexMap {
+    /// Terrain ids this map uses, each once, in the order it met them.
+    palette: Vec<String>,
     #[serde(with = "hex_keyed")]
-    tiles: HashMap<Hex, Tile>,
+    tiles: HashMap<Hex, Cell>,
+}
+
+/// A map as it comes off disk, before its indices have been checked against
+/// its palette.
+#[derive(Deserialize)]
+struct RawHexMap {
+    palette: Vec<String>,
+    #[serde(with = "hex_keyed")]
+    tiles: HashMap<Hex, Cell>,
+}
+
+impl TryFrom<RawHexMap> for HexMap {
+    type Error = String;
+
+    /// A tile pointing past the end of its palette would panic the first
+    /// time anybody asked what it was, which could be many rounds into a
+    /// loaded battle; refusing the file names the problem where it is.
+    fn try_from(raw: RawHexMap) -> Result<Self, Self::Error> {
+        let len = raw.palette.len();
+        if let Some((hex, cell)) = raw
+            .tiles
+            .iter()
+            .find(|(_, cell)| cell.terrain as usize >= len)
+        {
+            return Err(format!(
+                "tile {hex:?} names terrain {} of a palette of {len}",
+                cell.terrain
+            ));
+        }
+        Ok(Self {
+            palette: raw.palette,
+            tiles: raw.tiles,
+        })
+    }
+}
+
+/// Two maps are equal when every hex holds the same terrain at the same
+/// level. Palette order is how a map happened to be built, not what it is,
+/// so it takes no part.
+impl PartialEq for HexMap {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().all(|(hex, tile)| other.get(hex) == Some(tile))
+    }
 }
 
 /// What a fight on some ground is about: the ground worth holding, who
@@ -682,7 +753,7 @@ pub enum MapError {
 impl HexMap {
     pub fn from_map_file(file: &MapFile) -> Result<Self, MapError> {
         let palette = file.parsed_palette()?;
-        let mut tiles = HashMap::new();
+        let mut map = Self::default();
         for (row, line) in file.rows.iter().enumerate() {
             let elev_line = file.elevation.get(row).map(String::as_str).unwrap_or("");
             let mut elev_chars = elev_line.chars();
@@ -704,28 +775,52 @@ impl HexMap {
                         glyph: c,
                     })? as i32,
                 };
-                tiles.insert(
+                map.insert(
                     crate::offset_to_hex(col as i32, row as i32),
-                    Tile {
-                        terrain: terrain.clone(),
-                        elevation,
-                    },
+                    terrain,
+                    elevation,
                 );
             }
         }
-        Ok(Self { tiles })
+        Ok(map)
     }
 
-    pub fn get(&self, hex: Hex) -> Option<&Tile> {
-        self.tiles.get(&hex)
+    /// Put a tile at `hex`, replacing whatever was known there. The terrain
+    /// id is interned into this map's palette on first sight.
+    ///
+    /// # Panics
+    ///
+    /// If one map is asked to hold more than 65,536 distinct terrains, which
+    /// is a mod with a bug rather than a mod.
+    pub fn insert(&mut self, hex: Hex, terrain: &str, elevation: i32) {
+        let index = match self.palette.iter().position(|t| t == terrain) {
+            Some(i) => i,
+            None => {
+                self.palette.push(terrain.to_string());
+                self.palette.len() - 1
+            }
+        };
+        let terrain = u16::try_from(index).expect("more distinct terrains than one map can index");
+        self.tiles.insert(hex, Cell { terrain, elevation });
+    }
+
+    fn view(&self, cell: &Cell) -> Tile<'_> {
+        Tile {
+            terrain: &self.palette[cell.terrain as usize],
+            elevation: cell.elevation,
+        }
+    }
+
+    pub fn get(&self, hex: Hex) -> Option<Tile<'_>> {
+        self.tiles.get(&hex).map(|c| self.view(c))
     }
 
     pub fn contains(&self, hex: Hex) -> bool {
         self.tiles.contains_key(&hex)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (Hex, &Tile)> {
-        self.tiles.iter().map(|(h, t)| (*h, t))
+    pub fn iter(&self) -> impl Iterator<Item = (Hex, Tile<'_>)> {
+        self.tiles.iter().map(|(h, c)| (*h, self.view(c)))
     }
 
     pub fn len(&self) -> usize {
@@ -1257,7 +1352,7 @@ impl MapFile {
                      so no side could ever hold it",
                     self.id
                 )),
-                Some(_) if !map.iter().any(|(_, tile)| &tile.terrain == terrain) => {
+                Some(_) if !map.iter().any(|(_, tile)| tile.terrain == terrain) => {
                     report.errors.push(format!(
                         "map `{}`: `victory.hold` names `{terrain}`, and there is none on the map",
                         self.id
@@ -1320,6 +1415,82 @@ mod tests {
             }"##,
         )
         .unwrap()
+    }
+
+    /// What a world of tiles costs to hold is what one tile costs times
+    /// about 160,000, and the name was the expensive part: a `String` is 24
+    /// bytes before it has allocated anything. The palette index is two.
+    #[test]
+    fn a_tile_is_stored_in_eight_bytes_whatever_its_terrain_is_called() {
+        assert_eq!(std::mem::size_of::<Cell>(), 8);
+        let map = HexMap::from_map_file(&sample_file()).unwrap();
+        assert_eq!(
+            map.palette,
+            ["grass", "forest"],
+            "each terrain is named once, in the order the map met it"
+        );
+    }
+
+    /// Folding ground in is how a world will be assembled, so a tile that
+    /// replaces another must intern into the palette the map already has
+    /// rather than growing a second entry for a name it knows.
+    #[test]
+    fn a_tile_put_where_another_was_replaces_it_and_reuses_the_name() {
+        let mut map = HexMap::from_map_file(&sample_file()).unwrap();
+        let hex = crate::offset_to_hex(0, 0);
+        map.insert(hex, "forest", 3);
+        assert_eq!(
+            map.get(hex),
+            Some(Tile {
+                terrain: "forest",
+                elevation: 3
+            })
+        );
+        assert_eq!(map.palette.len(), 2);
+        map.insert(hex, "water", 0);
+        assert_eq!(map.get(hex).unwrap().terrain, "water");
+        assert_eq!(map.palette.len(), 3);
+        assert_eq!(map.len(), 8, "a replacement is not a new tile");
+    }
+
+    /// Palette order is an accident of construction. Two maps holding the
+    /// same terrain at the same level on every hex are the same ground, and a
+    /// save written from one must read back equal to it.
+    #[test]
+    fn two_maps_of_the_same_ground_are_equal_whatever_order_they_were_built_in() {
+        let map = HexMap::from_map_file(&sample_file()).unwrap();
+        let mut hexes: Vec<(Hex, Tile)> = map.iter().collect();
+        hexes.sort_by_key(|(h, t)| (t.terrain, h.x, h.y));
+        let mut rebuilt = HexMap::default();
+        for (hex, tile) in &hexes {
+            rebuilt.insert(*hex, tile.terrain, tile.elevation);
+        }
+        assert_ne!(
+            map.palette, rebuilt.palette,
+            "the test builds it the other way round"
+        );
+        assert_eq!(map, rebuilt);
+
+        let text = serde_json::to_string(&rebuilt).unwrap();
+        let back: HexMap = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, map);
+        rebuilt.insert(hexes[0].0, "water", 0);
+        assert_ne!(rebuilt, map);
+    }
+
+    /// A tile that points past the end of its palette would panic the first
+    /// time anybody asked what it was — possibly rounds into a loaded
+    /// battle. The file is refused instead, at the door.
+    #[test]
+    fn a_saved_map_whose_tile_names_no_terrain_is_refused() {
+        let map = HexMap::from_map_file(&sample_file()).unwrap();
+        let mut value = serde_json::to_value(&map).unwrap();
+        value["palette"].as_array_mut().unwrap().pop();
+        let err = serde_json::from_value::<HexMap>(value).unwrap_err();
+        assert!(
+            err.to_string().contains("palette of 1"),
+            "the refusal should say what was wrong: {err}"
+        );
     }
 
     #[test]

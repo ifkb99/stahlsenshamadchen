@@ -759,10 +759,8 @@ impl OverworldState {
         }
         let (mut held, mut total) = (0, 0);
         for (hex, tile) in self.map.iter() {
-            if !self.victory.hold.contains(&tile.terrain)
-                || !registry
-                    .terrain(&tile.terrain)
-                    .is_some_and(|t| t.capturable)
+            if !self.victory.hold.iter().any(|t| t == tile.terrain)
+                || !registry.terrain(tile.terrain).is_some_and(|t| t.capturable)
             {
                 continue;
             }
@@ -909,7 +907,7 @@ impl OverworldState {
         let concealed = self
             .map
             .get(army.pos)
-            .and_then(|t| registry.terrain(&t.terrain))
+            .and_then(|t| registry.terrain(t.terrain))
             .is_some_and(|t| t.concealing);
         if !concealed {
             return true;
@@ -1313,9 +1311,7 @@ impl OverworldState {
 
         // Capture objectives by standing on them.
         if let Some(tile) = self.map.get(destination)
-            && registry
-                .terrain(&tile.terrain)
-                .is_some_and(|t| t.capturable)
+            && registry.terrain(tile.terrain).is_some_and(|t| t.capturable)
             && self.owners.get(&destination) != Some(&side)
         {
             self.owners.insert(destination, side);
@@ -1671,9 +1667,7 @@ impl OverworldState {
             path: vec![from, to],
         });
         if let Some(tile) = self.map.get(to)
-            && registry
-                .terrain(&tile.terrain)
-                .is_some_and(|t| t.capturable)
+            && registry.terrain(tile.terrain).is_some_and(|t| t.capturable)
             && self.owners.get(&to) != Some(&side)
         {
             self.owners.insert(to, side);
@@ -1945,7 +1939,7 @@ impl AiPlanner<OverworldState, OverworldOrder> for SimpleOverworldPlanner {
         }
         // Objectives we don't own.
         for (hex, tile) in state.map.iter() {
-            let Some(t) = registry.terrain(&tile.terrain) else {
+            let Some(t) = registry.terrain(tile.terrain) else {
                 continue;
             };
             if t.capturable && state.owners.get(&hex) != Some(&side) {

@@ -152,7 +152,7 @@ fn where_she_would_stand_decides_what_can_be_put_on_her() {
     let wood = tactics_core::offset_to_hex(6, 1);
     let behind = tactics_core::offset_to_hex(9, 1);
     assert_eq!(
-        state.map.get(wood).map(|t| t.terrain.as_str()),
+        state.map.get(wood).map(|t| t.terrain),
         Some("forest"),
         "the middle hex has to be the wood or this test is about nothing"
     );
@@ -291,8 +291,8 @@ fn a_crew_would_rather_stand_where_the_gun_cannot_see_her() {
     );
     assert_eq!(
         (
-            state.map.get(masked).map(|t| t.terrain.as_str()),
-            state.map.get(exposed).map(|t| t.terrain.as_str())
+            state.map.get(masked).map(|t| t.terrain),
+            state.map.get(exposed).map(|t| t.terrain)
         ),
         (Some("grass"), Some("grass")),
         "and the same ground, or it is a test about cover"
@@ -394,8 +394,8 @@ fn with_nobody_found_a_doctrines_taste_for_cover_decides_the_ground() {
     );
     assert_eq!(
         (
-            state.map.get(wood).map(|t| t.terrain.as_str()),
-            state.map.get(field).map(|t| t.terrain.as_str())
+            state.map.get(wood).map(|t| t.terrain),
+            state.map.get(field).map(|t| t.terrain)
         ),
         (Some("forest"), Some("grass")),
         "one tile has to be the timber and the other the open ground"

@@ -417,7 +417,7 @@ impl Arena {
         let tiles: HashMap<Hex, (&str, i32)> = field
             .terrain
             .iter()
-            .map(|(h, t)| (h, (t.terrain.as_str(), t.elevation)))
+            .map(|(h, t)| (h, (t.terrain, t.elevation)))
             .collect();
         for (name, image) in REFLECTIONS {
             for (hex, ground) in &tiles {
