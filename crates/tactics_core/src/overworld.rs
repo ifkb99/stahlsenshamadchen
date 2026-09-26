@@ -6,6 +6,7 @@
 //! unless they sit in `concealing` terrain with no enemy adjacent.
 
 use crate::ai::{AiConfig, AiPlanner};
+use crate::battle::UnitId;
 use crate::data::{DataRegistry, MovementClass};
 use crate::map::{CampaignVictory, HexMap, MapFile, MapKind};
 use crate::roster::{CadetId, CasualtyRules, Roster, resolve_crew_fate, resolve_station_fate};
@@ -280,6 +281,10 @@ pub struct Army {
     /// `march` block's hours; reset at dawn.
     #[serde(default)]
     pub marched_ticks: u32,
+    /// The engagement it is fighting in, if it is: its vehicles are crews on
+    /// tiles there, and it does not march until the fight is over.
+    #[serde(default)]
+    pub engaged: Option<u32>,
 }
 
 /// A march in progress on the world clock.
@@ -336,6 +341,23 @@ pub enum OverworldOrder {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OverworldEvent {
+    /// Two armies made contact on the ground, and a fight began there
+    /// (WORLD.md W3.2).
+    EngagementBegan {
+        engagement: u32,
+        attacker: ArmyId,
+        defender: ArmyId,
+        at: Hex,
+    },
+    /// A fight on the ground is over, and its survivors are armies again.
+    EngagementEnded {
+        engagement: u32,
+        attacker_side: u8,
+        winner: Option<u8>,
+        rounds: u32,
+        /// Vehicles each side lost, by side.
+        hulls_lost: Vec<u32>,
+    },
     TurnStarted {
         side: u8,
         turn: u32,
@@ -594,6 +616,17 @@ pub struct OverworldState {
     /// runs on turns.
     #[serde(default)]
     pub clock: u64,
+    /// The fights going on, in the order they began (WORLD.md W3.2).
+    #[serde(default)]
+    pub engagements: Vec<crate::engagement::Engagement>,
+    /// The next unit id the world gives out: a vehicle lifted into a fight
+    /// is named by the world, not counted from zero, so two fights never
+    /// share a name.
+    #[serde(default)]
+    pub next_unit_id: u32,
+    /// The next engagement id.
+    #[serde(default)]
+    pub next_engagement: u32,
 }
 
 /// The kind of column a march is priced for: which movement classes are in
@@ -769,6 +802,7 @@ impl OverworldState {
                 tile: world.as_ref().map(|w| w.stand_tile(registry, positions[i])),
                 march: None,
                 marched_ticks: 0,
+                engaged: None,
             })
             .collect();
         let mut state = Self {
@@ -798,6 +832,9 @@ impl OverworldState {
             ground: std::sync::OnceLock::new(),
             passages: Arc::default(),
             clock: 0,
+            engagements: Vec::new(),
+            next_unit_id: 0,
+            next_engagement: 0,
         };
         // Who can hear whom on the morning of day one. The events are dropped
         // because nothing has *changed* yet — an army that starts the campaign
@@ -1440,10 +1477,11 @@ impl OverworldState {
         let mut events = Vec::new();
         for _ in 0..ticks {
             self.clock += 1;
+            events.extend(self.run_engagements(registry));
             let marching: Vec<ArmyId> = self
                 .armies
                 .iter()
-                .filter(|a| a.alive && a.march.is_some())
+                .filter(|a| a.alive && a.march.is_some() && a.engaged.is_none())
                 .map(|a| a.id)
                 .collect();
             for id in marching {
@@ -1542,13 +1580,22 @@ impl OverworldState {
             if hex != pos {
                 if let Some(other) = self.army_at(hex).filter(|o| o.side != army.side) {
                     // Contact: the column halts on the border of his ground,
-                    // and the fight is there.
-                    events.push(OverworldEvent::BattleTriggered {
-                        attacker: id,
-                        defender: other.id,
-                        at: hex,
-                    });
+                    // and the fight is there — on that ground, crews on
+                    // tiles, unless he is already fighting somebody else, in
+                    // which case she waits on the border (joining a fight in
+                    // progress is W3.5).
+                    let defender = other.id;
+                    let busy = other.engaged.is_some();
                     finished = true;
+                    if !busy {
+                        if let Some(a) = self.army_mut(id) {
+                            a.tile = Some(tile);
+                            a.pos = pos;
+                            a.march = None;
+                        }
+                        events.extend(self.open_engagement(registry, id, defender, hex));
+                        return events;
+                    }
                     break;
                 }
                 // Nobody finishes a march in a friend's hex: arriving there,
@@ -1576,6 +1623,333 @@ impl OverworldState {
             a.pos = pos;
             a.march = if finished { None } else { Some(order) };
         }
+        events
+    }
+
+    /// Put a campaign that came off disk back together: every engagement's
+    /// battle gets its caches back. `SaveGame::from_json` calls it, the way
+    /// it rehydrates a battle of its own.
+    pub fn rehydrate(&mut self, registry: &DataRegistry) {
+        for e in &mut self.engagements {
+            e.rehydrate(registry);
+        }
+    }
+
+    /// Lift an army's vehicles onto the ground around where it stands: each
+    /// on the nearest tile, spiralling out from the army's, that its chassis
+    /// can stand on and nobody has taken. One vehicle a tile.
+    fn lift(
+        &self,
+        registry: &DataRegistry,
+        army: &Army,
+        taken: &mut std::collections::HashSet<Hex>,
+    ) -> Vec<(crate::map::UnitPlacement, Vec<CadetId>)> {
+        let Some(ground) = self.ground(registry) else {
+            return Vec::new();
+        };
+        let centre = army.tile.unwrap_or(Hex::ZERO);
+        let formation = format!("army-{}", army.id.0);
+        let mut placed = Vec::new();
+        for (i, unit) in army.units.iter().enumerate() {
+            let Some(vehicle) = registry.vehicle(&unit.vehicle) else {
+                continue;
+            };
+            let spot = centre.spiral_range(0..=12).find(|h| {
+                !taken.contains(h)
+                    && ground.get(*h).is_some_and(|t| {
+                        registry
+                            .terrain(t.terrain)
+                            .is_some_and(|d| d.cost_for(vehicle.movement.class).is_some())
+                    })
+            });
+            let Some(spot) = spot else {
+                continue;
+            };
+            taken.insert(spot);
+            placed.push((
+                crate::map::UnitPlacement {
+                    aboard_at: None,
+                    at: crate::hex_to_offset(spot),
+                    side: army.side,
+                    vehicle: unit.vehicle.clone(),
+                    crew: Vec::new(),
+                    name: unit.name.clone(),
+                    facing: None,
+                    formation: Some(formation.clone()),
+                    leads: i == 0,
+                },
+                unit.crew.clone(),
+            ));
+        }
+        placed
+    }
+
+    /// Two armies made contact at `at`: lift both onto the ground there and
+    /// begin the fight (WORLD.md W3.2). The attacker's formation is told to
+    /// advance on where the defender stands — she came to find him — and the
+    /// defender's to hold.
+    fn open_engagement(
+        &mut self,
+        registry: &DataRegistry,
+        attacker: ArmyId,
+        defender: ArmyId,
+        at: Hex,
+    ) -> Vec<OverworldEvent> {
+        let (Some(world), Some(att), Some(def)) = (
+            self.world.clone(),
+            self.army(attacker).cloned(),
+            self.army(defender).cloned(),
+        ) else {
+            return Vec::new();
+        };
+        let mut taken = std::collections::HashSet::new();
+        let mut lifted = self.lift(registry, &att, &mut taken);
+        lifted.extend(self.lift(registry, &def, &mut taken));
+        if lifted.is_empty() {
+            return Vec::new();
+        }
+        let (placements, crews): (Vec<_>, Vec<_>) = lifted.into_iter().unzip();
+        let first = self.next_unit_id;
+        let ids: Vec<UnitId> = (0..placements.len() as u32)
+            .map(|i| UnitId(first + i))
+            .collect();
+        self.next_unit_id += placements.len() as u32;
+        let origins: Vec<(UnitId, ArmyId)> = ids
+            .iter()
+            .zip(&placements)
+            .map(|(id, p)| {
+                (
+                    *id,
+                    if p.side == att.side {
+                        attacker
+                    } else {
+                        defender
+                    },
+                )
+            })
+            .collect();
+        let doctrine = |side: u8| {
+            self.sides
+                .get(side as usize)
+                .and_then(|s| s.ai.as_ref())
+                .and_then(|ai| ai.doctrine.clone())
+        };
+        let formations = [&att, &def]
+            .iter()
+            .map(|a| crate::map::FormationDef {
+                id: format!("army-{}", a.id.0),
+                name: a.name.clone(),
+                side: a.side,
+                doctrine: doctrine(a.side),
+            })
+            .collect();
+        let sides = self
+            .sides
+            .iter()
+            .map(|s| crate::battle::SideState {
+                name: s.name.clone(),
+                ai: s.ai.clone(),
+            })
+            .collect();
+        let seed = crate::world::engagement_seed(
+            self.seed,
+            crate::world::EngagementKey {
+                when: self.clock,
+                at,
+                attacker: attacker.0,
+                defender: defender.0,
+            },
+        );
+        // The ground the defender holds is what the fight is about: the tiles
+        // around where he stands, worth holding (WORLD.md W3.4). Without it
+        // neither side's commander had anything to fight *for*, the attacker
+        // was sent at the one tile he occupied — which nobody can choose to
+        // stand on — and the two sat nine hexes apart until the stalemate
+        // clock ran out.
+        let held = def.tile.unwrap_or(Hex::ZERO);
+        let ground: Vec<Hex> = held.range(2).collect();
+        let scenario = crate::map::Scenario::with_formations(formations).with_objective(
+            crate::map::Objective {
+                id: format!("ground-{}", def.id.0),
+                name: format!("{}'s ground", def.name),
+                hexes: ground.clone(),
+                value: 3,
+                kind: crate::map::ObjectiveKind::Hold,
+                side: None,
+            },
+        );
+        let battle = crate::battle::BattleState::from_muster_on(
+            registry,
+            crate::world::World::window_onto(world),
+            scenario,
+            sides,
+            crate::battle::Muster {
+                placements: &placements,
+                crews: &crews,
+                ids: &ids,
+            },
+            Arc::new(self.roster.mustered(&[])),
+            seed,
+        );
+        let Ok(mut battle) = battle else {
+            return Vec::new();
+        };
+        // She came to find him: the attacker's formation assaults his ground,
+        // at the free tile of it nearest her; the defender holds it.
+        let nearest_free = {
+            let from = att.tile.unwrap_or(held);
+            ground
+                .iter()
+                .copied()
+                .filter(|h| battle.occupants(*h).next().is_none())
+                .min_by_key(|h| (h.unsigned_distance_to(from), h.x, h.y))
+        };
+        if let Some(target) = nearest_free {
+            let theirs: Vec<usize> = battle
+                .formations()
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.side == att.side)
+                .map(|(index, _)| index)
+                .collect();
+            for index in theirs {
+                {
+                    let order = crate::battle::Order::SetMission {
+                        formation: crate::battle::FormationId(index as u32),
+                        mission: crate::battle::Mission::Assault { to: target },
+                        latitude: crate::battle::Latitude::Delegated,
+                    };
+                    let _ = battle.apply(registry, &order);
+                }
+            }
+        }
+        let id = self.next_engagement;
+        self.next_engagement += 1;
+        for a in [attacker, defender] {
+            if let Some(army) = self.army_mut(a) {
+                army.engaged = Some(id);
+                army.march = None;
+            }
+        }
+        self.engagements.push(crate::engagement::Engagement {
+            id,
+            began: self.clock,
+            attacker,
+            defender,
+            origins,
+            seed,
+            fight: crate::engagement::Fight::Live(Box::new(battle)),
+        });
+        vec![OverworldEvent::EngagementBegan {
+            engagement: id,
+            attacker,
+            defender,
+            at,
+        }]
+    }
+
+    /// One clock tick of every fight: a battle whose round is being planned
+    /// is planned — by planners seeded from the fight's dice and the round,
+    /// so nothing between rounds lives outside the battle — and every battle
+    /// then resolves one tick. A fight that is over is closed.
+    fn run_engagements(&mut self, registry: &DataRegistry) -> Vec<OverworldEvent> {
+        let mut events = Vec::new();
+        let mut over = Vec::new();
+        let stand_in = AiConfig {
+            planner: "utility".into(),
+            difficulty: 3,
+            doctrine: None,
+        };
+        for e in &mut self.engagements {
+            let seed = e.seed;
+            let battle = e.battle_mut();
+            if battle.is_over() {
+                over.push(e.id);
+                continue;
+            }
+            if matches!(battle.phase, crate::battle::Phase::Planning { .. }) {
+                let round = battle.round as u64;
+                let mut ai = crate::ai::AiDriver::new();
+                for (side, s) in battle.sides.iter().enumerate() {
+                    let config = s.ai.clone().unwrap_or_else(|| stand_in.clone());
+                    ai.insert(
+                        side as u8,
+                        crate::ai::make_battle_planner(
+                            &config,
+                            seed ^ round.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ side as u64,
+                            registry,
+                        ),
+                    );
+                }
+                ai.plan_round(registry, battle);
+            }
+            battle.step_tick(registry);
+            if battle.is_over() {
+                over.push(e.id);
+            }
+        }
+        for id in over {
+            events.extend(self.close_engagement(registry, id));
+        }
+        events
+    }
+
+    /// A fight is over: what it did to the people in it goes onto the
+    /// campaign's roll, and every army that has anybody left is an army
+    /// again, standing where its first surviving vehicle stands (WORLD.md
+    /// W3.3).
+    fn close_engagement(&mut self, registry: &DataRegistry, id: u32) -> Vec<OverworldEvent> {
+        let Some(index) = self.engagements.iter().position(|e| e.id == id) else {
+            return Vec::new();
+        };
+        let e = self.engagements.remove(index);
+        let battle = e.battle();
+        let field = crate::field::FieldBattle {
+            attacker: e.attacker,
+            defender: e.defender,
+            origins: e.origins.clone(),
+        };
+        let report = field.report(registry, battle);
+        let mut hulls_lost = vec![0; battle.sides.len()];
+        for unit in battle.lost_units() {
+            hulls_lost[unit.side as usize] += 1;
+        }
+        let attacker_side = self.army(e.attacker).map_or(0, |a| a.side);
+        let radius = self.world.as_ref().map_or(20, |w| w.chunk_radius);
+        // Where each army's survivors are, before the report rewrites who is
+        // in it: the first surviving vehicle, in id order.
+        let mut stands: Vec<(ArmyId, Hex)> = Vec::new();
+        for unit in battle.surviving_units() {
+            if let Some(army) = e.origin(unit.id)
+                && !stands.iter().any(|(a, _)| *a == army)
+            {
+                stands.push((army, unit.pos));
+            }
+        }
+        let mut events = self.apply_losses_and_survivors(registry, &report);
+        for army_id in e.armies() {
+            let side = self.army(army_id).map(|a| a.side);
+            if let Some(army) = self.army_mut(army_id) {
+                army.engaged = None;
+                if let Some((_, tile)) = stands.iter().find(|(a, _)| *a == army_id) {
+                    army.tile = Some(*tile);
+                    army.pos = crate::world::chunk_of(*tile, radius);
+                }
+            }
+            if let (Some(side), Some(pos)) = (side, self.army(army_id).map(|a| a.pos))
+                && self.army(army_id).is_some()
+            {
+                events.extend(self.take_ground(registry, side, pos));
+            }
+        }
+        events.push(OverworldEvent::EngagementEnded {
+            engagement: id,
+            attacker_side,
+            winner: report.winner,
+            rounds: battle.round,
+            hulls_lost,
+        });
+        self.check_victory(&mut events);
         events
     }
 
@@ -2225,12 +2599,68 @@ impl OverworldState {
         registry: &DataRegistry,
         report: &BattleReport,
     ) -> Vec<OverworldEvent> {
-        let mut events = Vec::new();
         let attacker = report.attacker;
         let defender = report.defender;
         let attacker_pos = self.army(attacker).map(|a| a.pos);
         let defender_pos = self.army(defender).map(|a| a.pos);
+        let mut events = self.apply_losses_and_survivors(registry, report);
 
+        // An army that left the field by an exit is not where the battle
+        // was. It falls back a hex — along its own orders if it is under a
+        // withdrawal, and otherwise straight away from whoever it was
+        // fighting — so that a withdrawal *goes* somewhere instead of leaving
+        // the army standing on the ground it just gave up, in contact with
+        // the enemy it just broke contact with. In id order, because two
+        // armies falling back onto one hex is settled by who moves first.
+        let mut withdrew: Vec<ArmyId> = report.withdrew.clone();
+        withdrew.sort_unstable();
+        withdrew.dedup();
+        for id in withdrew {
+            let Some(army) = self.army(id) else {
+                continue;
+            };
+            let enemy = if army.side == self.army(attacker).map_or(u8::MAX, |a| a.side) {
+                defender_pos
+            } else {
+                attacker_pos
+            };
+            let Some(enemy) = enemy else {
+                continue;
+            };
+            if let Some(to) = self.fallback_hex(registry, id, enemy) {
+                self.place_army(registry, id, to, &mut events);
+            }
+        }
+
+        // The ground was contested and the attacker is the one still on it.
+        // Advancing onto a *vacated* tile rather than onto a destroyed
+        // defender's is what makes the two ways of losing ground the same
+        // ground lost: a defender who withdrew has yielded it exactly as one
+        // who burned has. An attacker who herself withdrew has yielded her
+        // claim, and one who has been wiped out has nobody to advance.
+        if let (Some(pos), Some(att)) = (defender_pos, self.army(attacker))
+            && !report.withdrew.contains(&attacker)
+            && self.army_at(pos).is_none()
+        {
+            let att_id = att.id;
+            self.place_army(registry, att_id, pos, &mut events);
+        }
+        self.check_victory(&mut events);
+        events
+    }
+
+    /// What any fight did to the people in it, whichever kind of fight it
+    /// was: every casualty resolved (in cadet-id order, through the campaign
+    /// rng), every survivor credited, every army handed back what it has
+    /// left and destroyed if that is nothing. Shared by a battle fought as an
+    /// event and an engagement fought on the ground (WORLD.md W3.3); what
+    /// each does about *where* the armies are afterwards is its own.
+    fn apply_losses_and_survivors(
+        &mut self,
+        registry: &DataRegistry,
+        report: &BattleReport,
+    ) -> Vec<OverworldEvent> {
+        let mut events = Vec::new();
         // Casualties first, so a cadet's fate is settled before the surviving
         // rosters are written back. Resolved in cadet-id order rather than the
         // order the battle happened to report them, because the rng is shared
@@ -2310,47 +2740,6 @@ impl OverworldState {
             }
         }
 
-        // An army that left the field by an exit is not where the battle
-        // was. It falls back a hex — along its own orders if it is under a
-        // withdrawal, and otherwise straight away from whoever it was
-        // fighting — so that a withdrawal *goes* somewhere instead of leaving
-        // the army standing on the ground it just gave up, in contact with
-        // the enemy it just broke contact with. In id order, because two
-        // armies falling back onto one hex is settled by who moves first.
-        let mut withdrew: Vec<ArmyId> = report.withdrew.clone();
-        withdrew.sort_unstable();
-        withdrew.dedup();
-        for id in withdrew {
-            let Some(army) = self.army(id) else {
-                continue;
-            };
-            let enemy = if army.side == self.army(attacker).map_or(u8::MAX, |a| a.side) {
-                defender_pos
-            } else {
-                attacker_pos
-            };
-            let Some(enemy) = enemy else {
-                continue;
-            };
-            if let Some(to) = self.fallback_hex(registry, id, enemy) {
-                self.place_army(registry, id, to, &mut events);
-            }
-        }
-
-        // The ground was contested and the attacker is the one still on it.
-        // Advancing onto a *vacated* tile rather than onto a destroyed
-        // defender's is what makes the two ways of losing ground the same
-        // ground lost: a defender who withdrew has yielded it exactly as one
-        // who burned has. An attacker who herself withdrew has yielded her
-        // claim, and one who has been wiped out has nobody to advance.
-        if let (Some(pos), Some(att)) = (defender_pos, self.army(attacker))
-            && !report.withdrew.contains(&attacker)
-            && self.army_at(pos).is_none()
-        {
-            let att_id = att.id;
-            self.place_army(registry, att_id, pos, &mut events);
-        }
-        self.check_victory(&mut events);
         events
     }
 

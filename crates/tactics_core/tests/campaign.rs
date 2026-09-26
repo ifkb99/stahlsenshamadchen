@@ -108,6 +108,7 @@ fn extra_army(state: &mut OverworldState, side: u8, at: Hex) -> ArmyId {
         tile: None,
         march: None,
         marched_ticks: 0,
+        engaged: None,
     });
     id
 }
@@ -1455,19 +1456,33 @@ fn a_march_into_an_enemy_halts_on_the_border_of_his_ground_and_fights() {
         .apply(&reg, &OverworldOrder::MoveArmy { army, to: enemy_at })
         .expect("an attack is an order like any other");
     let events = run_the_day(&reg, &mut state);
-    let moved = state.army(army).unwrap();
+    // Where she was when the fight began: the last hex her march reached
+    // before it. (Afterwards she may well stand on his ground — she came to
+    // take it, and the day goes on.)
+    let began = events
+        .iter()
+        .position(|e| matches!(e, OverworldEvent::EngagementBegan { .. }))
+        .expect("the fight began");
+    let halted = events[..began]
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            OverworldEvent::ArmyMoved { army: a, path } if *a == army => path.last().copied(),
+            _ => None,
+        })
+        .unwrap_or(here);
     assert_eq!(
-        moved.pos.unsigned_distance_to(enemy_at),
+        halted.unsigned_distance_to(enemy_at),
         1,
         "it stops next to him"
     );
     assert!(
         events.iter().any(|e| matches!(
             e,
-            OverworldEvent::BattleTriggered { attacker, defender, .. }
-                if *attacker == army && *defender == enemy
+            OverworldEvent::EngagementBegan { attacker, defender, at, .. }
+                if *attacker == army && *defender == enemy && *at == enemy_at
         )),
-        "and the fight is on: {events:?}"
+        "and the fight is on, on his ground: {events:?}"
     );
 }
 
@@ -1570,5 +1585,185 @@ fn a_day_on_the_clock_goes_through_a_save_and_runs_on_the_same() {
             back.army(army).unwrap().tile,
             state.army(army).unwrap().tile
         );
+    }
+}
+
+// --- fights on the ground (WORLD.md W3.2–W3.3) ---
+
+/// A generated campaign with the first Valkyrie army moved two campaign
+/// hexes from Kuhlmann's first, and Kuhlmann ordered onto it.
+fn about_to_meet(reg: &DataRegistry) -> (OverworldState, ArmyId, ArmyId) {
+    let mut state = generated(reg);
+    let radius = reg.scale.battle_map_radius();
+    let army = state.armies[0].id;
+    let here = state.army(army).unwrap().pos;
+    let enemy_at = here + Hex::new(2, 0);
+    let enemy = state
+        .armies
+        .iter()
+        .find(|a| a.side != state.army(army).unwrap().side)
+        .unwrap()
+        .id;
+    let world = state.world.clone().unwrap();
+    {
+        let e = state.armies.iter_mut().find(|a| a.id == enemy).unwrap();
+        e.pos = enemy_at;
+        e.tile = Some(world.stand_tile(reg, enemy_at));
+    }
+    let _ = radius;
+    state
+        .apply(reg, &OverworldOrder::MoveArmy { army, to: enemy_at })
+        .unwrap();
+    (state, army, enemy)
+}
+
+#[test]
+fn contact_on_a_generated_world_is_a_fight_on_the_ground_there() {
+    // No battle is sent anywhere: the two armies' vehicles are placed on the
+    // tiles around where they stand, and the fight is fought there, on the
+    // world, while the clock runs.
+    let reg = registry();
+    let (mut state, army, enemy) = about_to_meet(&reg);
+    let events = run_the_day(&reg, &mut state);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            OverworldEvent::EngagementBegan { attacker, defender, .. }
+                if *attacker == army && *defender == enemy
+        )) || !state.engagements.is_empty(),
+        "contact opened no fight: {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::BattleTriggered { .. })),
+        "a clocked campaign sends no battle anywhere"
+    );
+}
+
+#[test]
+fn a_fight_on_the_ground_ends_with_its_survivors_armies_again_where_they_stand() {
+    let reg = registry();
+    let (mut state, army, enemy) = about_to_meet(&reg);
+    let before: usize = [army, enemy]
+        .iter()
+        .map(|a| state.army(*a).unwrap().units.len())
+        .sum();
+    // Orders in, then the clock a tick at a time, keeping where each army's
+    // vehicles stood in the fight on the last tick before it ended.
+    state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
+    let mut last_seen: Vec<(ArmyId, Vec<Hex>)> = Vec::new();
+    let mut ended = false;
+    for _ in 0..60_000 {
+        if let Some(e) = state.engagements.first() {
+            last_seen = e
+                .armies()
+                .into_iter()
+                .map(|a| {
+                    let at = e
+                        .battle()
+                        .surviving_units()
+                        .filter(|u| e.origin(u.id) == Some(a))
+                        .map(|u| u.pos)
+                        .collect();
+                    (a, at)
+                })
+                .collect();
+        }
+        let events = state.advance_clock(&reg, 1);
+        if events
+            .iter()
+            .any(|e| matches!(e, OverworldEvent::EngagementEnded { .. }))
+        {
+            ended = true;
+            break;
+        }
+    }
+    assert!(ended, "the fight never ended");
+    for (id, stood) in &last_seen {
+        let Some(a) = state.army(*id).filter(|a| a.alive) else {
+            continue;
+        };
+        let tile = a.tile.unwrap();
+        assert!(
+            stood.iter().any(|h| h.unsigned_distance_to(tile) <= 2),
+            "`{}` is at {tile:?}, and its vehicles were at {stood:?}",
+            a.name
+        );
+    }
+    assert!(state.engagements.is_empty());
+    let radius = reg.scale.battle_map_radius();
+    let mut after = 0;
+    for id in [army, enemy] {
+        let Some(a) = state.army(id) else { continue };
+        assert_eq!(a.engaged, None, "`{}` is still fighting", a.name);
+        let tile = a.tile.unwrap();
+        assert_eq!(tactics_core::world::chunk_of(tile, radius), a.pos);
+        after += a.units.len();
+    }
+    assert!(after <= before, "a fight added vehicles");
+}
+
+#[test]
+fn a_campaign_in_the_middle_of_a_fight_goes_through_a_save_and_fights_on_the_same() {
+    let reg = registry();
+    let (mut state, _, _) = about_to_meet(&reg);
+    // Everybody's orders in, then the clock tick by tick to the contact — a
+    // day's end-of-turn would fight the whole fight inside one call — and a
+    // few minutes into it.
+    state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
+    for _ in 0..20_000 {
+        if !state.engagements.is_empty() {
+            break;
+        }
+        state.advance_clock(&reg, 1);
+    }
+    assert!(
+        !state.engagements.is_empty(),
+        "the test wants a fight in progress"
+    );
+    state.advance_clock(&reg, 40);
+    let text = tactics_core::save::SaveGame::<tactics_core::battle::BattleState>::new(
+        &reg,
+        Some(state.clone()),
+        None,
+    )
+    .to_json()
+    .unwrap();
+    let mut back = tactics_core::save::SaveGame::from_json(&reg, &text)
+        .unwrap()
+        .0
+        .overworld
+        .unwrap();
+    for _ in 0..120 {
+        let expected = state.advance_clock(&reg, 1);
+        let actual = back.advance_clock(&reg, 1);
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+    }
+    let positions = |s: &OverworldState| -> Vec<(u32, Hex)> {
+        s.engagements
+            .iter()
+            .flat_map(|e| e.battle().units.iter().map(|u| (u.id.0, u.pos)))
+            .collect()
+    };
+    assert_eq!(positions(&back), positions(&state));
+}
+
+#[test]
+fn every_seed_of_the_generated_campaign_is_fought_to_an_end() {
+    // Before fights were on the ground, a headquarters reduced to one hidden
+    // crew was attacked every day in a battle that stalemated without
+    // contact, and three seeds in sixteen never ended. On the ground the
+    // attacker advances on where he stands, and finds him.
+    let reg = registry();
+    for seed in 0..4 {
+        let run = tactics_core::harness::campaign::play(
+            &reg,
+            "frontier_world",
+            seed,
+            &tactics_core::harness::campaign::CampaignOptions::default(),
+        )
+        .unwrap();
+        assert!(run.end.is_some(), "seed {seed} never ended");
     }
 }

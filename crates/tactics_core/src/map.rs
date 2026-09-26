@@ -753,6 +753,22 @@ impl Battlefield {
 }
 
 impl Scenario {
+    /// A scenario that says who answers to whom and nothing else: no ground
+    /// worth fighting for, no stakes beyond elimination. What an engagement
+    /// on the world starts from (WORLD.md W3.2).
+    pub fn with_formations(formations: Vec<FormationDef>) -> Self {
+        Self {
+            formations,
+            ..Self::default()
+        }
+    }
+
+    /// This scenario with `objective` added after the ones it has.
+    pub fn with_objective(mut self, objective: Objective) -> Self {
+        self.objectives.push(objective);
+        self
+    }
+
     /// The scenario a map file declares. Infallible: everything that can be
     /// wrong with it is a validation error with a better message, reported by
     /// [`MapFile::validate_into`].

@@ -26,6 +26,7 @@
 pub mod ai;
 pub mod battle;
 pub mod data;
+pub mod engagement;
 pub mod field;
 pub mod force;
 pub mod ground;
