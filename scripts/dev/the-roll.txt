@@ -1,5 +1,5 @@
 # The academy roll: a screen the player opens when she wants it.
-#!env
+#!env STAHL_CAMPAIGN=frontier
 #
 #   STAHL_PRESENT=immediate STAHL_DEBUG=1 \
 #     STAHL_SCRIPT=scripts/dev/the-roll.txt cargo run -p stahlsenshamädchen

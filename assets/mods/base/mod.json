@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "Core content: starter characters, vehicles, weapons, terrain and demo maps.",
   "dependencies": [],
+  "campaign": "frontier_world",
   "scale": {
     "hex_meters": 100,
     "round_seconds": 60,

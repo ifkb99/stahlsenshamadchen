@@ -610,4 +610,5 @@ The fourth round (2026-09-26, after W4):
    the AI does not detach.
 9. **The generated campaign is the default**: the game opens on
    `frontier_world`, and the drawn `frontier` is reached by
-   `STAHL_CAMPAIGN=frontier`.
+   `STAHL_CAMPAIGN=frontier`. **Done 2026-09-26**: `campaign` in `mod.json`
+   names it, validated; the game and `examples/campaign` both read it.

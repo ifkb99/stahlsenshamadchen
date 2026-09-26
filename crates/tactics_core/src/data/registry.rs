@@ -94,6 +94,9 @@ pub struct DataRegistry {
     /// How fast a column moves across a generated world. Defaulted, like
     /// [`Self::planner`]: a column that marches has a pace.
     pub march: super::March,
+    /// The campaign a new game opens on, if a mod names one
+    /// ([`super::ModManifest::campaign`]).
+    pub campaign: Option<String>,
     /// The ladder of rank, lowest first ([`RankDef`]). Empty is no ranks at
     /// all: everybody is equal and command passes by arrival order.
     pub ranks: Vec<super::RankDef>,
@@ -184,6 +187,9 @@ impl DataRegistry {
             }
             if let Some(march) = &manifest.march {
                 registry.march = march.clone();
+            }
+            if let Some(campaign) = &manifest.campaign {
+                registry.campaign = Some(campaign.clone());
             }
             if let Some(ranks) = &manifest.ranks {
                 registry.ranks = ranks.clone();
@@ -338,6 +344,18 @@ impl DataRegistry {
     pub fn validate_into(&self, report: &mut ValidationReport) {
         self.validate_scale(report);
         self.validate_worldgen(report);
+        // A game that opens on a campaign it does not have opens on nothing,
+        // and one that opens on a battle map is not a campaign.
+        if let Some(id) = &self.campaign
+            && !self
+                .maps
+                .get(id)
+                .is_some_and(|m| m.kind == crate::map::MapKind::Overworld)
+        {
+            report.error(format!(
+                "`campaign` names `{id}`, which is not an overworld map any mod ships"
+            ));
+        }
         // A rank the ladder does not have would put her at the bottom without
         // a word, which is a demotion nobody wrote.
         let mut ranked: Vec<&CharacterDef> = self.characters.values().collect();
@@ -1209,6 +1227,7 @@ mod tests {
                     command: None,
                     worldgen: None,
                     march: None,
+                    campaign: None,
                     ranks: None,
                     dependencies: deps.iter().map(|s| s.to_string()).collect(),
                     scale: None,
