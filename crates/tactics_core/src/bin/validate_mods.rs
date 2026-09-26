@@ -271,6 +271,26 @@ fn report_scale(registry: &DataRegistry) {
         // hexes: the same grid at two very different zooms. A tile-shaped
         // battle map is a hexagon, so quoting its bounding box would suggest
         // a rectangle that is not there.
+        // A generated campaign has no rows: its size is its world's radius,
+        // in campaign hexes, and what that comes to in tiles.
+        if let Some(world) = &m.world {
+            let radius = world
+                .rules
+                .as_ref()
+                .or(registry.worldgen.as_ref())
+                .map_or(0, |r| r.radius);
+            let hexes = 3 * radius * (radius + 1) + 1;
+            println!(
+                "  {:<16} {:?} generated, radius {radius} ({hexes} campaign hexes, {} tiles), seed {}",
+                m.id,
+                m.kind,
+                hexes * s.battle_map_tiles(),
+                world
+                    .seed
+                    .map_or("from the campaign".to_string(), |x| x.to_string()),
+            );
+            continue;
+        }
         let size = match (m.kind, m.shape()) {
             (MapKind::Battle, MapShape::Tile) => format!(
                 "hexagon r{}, {} across, {tiles} tiles",

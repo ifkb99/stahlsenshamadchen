@@ -6,6 +6,7 @@
 //! cargo run --release -p tactics_core --example campaign              # seeds 0..8
 //! cargo run --release -p tactics_core --example campaign -- 3         # one seed, every battle
 //! cargo run --release -p tactics_core --example campaign -- 0 32      # seeds 0..32, summary only
+//! cargo run --release -p tactics_core --example campaign -- --map frontier_world 0 8  # another campaign
 //! ```
 //!
 //! The first instrument this project has had that reads the *campaign*
@@ -19,15 +20,25 @@ use tactics_core::data::DataRegistry;
 use tactics_core::harness::campaign::{CampaignOptions, CampaignRun, play};
 use tactics_core::harness::parallel::run_all;
 
+/// The campaign played when `--map` names none.
 const MAP: &str = "frontier";
 
 fn main() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
     let (registry, _) = DataRegistry::load_dir(&root).expect("mods load");
-    let args: Vec<u64> = std::env::args()
-        .skip(1)
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    let map = raw
+        .iter()
+        .position(|a| a == "--map")
+        .and_then(|i| raw.get(i + 1))
+        .cloned()
+        .unwrap_or_else(|| MAP.to_string());
+    let args: Vec<u64> = raw
+        .iter()
+        .filter(|a| *a != "--map" && **a != map)
         .map(|a| a.parse().expect("seeds are numbers"))
         .collect();
+    let map = map.as_str();
     let (from, to) = match args.as_slice() {
         [] => (0, 8),
         [one] => (*one, *one + 1),
@@ -37,11 +48,11 @@ fn main() {
     let seeds: Vec<u64> = (from..to).collect();
     let started = std::time::Instant::now();
     let runs: Vec<CampaignRun> = run_all(&seeds, |seed| {
-        play(&registry, MAP, *seed, &options).expect("the shipped campaign builds")
+        play(&registry, map, *seed, &options).expect("the shipped campaign builds")
     });
     let elapsed = started.elapsed();
 
-    let names: Vec<String> = tactics_core::overworld::OverworldState::from_map(&registry, MAP, 0)
+    let names: Vec<String> = tactics_core::overworld::OverworldState::from_map(&registry, map, 0)
         .expect("the shipped campaign builds")
         .sides
         .iter()

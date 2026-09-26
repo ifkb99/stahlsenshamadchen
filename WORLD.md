@@ -309,6 +309,24 @@ the determinism snapshot passes **unregenerated**.
 
 ### W2 — campaign movement on real ground
 
+- [x] ~~**W2.0 A campaign on a generated world.**~~ **Done 2026-09-26**
+      (added: the rest of W2 needs a campaign to move on). A campaign map
+      file may say `"world": { "seed": 1 }` (and optionally its own
+      `rules`) instead of drawing rows; its campaign map is then
+      `GeneratedWorld::campaign_map()` — the chunks' summaries at the
+      chunks' own coordinates — and each army says
+      `"place": { "feature": "town", "toward": "west", "rank": 0 }` instead
+      of `at`, resolved by `GeneratedWorld::place_armies` (the `rank`-th
+      town furthest that way on the plane, the nearest free campaign hex if
+      taken). `OverworldState::world` keeps the world and saves as how to
+      make it. `frontier_world` ships beside `frontier` — every rule the
+      campaign has (missions, the net, the endings, the planner) runs on it
+      unchanged — and is played with `STAHL_CAMPAIGN=frontier_world` or
+      `examples/campaign -- --map frontier_world`; the
+      `generated-campaign` tour drives it. Its battles are still fought on
+      the shipped battle maps by terrain (W3 moves them onto the ground).
+      The unused `map::MapGenerator` trait is retired: a world is not a
+      map file.
 - [ ] **W2.1 Armies have a tile position.**
 - [ ] **W2.2 HPA\***: portals, crossing costs from the `MoveGrid`, abstract
       search, local refinement.

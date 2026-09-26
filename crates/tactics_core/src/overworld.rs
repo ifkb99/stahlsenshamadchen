@@ -9,6 +9,7 @@ use crate::ai::{AiConfig, AiPlanner};
 use crate::data::{DataRegistry, MovementClass};
 use crate::map::{CampaignVictory, HexMap, MapFile, MapKind};
 use crate::roster::{CadetId, CasualtyRules, Roster, resolve_crew_fate, resolve_station_fate};
+use crate::worldgen::GeneratedWorld;
 use hexx::Hex;
 use rand::seq::IndexedRandom;
 use rand::{RngExt, SeedableRng};
@@ -540,6 +541,12 @@ pub struct OverworldState {
     /// battles from seed 0, which is still one fixed answer.
     #[serde(default)]
     pub seed: u64,
+    /// The world this campaign is fought over, when it was generated rather
+    /// than drawn: its campaign map is this world's summary and its battles
+    /// are fought on this world's ground. Saved as how to make it again.
+    /// `None` for a drawn campaign.
+    #[serde(default)]
+    pub world: Option<Arc<GeneratedWorld>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -550,6 +557,8 @@ pub enum OverworldSetupError {
     NotAnOverworldMap(String),
     #[error(transparent)]
     Map(#[from] crate::map::MapError),
+    #[error(transparent)]
+    World(#[from] crate::worldgen::WorldGenError),
 }
 
 /// Armies traverse the overworld as tracked columns with generous climb.
@@ -592,7 +601,45 @@ impl OverworldState {
         if file.kind != MapKind::Overworld {
             return Err(OverworldSetupError::NotAnOverworldMap(map_id.to_string()));
         }
-        let map = HexMap::from_map_file(file)?;
+        // A drawn campaign map is its tiles and its armies' coordinates; a
+        // generated one is a world, the campaign map its chunks add up to,
+        // and each army's place resolved against the features it names.
+        let (map, world, positions): (HexMap, Option<Arc<GeneratedWorld>>, Vec<Hex>) =
+            match &file.world {
+                None => (
+                    HexMap::from_map_file(file)?,
+                    None,
+                    file.armies
+                        .iter()
+                        .map(|a| crate::offset_to_hex(a.at[0], a.at[1]))
+                        .collect(),
+                ),
+                Some(spec) => {
+                    let rules = spec
+                        .rules
+                        .clone()
+                        .or_else(|| registry.worldgen.clone())
+                        .ok_or(crate::worldgen::WorldGenError::NoRules)?;
+                    let world = GeneratedWorld::with_rules(
+                        rules,
+                        registry.scale.battle_map_radius(),
+                        spec.seed.unwrap_or(seed),
+                    )?;
+                    let places: Vec<crate::map::Place> = file
+                        .armies
+                        .iter()
+                        .map(|a| {
+                            a.place.unwrap_or(crate::map::Place {
+                                feature: crate::map::PlaceFeature::Town,
+                                toward: crate::map::Toward::West,
+                                rank: 0,
+                            })
+                        })
+                        .collect();
+                    let positions = world.place_armies(&places);
+                    (world.campaign_map(), Some(Arc::new(world)), positions)
+                }
+            };
         let sides = file
             .sides
             .iter()
@@ -627,7 +674,7 @@ impl OverworldState {
                 id: ArmyId(i as u32),
                 side: a.side,
                 name: a.name.clone(),
-                pos: crate::offset_to_hex(a.at[0], a.at[1]),
+                pos: positions[i],
                 movement: a.movement,
                 moved: false,
                 units: a
@@ -674,6 +721,7 @@ impl OverworldState {
             hold_streak: None,
             rng: ChaCha8Rng::seed_from_u64(seed),
             seed,
+            world,
         };
         // Who can hear whom on the morning of day one. The events are dropped
         // because nothing has *changed* yet — an army that starts the campaign

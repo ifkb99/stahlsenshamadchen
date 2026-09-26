@@ -349,10 +349,84 @@ pub enum LossTrigger {
     Wiped,
 }
 
+/// Which way across a generated world, for a campaign file to say where a
+/// side begins. Directions on the plane, not tile directions: the words a
+/// scenario author uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Toward {
+    West,
+    East,
+    North,
+    South,
+    NorthWest,
+    NorthEast,
+    SouthWest,
+    SouthEast,
+}
+
+impl Toward {
+    /// The direction as a vector on the plane, `y` growing southward as rows
+    /// do.
+    pub fn vector(self) -> (f64, f64) {
+        let d = std::f64::consts::FRAC_1_SQRT_2;
+        match self {
+            Self::West => (-1.0, 0.0),
+            Self::East => (1.0, 0.0),
+            Self::North => (0.0, -1.0),
+            Self::South => (0.0, 1.0),
+            Self::NorthWest => (-d, -d),
+            Self::NorthEast => (d, -d),
+            Self::SouthWest => (-d, d),
+            Self::SouthEast => (d, d),
+        }
+    }
+}
+
+/// A feature of a generated world an army can be placed by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaceFeature {
+    Town,
+    Factory,
+}
+
+/// Where an army begins on a generated world, named by a feature rather
+/// than a coordinate (the designer's ruling, 2026-09-26: a scenario names
+/// features and the generator resolves them). `rank` 0 is the one of that
+/// feature furthest `toward`; 1 the next; and so on. An army whose place
+/// another army already holds stands on the nearest free campaign hex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Place {
+    pub feature: PlaceFeature,
+    pub toward: Toward,
+    #[serde(default)]
+    pub rank: u32,
+}
+
+/// The world a campaign map is generated rather than drawn from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorldSpec {
+    /// The world's seed: the same world every time the campaign is started.
+    /// `None` is a new world from the campaign's own seed each time.
+    #[serde(default)]
+    pub seed: Option<u64>,
+    /// Rules for this campaign's world, replacing the mod's `worldgen` block
+    /// wholesale. `None` is the mod's.
+    #[serde(default)]
+    pub rules: Option<crate::data::WorldGen>,
+}
+
 /// An army placed by an overworld map.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArmyPlacement {
+    /// Where it stands on a drawn campaign map, in offset coordinates. Unread
+    /// on a generated one, which says [`Self::place`] instead.
+    #[serde(default)]
     pub at: [i32; 2],
+    /// Where it stands on a generated campaign map.
+    #[serde(default)]
+    pub place: Option<Place>,
     pub side: u8,
     pub name: String,
     /// Units travelling with this army, spawned into battles it fights.
@@ -489,6 +563,11 @@ pub struct MapFile {
     /// exactly as every campaign was before there was anything else to say.
     #[serde(default)]
     pub victory: CampaignVictory,
+    /// For a campaign map: the world it is generated from, in which case
+    /// `rows` and `palette` are empty and every army says `place` rather
+    /// than `at` (WORLD.md W2).
+    #[serde(default)]
+    pub world: Option<WorldSpec>,
 }
 
 /// One tile of a map, as anybody reading it sees it: which terrain, and how
@@ -1020,6 +1099,10 @@ impl MapFile {
 
     /// Validate this map against loaded terrain/vehicle/character defs.
     pub fn validate_into(&self, registry: &DataRegistry, report: &mut ValidationReport) {
+        if self.world.is_some() {
+            self.validate_generated(registry, report);
+            return;
+        }
         let palette = match self.parsed_palette() {
             Ok(p) => p,
             Err(e) => {
@@ -1317,6 +1400,94 @@ impl MapFile {
 }
 
 impl MapFile {
+    /// A campaign generated rather than drawn: there are no tiles to check
+    /// until the world is made, so what is checked is that it can be made,
+    /// that every army says where it stands, and that the ending is one
+    /// the generated ground can satisfy.
+    fn validate_generated(&self, registry: &DataRegistry, report: &mut ValidationReport) {
+        if self.kind != MapKind::Overworld {
+            report.errors.push(format!(
+                "map `{}`: only a campaign map can be generated",
+                self.id
+            ));
+            return;
+        }
+        let rules = self
+            .world
+            .as_ref()
+            .and_then(|w| w.rules.as_ref())
+            .or(registry.worldgen.as_ref());
+        let Some(rules) = rules else {
+            report.errors.push(format!(
+                "map `{}`: generated, and no mod declares a `worldgen` block",
+                self.id
+            ));
+            return;
+        };
+        for (i, army) in self.armies.iter().enumerate() {
+            if army.place.is_none() {
+                report.errors.push(format!(
+                    "map `{}`: army {i} (`{}`) says no `place`; a generated map has no \
+                     coordinates to put it at",
+                    self.id, army.name
+                ));
+            }
+            if let Some(place) = army.place
+                && place.feature == PlaceFeature::Factory
+                && place.rank >= rules.towns.factories
+            {
+                report.errors.push(format!(
+                    "map `{}`: army `{}` stands by factory {}, and the world has {}",
+                    self.id, army.name, place.rank, rules.towns.factories
+                ));
+            }
+            if let Some(place) = army.place
+                && place.feature == PlaceFeature::Town
+                && place.rank >= rules.towns.count
+            {
+                report.errors.push(format!(
+                    "map `{}`: army `{}` stands by town {}, and the world has {}",
+                    self.id, army.name, place.rank, rules.towns.count
+                ));
+            }
+            if army.side as usize >= self.sides.len() {
+                report.errors.push(format!(
+                    "map `{}`: army `{}` is on side {}, and the map declares {}",
+                    self.id,
+                    army.name,
+                    army.side,
+                    self.sides.len()
+                ));
+            }
+            for unit in &army.units {
+                if registry.vehicle(&unit.vehicle).is_none() {
+                    report.errors.push(format!(
+                        "map `{}`: army `{}` fields `{}`, which no mod ships",
+                        self.id, army.name, unit.vehicle
+                    ));
+                }
+                for cadet in &unit.crew {
+                    if registry.character(cadet).is_none() {
+                        report.errors.push(format!(
+                            "map `{}`: army `{}` is crewed by `{cadet}`, whom no mod declares",
+                            self.id, army.name
+                        ));
+                    }
+                }
+            }
+        }
+        let named: Vec<&str> = rules.summary.iter().map(|r| r.terrain.as_str()).collect();
+        for terrain in &self.victory.hold {
+            if !named.contains(&terrain.as_str()) {
+                report.errors.push(format!(
+                    "map `{}`: `victory.hold` names `{terrain}`, which the world's summary \
+                     never calls a campaign hex",
+                    self.id
+                ));
+            }
+        }
+    }
+
     /// The campaign's ending, checked for the two ways it can be written so
     /// that it can never come true.
     ///
@@ -1395,17 +1566,6 @@ impl MapFile {
             }
         }
     }
-}
-
-/// Procedural map generation hook. Implementations produce a [`MapFile`]
-/// (not a [`HexMap`]) so generated maps go through the same validation and
-/// can be dumped to JSON for inspection or hand-editing.
-pub trait MapGenerator {
-    fn generate(
-        &mut self,
-        registry: &crate::data::DataRegistry,
-        seed: u64,
-    ) -> Result<MapFile, MapError>;
 }
 
 #[cfg(test)]

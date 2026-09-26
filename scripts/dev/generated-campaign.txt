@@ -1,0 +1,28 @@
+# The generated campaign: the map is a world's campaign hexes, the armies
+# stand where their places resolved, and a day turns over.
+#!env STAHL_CAMPAIGN=frontier_world
+#
+#   STAHL_CAMPAIGN=frontier_world STAHL_DEBUG=1 \
+#     STAHL_SCRIPT=scripts/dev/generated-campaign.txt cargo run -p stahlsenshamädchen
+#
+# frontier_world's 1st Company resolves to the western town, which is the
+# campaign hex at axial (-6, 0) — a city, because its tiles hold a town.
+
+at 3.0
+log "generated campaign, day 1"
+shot /tmp/world-01-start.png
+
+hex -6,0
+wait 0.3
+click left
+wait 0.5
+shot /tmp/world-02-selected.png
+
+until idle 10
+key Enter
+until turn >= 2 60
+until idle 60
+expect log "Day 2"
+shot /tmp/world-03-next-day.png
+
+quit

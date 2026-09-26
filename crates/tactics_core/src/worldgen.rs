@@ -400,6 +400,60 @@ impl GeneratedWorld {
         })
     }
 
+    /// The campaign map this world adds up to: every campaign hex, at its
+    /// chunk's coordinates, named and raised by [`Self::summary`]. The
+    /// campaign's coordinates *are* the chunks', so a campaign hex and the
+    /// ground under it are one address.
+    pub fn campaign_map(&self) -> crate::map::HexMap {
+        let mut map = crate::map::HexMap::default();
+        for chunk in self.chunks() {
+            if let Some(summary) = self.summary(chunk) {
+                map.insert(chunk, &summary.terrain, summary.elevation);
+            }
+        }
+        map
+    }
+
+    /// The campaign hex each army begins on, resolving each [`Place`] against
+    /// this world: the `rank`-th town (or factory town) furthest `toward`,
+    /// and if another army already stands there, the nearest free campaign
+    /// hex to it.
+    ///
+    /// [`Place`]: crate::map::Place
+    pub fn place_armies(&self, places: &[crate::map::Place]) -> Vec<Hex> {
+        let mut taken: Vec<Hex> = Vec::new();
+        for place in places {
+            let (dx, dy) = place.toward.vector();
+            let mut towns: Vec<&Town> = self
+                .skeleton
+                .towns
+                .iter()
+                .filter(|t| place.feature == crate::map::PlaceFeature::Town || t.factory)
+                .collect();
+            towns.sort_by(|a, b| {
+                let along = |t: &Town| {
+                    let (x, y) = plane(t.centre);
+                    x * dx + y * dy
+                };
+                along(b)
+                    .total_cmp(&along(a))
+                    .then(self.lot(a.centre).cmp(&self.lot(b.centre)))
+            });
+            let home = towns
+                .get(place.rank as usize)
+                .or(towns.last())
+                .map_or(Hex::ZERO, |t| chunk_of(t.centre, self.chunk_radius));
+            let spot = home
+                .spiral_range(0..=self.rules.radius * 2)
+                .find(|c| {
+                    c.unsigned_distance_to(Hex::ZERO) <= self.rules.radius && !taken.contains(c)
+                })
+                .unwrap_or(home);
+            taken.push(spot);
+        }
+        taken
+    }
+
     // --- making it -----------------------------------------------------------
 
     /// A fixed sample of the world: every seventh tile of every chunk. Big
