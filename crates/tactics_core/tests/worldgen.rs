@@ -657,3 +657,121 @@ fn wet_meadow_lies_along_the_rivers() {
         100.0 * away
     );
 }
+
+// --- cover that reads the ground (W6.6) ---------------------------------------
+
+/// Every tile of a world, by hex.
+fn all_tiles(made: &GeneratedWorld) -> HashMap<Hex, (String, i32)> {
+    let mut tiles = HashMap::new();
+    for chunk in made.chunks() {
+        for (h, t, l) in made.chunk_tiles(chunk) {
+            tiles.insert(h, (t.to_string(), l));
+        }
+    }
+    tiles
+}
+
+/// Wood's share of the upper and lower halves of the land by level, and of
+/// steep ground (a neighbour at another level) and flat.
+fn wood_by_ground(made: &GeneratedWorld) -> ((f64, f64), (f64, f64)) {
+    let tiles = all_tiles(made);
+    let wood = &made.rules.terrain.wood;
+    let mut levels: Vec<i32> = tiles.values().map(|(_, l)| *l).collect();
+    levels.sort_unstable();
+    let median = levels[levels.len() / 2];
+    let mut counts = [[0u64; 2]; 4];
+    for (h, (t, l)) in &tiles {
+        let is_wood = (t == wood) as u64;
+        let steep = h
+            .all_neighbors()
+            .iter()
+            .any(|n| tiles.get(n).is_some_and(|(_, m)| m != l));
+        for (slot, yes) in [(0, *l > median), (1, *l <= median), (2, steep), (3, !steep)] {
+            if yes {
+                counts[slot][0] += is_wood;
+                counts[slot][1] += 1;
+            }
+        }
+    }
+    let share = |i: usize| counts[i][0] as f64 / counts[i][1].max(1) as f64;
+    ((share(0), share(1)), (share(2), share(3)))
+}
+
+#[test]
+fn woods_stand_on_high_and_steep_ground() {
+    // The diagnosis: forest was 27–31% at every level and the same on slopes
+    // as on the flat, because it was a noise laid over the relief without
+    // reading it. Farmers clear the flat low land and leave the hills and
+    // the valley sides to the trees. The control is the same world with the
+    // lean switched off.
+    let reg = registry();
+    let base = reg.worldgen.clone().unwrap();
+    let leaned = GeneratedWorld::with_rules(
+        WorldGen {
+            radius: 4,
+            ..base.clone()
+        },
+        reg.scale.battle_map_radius(),
+        1,
+    )
+    .unwrap();
+    let level = GeneratedWorld::with_rules(
+        WorldGen {
+            radius: 4,
+            cover: tactics_core::data::Cover {
+                wood_on_high: 0,
+                wood_on_slope: 0,
+                ..base.cover.clone()
+            },
+            ..base.clone()
+        },
+        reg.scale.battle_map_radius(),
+        1,
+    )
+    .unwrap();
+    let ((hi, lo), (steep, flat)) = wood_by_ground(&leaned);
+    assert!(
+        hi > 2.0 * lo && steep > 1.5 * flat,
+        "woods: {:.0}% high, {:.0}% low; {:.0}% steep, {:.0}% flat",
+        100.0 * hi,
+        100.0 * lo,
+        100.0 * steep,
+        100.0 * flat
+    );
+    let ((hi, lo), _) = wood_by_ground(&level);
+    assert!(
+        (hi - lo).abs() < 0.1,
+        "without the lean the woods do not read the ground: {hi:.2} against {lo:.2}"
+    );
+}
+
+#[test]
+fn hedges_bound_fields_rather_than_fringe_woods() {
+    // The old hedge was the band of cover noise just short of wood, so every
+    // wood wore a hedge halo and a hedge was almost always beside a wood.
+    // A hedge is the boundary between two fields, and fields are farmland.
+    let reg = registry();
+    let made = sized(&reg, 1, 4);
+    let tiles = all_tiles(&made);
+    let palette = &made.rules.terrain;
+    let hedges: Vec<&Hex> = tiles
+        .iter()
+        .filter(|(_, (t, _))| *t == palette.hedge)
+        .map(|(h, _)| h)
+        .collect();
+    assert!(hedges.len() > 1000, "only {} hedge tiles", hedges.len());
+    let by_wood = hedges
+        .iter()
+        .filter(|h| {
+            h.all_neighbors()
+                .iter()
+                .any(|n| tiles.get(n).is_some_and(|(t, _)| *t == palette.wood))
+        })
+        .count() as f64
+        / hedges.len() as f64;
+    assert!(
+        by_wood < 0.35,
+        "{:.0}% of hedges touch a wood: they fringe the woods rather than bound fields",
+        100.0 * by_wood
+    );
+}

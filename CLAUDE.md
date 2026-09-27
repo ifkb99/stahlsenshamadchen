@@ -534,6 +534,13 @@ and the seam tests in `tests/ground.rs`.
   levels, and ties go to the seeded lot. A `Course` is one watercourse,
   source first, stream then river then broad; `joins` marks one whose
   last tile is the river it flows into, and `own()` leaves that tile out.
+- **Cover reads the ground** (W6.6). Woods lean toward high and steep
+  ground by `cover.wood_on_high` / `wood_on_slope` (zero is the noise
+  alone), and are still calibrated to `wood_percent`. Hedges are field
+  boundaries — Worley F2 − F1 on a lattice `field_size` apart, correctly
+  rounded `sqrt` — in districts of hedgerow country calibrated to
+  `hedge_percent`; they are never the fringe of the wood noise again
+  (`hedges_bound_fields_rather_than_fringe_woods`, mutation-checked).
 - **A world's save carries its generator** (`GENERATOR_VERSION`), and a
   save from another is refused: a world saves as how to make it, so a
   change to *how* would otherwise put different ground under the same

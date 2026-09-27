@@ -704,8 +704,20 @@ is what a loaded campaign stands on.
       rule (W6.7). Tours now find a company by name (`hex "1st Company"`,
       from a new `places` fact) instead of a pair of coordinates the
       ground moves.
-- [ ] **W6.6 Cover that reads the ground.** Wood on slopes and high
-      ground, fields in the lowlands, hedges as field boundaries.
+- [x] ~~**W6.6 Cover that reads the ground.**~~ **Done 2026-09-27.** The
+      wood score is the cover noise leaned toward high ground and steep
+      ground (`cover.wood_on_high` 25, `wood_on_slope` 20; zero is the old
+      rule), still calibrated to `wood_percent`: woods are 51% of the upper
+      half of the land and 14% of the lower (28/27 before), 48% of steep
+      ground and 22% of flat (29/27). Hedges are the boundaries of fields —
+      Worley F2 − F1 on a jittered lattice `field_size` (5) tiles apart —
+      laid in districts of hedgerow country (a broad noise, calibrated to
+      `hedge_percent`), no longer the fringe of the wood noise: 13% of
+      hedge tiles touch a wood. The generic lowland wet ground went from
+      20% of level 0 to 8%, because the floodplain carries most of the wet
+      now (wet ground within 300 m of a river: 23%, from 10 at W6.5). The
+      campaign map reads as regions (clump 0.08 → 0.14). `GENERATOR_VERSION`
+      4. Wars: 4–4 over eight seeds.
 - [ ] **W6.7 Settlements in a hierarchy** — a city, towns, villages — on
       rivers and road junctions, roads down the valleys.
 - [ ] **W6.8 The campaign map drawn at its own scale**: its own vertical

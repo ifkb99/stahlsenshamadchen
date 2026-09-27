@@ -214,11 +214,14 @@ struct Stats {
     height_corr: f64,
     wood_hi: f64,
     wood_lo: f64,
+    wood_steep: f64,
+    wood_flat: f64,
+    hedge_nb: f64,
     wet_at_water: f64,
 }
 
 impl Stats {
-    const HEADER: &str = "  world                  hexes  wood hedge  wet water town  level  rivers  towns   M   W   =   clump  h-corr  wood hi/lo  wet@water";
+    const HEADER: &str = "  world                  hexes  wood hedge  wet water town  level  rivers  towns   M   W   =   clump  h-corr  wood hi/lo  steep/flat  hedge-nb  wet@water";
 
     fn of(world: &GeneratedWorld) -> Self {
         let chunks: Vec<Hex> = world.chunks().collect();
@@ -335,6 +338,42 @@ impl Stats {
         } else {
             0.0
         };
+        // Wood on steep ground (a neighbour at another level) against flat,
+        // and how many hedge neighbours a hedge has: about two is a line,
+        // four or more a blob.
+        let (mut steep, mut flat) = ((0u64, 0u64), (0u64, 0u64));
+        let (mut hedges, mut hedge_links) = (0u64, 0u64);
+        for (h, (t, e)) in &tiles {
+            let near: Vec<&(String, i32)> = h
+                .all_neighbors()
+                .iter()
+                .filter_map(|n| tiles.get(n))
+                .collect();
+            let slot = if near.iter().any(|(_, l)| l != e) {
+                &mut steep
+            } else {
+                &mut flat
+            };
+            slot.1 += 1;
+            slot.0 += (*t == palette.wood) as u64;
+            if *t == palette.hedge {
+                hedges += 1;
+                hedge_links += near.iter().filter(|(nt, _)| *nt == palette.hedge).count() as u64;
+            }
+        }
+        let pct = |(a, b): (u64, u64)| {
+            if b == 0 {
+                0.0
+            } else {
+                100.0 * a as f64 / b as f64
+            }
+        };
+        let (wood_steep, wood_flat) = (pct(steep), pct(flat));
+        let hedge_nb = if hedges == 0 {
+            0.0
+        } else {
+            hedge_links as f64 / hedges as f64
+        };
         let total = summaries.len() as f64;
         let chance: f64 = classes.values().map(|c| (*c as f64 / total).powi(2)).sum();
         let clump = if pairs == 0 {
@@ -359,6 +398,9 @@ impl Stats {
             height_corr,
             wood_hi,
             wood_lo,
+            wood_steep,
+            wood_flat,
+            hedge_nb,
             wet_at_water,
         }
     }
@@ -367,7 +409,7 @@ impl Stats {
         let share = |t: &str| self.shares.get(t).copied().unwrap_or(0.0);
         let class = |g: char| self.classes.get(&g).copied().unwrap_or(0);
         format!(
-            "  {label:<22} {:>5} {:>5.1} {:>5.1} {:>4.1} {:>5.2} {:>4.1} {:>6.2}  {:>2} {:>5}  {:>5}  {:>3} {:>3} {:>3}  {:>6.3}  {:>6.2}  {:>4.0}/{:<4.0}  {:>8.0}%",
+            "  {label:<22} {:>5} {:>5.1} {:>5.1} {:>4.1} {:>5.2} {:>4.1} {:>6.2}  {:>2} {:>5}  {:>5}  {:>3} {:>3} {:>3}  {:>6.3}  {:>6.2}  {:>4.0}/{:<4.0}  {:>4.0}/{:<4.0}  {:>7.1}  {:>8.0}%",
             self.hexes,
             share("forest"),
             share("hedgerow"),
@@ -385,6 +427,9 @@ impl Stats {
             self.height_corr,
             self.wood_hi,
             self.wood_lo,
+            self.wood_steep,
+            self.wood_flat,
+            self.hedge_nb,
             self.wet_at_water,
         )
     }

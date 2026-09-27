@@ -45,6 +45,8 @@ enum Channel {
     Lot = 4,
     Landform = 5,
     Ridge = 6,
+    Field = 7,
+    Bocage = 8,
 }
 
 /// Which generator made a world: saved beside its seed and rules, and a
@@ -56,8 +58,9 @@ enum Channel {
 ///
 /// 2 is W6.4: simplex noise in place of lattice value noise, and the
 /// landform and ridge layers. 3 is W6.5: the drainage network, streams and
-/// floodplain meadows.
-pub const GENERATOR_VERSION: u32 = 3;
+/// floodplain meadows. 4 is W6.6: woods on high and steep ground, hedges as
+/// the boundaries of fields.
+pub const GENERATOR_VERSION: u32 = 4;
 
 /// SplitMix64: the one mixing function the world is made with.
 fn mix(state: u64, value: u64) -> u64 {
@@ -250,10 +253,17 @@ struct ChunkFeatures {
 struct Calibration {
     /// Relief noise at or above `levels[i]` is at least level `i + 1`.
     levels: Vec<f64>,
-    /// Cover noise at or above this is wood.
+    /// A wood score (cover noise leaned toward high and steep ground) at or
+    /// above this is wood.
     wood: f64,
-    /// Cover noise at or above this (and below `wood`) is hedged.
+    /// Bocage noise at or above this is hedgerow country, where every field
+    /// boundary is a hedge.
     hedge: f64,
+    /// The land's continuous height at its 5th and 95th percentiles, and its
+    /// steepness at its 95th: what "high" and "steep" are measured against.
+    height_lo: f64,
+    height_hi: f64,
+    steep: f64,
     /// Wet noise below this, on level-0 ground, is wet.
     wet: f64,
     /// Wet noise below this, on a river's floodplain, is wet meadow.
@@ -366,7 +376,7 @@ impl GeneratedWorld {
             calibration: Calibration::default(),
             index: HashMap::new(),
         };
-        world.calibration = world.calibrate();
+        world.calibrate();
         world.skeleton.rivers = world.lay_rivers();
         world.index_rivers();
         world.skeleton.towns = world.site_towns();
@@ -431,6 +441,88 @@ impl GeneratedWorld {
         noise(self.seed, Channel::Wet, hex, self.rules.cover.scale, 1)
     }
 
+    /// How steep the land is at `hex`: the fall of its continuous height to
+    /// two of its neighbours, which is enough to tell a valley side from a
+    /// plain at a third of the cost of asking all six.
+    fn steepness(&self, hex: Hex, here: f64) -> f64 {
+        (self.relief_noise(hex + Hex::new(1, 0)) - here).abs()
+            + (self.relief_noise(hex + Hex::new(0, 1)) - here).abs()
+    }
+
+    /// Where the woods are (W6.6): the cover noise, leaned toward high
+    /// ground and steep ground by the mod's weights. Farmers clear the flat
+    /// low land first and leave the hills and the valley sides to the
+    /// trees; with both weights at zero this is the cover noise alone, the
+    /// game before.
+    fn wood_score(&self, hex: Hex, here: f64) -> f64 {
+        let c = &self.rules.cover;
+        let (high, steep) = (
+            c.wood_on_high.min(100) as f64 / 100.0,
+            c.wood_on_slope.min(100) as f64 / 100.0,
+        );
+        let cover = self.cover_noise(hex);
+        if high == 0.0 && steep == 0.0 {
+            return cover;
+        }
+        let k = &self.calibration;
+        let height = ((here - k.height_lo) / (k.height_hi - k.height_lo).max(1e-9)).clamp(0.0, 1.0);
+        let slope = if steep > 0.0 {
+            (self.steepness(hex, here) / k.steep.max(1e-12)).min(1.0)
+        } else {
+            0.0
+        };
+        cover * (1.0 - high - steep).max(0.0) + height * high + slope * steep
+    }
+
+    /// How near `hex` lies to the boundary between two fields, in tiles:
+    /// the difference between its distances to the nearest two field
+    /// centres of a jittered lattice `cover.field_size` apart (Worley's
+    /// F2 − F1). Near zero is the line where two fields meet. `sqrt` is
+    /// correctly rounded, like `+` and `*`.
+    fn field_edge(&self, hex: Hex) -> f64 {
+        let (px, py) = plane(hex);
+        let size = self.rules.cover.field_size.max(1) as f64;
+        let (cx, cy) = ((px / size).floor() as i64, (py / size).floor() as i64);
+        let (mut d1, mut d2) = (f64::MAX, f64::MAX);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                let (ix, iy) = (cx + dx, cy + dy);
+                let h = [Channel::Field as u64, ix as u64, iy as u64]
+                    .into_iter()
+                    .fold(mix(0, self.seed), mix);
+                let jx = (h >> 40) as f64 / (1u64 << 24) as f64;
+                let jy = ((h >> 16) & 0xFF_FFFF) as f64 / (1u64 << 24) as f64;
+                let (fx, fy) = ((ix as f64 + jx) * size, (iy as f64 + jy) * size);
+                let d = (px - fx) * (px - fx) + (py - fy) * (py - fy);
+                if d < d1 {
+                    d2 = d1;
+                    d1 = d;
+                } else if d < d2 {
+                    d2 = d;
+                }
+            }
+        }
+        d2.sqrt() - d1.sqrt()
+    }
+
+    /// Where hedgerow country is: a broad noise, so the bocage comes in
+    /// districts, as it does, rather than a hedge here and there.
+    fn bocage_noise(&self, hex: Hex) -> f64 {
+        noise(
+            self.seed,
+            Channel::Bocage,
+            hex,
+            self.rules.cover.bocage_scale,
+            2,
+        )
+    }
+
+    /// A field boundary: within half a tile of the line where two fields
+    /// meet, which draws it a tile wide.
+    fn on_field_edge(&self, hex: Hex) -> bool {
+        self.field_edge(hex) < 1.0
+    }
+
     /// The level relief noise `v` stands at.
     /// A seeded lot drawn for `hex`: what a tie between two sites is broken
     /// by. Uniform over the map, so no direction is favoured.
@@ -448,14 +540,14 @@ impl GeneratedWorld {
     /// and cover alone. Roads are routed over this.
     fn natural(&self, hex: Hex) -> (&str, i32) {
         let palette = &self.rules.terrain;
-        let level = self.level_of(self.relief_noise(hex));
-        let cover = self.cover_noise(hex);
+        let here = self.relief_noise(hex);
+        let level = self.level_of(here);
         let c = &self.calibration;
-        let terrain = if cover >= c.wood {
+        let terrain = if self.wood_score(hex, here) >= c.wood {
             &palette.wood
         } else if self.is_meadow(hex) && self.wet_noise(hex) < c.meadow {
             &palette.wet
-        } else if cover >= c.hedge {
+        } else if self.bocage_noise(hex) >= c.hedge && self.on_field_edge(hex) {
             &palette.hedge
         } else if level == 0 && self.wet_noise(hex) < c.wet {
             &palette.wet
@@ -654,7 +746,10 @@ impl GeneratedWorld {
             .collect()
     }
 
-    fn calibrate(&self) -> Calibration {
+    /// Set the thresholds that make the mod's shares true of this world. In
+    /// stages, because what the woods lean toward — how high is high, how
+    /// steep is steep — has to be known before the woods can be measured.
+    fn calibrate(&mut self) {
         let sample = self.sample();
         let quantile = |mut values: Vec<f64>, share: f64| -> f64 {
             values.sort_by(f64::total_cmp);
@@ -672,23 +767,51 @@ impl GeneratedWorld {
             below += share;
             levels.push(quantile(relief.clone(), below as f64 / 100.0));
         }
-        let cover: Vec<f64> = sample.iter().map(|h| self.cover_noise(*h)).collect();
+        // What "high" and "steep" mean on this world, so the woods' lean is
+        // the same whatever the relief's shares.
+        self.calibration.height_lo = quantile(relief.clone(), 0.05);
+        self.calibration.height_hi = quantile(relief.clone(), 0.95);
+        let steep: Vec<f64> = sample
+            .iter()
+            .zip(&relief)
+            .map(|(h, here)| self.steepness(*h, *here))
+            .collect();
+        self.calibration.steep = quantile(steep, 0.95);
         let c = &self.rules.cover;
-        let wood = quantile(cover.clone(), 1.0 - c.wood_percent as f64 / 100.0);
-        let hedge = quantile(
-            cover,
-            1.0 - (c.wood_percent + c.hedge_percent) as f64 / 100.0,
-        );
+        let scores: Vec<f64> = sample
+            .iter()
+            .zip(&relief)
+            .map(|(h, here)| self.wood_score(*h, *here))
+            .collect();
+        let wood = quantile(scores.clone(), 1.0 - c.wood_percent as f64 / 100.0);
+        // Hedgerow country is whichever districts make `hedge_percent` of
+        // the land hedge: of the sampled tiles that are a field boundary and
+        // not wood, the bocage noise that takes the right number of them.
+        let mut edges: Vec<f64> = sample
+            .iter()
+            .zip(&scores)
+            .filter(|(h, score)| **score < wood && self.on_field_edge(**h))
+            .map(|(h, _)| self.bocage_noise(*h))
+            .collect();
+        edges.sort_by(|a, b| b.total_cmp(a));
+        let wanted = (sample.len() as f64 * c.hedge_percent as f64 / 100.0) as usize;
+        let hedge = match wanted {
+            0 => f64::MAX,
+            n => edges.get(n - 1).copied().unwrap_or(f64::MIN),
+        };
         let wet_sample: Vec<f64> = sample.iter().map(|h| self.wet_noise(*h)).collect();
         let wet = quantile(wet_sample.clone(), c.wet_percent as f64 / 100.0);
         let meadow = quantile(wet_sample, self.rules.rivers.meadow_percent as f64 / 100.0);
-        Calibration {
+        self.calibration = Calibration {
             levels,
             wood,
             hedge,
             wet,
             meadow,
-        }
+            height_lo: self.calibration.height_lo,
+            height_hi: self.calibration.height_hi,
+            steep: self.calibration.steep,
+        };
     }
 
     /// Chunks in the world, best `score` first, each at least `spacing`

@@ -1705,6 +1705,8 @@ fn a_fight_on_the_ground_ends_with_its_survivors_armies_again_where_they_stand()
     state.apply(&reg, &OverworldOrder::EndTurn).unwrap();
     let mut last_seen: Vec<(ElementId, Vec<Hex>)> = Vec::new();
     let mut ended = false;
+    let mut fell_back: Vec<ElementId> = Vec::new();
+    let radius = state.world.as_ref().unwrap().chunk_radius;
     for _ in 0..60_000 {
         if let Some(e) = state.front.as_ref() {
             last_seen = e
@@ -1727,6 +1729,16 @@ fn a_fight_on_the_ground_ends_with_its_survivors_armies_again_where_they_stand()
             .any(|e| matches!(e, OverworldEvent::FightingOver { .. }))
         {
             ended = true;
+            // An army that came out of the fight on its enemy's hex falls
+            // back a hex (leave_fighting): the one exception to standing
+            // where its vehicles stood, and it says so with a move.
+            fell_back = events
+                .iter()
+                .filter_map(|e| match e {
+                    OverworldEvent::ArmyMoved { army, .. } => Some(*army),
+                    _ => None,
+                })
+                .collect();
             break;
         }
     }
@@ -1736,6 +1748,16 @@ fn a_fight_on_the_ground_ends_with_its_survivors_armies_again_where_they_stand()
             continue;
         };
         let tile = a.tile.unwrap();
+        if fell_back.contains(id) {
+            let fought_in = tactics_core::world::chunk_of(stood[0], radius);
+            assert_eq!(
+                a.pos.unsigned_distance_to(fought_in),
+                1,
+                "`{}` fell back more than a hex",
+                a.name
+            );
+            continue;
+        }
         assert!(
             stood.iter().any(|h| h.unsigned_distance_to(tile) <= 2),
             "`{}` is at {tile:?}, and its vehicles were at {stood:?}",
@@ -2220,8 +2242,16 @@ fn a_fight_at_a_town_is_fought_over_the_town_and_whoever_holds_it_takes_it() {
 /// contact is its first step. (Set down further off they meet minutes apart,
 /// and a fight here can be over before the other begins.) The clock is run
 /// until all four are fighting. Returns the pairs, Kuhlmann first.
-fn two_fights(reg: &DataRegistry) -> (OverworldState, Vec<(ElementId, ElementId)>) {
-    let mut state = generated(reg);
+fn two_fights(
+    reg: &DataRegistry,
+    world_seed: u64,
+) -> (OverworldState, Vec<(ElementId, ElementId)>) {
+    let setup = tactics_core::data::WorldSetup {
+        seed: Some(world_seed),
+        ..Default::default()
+    };
+    let mut state = OverworldState::from_map_setup(reg, "frontier_world", 3, &setup)
+        .expect("the generated campaign builds");
     let world = state.world.clone().unwrap();
     let radius = world.chunk_radius;
     let kuhlmann: Vec<ElementId> = state
@@ -2246,19 +2276,21 @@ fn two_fights(reg: &DataRegistry) -> (OverworldState, Vec<(ElementId, ElementId)
         // ended the war.
         let stage = |state: &mut OverworldState, there: Hex| -> Option<usize> {
             let (from, to) = (world.stand_tile(reg, here), world.stand_tile(reg, there));
+            let standable = |t: &Hex| {
+                world.tile(*t).is_some_and(|(terrain, _)| {
+                    reg.terrain(terrain).is_some_and(|d| {
+                        d.cost_for(tactics_core::data::MovementClass::Tracked)
+                            .is_some()
+                    })
+                })
+            };
             // The last tile on the way there that is still her hex, and
-            // ground a column can stand on.
+            // ground a column can stand on (since W6.5 the straight line may
+            // cross a river).
             let border = from
                 .line_to(to)
                 .take_while(|t| tactics_core::world::chunk_of(*t, radius) == here)
-                .filter(|t| {
-                    world.tile(*t).is_some_and(|(terrain, _)| {
-                        reg.terrain(terrain).is_some_and(|d| {
-                            d.cost_for(tactics_core::data::MovementClass::Tracked)
-                                .is_some()
-                        })
-                    })
-                })
+                .filter(standable)
                 .last()?;
             state.place_mut(*ours).unwrap().tile = Some(border);
             let e = state.place_mut(*theirs).unwrap();
@@ -2304,7 +2336,7 @@ fn two_fights_in_different_places_are_one_battle() {
     // nothing to merge when they drift together and nothing to split when
     // they part.
     let reg = registry();
-    let (state, pairs) = two_fights(&reg);
+    let (state, pairs) = two_fights(&reg, 1);
     let front = state.front.as_ref().expect("the fighting began");
     assert_eq!(
         front.armies().len(),
@@ -2361,14 +2393,8 @@ fn a_fight_that_is_over_in_one_place_lets_its_army_go_while_another_goes_on() {
     // field, and the Kuhlmann company that was fighting them — nobody left
     // within her reach — is a column again once the battle's own stalemate
     // patience has run, while the first pair are still at it.
-    //
-    // The patience is two rounds here rather than the mod's eight: the
-    // claim is about who is held, not how long she waits, and on the ground
-    // since W6.5 the first pair's fight is over in five rounds — the
-    // headquarters company is destroyed and the war ends with it.
-    let mut reg = registry();
-    reg.balance.stalemate_rounds = 2;
-    let (mut state, pairs) = two_fights(&reg);
+    let reg = registry();
+    let (mut state, pairs) = two_fights(&reg, 1);
     let (winner, gone) = pairs[1];
     let front = state.front.as_mut().expect("the fighting began");
     for u in front.crews_of(gone) {
