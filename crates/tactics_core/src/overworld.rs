@@ -381,6 +381,14 @@ pub enum OverworldOrder {
         to: ElementId,
         unit: usize,
     },
+    /// Take back a node's own orders: it answers to its company again
+    /// (WORLD.md W4.6b). A vehicle that was sent out marches back, and when
+    /// she stands with her company she is part of its column again. Only a
+    /// node that stands on its own and has a company to go back to — a
+    /// company answers to its side, and there is nowhere to recall it to.
+    Recall {
+        element: ElementId,
+    },
     EndTurn,
 }
 
@@ -460,6 +468,22 @@ pub enum OverworldEvent {
         from: ElementId,
         to: ElementId,
         vehicle: String,
+    },
+    /// A node below a company was given orders of its own and stands on its
+    /// own now (WORLD.md W4.6b): a vehicle sent out from `from`, her company.
+    ArmyDetached {
+        army: ElementId,
+        from: ElementId,
+    },
+    /// A node's own orders were taken back; it is on its way home.
+    ArmyRecalled {
+        army: ElementId,
+    },
+    /// A node that stood on its own is with its company again, and part of
+    /// its column.
+    ArmyRejoined {
+        army: ElementId,
+        into: ElementId,
     },
     /// An order for this army could not be got to it and is waiting at
     /// headquarters until it can. It transmits at the first turn start that
@@ -571,6 +595,14 @@ pub enum OverworldError {
     /// because the fix is the same — pick another army or another day.
     #[error("those armies cannot exchange vehicles today")]
     NoTransfer,
+    /// An order to a vehicle that cannot be sent out on her own: not on the
+    /// clock, her company fighting, her company's last, or the vehicle her
+    /// side's commander rides in — headquarters does not go to look.
+    #[error("that vehicle cannot be sent out on her own")]
+    NoDetach,
+    /// A recall of a node with no company to go back to.
+    #[error("there is nobody to recall her to")]
+    NoRecall,
     // There is deliberately no `OutOfContact` refusal any more. An order to an
     // army beyond the net used to be rejected; it now waits at headquarters
     // and transmits when the wire comes back, so being unreachable is a delay
@@ -917,7 +949,11 @@ impl OverworldState {
                 elements.push(Element {
                     id: ElementId(id),
                     side: a.side,
-                    name: unit.name.clone().unwrap_or_else(|| unit.vehicle.clone()),
+                    name: unit.name.clone().unwrap_or_else(|| {
+                        registry
+                            .vehicle(&unit.vehicle)
+                            .map_or_else(|| unit.vehicle.clone(), |v| v.name.clone())
+                    }),
                     parent: Some(ElementId(i as u32)),
                     vehicle: Some(unit),
                     headquarters: false,
@@ -997,7 +1033,7 @@ impl OverworldState {
 
     /// The living vehicles that go with the column `id`, in the order they
     /// joined it.
-    fn members(&self, id: ElementId) -> Vec<ElementId> {
+    pub fn members(&self, id: ElementId) -> Vec<ElementId> {
         let mut leaves: Vec<&Element> = self
             .elements
             .iter()
@@ -1010,10 +1046,18 @@ impl OverworldState {
     /// What the map shows of `element`, if it stands on its own and lives.
     fn view(&self, element: &Element) -> Option<Column> {
         let place = element.place.as_ref().filter(|_| element.alive)?;
+        // A vehicle standing on her own is still her company's, and says so.
+        let name = match (
+            &element.vehicle,
+            element.parent.and_then(|p| self.element(p)),
+        ) {
+            (Some(_), Some(company)) => format!("{} of {}", element.name, company.name),
+            _ => element.name.clone(),
+        };
         Some(Column {
             id: element.id,
             side: element.side,
-            name: element.name.clone(),
+            name,
             pos: place.pos,
             movement: place.movement,
             moved: place.moved,
@@ -1870,6 +1914,7 @@ impl OverworldState {
             }
             self.clock += 1;
             events.extend(self.run_front(registry));
+            events.extend(self.bring_home(registry));
             let marching: Vec<ElementId> = self
                 .columns()
                 .into_iter()
@@ -2850,6 +2895,7 @@ impl OverworldState {
             OverworldOrder::TransferUnit { from, to, unit } => {
                 self.apply_transfer(*from, *to, *unit)?
             }
+            OverworldOrder::Recall { element } => self.apply_recall(*element)?,
             OverworldOrder::EndTurn => self.apply_end_turn(registry),
         };
         self.check_victory(&mut events);
@@ -3009,7 +3055,139 @@ impl OverworldState {
         id: ElementId,
         to: Hex,
     ) -> Result<Vec<OverworldEvent>, OverworldError> {
-        self.move_army(registry, id, to, Engagement::Avoid)
+        // An order to a vehicle that goes with her company sends her out on
+        // her own: she takes a place of her own where her company stands,
+        // and the march is hers (WORLD.md W4.6b). If the march cannot be
+        // made she was never sent.
+        let detached = self.army(id).is_none();
+        let from = if detached {
+            Some(self.detach(id)?)
+        } else {
+            None
+        };
+        match self.move_army(registry, id, to, Engagement::Avoid) {
+            Ok(mut events) => {
+                if let Some(from) = from {
+                    events.insert(0, OverworldEvent::ArmyDetached { army: id, from });
+                }
+                Ok(events)
+            }
+            Err(e) => {
+                if detached && let Some(el) = self.element_mut(id) {
+                    el.place = None;
+                    el.mission = None;
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Give a vehicle that goes with her company a place of her own, where
+    /// the company stands, and a standing order to hold — so that when she
+    /// gets where she is sent she stays there until she is recalled (the
+    /// designer's ruling), exactly as a crew's march in battle becomes a
+    /// hold. Returns her company. See [`OverworldError::NoDetach`] for what
+    /// is refused.
+    fn detach(&mut self, id: ElementId) -> Result<ElementId, OverworldError> {
+        let element = self.element(id).ok_or(OverworldError::NoSuchArmy)?;
+        if !element.alive || element.place.is_some() {
+            return Err(OverworldError::NoSuchArmy);
+        }
+        let vehicle = element.vehicle.as_ref().ok_or(OverworldError::NoDetach)?;
+        let home = self.column_of(id).ok_or(OverworldError::NoSuchArmy)?;
+        let column = self.army(home).ok_or(OverworldError::NoSuchArmy)?;
+        let commander = self
+            .sides
+            .get(element.side as usize)
+            .and_then(|s| s.commander);
+        if !self.clocked()
+            || column.fighting
+            || column.units.len() <= 1
+            || commander.is_some_and(|c| vehicle.crew.contains(&c))
+        {
+            return Err(OverworldError::NoDetach);
+        }
+        let place = Place {
+            march: None,
+            moved: false,
+            fighting: false,
+            ..self
+                .element(home)
+                .and_then(|e| e.place.clone())
+                .expect("a column")
+        };
+        let element = self.element_mut(id).expect("checked above");
+        element.place = Some(place);
+        element.mission = Some(ArmyMission::Hold);
+        Ok(home)
+    }
+
+    /// Take a node's own orders back. See [`OverworldOrder::Recall`].
+    fn apply_recall(&mut self, id: ElementId) -> Result<Vec<OverworldEvent>, OverworldError> {
+        self.army(id).ok_or(OverworldError::NoSuchArmy)?;
+        if self.home_of(id).is_none() {
+            return Err(OverworldError::NoRecall);
+        }
+        let element = self.element_mut(id).expect("checked above");
+        element.mission = None;
+        if let Some(place) = element.place.as_mut() {
+            place.march = None;
+        }
+        Ok(vec![OverworldEvent::ArmyRecalled { army: id }])
+    }
+
+    /// The column a node that stands on its own belongs with: its parent's.
+    /// `None` for a company, whose parent is its side.
+    fn home_of(&self, id: ElementId) -> Option<ElementId> {
+        self.column_of(self.element(id)?.parent?)
+    }
+
+    /// Every node that stands on its own with no orders of its own goes
+    /// home (WORLD.md W4.6b): it marches for its company, and once it stands
+    /// with it — on its hex or the next, since a column does not finish a
+    /// march inside a friend's — its place is dropped and it is part of the
+    /// column again. Nothing is stored to say she is on her way back: a
+    /// node stands apart while it has orders of its own, and one without
+    /// them is going home because that is what having none means.
+    fn bring_home(&mut self, registry: &DataRegistry) -> Vec<OverworldEvent> {
+        let returning: Vec<(ElementId, ElementId)> = self
+            .elements
+            .iter()
+            .filter(|e| e.alive && e.mission.is_none())
+            .filter(|e| e.place.as_ref().is_some_and(|p| !p.fighting))
+            // A company answers to its side, which stands nowhere: only a
+            // node below a company has a column to go home to. Asked first
+            // because this runs every tick and nearly every node is one.
+            .filter(|e| {
+                e.parent
+                    .and_then(|p| self.element(p))
+                    .is_some_and(|p| p.parent.is_some())
+            })
+            .filter_map(|e| Some((e.id, self.home_of(e.id)?)))
+            .collect();
+        let mut events = Vec::new();
+        for (id, home) in returning {
+            let (Some(her), Some(company)) = (self.army(id), self.army(home)) else {
+                continue;
+            };
+            if company.fighting {
+                continue;
+            }
+            if her.pos.distance_to(company.pos) <= 1 {
+                if let Some(e) = self.element_mut(id) {
+                    e.place = None;
+                }
+                events.push(OverworldEvent::ArmyRejoined {
+                    army: id,
+                    into: home,
+                });
+            } else if her.march.as_ref().is_none_or(|m| m.to != company.pos)
+                && let Ok(more) = self.move_army(registry, id, company.pos, Engagement::Avoid)
+            {
+                events.extend(more);
+            }
+        }
+        events
     }
 
     fn move_army(

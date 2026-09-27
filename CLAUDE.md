@@ -586,6 +586,23 @@ and the seam tests in `tests/ground.rs`.
   vehicle she was**: a fight's survivors are matched back to their nodes
   in joining order by chassis and crew (`set_survivors`), never replaced
   by new ones — `a_vehicle_keeps_her_place_in_the_chain_of_command_through_a_fight`.
+- **A detachment is a node with orders of its own, and nothing else**
+  (W4.6b). The move order given to a vehicle's node rather than her
+  company's sends her out (`detach`): she takes a place where her company
+  stands and a standing `Hold`, so she holds where she arrives until
+  recalled. `OverworldOrder::Recall` takes her own orders back, and
+  **a node that stands on its own with no orders of its own is going home
+  because that is what having none means** (`bring_home`, every tick):
+  she marches for her company's column and her place is dropped when she
+  stands with it (its hex or the next). No state says "detached" or
+  "returning", and no army is made or merged. Refused: off the clock, from
+  a company in the fighting, a company's last vehicle, the vehicle her
+  side's commander rides in; a company cannot be recalled (it answers to
+  its side). The player's order only; the AI never sends one out. In the
+  game a digit with open ground hovered sends that vehicle of the selected
+  company, `B` recalls; `send-a-vehicle-out` drives both. Tests
+  mutation-checked (no hold, never rejoining, the commander guard, a
+  company recall).
 - **A side's commander is a cadet** (`OverworldSide::commander`, from the
   vehicle its map flags `command`), her death under `victory.commander`
   ends the campaign, and while she is wounded `acting_commander` is the
