@@ -10,6 +10,7 @@ mod manifest;
 mod march;
 mod modules;
 mod morale;
+pub mod patch;
 mod planner;
 mod registry;
 mod scale;
@@ -36,6 +37,6 @@ pub use registry::{DataError, DataRegistry, ValidationReport, parse_color};
 pub use scale::Scale;
 pub use templates::{FixAndFlank, TemplateDef, TemplateKind};
 pub use worldgen::{
-    Cover, GroundPalette, Relief, Rivers, Roads, SkeletonFeature, SummaryRule, TerrainShare, Towns,
-    WorldGen,
+    Cover, GroundPalette, Relief, Rivers, Roads, SettingError, SkeletonFeature, SummaryRule,
+    TerrainShare, Towns, WorldGen, WorldOption, WorldSetting, WorldSetup,
 };

@@ -596,6 +596,80 @@ the determinism snapshot passes **unregenerated**.
       `fight-on-the-ground` plays a fight on the ground from contact to the
       end and back to the map.
 
+### W6 — a world made to order, and made like country
+
+The designer's rulings (2026-09-27, after a playtest): **the world
+generation should be more realistic**, and **it should be variable — the
+player sets various settings, like Civilization's map setup.**
+
+What the playtest measured (seed 1, all 417k tiles dumped): the layers of
+the generator ignore one another — forest is 27–31% at *every* elevation
+level and 29% on slopes against 28% on the flat; not one of 17,732 mud
+tiles lies within 300 m of water; hedgerow is the fringe of the wood noise,
+so every wood wears a hedge halo instead of fields having hedges. Nothing
+in it is larger than a campaign hex (the coarsest relief lattice is 48
+tiles; a chunk is 41 across), so the campaign map it adds up to is nearly
+salt and pepper: 42% of neighbouring campaign hexes share a class against
+34% for the same hexes shuffled. Three rivers of ~10 km rise near the rim
+and leave by it; the interior has none. Fourteen identical towns of 700 m.
+The display then makes it look worse: campaign elevation is drawn at the
+battle's 14 px a level on a hex 4 km wide (about 90× exaggeration, so
+every mountain hex is a tower), no summary rule names a river so the
+campaign map never shows one, and a hex any road touches is "highway".
+
+The shape: **a setting is data, and it is a list of `worldgen` fields to
+set.** The generator's numbers already live in the `worldgen` block, so a
+choice like "woodland: heavy" is nothing more than `cover.wood_percent: 45`
+— written in `mod.json` as options on a setting, addressed by the same json
+paths `balance --set` uses, and applied through the same patch. A mod adds
+a setting, or an option to one, without a line of Rust. **The default
+option of every setting changes nothing**, so a world made with every
+setting at its default is the mod's world, exactly — the additivity rule.
+A world's rules still travel in its save (W1.6), so what the player chose
+is what a loaded campaign stands on.
+
+- [x] ~~**W6.1 Settings as data.**~~ **Done 2026-09-27.**
+      `world_settings` in `mod.json` (`WorldSetting`, `WorldOption`): the
+      base mod ships six — map size, terrain, woodland, field boundaries,
+      rainfall, settlement — of two to four options each, every default
+      setting nothing. `WorldGen::with_settings` applies a choice through
+      `data::patch`, the walk `balance --set` uses, moved out of the
+      harness because the game now uses it too. Towns and rivers are
+      densities (`every`), which kept seed 1's world byte-identical (14
+      towns, 3 rivers, the same 15 roads) and bumped `SAVE_VERSION` to 10.
+      `validate-mods` validates all 324 combinations.
+      `OverworldState::from_map_setup` takes the choices and a seed.
+- [x] ~~**W6.2 The instruments take a world.**~~ **Done 2026-09-27.**
+      `examples/worldgen` and `examples/campaign` take `--world
+      size=large,woodland=heavy`; `examples/worldgen --settings` makes one
+      world per option and measures it (the W6 diagnosis's columns: clump,
+      wood high and low, wet by water). On seed 1 every option moves what
+      it names and nothing else — woodland 12/28/45%, hedge 2/9/22%, mean
+      level 0.40/1.44/2.31/3.80, towns 8/14/24 — and the realism columns
+      read the same bad news on every row (clump 0.05–0.11, wood the same
+      share high and low, 0–2% of wet ground by water), which is W6.4–W6.6.
+- [ ] **W6.3 The setup screen.** Before a fresh generated campaign: every
+      setting, its options, the seed and a new one on demand, and a
+      picture of the world it makes. `STAHL_WORLD=default` (or
+      `size=large,…`) skips it, for the tours.
+- [ ] **W6.4 Relief with a shape.** Large-scale landforms — ranges and
+      uplands with valleys between — under the local noise, and a noise
+      without lattice-straight edges. A setting's relief option picks the
+      landform.
+- [ ] **W6.5 Water that drains.** A river network from many sources down
+      the valleys, joining, wider downstream, with wet meadow along it.
+- [ ] **W6.6 Cover that reads the ground.** Wood on slopes and high
+      ground, fields in the lowlands, hedges as field boundaries.
+- [ ] **W6.7 Settlements in a hierarchy** — a city, towns, villages — on
+      rivers and road junctions, roads down the valleys.
+- [ ] **W6.8 The campaign map drawn at its own scale**: its own vertical
+      exaggeration, rivers drawn, a summary that does not call every hex a
+      road touches a highway.
+
+W6.4 onward change what every generated campaign stands on. Saves carry a
+world as its seed and rules, and regenerate it with the generator of the
+day, so each one either keeps worlds bit-identical or refuses an old save.
+
 ## Open questions
 
 All answered 2026-09-26. The first round (pace, skeleton, reaching down,

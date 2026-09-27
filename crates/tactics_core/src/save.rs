@@ -123,7 +123,13 @@ use serde::{Deserialize, Serialize};
 /// command (`elements`) rather than a list of armies: a version-8 campaign
 /// has no tree to read, and one read as empty would open with nobody on the
 /// map and end on its first check.
-pub const SAVE_VERSION: u32 = 9;
+///
+/// Version 10 counts a generated world's towns and rivers by density — one
+/// every so many campaign hexes (WORLD.md W6.1) — rather than by number. A
+/// version-9 world's rules name a `count` nothing reads any more, and would
+/// regenerate with the default density: a different world under the same
+/// armies, with no error to say so.
+pub const SAVE_VERSION: u32 = 10;
 
 /// Which mod, at which version, was loaded when a save was written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

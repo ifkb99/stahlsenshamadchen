@@ -43,6 +43,10 @@ pub struct CampaignOptions {
     /// the campaign is *stored* changed what it *does*, and nothing else
     /// needs them.
     pub trace: bool,
+    /// The world a generated campaign is played on: the player's choices
+    /// from the setup screen (WORLD.md W6.1), so an instrument can ask what
+    /// "woodland: heavy" does to a war. Empty is the mod's own world.
+    pub world: crate::data::WorldSetup,
 }
 
 impl Default for CampaignOptions {
@@ -56,6 +60,7 @@ impl Default for CampaignOptions {
             max_days: 60,
             max_rounds: 100,
             trace: false,
+            world: crate::data::WorldSetup::default(),
         }
     }
 }
@@ -108,7 +113,7 @@ pub fn play(
     seed: u64,
     options: &CampaignOptions,
 ) -> Result<CampaignRun, OverworldSetupError> {
-    let mut state = OverworldState::from_map(registry, map_id, seed)?;
+    let mut state = OverworldState::from_map_setup(registry, map_id, seed, &options.world)?;
     let sides = state.sides.len();
     let mut planners: Vec<_> = state
         .sides

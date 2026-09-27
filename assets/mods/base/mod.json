@@ -125,9 +125,9 @@
     "radius": 10,
     "relief": { "scale": 48, "octaves": 3, "shares": [38, 24, 15, 10, 7, 4, 2] },
     "cover": { "scale": 18, "wood_percent": 28, "hedge_percent": 9, "wet_percent": 20 },
-    "rivers": { "count": 3, "spacing": 4 },
+    "rivers": { "every": 110, "spacing": 4 },
     "towns": {
-      "count": 14, "spacing": 3, "radius": 3, "factories": 2,
+      "every": 24, "spacing": 3, "radius": 3, "factories": 2,
       "worth": 2, "factory_worth": 4, "contested_within": 30
     },
     "roads": { "extra_links": 2 },
@@ -145,6 +145,70 @@
     ],
     "residency_margin": 4
   },
+  "world_settings": [
+    {
+      "id": "size", "name": "Map size", "default": "standard",
+      "options": [
+        { "id": "small", "name": "Small", "text": "56 km across; the armies meet in a day or two.",
+          "set": { "radius": 7 } },
+        { "id": "standard", "name": "Standard", "text": "84 km across." },
+        { "id": "large", "name": "Large", "text": "108 km across; room to manoeuvre, and a long march to contact.",
+          "set": { "radius": 13 } }
+      ]
+    },
+    {
+      "id": "relief", "name": "Terrain", "default": "rolling",
+      "options": [
+        { "id": "flat", "name": "Flat", "text": "Open plain; little to hide behind, long sight lines.",
+          "set": { "relief.scale": 64, "relief.shares": [70, 22, 6, 2] } },
+        { "id": "rolling", "name": "Rolling", "text": "Low hills and gentle ground." },
+        { "id": "hilly", "name": "Hilly", "text": "Ridges and valleys; high ground worth fighting for.",
+          "set": { "relief.shares": [22, 20, 17, 14, 11, 8, 5, 3] } },
+        { "id": "mountainous", "name": "Mountainous", "text": "Steep country; the roads are the only easy way through.",
+          "set": { "relief.scale": 40, "relief.shares": [12, 13, 13, 12, 11, 10, 9, 8, 7, 5] } }
+      ]
+    },
+    {
+      "id": "woodland", "name": "Woodland", "default": "normal",
+      "options": [
+        { "id": "sparse", "name": "Sparse", "text": "A copse here and there.",
+          "set": { "cover.wood_percent": 12 } },
+        { "id": "normal", "name": "Normal", "text": "About a quarter of the land under trees." },
+        { "id": "heavy", "name": "Heavy", "text": "Forest country; close fighting and short sight lines.",
+          "set": { "cover.wood_percent": 45 } }
+      ]
+    },
+    {
+      "id": "fields", "name": "Field boundaries", "default": "mixed",
+      "options": [
+        { "id": "open", "name": "Open fields", "text": "Wide unfenced fields.",
+          "set": { "cover.hedge_percent": 2 } },
+        { "id": "mixed", "name": "Mixed", "text": "Some hedged fields." },
+        { "id": "bocage", "name": "Bocage", "text": "Hedgerow country: cover everywhere, and every field a strongpoint.",
+          "set": { "cover.hedge_percent": 22 } }
+      ]
+    },
+    {
+      "id": "water", "name": "Rainfall", "default": "normal",
+      "options": [
+        { "id": "dry", "name": "Dry", "text": "Few rivers, firm ground.",
+          "set": { "rivers.every": 220, "cover.wet_percent": 6 } },
+        { "id": "normal", "name": "Normal", "text": "A few rivers, some soft ground in the low places." },
+        { "id": "wet", "name": "Wet", "text": "Many rivers to cross, and mud in every hollow.",
+          "set": { "rivers.every": 60, "cover.wet_percent": 35 } }
+      ]
+    },
+    {
+      "id": "settlement", "name": "Settlement", "default": "normal",
+      "options": [
+        { "id": "sparse", "name": "Sparse", "text": "Far-apart towns and few roads.",
+          "set": { "towns.every": 40, "roads.extra_links": 1 } },
+        { "id": "normal", "name": "Normal", "text": "A town every twenty-odd campaign hexes." },
+        { "id": "dense", "name": "Dense", "text": "Towns everywhere, and roads between them all.",
+          "set": { "towns.every": 14, "towns.spacing": 2, "roads.extra_links": 5 } }
+      ]
+    }
+  ],
   "march": { "column_percent": 20, "hours_per_day": 4, "halt_minutes_per_hour": 10 },
   "cores": [
     {

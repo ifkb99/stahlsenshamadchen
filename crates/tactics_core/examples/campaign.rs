@@ -8,7 +8,12 @@
 //! cargo run --release -p tactics_core --example campaign -- 0 32      # seeds 0..32, summary only
 //! cargo run --release -p tactics_core --example campaign -- --map frontier 0 32  # the drawn one
 //! cargo run --release -p tactics_core --example campaign -- --trace 3  # ...and every event
+//! cargo run --release -p tactics_core --example campaign -- --world size=large,woodland=heavy
 //! ```
+//!
+//! `--world` makes the generated campaign's world to the same choices the
+//! setup screen offers (`world_settings` in `mod.json`), so what a setting
+//! does to a war is read here rather than guessed.
 //!
 //! With no `--map` it plays the campaign the game opens on (`campaign` in
 //! `mod.json`), so the instrument measures what a player plays.
@@ -39,9 +44,25 @@ fn main() {
         .or_else(|| registry.campaign.clone())
         .unwrap_or_else(|| MAP.to_string());
     let trace = raw.iter().any(|a| a == "--trace");
+    let world_arg = raw
+        .iter()
+        .position(|a| a == "--world")
+        .and_then(|i| raw.get(i + 1))
+        .cloned();
+    let world = tactics_core::data::WorldSetup::parse(world_arg.as_deref().unwrap_or(""))
+        .unwrap_or_else(|e| {
+            eprintln!("error: --world: {e}");
+            std::process::exit(1);
+        });
     let args: Vec<u64> = raw
         .iter()
-        .filter(|a| *a != "--map" && **a != map && *a != "--trace")
+        .filter(|a| {
+            *a != "--map"
+                && **a != map
+                && *a != "--trace"
+                && *a != "--world"
+                && Some(*a) != world_arg.as_ref()
+        })
         .map(|a| a.parse().expect("seeds are numbers"))
         .collect();
     let map = map.as_str();
@@ -52,6 +73,7 @@ fn main() {
     };
     let options = CampaignOptions {
         trace,
+        world,
         ..CampaignOptions::default()
     };
     let seeds: Vec<u64> = (from..to).collect();
@@ -68,12 +90,16 @@ fn main() {
         }
     }
 
-    let names: Vec<String> = tactics_core::overworld::OverworldState::from_map(&registry, map, 0)
-        .expect("the shipped campaign builds")
-        .sides
-        .iter()
-        .map(|s| s.name.clone())
-        .collect();
+    let names: Vec<String> =
+        tactics_core::overworld::OverworldState::from_map_setup(&registry, map, 0, &options.world)
+            .unwrap_or_else(|e| {
+                eprintln!("error: {e}");
+                std::process::exit(1);
+            })
+            .sides
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
 
     if runs.len() == 1 {
         let run = &runs[0];

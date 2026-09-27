@@ -4,7 +4,19 @@
 //! cargo run --release -p tactics_core --example worldgen [seed]
 //! cargo run --release -p tactics_core --example worldgen -- [seed] --chunk q,r
 //! cargo run --release -p tactics_core --example worldgen -- [seed] --relief
+//! cargo run --release -p tactics_core --example worldgen -- [seed] --world woodland=heavy,size=small
+//! cargo run --release -p tactics_core --example worldgen -- [seed] --settings
 //! ```
+//!
+//! `--world` makes the world to the choices the setup screen offers
+//! (`world_settings` in `mod.json`). `--settings` makes one world per option
+//! of every setting, the others at their defaults, and prints a row of
+//! measurements for each — what a setting actually does, read off the
+//! tiles. The measurements are the ones the W6 diagnosis was made with:
+//! `clump` is how much more often neighbouring campaign hexes share a class
+//! than chance would have them (0 is salt and pepper), `wood hi/lo` is the
+//! wood share on the upper half of the land's levels against the lower, and
+//! `wet@water` is the share of wet ground within 300 m of a river.
 //!
 //! Prints the campaign map the tiles summarise to (WORLD.md W1.4: a campaign
 //! hex is `R` of its tiles), the terrain shares the world came out with
@@ -13,9 +25,10 @@
 //! the campaign map by elevation instead of terrain.
 
 use hexx::Hex;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
-use tactics_core::data::DataRegistry;
+use tactics_core::data::{DataRegistry, WorldGen, WorldSetup};
+use tactics_core::harness::parallel::run_all;
 use tactics_core::world::chunk_hexes;
 use tactics_core::worldgen::GeneratedWorld;
 
@@ -31,12 +44,40 @@ fn main() {
             Some(Hex::new(q.trim().parse().ok()?, r.trim().parse().ok()?))
         });
     let relief = args.iter().any(|a| a == "--relief");
+    let setup = args
+        .iter()
+        .position(|a| a == "--world")
+        .and_then(|i| args.get(i + 1))
+        .map(|s| WorldSetup::parse(s))
+        .transpose()
+        .unwrap_or_else(|e| {
+            eprintln!("error: --world: {e}");
+            std::process::exit(1);
+        })
+        .unwrap_or_default();
 
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/mods");
     let (registry, _) = DataRegistry::load_dir(root.as_ref()).expect("mods load");
+    let base = registry
+        .worldgen
+        .clone()
+        .expect("the base mod declares a world");
+    let radius = registry.scale.battle_map_radius();
 
+    if args.iter().any(|a| a == "--settings") {
+        settings_table(&registry, &base, radius, seed);
+        return;
+    }
+
+    let rules = base
+        .with_settings(&registry.world_settings, &setup.choices)
+        .unwrap_or_else(|e| {
+            eprintln!("error: --world: {e}");
+            std::process::exit(1);
+        });
+    let seed = setup.seed.unwrap_or(seed);
     let start = Instant::now();
-    let world = GeneratedWorld::new(&registry, seed).expect("the base mod declares a world");
+    let world = GeneratedWorld::with_rules(rules, radius, seed).expect("the rules make a world");
     let made = start.elapsed();
 
     if let Some(chunk) = chunk {
@@ -100,6 +141,185 @@ fn main() {
         made.as_secs_f64() * 1e3,
         summarised.as_secs_f64() * 1e3
     );
+    println!();
+    println!("{}", Stats::HEADER);
+    println!("{}", Stats::of(&world).row("this world"));
+}
+
+/// One world per option of every setting, the rest at their defaults.
+fn settings_table(registry: &DataRegistry, base: &WorldGen, radius: u32, seed: u64) {
+    let mut jobs: Vec<(String, BTreeMap<String, String>)> =
+        vec![("defaults".into(), BTreeMap::new())];
+    for setting in &registry.world_settings {
+        for option in &setting.options {
+            if option.id == setting.default {
+                continue;
+            }
+            jobs.push((
+                format!("{}={}", setting.id, option.id),
+                BTreeMap::from([(setting.id.clone(), option.id.clone())]),
+            ));
+        }
+    }
+    let rows = run_all(&jobs, |(label, choices)| {
+        let rules = base
+            .with_settings(&registry.world_settings, choices)
+            .expect("validate-mods passed");
+        let world = GeneratedWorld::with_rules(rules, radius, seed).expect("a world");
+        Stats::of(&world).row(label)
+    });
+    println!("world seed {seed}, one setting changed at a time");
+    println!("{}", Stats::HEADER);
+    for row in rows {
+        println!("{row}");
+    }
+}
+
+/// What a world came out as, in the measurements the W6 diagnosis used.
+struct Stats {
+    hexes: usize,
+    shares: BTreeMap<String, f64>,
+    mean_level: f64,
+    rivers: usize,
+    river_tiles: usize,
+    towns: usize,
+    classes: BTreeMap<char, usize>,
+    clump: f64,
+    wood_hi: f64,
+    wood_lo: f64,
+    wet_at_water: f64,
+}
+
+impl Stats {
+    const HEADER: &str = "  world                  hexes  wood hedge  wet water town  level  rivers  towns   M   W   =   clump  wood hi/lo  wet@water";
+
+    fn of(world: &GeneratedWorld) -> Self {
+        let chunks: Vec<Hex> = world.chunks().collect();
+        let mut tiles: HashMap<Hex, (String, i32)> = HashMap::new();
+        for c in &chunks {
+            for (h, t, e) in world.chunk_tiles(*c) {
+                tiles.insert(h, (t.to_string(), e));
+            }
+        }
+        let n = tiles.len() as f64;
+        let mut shares: BTreeMap<String, f64> = BTreeMap::new();
+        let mut level_sum = 0i64;
+        let mut by_level: BTreeMap<i32, (u64, u64)> = BTreeMap::new();
+        let palette = &world.rules.terrain;
+        for (t, e) in tiles.values() {
+            *shares.entry(t.clone()).or_default() += 100.0 / n;
+            level_sum += *e as i64;
+            let slot = by_level.entry(*e).or_default();
+            slot.1 += 1;
+            if *t == palette.wood {
+                slot.0 += 1;
+            }
+        }
+        // The median level splits the land into an upper and a lower half.
+        let mut seen = 0u64;
+        let mut median = 0;
+        for (level, (_, count)) in &by_level {
+            seen += count;
+            if seen as f64 >= n / 2.0 {
+                median = *level;
+                break;
+            }
+        }
+        let share_of = |f: &dyn Fn(i32) -> bool| {
+            let (w, c) = by_level
+                .iter()
+                .filter(|(l, _)| f(**l))
+                .fold((0u64, 0u64), |(w, c), (_, (a, b))| (w + a, c + b));
+            if c == 0 {
+                0.0
+            } else {
+                100.0 * w as f64 / c as f64
+            }
+        };
+        let wood_hi = share_of(&|l| l > median);
+        let wood_lo = share_of(&|l| l <= median);
+        let water: Vec<Hex> = tiles
+            .iter()
+            .filter(|(_, (t, _))| *t == palette.water)
+            .map(|(h, _)| *h)
+            .collect();
+        let near: std::collections::HashSet<Hex> = water.iter().flat_map(|h| h.range(3)).collect();
+        let wet: Vec<&Hex> = tiles
+            .iter()
+            .filter(|(_, (t, _))| *t == palette.wet)
+            .map(|(h, _)| h)
+            .collect();
+        let wet_at_water = if wet.is_empty() {
+            0.0
+        } else {
+            100.0 * wet.iter().filter(|h| near.contains(h)).count() as f64 / wet.len() as f64
+        };
+        let summaries: HashMap<Hex, char> = chunks
+            .iter()
+            .filter_map(|c| world.summary(*c).map(|s| (*c, campaign_glyph(&s.terrain))))
+            .collect();
+        let mut classes: BTreeMap<char, usize> = BTreeMap::new();
+        for g in summaries.values() {
+            *classes.entry(*g).or_default() += 1;
+        }
+        // Neighbouring campaign hexes sharing a class, less what chance
+        // gives: for class shares p, a random map shares sum(p^2) of the
+        // time. Zero is salt and pepper; real country is well above it.
+        let (mut same, mut pairs) = (0u64, 0u64);
+        for (h, g) in &summaries {
+            for nb in h.all_neighbors() {
+                if let Some(o) = summaries.get(&nb) {
+                    pairs += 1;
+                    same += (o == g) as u64;
+                }
+            }
+        }
+        let total = summaries.len() as f64;
+        let chance: f64 = classes.values().map(|c| (*c as f64 / total).powi(2)).sum();
+        let clump = if pairs == 0 {
+            0.0
+        } else {
+            same as f64 / pairs as f64 - chance
+        };
+        Self {
+            hexes: summaries.len(),
+            shares,
+            mean_level: level_sum as f64 / n,
+            rivers: world.skeleton.rivers.len(),
+            river_tiles: world.skeleton.rivers.iter().map(Vec::len).sum(),
+            towns: world.skeleton.towns.len(),
+            classes,
+            clump,
+            wood_hi,
+            wood_lo,
+            wet_at_water,
+        }
+    }
+
+    fn row(&self, label: &str) -> String {
+        let share = |t: &str| self.shares.get(t).copied().unwrap_or(0.0);
+        let class = |g: char| self.classes.get(&g).copied().unwrap_or(0);
+        format!(
+            "  {label:<22} {:>5} {:>5.1} {:>5.1} {:>4.1} {:>5.2} {:>4.1} {:>6.2}  {:>2} {:>5}  {:>5}  {:>3} {:>3} {:>3}  {:>6.3}  {:>4.0}/{:<4.0}  {:>8.0}%",
+            self.hexes,
+            share("forest"),
+            share("hedgerow"),
+            share("mud"),
+            share("water"),
+            share("town"),
+            self.mean_level,
+            self.rivers,
+            self.river_tiles,
+            self.towns,
+            class('M'),
+            class('W'),
+            class('='),
+            self.clump,
+            self.wood_hi,
+            self.wood_lo,
+            self.wet_at_water,
+        )
+    }
 }
 
 /// One glyph per campaign terrain.
