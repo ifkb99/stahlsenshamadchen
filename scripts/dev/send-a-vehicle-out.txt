@@ -2,7 +2,7 @@
 # Company's recon car goes to the next hex on her own, holds there through
 # the day, and comes home when she is recalled — the same node of the chain
 # of command throughout, standing on her own while she has orders of her own.
-#!env STAHL_CAMPAIGN=frontier_world
+#!env STAHL_CAMPAIGN=frontier_world STAHL_WORLD=default
 #
 #   STAHL_CAMPAIGN=frontier_world STAHL_DEBUG=1 \
 #     STAHL_SCRIPT=scripts/dev/send-a-vehicle-out.txt cargo run -p stahlsenshamädchen

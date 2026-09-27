@@ -355,6 +355,8 @@ fn enter_overworld(
     outcome: Option<Res<BattleOutcome>>,
     #[cfg(feature = "lua-campaigns")] campaign: Option<NonSendMut<Campaign>>,
     mut focus: ResMut<CameraFocus>,
+    prepared: Option<ResMut<crate::setup::PreparedCampaign>>,
+    chosen: Option<Res<crate::setup::ChosenWorld>>,
 ) {
     let registry = &mods.0;
 
@@ -392,32 +394,20 @@ fn enter_overworld(
         return;
     }
 
-    // Fresh campaign: STAHL_CAMPAIGN names one (a dev tool until there is a
-    // start menu — `frontier` is the drawn campaign), else the one the mods
-    // open on (`campaign` in `mod.json`; the base mod names the generated
-    // `frontier_world`), else the first overworld map from the mods, by id.
-    // It used to be whichever one the registry's hash map yielded first,
-    // which is a different campaign from one launch to the next the day a
-    // mod ships a second one.
-    let overworld = |id: &String| {
-        registry
-            .map(id)
-            .is_some_and(|m| m.kind == MapKind::Overworld)
+    // Fresh campaign. The setup screen hands over the campaign it already
+    // made while showing the player her world (so starting costs nothing);
+    // `STAHL_WORLD` hands over a choice to make one from; anything else is
+    // the campaign as its map describes it.
+    let mut state = match prepared.and_then(|mut p| p.0.take()) {
+        Some(state) => state,
+        None => {
+            let setup = chosen.map(|c| c.0.clone()).unwrap_or_default();
+            OverworldState::from_map_setup(registry, &campaign_map_id(registry), 1337, &setup)
+                .expect("overworld builds")
+        }
     };
-    let map_id = std::env::var("STAHL_CAMPAIGN")
-        .ok()
-        .filter(overworld)
-        .or_else(|| registry.campaign.clone().filter(overworld))
-        .or_else(|| {
-            registry
-                .maps
-                .values()
-                .filter(|m| m.kind == MapKind::Overworld)
-                .map(|m| m.id.clone())
-                .min()
-        })
-        .expect("base mod provides an overworld map");
-    let mut state = OverworldState::from_map(registry, &map_id, 1337).expect("overworld builds");
+    commands.remove_resource::<crate::setup::PreparedCampaign>();
+    commands.remove_resource::<crate::setup::ChosenWorld>();
     // On the clock the player commands her own fights: the clock waits at a
     // fight she can reach, and the fight screen opens on it (WORLD.md W4.4,
     // W5).
@@ -482,6 +472,34 @@ fn enter_overworld(
 /// and right for one that is still run from its source tree.
 fn save_path() -> std::path::PathBuf {
     std::path::PathBuf::from("saves/campaign.json")
+}
+
+/// The campaign a new game is fought on: `STAHL_CAMPAIGN` names one (a dev
+/// tool until there is a start menu — `frontier` is the drawn campaign), else
+/// the one the mods open on (`campaign` in `mod.json`; the base mod names the
+/// generated `frontier_world`), else the first overworld map from the mods,
+/// by id. It used to be whichever one the registry's hash map yielded first,
+/// which is a different campaign from one launch to the next the day a mod
+/// ships a second one.
+pub(crate) fn campaign_map_id(registry: &tactics_core::data::DataRegistry) -> String {
+    let overworld = |id: &String| {
+        registry
+            .map(id)
+            .is_some_and(|m| m.kind == MapKind::Overworld)
+    };
+    std::env::var("STAHL_CAMPAIGN")
+        .ok()
+        .filter(overworld)
+        .or_else(|| registry.campaign.clone().filter(overworld))
+        .or_else(|| {
+            registry
+                .maps
+                .values()
+                .filter(|m| m.kind == MapKind::Overworld)
+                .map(|m| m.id.clone())
+                .min()
+        })
+        .expect("base mod provides an overworld map")
 }
 
 fn center_camera(focus: &mut CameraFocus, rotation: u32, center: Hex) {

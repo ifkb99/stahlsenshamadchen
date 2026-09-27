@@ -1,0 +1,45 @@
+# The world setup screen (WORLD.md W6.3): a generated campaign opens on the
+# choice of its world. Every setting is listed with its option, the picture
+# is the campaign each choice makes, and Enter hands that campaign over.
+#!env STAHL_CAMPAIGN=frontier_world
+#
+#   STAHL_CAMPAIGN=frontier_world STAHL_DEBUG=1 \
+#     STAHL_SCRIPT=scripts/dev/world-setup.txt cargo run -p stahlsenshamädchen
+
+at 2.0
+# The first world is made on a thread of its own; `idle` is the picture
+# being of the choice as it stands.
+until idle 60
+expect selected "Map size"
+shot /tmp/setup-01-defaults.png
+
+# Down to the terrain, and two steps right: rolling -> hilly -> mountainous.
+key ArrowDown
+expect selected "Terrain"
+key ArrowRight
+key ArrowRight
+until idle 60
+shot /tmp/setup-02-mountainous.png
+
+# Heavy woodland and a large map, then a new seed.
+key ArrowDown
+key ArrowRight
+key ArrowUp
+key ArrowUp
+key ArrowRight
+until idle 60
+key KeyN
+until idle 60
+shot /tmp/setup-03-large-wooded.png
+
+# Backspace is the mod's own world again.
+key Backspace
+until idle 60
+expect log "World ready."
+
+# Enter begins the campaign on the world just shown.
+key Enter
+until log "Campaign started." 30
+wait 1.0
+shot /tmp/setup-04-campaign.png
+quit

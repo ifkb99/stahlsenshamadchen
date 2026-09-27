@@ -648,10 +648,22 @@ is what a loaded campaign stands on.
       level 0.40/1.44/2.31/3.80, towns 8/14/24 — and the realism columns
       read the same bad news on every row (clump 0.05–0.11, wood the same
       share high and low, 0–2% of wet ground by water), which is W6.4–W6.6.
-- [ ] **W6.3 The setup screen.** Before a fresh generated campaign: every
-      setting, its options, the seed and a new one on demand, and a
-      picture of the world it makes. `STAHL_WORLD=default` (or
-      `size=large,…`) skips it, for the tours.
+- [x] ~~**W6.3 The setup screen.**~~ **Done 2026-09-27.**
+      `crates/game/src/setup.rs`, `AppState::WorldSetup`: before a fresh
+      generated campaign, every setting with its option (Up/Down, Left/
+      Right), the seed (N for a new one, drawn from the clock — the one
+      place the game does, and it never reaches the simulation, which is
+      handed the number), Backspace for the mod's own world, and a picture
+      of the world at a pixel a tile, hillshaded, with the rivers, roads,
+      towns, factories and both sides' companies drawn over it. The
+      picture is the real campaign: each choice runs `from_map_setup` on a
+      thread of its own (a run of key presses costs one world, after the
+      last), and Enter hands *that* campaign to the map
+      (`PreparedCampaign`), so what she saw is what she gets. A drawn
+      campaign skips the screen; `STAHL_WORLD=default` or
+      `size=large,…,seed=4` skips it with a choice, which the three tours
+      that are about something else now declare. `world-setup` is the
+      screen's own tour.
 - [ ] **W6.4 Relief with a shape.** Large-scale landforms — ranges and
       uplands with valleys between — under the local noise, and a noise
       without lattice-straight edges. A setting's relief option picks the

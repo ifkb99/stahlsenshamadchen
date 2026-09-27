@@ -149,7 +149,7 @@
     {
       "id": "size", "name": "Map size", "default": "standard",
       "options": [
-        { "id": "small", "name": "Small", "text": "56 km across; the armies meet in a day or two.",
+        { "id": "small", "name": "Small", "text": "60 km across; the armies meet sooner.",
           "set": { "radius": 7 } },
         { "id": "standard", "name": "Standard", "text": "84 km across." },
         { "id": "large", "name": "Large", "text": "108 km across; room to manoeuvre, and a long march to contact.",

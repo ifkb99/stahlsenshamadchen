@@ -2,7 +2,7 @@
 # of the player's companies makes contact, the fight screen opens on it, and
 # she commits minute after minute until it is over — the fight resolved by
 # the world clock, in lockstep with the campaign.
-#!env STAHL_CAMPAIGN=frontier_world
+#!env STAHL_CAMPAIGN=frontier_world STAHL_WORLD=default
 #
 #   STAHL_CAMPAIGN=frontier_world STAHL_DEBUG=1 \
 #     STAHL_SCRIPT=scripts/dev/fight-on-the-ground.txt cargo run -p stahlsenshamädchen

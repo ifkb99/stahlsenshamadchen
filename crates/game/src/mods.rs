@@ -65,7 +65,10 @@ fn load_mods(
             commands.insert_resource(crate::battle::PendingBattle::Scenario { map_id });
             next.set(AppState::Battle);
         }
-        None => next.set(AppState::Overworld),
+        None => next.set(crate::setup::first_campaign_screen(
+            &mut commands,
+            &registry,
+        )),
     }
 }
 

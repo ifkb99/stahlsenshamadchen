@@ -534,6 +534,14 @@ and the seam tests in `tests/ground.rs`.
   ending names every one. `examples/worldgen --settings` prints what each
   option does to the tiles, and `--world size=large,...` reaches both
   instruments.
+- **The setup screen hands over the campaign it drew** (`setup.rs`,
+  W6.3): each choice builds the whole campaign on a background thread and
+  the preview is its tiles, so Enter moves that `OverworldState` into the
+  map (`PreparedCampaign`) rather than making a second one that could
+  differ. A generated campaign always opens on it; **a tour that is about
+  something else declares `STAHL_WORLD=default`** on its `#!env` line (or
+  a choice, `size=small,seed=4`), or it waits on a screen it never
+  expected.
 - **The game opens on the campaign the mods name** (`campaign` in
   `mod.json`, `frontier_world` in the base mod; `validate-mods` errors on
   anything that is not an overworld map), then on the first overworld map

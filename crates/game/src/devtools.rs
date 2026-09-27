@@ -639,6 +639,8 @@ fn parse_key(name: &str) -> Option<KeyCode> {
         "Escape" | "Esc" => Some(KeyCode::Escape),
         "Space" => Some(KeyCode::Space),
         "Tab" => Some(KeyCode::Tab),
+        // The world setup screen's "back to the defaults" (WORLD.md W6.3).
+        "Backspace" => Some(KeyCode::Backspace),
         "ArrowUp" | "Up" => Some(KeyCode::ArrowUp),
         "ArrowDown" | "Down" => Some(KeyCode::ArrowDown),
         "ArrowLeft" | "Left" => Some(KeyCode::ArrowLeft),
