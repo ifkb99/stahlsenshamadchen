@@ -31,6 +31,8 @@ pub struct WorldGen {
     #[serde(default)]
     pub towns: Towns,
     #[serde(default)]
+    pub villages: Villages,
+    #[serde(default)]
     pub roads: Roads,
     /// Which terrain each kind of ground is written as.
     #[serde(default)]
@@ -204,6 +206,7 @@ impl Default for WorldGen {
             cover: Cover::default(),
             rivers: Rivers::default(),
             towns: Towns::default(),
+            villages: Villages::default(),
             roads: Roads::default(),
             terrain: GroundPalette::default(),
             summary: default_summary(),
@@ -359,6 +362,12 @@ pub struct Towns {
     pub factory_worth: u32,
     /// How near a fight a town has to be, in tiles, to be fought over.
     pub contested_within: u32,
+    /// How many of the towns are cities (W6.7): the best sites, and the
+    /// factories go to them first. Zero is every town a town.
+    pub cities: u32,
+    /// How far a city reaches from its centre, in tiles. Zero is a town's
+    /// `radius`.
+    pub city_radius: u32,
 }
 
 impl Default for Towns {
@@ -372,6 +381,8 @@ impl Default for Towns {
             worth: 2,
             factory_worth: 4,
             contested_within: 30,
+            cities: 0,
+            city_radius: 0,
         }
     }
 }
@@ -380,6 +391,40 @@ impl Towns {
     /// How many towns a world of `hexes` campaign hexes has.
     pub fn count(&self, hexes: u32) -> u32 {
         per(hexes, self.every)
+    }
+}
+
+/// The villages between the towns (W6.7): a cluster of houses a tile or two
+/// across, on low ground by water, every few kilometres, the way farmland
+/// is settled. Not objectives and not campaign hexes' names — a campaign
+/// that fought over every village would be about nothing else — but cover
+/// on the ground, and a tactical fact wherever a fight comes near one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Villages {
+    /// How many villages for every ten campaign hexes of world. Zero is
+    /// none, the game before.
+    pub per_ten_hexes: u32,
+    /// How far a village reaches from its centre, in tiles.
+    pub radius: u32,
+    /// How far apart villages stand, and how far from a town, in tiles.
+    pub spacing: u32,
+}
+
+impl Default for Villages {
+    fn default() -> Self {
+        Self {
+            per_ten_hexes: 0,
+            radius: 1,
+            spacing: 12,
+        }
+    }
+}
+
+impl Villages {
+    /// How many villages a world of `hexes` campaign hexes has.
+    pub fn count(&self, hexes: u32) -> u32 {
+        (hexes * self.per_ten_hexes + 5) / 10
     }
 }
 

@@ -541,6 +541,14 @@ and the seam tests in `tests/ground.rs`.
   rounded `sqrt` — in districts of hedgerow country calibrated to
   `hedge_percent`; they are never the fringe of the wood noise again
   (`hedges_bound_fields_rather_than_fringe_woods`, mutation-checked).
+- **Settlements come in three sizes** (W6.7): cities (the best
+  `towns.cities` sites, `city_radius`, where the factories go), towns (by a
+  river, not merely by water — since W6.5 a stream is near nearly
+  anywhere), and villages (`villages`: low, level, by running water,
+  spaced in tiles). A village is town terrain and nothing else: not an
+  objective, not a campaign hex's name, not a road node, so
+  `SkeletonFeature::Town`, `contest_towns` and `place_armies` all still
+  read `skeleton.towns` alone.
 - **A world's save carries its generator** (`GENERATOR_VERSION`), and a
   save from another is refused: a world saves as how to make it, so a
   change to *how* would otherwise put different ground under the same

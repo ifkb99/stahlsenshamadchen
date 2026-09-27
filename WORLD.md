@@ -718,8 +718,21 @@ is what a loaded campaign stands on.
       now (wet ground within 300 m of a river: 23%, from 10 at W6.5). The
       campaign map reads as regions (clump 0.08 → 0.14). `GENERATOR_VERSION`
       4. Wars: 4–4 over eight seeds.
-- [ ] **W6.7 Settlements in a hierarchy** — a city, towns, villages — on
-      rivers and road junctions, roads down the valleys.
+- [x] ~~**W6.7 Settlements in a hierarchy.**~~ **Done 2026-09-27.** The
+      best `towns.cities` (3) sites are cities of `city_radius` (5), and the
+      factories go to them. Towns want a river within four tiles, not any
+      water: since W6.5 a stream is within reach of nearly anywhere, so
+      "by water" had stopped telling sites apart. Villages
+      (`villages.per_ten_hexes` 10, radius 1, spacing 12): the best of a
+      sample of every ninth tile, low, level and by running water, greedily
+      spaced and clear of the towns — town terrain on the ground, but not
+      objectives, not campaign hexes' names, not road nodes. Seed 1: 331
+      villages, all on the lower half of the land; 41% within 300 m of
+      running water against 4% of the land (12% without the pull), towns
+      on rivers. Settlement moves villages too (sparse 132, dense 662).
+      Roads still join towns only, straight across the valleys rather
+      than down them; that and village lanes are left. `GENERATOR_VERSION`
+      5. Wars: 4–4 over eight seeds, 14 battles.
 - [ ] **W6.8 The campaign map drawn at its own scale**: its own vertical
       exaggeration, rivers drawn, a summary that does not call every hex a
       road touches a highway.

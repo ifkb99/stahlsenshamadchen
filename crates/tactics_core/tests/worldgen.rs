@@ -775,3 +775,106 @@ fn hedges_bound_fields_rather_than_fringe_woods() {
         100.0 * by_wood
     );
 }
+
+// --- settlements in a hierarchy (W6.7) ------------------------------------------
+
+#[test]
+fn settlements_come_in_sizes_and_the_factories_are_in_the_cities() {
+    // Fourteen identical towns of 700 m was the diagnosis. A country has a
+    // few cities, more towns, and villages everywhere between them; the
+    // factories — what the war is about — are in the cities.
+    let reg = registry();
+    let made = sized(&reg, 1, 6);
+    let t = &made.rules.towns;
+    assert!(
+        t.cities > 0 && t.city_radius > t.radius,
+        "the mod ships cities"
+    );
+    let towns = &made.skeleton.towns;
+    let cities: Vec<_> = towns.iter().filter(|x| x.radius == t.city_radius).collect();
+    assert_eq!(cities.len() as u32, t.cities.min(towns.len() as u32));
+    assert!(
+        towns
+            .iter()
+            .filter(|x| x.factory)
+            .all(|x| x.radius == t.city_radius),
+        "a factory in a town, not a city"
+    );
+    let villages = &made.skeleton.villages;
+    assert_eq!(
+        villages.len() as u32,
+        made.rules.villages.count(made.rules.hexes()),
+        "every village the density asks for found a site"
+    );
+    assert!(villages.len() > 5 * towns.len());
+    for (i, a) in villages.iter().enumerate() {
+        for b in &villages[i + 1..] {
+            assert!(a.unsigned_distance_to(*b) >= made.rules.villages.spacing);
+        }
+        for town in towns {
+            assert!(a.unsigned_distance_to(town.centre) > town.radius);
+        }
+    }
+}
+
+#[test]
+fn villages_settle_low_ground_by_water_and_towns_the_rivers() {
+    let reg = registry();
+    let made = sized(&reg, 1, 6);
+    let tiles = all_tiles(&made);
+    let palette = &made.rules.terrain;
+    let mut levels: Vec<i32> = tiles.values().map(|(_, l)| *l).collect();
+    levels.sort_unstable();
+    let median = levels[levels.len() / 2];
+    let level_at = |h: &Hex| tiles.get(h).map(|(_, l)| *l).unwrap_or(0);
+    let water_near = |h: &Hex, r: u32, terrains: &[&String]| {
+        h.range(r)
+            .any(|n| tiles.get(&n).is_some_and(|(t, _)| terrains.contains(&t)))
+    };
+    let villages = &made.skeleton.villages;
+    let low =
+        villages.iter().filter(|v| level_at(v) <= median).count() as f64 / villages.len() as f64;
+    let wet = villages
+        .iter()
+        .filter(|v| water_near(v, 3, &[&palette.water, &palette.stream]))
+        .count() as f64
+        / villages.len() as f64;
+    // Against how much of the land lies that near running water at all, so
+    // the claim is that villages seek it, not that water is common.
+    let land = tiles
+        .iter()
+        .filter(|(_, (t, _))| *t != palette.water && *t != palette.stream)
+        .map(|(h, _)| *h)
+        .collect::<Vec<_>>();
+    let base = land
+        .iter()
+        .step_by(7)
+        .filter(|h| water_near(h, 3, &[&palette.water, &palette.stream]))
+        .count() as f64
+        / land.iter().step_by(7).count() as f64;
+    assert!(
+        low > 0.75,
+        "{:.0}% of villages on the lower half",
+        100.0 * low
+    );
+    assert!(
+        wet > 5.0 * base,
+        "{:.0}% of villages by running water, against {:.0}% of the land",
+        100.0 * wet,
+        100.0 * base
+    );
+    // A town wants a river, not merely a stream: in reach of the river trade
+    // and at its bridge.
+    let by_river = made
+        .skeleton
+        .towns
+        .iter()
+        .filter(|t| water_near(&t.centre, t.radius + 4, &[&palette.water]))
+        .count() as f64
+        / made.skeleton.towns.len() as f64;
+    assert!(
+        by_river > 0.5,
+        "{:.0}% of towns by a river",
+        100.0 * by_river
+    );
+}

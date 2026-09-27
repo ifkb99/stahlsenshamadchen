@@ -883,6 +883,12 @@ impl DataRegistry {
                 wg.towns.factories
             ));
         }
+        if wg.towns.cities > towns {
+            report.error(format!(
+                "{label}: asks for {} cities in {towns} towns",
+                wg.towns.cities
+            ));
+        }
         let r = &wg.rivers;
         if r.stream > 0 && !(r.stream <= r.river && r.river <= r.broad) {
             report.error(format!(
