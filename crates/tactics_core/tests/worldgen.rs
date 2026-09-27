@@ -878,3 +878,37 @@ fn villages_settle_low_ground_by_water_and_towns_the_rivers() {
         100.0 * by_river
     );
 }
+
+// --- the campaign map at its own scale (W6.8) -------------------------------------
+
+#[test]
+fn the_campaign_map_stands_at_its_own_vertical_scale() {
+    // A campaign hex is four kilometres across; drawn at the battle's ten
+    // metres a level every hill was a tower. The campaign's levels are its
+    // own (`scale.overworld_elevation_meters`), and one scale for both is
+    // the campaign map exactly as it was.
+    let reg = registry();
+    let made = sized(&reg, 1, 4);
+    let one_scale = tactics_core::data::Scale {
+        overworld_elevation_meters: reg.scale.elevation_meters,
+        ..reg.scale
+    };
+    let as_battle = made.campaign_map(&one_scale);
+    for chunk in made.chunks() {
+        assert_eq!(
+            as_battle.get(chunk).map(|t| t.elevation),
+            made.summary(chunk).map(|s| s.elevation),
+            "one scale for both is the land's mean level"
+        );
+    }
+    assert!(reg.scale.overworld_elevation_meters > reg.scale.elevation_meters);
+    let shipped = made.campaign_map(&reg.scale);
+    let ratio = reg.scale.elevation_meters / reg.scale.overworld_elevation_meters;
+    for chunk in made.chunks() {
+        let tenths = made.summary(chunk).unwrap().mean_tenths as f32;
+        let level = shipped.get(chunk).unwrap().elevation;
+        assert_eq!(level, (tenths / 10.0 * ratio).round() as i32);
+    }
+    let highest = |m: &tactics_core::map::HexMap| m.iter().map(|(_, t)| t.elevation).max();
+    assert!(highest(&shipped) < highest(&as_battle));
+}

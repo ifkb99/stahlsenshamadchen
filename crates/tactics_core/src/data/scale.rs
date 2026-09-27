@@ -54,6 +54,13 @@ pub struct Scale {
     /// one battle map across, which is what makes a field battle a zoom-in on
     /// the tile the armies met in rather than a separate abstraction.
     pub overworld_hex_meters: f32,
+    /// Height of one elevation level on the campaign map, in metres: the
+    /// campaign's own vertical scale (WORLD.md W6.8). A campaign hex is four
+    /// kilometres across, and drawn at the battle's ten metres a level
+    /// every hill stood up as a tower, about ninety times exaggerated. A
+    /// generated campaign's hexes are raised by their land's mean height
+    /// in these units. Equal to `elevation_meters` is one scale for both.
+    pub overworld_elevation_meters: f32,
     /// How much time one overworld turn represents, in hours.
     ///
     /// A day, which is what the campaign layer has quietly assumed all along:
@@ -73,6 +80,7 @@ impl Default for Scale {
             ticks_per_round: 12,
             elevation_meters: 10.0,
             overworld_hex_meters: 4000.0,
+            overworld_elevation_meters: 10.0,
             overworld_turn_hours: 24.0,
         }
     }

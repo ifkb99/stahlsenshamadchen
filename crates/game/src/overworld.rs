@@ -251,6 +251,7 @@ impl Plugin for OverworldPlugin {
                     update_muster_ui,
                     update_debrief_ui,
                     update_roster_ui,
+                    draw_rivers,
                 )
                     .chain()
                     .in_set(ScreenSet::Present)
@@ -282,6 +283,114 @@ impl Plugin for OverworldPlugin {
                         .run_if(in_state(AppState::Overworld)),
                 );
         }
+    }
+}
+
+/// The rivers of a generated world, in campaign coordinates: each river's
+/// course as fractional campaign hexes, with the campaign elevation of the
+/// hex each point stands in. Made once per world and kept, because the
+/// drawing is redone every frame and the courses never change.
+#[derive(Default)]
+struct RiverLines {
+    /// Which world these are the rivers of: a weak handle, compared by
+    /// pointer, so a new campaign (or a loaded one) rebuilds them.
+    world: Option<std::sync::Weak<tactics_core::worldgen::GeneratedWorld>>,
+    lines: Vec<Vec<(Vec2, i32)>>,
+}
+
+/// Draw the rivers over the campaign map (WORLD.md W6.8). No campaign hex is
+/// named for a river — a hex a river crosses is still plains or forest — so
+/// before this the campaign map showed none, though a river is the one thing
+/// on it an army cannot simply drive across. Each river's own tiles, a
+/// point every few, are placed exactly where they lie on the campaign map:
+/// the chunk lattice is linear (`chunk_centre`), so a tile's position in
+/// campaign hexes is two numbers solved from it, then projected, rotated and
+/// raised to its hex's height the way a hex is. Hidden when zoomed onto the
+/// ground, where the water tiles are drawn themselves.
+fn draw_rivers(
+    overworld: Option<Res<Overworld>>,
+    view: map_render::View,
+    center: Res<ViewCenter>,
+    mut cache: Local<RiverLines>,
+    mut gizmos: Gizmos,
+) {
+    let Some(overworld) = overworld else {
+        return;
+    };
+    let Some(world) = overworld.state.world.as_ref() else {
+        return;
+    };
+    if overworld.ground.is_some() {
+        return;
+    }
+    let current = cache
+        .world
+        .as_ref()
+        .and_then(std::sync::Weak::upgrade)
+        .is_some_and(|w| std::sync::Arc::ptr_eq(&w, world));
+    if !current {
+        let r = world.chunk_radius;
+        let (a, b) = (
+            tactics_core::world::chunk_centre(Hex::new(1, 0), r),
+            tactics_core::world::chunk_centre(Hex::new(0, 1), r),
+        );
+        let det = (a.x * b.y - b.x * a.y) as f32;
+        let campaign = |t: Hex| {
+            Vec2::new(
+                (t.x as f32 * b.y as f32 - b.x as f32 * t.y as f32) / det,
+                (a.x as f32 * t.y as f32 - t.x as f32 * a.y as f32) / det,
+            )
+        };
+        let lines = world
+            .skeleton
+            .rivers
+            .iter()
+            .filter(|c| c.river().len() > 1)
+            .map(|c| {
+                // The confluence too, so a tributary meets its river.
+                let tiles: Vec<Hex> = c.tiles[c.river_from.min(c.tiles.len())..].to_vec();
+                let last = tiles.len() - 1;
+                tiles
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| i % 4 == 0 || *i == last)
+                    .map(|(_, t)| {
+                        let hex = tactics_core::world::chunk_of(*t, r);
+                        let level = overworld.state.map.get(hex).map_or(0, |x| x.elevation);
+                        (campaign(*t), level)
+                    })
+                    .collect()
+            })
+            .collect();
+        *cache = RiverLines {
+            world: Some(std::sync::Arc::downgrade(world)),
+            lines,
+        };
+    }
+    // The projection is linear in axial coordinates, so a fractional hex is
+    // placed by the same rotation and layout as a whole one.
+    let rotation = view.rotation();
+    let turn = |h: Hex| h.rotate_cw_around(Hex::ZERO, rotation);
+    let (e1, e2) = (turn(Hex::new(1, 0)), turn(Hex::new(0, 1)));
+    let layout = iso::layout();
+    let w = |h: Hex| {
+        let p = layout.hex_to_world_pos(h);
+        Vec2::new(p.x, p.y)
+    };
+    let (w1, w2) = (w(Hex::new(1, 0)), w(Hex::new(0, 1)));
+    let c = center.0;
+    let origin = w(c);
+    let colour = Color::srgb(0.30, 0.55, 0.95);
+    for line in &cache.lines {
+        gizmos.linestrip_2d(
+            line.iter().map(|(p, level)| {
+                let d = Vec2::new(p.x - c.x as f32, p.y - c.y as f32);
+                let q = d.x * e1.x as f32 + d.y * e2.x as f32;
+                let r = d.x * e1.y as f32 + d.y * e2.y as f32;
+                origin + q * w1 + r * w2 + Vec2::new(0.0, *level as f32 * iso::ELEV_PX)
+            }),
+            colour,
+        );
     }
 }
 

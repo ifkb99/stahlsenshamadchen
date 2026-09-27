@@ -733,9 +733,28 @@ is what a loaded campaign stands on.
       Roads still join towns only, straight across the valleys rather
       than down them; that and village lanes are left. `GENERATOR_VERSION`
       5. Wars: 4–4 over eight seeds, 14 battles.
-- [ ] **W6.8 The campaign map drawn at its own scale**: its own vertical
-      exaggeration, rivers drawn, a summary that does not call every hex a
-      road touches a highway.
+- [x] ~~**W6.8 The campaign map drawn at its own scale.**~~ **Done
+      2026-09-27.** `scale.overworld_elevation_meters` (30 in the base mod,
+      the battle's 10 by default) is the campaign's own vertical scale: a
+      generated campaign hex is raised by its land's mean height in those
+      units (`Summary::mean_tenths`), so mountains are ranges a level or two
+      high rather than towers. It also closes CLAUDE.md's "overworld
+      elevation is priced at the battle scale", which no rule reads on a
+      generated world. Rivers are drawn over the campaign map as lines
+      (`draw_rivers`): no campaign hex is named for one, so the map showed
+      none, though a river is the one thing on it a column cannot drive
+      across. The chunk lattice is linear, so each river tile's position in
+      campaign hexes is solved exactly and projected like a hex. The
+      "highway" summary is left as it is: it names only a hex that is not
+      a town, mountains or forest, so it draws the road net across the
+      open country, which reads as roads.
+
+Found along the way and not yet anybody's rule: on seed 1 from W6.5 on,
+the campaign AI does not come for a player who waits (no contact in 16
+minutes of fast clock, against about one on W6.4's ground), and on
+mountainous ground the Valkyries win five of eight by holding the
+factories with little fighting. Where the factories fall relative to each
+side's start, and what makes the AI attack, want their own look.
 
 W6.4 onward change what every generated campaign stands on. Saves carry a
 world as its seed and rules, and regenerate it with the generator of the
