@@ -7,14 +7,15 @@
 #   STAHL_CAMPAIGN=frontier_world STAHL_DEBUG=1 \
 #     STAHL_SCRIPT=scripts/dev/send-a-vehicle-out.txt cargo run -p stahlsenshamädchen
 #
-# The 1st Company stands in the western town at axial (-3, -7) (see
+# The 1st Company stands in the western town at axial (-1, -8) (see
 # generated-campaign); its second vehicle is the recon car, and (-2, -7) is
-# the hex beside it.
+# the open hex beside it. Both move whenever the generator does
+# (GENERATOR_VERSION): this is seed 1's world under generator 2.
 
 at 3.0
 until idle 10
 wait 1.0
-hex -3,-7
+hex -1,-8
 wait 0.3
 click left
 wait 0.3

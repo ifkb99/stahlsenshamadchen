@@ -123,8 +123,11 @@
   },
   "worldgen": {
     "radius": 10,
-    "relief": { "scale": 48, "octaves": 3, "shares": [38, 24, 15, 10, 7, 4, 2] },
-    "cover": { "scale": 18, "wood_percent": 28, "hedge_percent": 9, "wet_percent": 20 },
+    "relief": {
+      "scale": 48, "octaves": 3, "shares": [38, 24, 15, 10, 7, 4, 2],
+      "landform_percent": 40, "landform_scale": 300, "ridge_percent": 35, "ridge_scale": 160
+    },
+    "cover": { "scale": 40, "wood_percent": 28, "hedge_percent": 9, "wet_percent": 20 },
     "rivers": { "every": 110, "spacing": 4 },
     "towns": {
       "every": 24, "spacing": 3, "radius": 3, "factories": 2,
@@ -160,12 +163,15 @@
       "id": "relief", "name": "Terrain", "default": "rolling",
       "options": [
         { "id": "flat", "name": "Flat", "text": "Open plain; little to hide behind, long sight lines.",
-          "set": { "relief.scale": 64, "relief.shares": [70, 22, 6, 2] } },
+          "set": { "relief.shares": [70, 22, 6, 2], "relief.landform_percent": 65, "relief.ridge_percent": 0 } },
         { "id": "rolling", "name": "Rolling", "text": "Low hills and gentle ground." },
         { "id": "hilly", "name": "Hilly", "text": "Ridges and valleys; high ground worth fighting for.",
-          "set": { "relief.shares": [22, 20, 17, 14, 11, 8, 5, 3] } },
+          "set": { "relief.shares": [22, 20, 17, 14, 11, 8, 5, 3], "relief.ridge_percent": 45 } },
         { "id": "mountainous", "name": "Mountainous", "text": "Steep country; the roads are the only easy way through.",
-          "set": { "relief.scale": 40, "relief.shares": [12, 13, 13, 12, 11, 10, 9, 8, 7, 5] } }
+          "set": {
+            "relief.shares": [12, 13, 13, 12, 11, 10, 9, 8, 7, 5],
+            "relief.landform_percent": 30, "relief.ridge_percent": 55, "relief.ridge_scale": 120
+          } }
       ]
     },
     {

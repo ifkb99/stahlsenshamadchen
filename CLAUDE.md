@@ -509,8 +509,21 @@ and the seam tests in `tests/ground.rs`.
   `tile(hex)` is a pure function of seed, rules, skeleton and hex, with no
   chunk boundary inside it — which is why there is no seam to test for,
   and the test is that any order of chunks gives the same ground.
-- **Noise is `+` and `*` over integer hashes**, and shares are quantiles of
-  the world's own noise, so "28% wood" is true of every world.
+- **Noise is `+`, `*` and `floor` over integer hashes**, and shares are
+  quantiles of the world's own noise, so "28% wood" is true of every
+  world. Simplex since W6.4 (lattice value noise drew grid-straight wood
+  edges and relief bands), its octaves turned by the 3-4-5 rotation so no
+  sine is ever taken. **Relief is three layers weighted by data**: the
+  local hills, the landform (uplands and lowlands a few hundred tiles
+  across, `relief.landform_*`) and ridged ranges raised on the uplands
+  (`relief.ridge_*`). Neighbouring campaign hexes' heights correlate 0.69
+  on seed 1 with them and −0.12 without (about 0.35 under the old noise):
+  the land has regions now, and `the_land_has_regions_larger_than_a_campaign_hex`
+  fails with the layers switched off.
+- **A world's save carries its generator** (`GENERATOR_VERSION`), and a
+  save from another is refused: a world saves as how to make it, so a
+  change to *how* would otherwise put different ground under the same
+  armies without a word. **Bump it with any change that moves a tile.**
 - **A tie goes to a seeded lot (`lot`), never a coordinate.** Coordinates
   first put every town on the western edge; the compass spoils maps the way
   it spoils decisions.
