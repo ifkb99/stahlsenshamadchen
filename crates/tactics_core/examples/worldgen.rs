@@ -6,8 +6,11 @@
 //! cargo run --release -p tactics_core --example worldgen -- [seed] --relief
 //! cargo run --release -p tactics_core --example worldgen -- [seed] --world woodland=heavy,size=small
 //! cargo run --release -p tactics_core --example worldgen -- [seed] --settings
+//! cargo run --release -p tactics_core --example worldgen -- [seed] --picture world.ppm
 //! ```
 //!
+//! `--picture` writes the world a pixel a tile, drawn the way the game's
+//! setup screen draws it (`worldgen::picture`), as a PPM any viewer reads.
 //! `--world` makes the world to the choices the setup screen offers
 //! (`world_settings` in `mod.json`). `--settings` makes one world per option
 //! of every setting, the others at their defaults, and prints a row of
@@ -64,6 +67,12 @@ fn main() {
         .expect("the base mod declares a world");
     let radius = registry.scale.battle_map_radius();
 
+    let picture_path = args
+        .iter()
+        .position(|a| a == "--picture")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+
     if args.iter().any(|a| a == "--settings") {
         settings_table(&registry, &base, radius, seed);
         return;
@@ -79,6 +88,18 @@ fn main() {
     let start = Instant::now();
     let world = GeneratedWorld::with_rules(rules, radius, seed).expect("the rules make a world");
     let made = start.elapsed();
+
+    if let Some(path) = picture_path {
+        let pic = tactics_core::worldgen::picture(&registry, &world, &[]);
+        // A binary PPM: no image library in the core crate, and every
+        // viewer and converter reads it.
+        let mut bytes = format!("P6\n{} {}\n255\n", pic.width, pic.height).into_bytes();
+        for px in pic.rgba.chunks(4) {
+            bytes.extend_from_slice(&px[..3]);
+        }
+        std::fs::write(&path, bytes).expect("the picture writes");
+        println!("wrote {path} ({}x{})", pic.width, pic.height);
+    }
 
     if let Some(chunk) = chunk {
         draw_chunk(&world, chunk);
@@ -185,13 +206,14 @@ struct Stats {
     towns: usize,
     classes: BTreeMap<char, usize>,
     clump: f64,
+    height_corr: f64,
     wood_hi: f64,
     wood_lo: f64,
     wet_at_water: f64,
 }
 
 impl Stats {
-    const HEADER: &str = "  world                  hexes  wood hedge  wet water town  level  rivers  towns   M   W   =   clump  wood hi/lo  wet@water";
+    const HEADER: &str = "  world                  hexes  wood hedge  wet water town  level  rivers  towns   M   W   =   clump  h-corr  wood hi/lo  wet@water";
 
     fn of(world: &GeneratedWorld) -> Self {
         let chunks: Vec<Hex> = world.chunks().collect();
@@ -274,6 +296,40 @@ impl Stats {
                 }
             }
         }
+        // Neighbouring campaign hexes' mean heights, correlated: whether the
+        // land has regions larger than a hex (W6.4). Near zero is none.
+        let mut height: HashMap<Hex, (i64, i64)> = HashMap::new();
+        for (h, (_, e)) in &tiles {
+            let slot = height
+                .entry(tactics_core::world::chunk_of(*h, world.chunk_radius))
+                .or_default();
+            slot.0 += *e as i64;
+            slot.1 += 1;
+        }
+        let mean: HashMap<Hex, f64> = height
+            .iter()
+            .map(|(c, (s, n))| (*c, *s as f64 / *n as f64))
+            .collect();
+        let hpairs: Vec<(f64, f64)> = mean
+            .iter()
+            .flat_map(|(c, a)| {
+                c.all_neighbors()
+                    .into_iter()
+                    .filter_map(|n| mean.get(&n).map(|b| (*a, *b)))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let np = hpairs.len().max(1) as f64;
+        let ma = hpairs.iter().map(|p| p.0).sum::<f64>() / np;
+        let mb = hpairs.iter().map(|p| p.1).sum::<f64>() / np;
+        let cov: f64 = hpairs.iter().map(|(a, b)| (a - ma) * (b - mb)).sum();
+        let va: f64 = hpairs.iter().map(|(a, _)| (a - ma).powi(2)).sum();
+        let vb: f64 = hpairs.iter().map(|(_, b)| (b - mb).powi(2)).sum();
+        let height_corr = if va * vb > 0.0 {
+            cov / (va * vb).sqrt()
+        } else {
+            0.0
+        };
         let total = summaries.len() as f64;
         let chance: f64 = classes.values().map(|c| (*c as f64 / total).powi(2)).sum();
         let clump = if pairs == 0 {
@@ -290,6 +346,7 @@ impl Stats {
             towns: world.skeleton.towns.len(),
             classes,
             clump,
+            height_corr,
             wood_hi,
             wood_lo,
             wet_at_water,
@@ -300,7 +357,7 @@ impl Stats {
         let share = |t: &str| self.shares.get(t).copied().unwrap_or(0.0);
         let class = |g: char| self.classes.get(&g).copied().unwrap_or(0);
         format!(
-            "  {label:<22} {:>5} {:>5.1} {:>5.1} {:>4.1} {:>5.2} {:>4.1} {:>6.2}  {:>2} {:>5}  {:>5}  {:>3} {:>3} {:>3}  {:>6.3}  {:>4.0}/{:<4.0}  {:>8.0}%",
+            "  {label:<22} {:>5} {:>5.1} {:>5.1} {:>4.1} {:>5.2} {:>4.1} {:>6.2}  {:>2} {:>5}  {:>5}  {:>3} {:>3} {:>3}  {:>6.3}  {:>6.2}  {:>4.0}/{:<4.0}  {:>8.0}%",
             self.hexes,
             share("forest"),
             share("hedgerow"),
@@ -315,6 +372,7 @@ impl Stats {
             class('W'),
             class('='),
             self.clump,
+            self.height_corr,
             self.wood_hi,
             self.wood_lo,
             self.wet_at_water,

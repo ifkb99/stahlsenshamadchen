@@ -43,7 +43,20 @@ enum Channel {
     Cover = 2,
     Wet = 3,
     Lot = 4,
+    Landform = 5,
+    Ridge = 6,
 }
+
+/// Which generator made a world: saved beside its seed and rules, and a
+/// save made by another is refused rather than regenerated. A world is
+/// saved as how to make it again (W1.6), so a change to *how* — a new noise,
+/// a new layer, a river drawn differently — would otherwise hand a loaded
+/// campaign different ground under the same armies with no error at all.
+/// Bump it with any change that moves a tile.
+///
+/// 2 is W6.4: simplex noise in place of lattice value noise, and the
+/// landform and ridge layers.
+pub const GENERATOR_VERSION: u32 = 2;
 
 /// SplitMix64: the one mixing function the world is made with.
 fn mix(state: u64, value: u64) -> u64 {
@@ -53,17 +66,58 @@ fn mix(state: u64, value: u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// A value in `[0, 1)` for one lattice point.
-fn lattice(seed: u64, channel: Channel, octave: u32, x: i64, y: i64) -> f64 {
-    let h = [channel as u64, octave as u64, x as u64, y as u64]
+/// The gradient at one corner of the simplex grid: one of eight directions,
+/// the compass points and the diagonals, chosen by hash.
+fn gradient(seed: u64, channel: Channel, octave: u32, i: i64, j: i64) -> (f64, f64) {
+    const D: f64 = std::f64::consts::FRAC_1_SQRT_2;
+    const G: [(f64, f64); 8] = [
+        (1.0, 0.0),
+        (-1.0, 0.0),
+        (0.0, 1.0),
+        (0.0, -1.0),
+        (D, D),
+        (-D, D),
+        (D, -D),
+        (-D, -D),
+    ];
+    let h = [channel as u64, octave as u64, i as u64, j as u64]
         .into_iter()
         .fold(mix(0, seed), mix);
-    (h >> 11) as f64 / (1u64 << 53) as f64
+    G[(h >> 61) as usize]
 }
 
-/// Smoothstep: continuous slope across a lattice cell's edge.
-fn fade(t: f64) -> f64 {
-    t * t * (3.0 - 2.0 * t)
+/// Simplex noise at a point of the plane, roughly in `[-1, 1]`.
+///
+/// It replaced lattice value noise (W6.4), whose bilinear blend across a
+/// square grid drew wood edges and relief bands along the grid's axes —
+/// straight lines a hex map shows plainly. Simplex has no preferred axis.
+/// Everything is `+`, `*` and `floor` on correctly-rounded IEEE values and
+/// the skew factors are constants, so a tile is the same tile on every
+/// machine, which is the rule this module was written under.
+fn simplex(seed: u64, channel: Channel, octave: u32, x: f64, y: f64) -> f64 {
+    const F2: f64 = 0.366_025_403_784_438_6; // (sqrt 3 - 1) / 2
+    const G2: f64 = 0.211_324_865_405_187_1; // (3 - sqrt 3) / 6
+    let s = (x + y) * F2;
+    let (i, j) = ((x + s).floor(), (y + s).floor());
+    let t = (i + j) * G2;
+    let (x0, y0) = (x - (i - t), y - (j - t));
+    let (i1, j1) = if x0 > y0 { (1.0, 0.0) } else { (0.0, 1.0) };
+    let corners = [
+        (x0, y0, 0.0, 0.0),
+        (x0 - i1 + G2, y0 - j1 + G2, i1, j1),
+        (x0 - 1.0 + 2.0 * G2, y0 - 1.0 + 2.0 * G2, 1.0, 1.0),
+    ];
+    let mut total = 0.0;
+    for (dx, dy, di, dj) in corners {
+        let falloff = 0.5 - dx * dx - dy * dy;
+        if falloff > 0.0 {
+            let (gx, gy) = gradient(seed, channel, octave, (i + di) as i64, (j + dj) as i64);
+            let f2 = falloff * falloff;
+            total += f2 * f2 * (gx * dx + gy * dy);
+        }
+    }
+    // Scaled so the extremes of eight unit gradients reach about one.
+    (total * 99.0).clamp(-1.0, 1.0)
 }
 
 /// Where a hex sits on the plane, in tiles. Pointy-topped axial to
@@ -76,31 +130,48 @@ fn plane(hex: Hex) -> (f64, f64) {
     )
 }
 
-/// Fractal value noise at `hex`: `octaves` layers, each twice as fine and
-/// half as strong as the last, normalised to `[0, 1)`.
-fn noise(seed: u64, channel: Channel, hex: Hex, scale: u32, octaves: u32) -> f64 {
-    let (px, py) = plane(hex);
+/// What one octave of noise makes of a raw simplex value.
+#[derive(Clone, Copy)]
+enum Shape {
+    /// `[0, 1)`, even: rises, hollows, woods.
+    Plain,
+    /// Sharp crests where the noise crosses zero, broad troughs between:
+    /// ranges with valleys, rather than blobs.
+    Ridged,
+}
+
+/// Fractal noise at `hex`: `octaves` layers, each twice as fine and half as
+/// strong as the last, normalised to `[0, 1]`. Each octave is turned by the
+/// 3-4-5 angle and shifted, so their grids never line up — a rotation by a
+/// Pythagorean triple is exact in `+` and `*`, with no sine to round
+/// differently on another machine.
+fn fractal(seed: u64, channel: Channel, hex: Hex, scale: u32, octaves: u32, shape: Shape) -> f64 {
+    let (mut px, mut py) = plane(hex);
     let mut total = 0.0;
     let mut weight = 0.0;
     let mut amplitude = 1.0;
     let mut cell = scale.max(1) as f64;
     for octave in 0..octaves.max(1) {
-        let (x, y) = (px / cell, py / cell);
-        let (ix, iy) = (x.floor(), y.floor());
-        let (fx, fy) = (fade(x - ix), fade(y - iy));
-        let (ix, iy) = (ix as i64, iy as i64);
-        let v00 = lattice(seed, channel, octave, ix, iy);
-        let v10 = lattice(seed, channel, octave, ix + 1, iy);
-        let v01 = lattice(seed, channel, octave, ix, iy + 1);
-        let v11 = lattice(seed, channel, octave, ix + 1, iy + 1);
-        let top = v00 + (v10 - v00) * fx;
-        let bottom = v01 + (v11 - v01) * fx;
-        total += (top + (bottom - top) * fy) * amplitude;
+        let n = simplex(seed, channel, octave, px / cell, py / cell);
+        let v = match shape {
+            Shape::Plain => 0.5 + 0.5 * n,
+            Shape::Ridged => {
+                let r = 1.0 - n.abs();
+                r * r
+            }
+        };
+        total += v * amplitude;
         weight += amplitude;
         amplitude *= 0.5;
         cell = (cell * 0.5).max(1.0);
+        (px, py) = (0.6 * px - 0.8 * py + 131.0, 0.8 * px + 0.6 * py + 71.0);
     }
     total / weight
+}
+
+/// Plain fractal noise, the shape everything but the ridges is made of.
+fn noise(seed: u64, channel: Channel, hex: Hex, scale: u32, octaves: u32) -> f64 {
+    fractal(seed, channel, hex, scale, octaves, Shape::Plain)
 }
 
 /// A town: where, how far it reaches, and whether it has a factory.
@@ -179,6 +250,14 @@ struct SavedGeneration {
     seed: u64,
     rules: WorldGen,
     chunk_radius: u32,
+    /// [`GENERATOR_VERSION`] when it was saved. Absent in a save from
+    /// before the field, which was generator 1.
+    #[serde(default = "first_generator")]
+    generator: u32,
+}
+
+fn first_generator() -> u32 {
+    1
 }
 
 impl Serialize for GeneratedWorld {
@@ -187,6 +266,7 @@ impl Serialize for GeneratedWorld {
             seed: self.seed,
             rules: self.rules.clone(),
             chunk_radius: self.chunk_radius,
+            generator: GENERATOR_VERSION,
         }
         .serialize(s)
     }
@@ -195,6 +275,13 @@ impl Serialize for GeneratedWorld {
 impl<'de> Deserialize<'de> for GeneratedWorld {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let saved = SavedGeneration::deserialize(d)?;
+        if saved.generator != GENERATOR_VERSION {
+            return Err(serde::de::Error::custom(format!(
+                "this world was made by generator {}, and this build makes worlds with \
+                 generator {GENERATOR_VERSION}: regenerated, it would be different ground",
+                saved.generator
+            )));
+        }
         Self::with_rules(saved.rules, saved.chunk_radius, saved.seed)
             .map_err(serde::de::Error::custom)
     }
@@ -257,9 +344,40 @@ impl GeneratedWorld {
 
     // --- the tile function -------------------------------------------------
 
+    /// The height of the land before it is cut into levels: three layers
+    /// weighted by the mod (W6.4). The hills are the local rise and fall.
+    /// The landform is the country's broad shape — uplands and lowlands
+    /// several campaign hexes across, the scale at which a campaign map
+    /// should read as regions rather than salt and pepper. The ridges are
+    /// ranges with valleys between them, raised where the landform is high,
+    /// because mountains stand on uplands. A mod that weights neither is the
+    /// hills alone.
     fn relief_noise(&self, hex: Hex) -> f64 {
         let r = &self.rules.relief;
-        noise(self.seed, Channel::Relief, hex, r.scale, r.octaves)
+        let hills = noise(self.seed, Channel::Relief, hex, r.scale, r.octaves);
+        let land_share = r.landform_percent.min(100) as f64 / 100.0;
+        let ridge_share = r.ridge_percent.min(100) as f64 / 100.0;
+        if land_share == 0.0 && ridge_share == 0.0 {
+            return hills;
+        }
+        let land = noise(self.seed, Channel::Landform, hex, r.landform_scale, 2);
+        let ridge = if ridge_share > 0.0 {
+            let crest = fractal(
+                self.seed,
+                Channel::Ridge,
+                hex,
+                r.ridge_scale,
+                3,
+                Shape::Ridged,
+            );
+            // Ranges rise out of the uplands and die away in the lowlands.
+            let upland = ((land - 0.35) / 0.4).clamp(0.0, 1.0);
+            crest * (0.25 + 0.75 * upland)
+        } else {
+            0.0
+        };
+        let hill_share = (1.0 - land_share - ridge_share).max(0.0);
+        hills * hill_share + land * land_share + ridge * ridge_share
     }
 
     fn cover_noise(&self, hex: Hex) -> f64 {
@@ -829,4 +947,114 @@ impl GeneratedWorld {
             }
         }
     }
+}
+
+/// A world drawn a pixel a tile, as rows of RGBA: what the setup screen
+/// shows the player and what `examples/worldgen --picture` writes, one
+/// drawing for both so the instrument and the screen cannot disagree.
+pub struct Picture {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+impl Picture {
+    /// The pixel `hex` falls on, if it is inside the picture. A row per `r`,
+    /// and within it `q` shifted half a pixel a row, which puts every tile
+    /// on a pixel of its own; rows are 0.866 of a column apart on the
+    /// ground, which whoever shows the picture should stretch back.
+    fn at(&self, origin: (i32, i32), hex: Hex) -> Option<usize> {
+        let x = (2 * hex.x + hex.y).div_euclid(2) - origin.0;
+        let y = hex.y - origin.1;
+        (x >= 0 && y >= 0 && (x as u32) < self.width && (y as u32) < self.height)
+            .then(|| ((y as u32 * self.width + x as u32) * 4) as usize)
+    }
+}
+
+/// Draw `world`: each tile in its terrain's map colour, lighter the higher
+/// it stands and lit from the north-west so slopes read as slopes; the
+/// skeleton over it a touch heavier than its tiles, because at a pixel a
+/// tile a river one tile wide vanishes and these are what a commander plans
+/// around; factories ringed; and `marks` — a colour at a tile, the armies —
+/// last.
+pub fn picture(
+    registry: &DataRegistry,
+    world: &GeneratedWorld,
+    marks: &[(Hex, [u8; 3])],
+) -> Picture {
+    let tiles: Vec<(Hex, &str, i32)> = world.chunks().flat_map(|c| world.chunk_tiles(c)).collect();
+    let col = |h: Hex| (2 * h.x + h.y).div_euclid(2);
+    let (min_x, max_x) = tiles
+        .iter()
+        .map(|(h, _, _)| col(*h))
+        .fold((i32::MAX, i32::MIN), |(a, b), x| (a.min(x), b.max(x)));
+    let (min_y, max_y) = tiles
+        .iter()
+        .map(|(h, _, _)| h.y)
+        .fold((i32::MAX, i32::MIN), |(a, b), y| (a.min(y), b.max(y)));
+    let origin = (min_x, min_y);
+    let mut pic = Picture {
+        width: (max_x - min_x + 1).max(1) as u32,
+        height: (max_y - min_y + 1).max(1) as u32,
+        rgba: Vec::new(),
+    };
+    pic.rgba = vec![0; (pic.width * pic.height * 4) as usize];
+    let put = |pic: &mut Picture, hex: Hex, [r, g, b]: [u8; 3]| {
+        if let Some(i) = pic.at(origin, hex) {
+            pic.rgba[i..i + 4].copy_from_slice(&[r, g, b, 255]);
+        }
+    };
+    let palette = &world.rules.terrain;
+    let levels: HashMap<Hex, i32> = tiles.iter().map(|(h, _, l)| (*h, *l)).collect();
+    let mut colours: HashMap<&str, [u8; 3]> = HashMap::new();
+    const WATER: [u8; 3] = [60, 120, 215];
+    for (hex, terrain, level) in &tiles {
+        let base = *colours.entry(terrain).or_insert_with(|| {
+            registry
+                .terrain(terrain)
+                .and_then(|t| crate::data::parse_color(&t.color))
+                .unwrap_or([128, 128, 128])
+        });
+        let colour = if *terrain == palette.water {
+            WATER
+        } else {
+            let upslope = levels
+                .get(&(*hex + Hex::new(0, -1)))
+                .copied()
+                .unwrap_or(*level);
+            let lit = (*level - upslope) as f32 * 0.16;
+            let height = 0.70 + 0.07 * (*level).clamp(0, 9) as f32;
+            base.map(|c| (c as f32 * (height + lit)).clamp(0.0, 255.0) as u8)
+        };
+        put(&mut pic, *hex, colour);
+    }
+    for river in &world.skeleton.rivers {
+        for hex in river {
+            put(&mut pic, *hex, WATER);
+            put(&mut pic, *hex + Hex::new(1, 0), WATER);
+        }
+    }
+    for road in &world.skeleton.roads {
+        for hex in road {
+            put(&mut pic, *hex, [214, 196, 150]);
+        }
+    }
+    for town in &world.skeleton.towns {
+        for hex in town.centre.range(town.radius) {
+            put(&mut pic, hex, [236, 232, 220]);
+        }
+        if town.factory {
+            for ring in [town.radius + 1, town.radius + 2] {
+                for hex in town.centre.ring(ring) {
+                    put(&mut pic, hex, [250, 200, 30]);
+                }
+            }
+        }
+    }
+    for (at, colour) in marks {
+        for hex in at.range(6) {
+            put(&mut pic, hex, *colour);
+        }
+    }
+    pic
 }

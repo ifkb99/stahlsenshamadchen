@@ -226,6 +226,17 @@ pub struct Relief {
     /// and it should add up to 100. Calibrated against the world's own
     /// noise, so these are the shares a world comes out with.
     pub shares: Vec<u32>,
+    /// How much of the height is the country's broad shape — uplands and
+    /// lowlands — in percent (W6.4). Zero is none: the hills alone.
+    pub landform_percent: u32,
+    /// How wide an upland or a lowland is, roughly, in tiles. A campaign
+    /// hex is about forty across, so a few hundred is a region of them.
+    pub landform_scale: u32,
+    /// How much of the height is ranges with valleys between them, in
+    /// percent. Zero is none.
+    pub ridge_percent: u32,
+    /// How far apart the ranges run, roughly, in tiles.
+    pub ridge_scale: u32,
 }
 
 impl Default for Relief {
@@ -234,6 +245,10 @@ impl Default for Relief {
             scale: 48,
             octaves: 3,
             shares: vec![38, 24, 15, 10, 7, 4, 2],
+            landform_percent: 0,
+            landform_scale: 240,
+            ridge_percent: 0,
+            ridge_scale: 120,
         }
     }
 }

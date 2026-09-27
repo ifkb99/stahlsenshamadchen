@@ -437,3 +437,94 @@ fn a_fault_between_two_settings_fails_validation() {
         report.errors
     );
 }
+
+// --- relief with a shape (W6.4) ---------------------------------------------
+
+/// How alike neighbouring campaign hexes stand: the correlation of their
+/// mean heights across every neighbouring pair. Near zero is a campaign map
+/// of salt and pepper; real country, where a hex on an upland has uplands
+/// round it, is well above.
+fn neighbour_height_correlation(world: &GeneratedWorld) -> f64 {
+    let mean: HashMap<Hex, f64> = world
+        .chunks()
+        .map(|c| {
+            let tiles = world.chunk_tiles(c);
+            let sum: i64 = tiles.iter().map(|(_, _, l)| *l as i64).sum();
+            (c, sum as f64 / tiles.len().max(1) as f64)
+        })
+        .collect();
+    let pairs: Vec<(f64, f64)> = mean
+        .iter()
+        .flat_map(|(c, a)| {
+            c.all_neighbors()
+                .into_iter()
+                .filter_map(|n| mean.get(&n).map(|b| (*a, *b)))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let n = pairs.len() as f64;
+    let (ma, mb) = (
+        pairs.iter().map(|p| p.0).sum::<f64>() / n,
+        pairs.iter().map(|p| p.1).sum::<f64>() / n,
+    );
+    let cov: f64 = pairs.iter().map(|(a, b)| (a - ma) * (b - mb)).sum();
+    let va: f64 = pairs.iter().map(|(a, _)| (a - ma).powi(2)).sum();
+    let vb: f64 = pairs.iter().map(|(_, b)| (b - mb).powi(2)).sum();
+    cov / (va * vb).sqrt()
+}
+
+#[test]
+fn the_land_has_regions_larger_than_a_campaign_hex() {
+    // The diagnosis W6.4 answers: nothing in the relief was larger than a
+    // campaign hex, so neighbouring hexes' heights were nearly independent
+    // and the campaign map was salt and pepper. The landform and the ridges
+    // are what make a hex on an upland have uplands round it.
+    let reg = registry();
+    let base = reg.worldgen.clone().unwrap();
+    let with = |relief: tactics_core::data::Relief| WorldGen {
+        radius: 5,
+        relief,
+        ..base.clone()
+    };
+    let hills_only = tactics_core::data::Relief {
+        landform_percent: 0,
+        ridge_percent: 0,
+        ..base.relief.clone()
+    };
+    let radius = reg.scale.battle_map_radius();
+    for seed in [1, 2] {
+        let shaped = GeneratedWorld::with_rules(with(base.relief.clone()), radius, seed).unwrap();
+        let flat = GeneratedWorld::with_rules(with(hills_only.clone()), radius, seed).unwrap();
+        let (s, f) = (
+            neighbour_height_correlation(&shaped),
+            neighbour_height_correlation(&flat),
+        );
+        assert!(
+            s > 0.6 && s > f + 0.25,
+            "seed {seed}: neighbouring campaign hexes correlate {s:.2} with the landform \
+             and ridges, {f:.2} with the hills alone"
+        );
+    }
+}
+
+#[test]
+fn a_world_made_by_another_generator_is_refused_rather_than_regenerated() {
+    // A world saves as how to make it, so a save from a build whose
+    // generator made different ground would load with different ground
+    // under the same armies and no error. The version travels with it.
+    let reg = registry();
+    let world = small(&reg, 2);
+    let mut json = serde_json::to_value(&world).unwrap();
+    assert_eq!(
+        json["generator"],
+        serde_json::json!(tactics_core::worldgen::GENERATOR_VERSION)
+    );
+    let back: GeneratedWorld = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(back.skeleton, world.skeleton);
+    json["generator"] = serde_json::json!(tactics_core::worldgen::GENERATOR_VERSION - 1);
+    let refused = serde_json::from_value::<GeneratedWorld>(json.clone());
+    assert!(refused.is_err());
+    // A save from before the version was written down is generator 1.
+    json.as_object_mut().unwrap().remove("generator");
+    assert!(serde_json::from_value::<GeneratedWorld>(json).is_err());
+}

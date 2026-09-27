@@ -664,10 +664,26 @@ is what a loaded campaign stands on.
       `size=large,…,seed=4` skips it with a choice, which the three tours
       that are about something else now declare. `world-setup` is the
       screen's own tour.
-- [ ] **W6.4 Relief with a shape.** Large-scale landforms — ranges and
-      uplands with valleys between — under the local noise, and a noise
-      without lattice-straight edges. A setting's relief option picks the
-      landform.
+- [x] ~~**W6.4 Relief with a shape.**~~ **Done 2026-09-27.** Simplex
+      noise in place of lattice value noise (no more grid-straight edges;
+      octaves turned by the exact 3-4-5 rotation), and two layers under
+      the local hills, weighted by data: the landform (uplands and
+      lowlands, `relief.landform_percent` 40 at scale 300 in the base mod)
+      and ridged ranges (`relief.ridge_percent` 35 at 160) raised where the
+      landform is high. Neighbouring campaign hexes' mean heights now
+      correlate 0.69 on seed 1 (0.64–0.73 across every setting's options;
+      about 0.35 under the old noise, −0.12 for the hills alone). The
+      terrain setting's options move the layers as well as the level
+      shares. Cover's scale went 18 → 40 because simplex woods come out
+      finer than value-noise woods at one scale, and at 18 no campaign hex
+      reached deep forest. `GENERATOR_VERSION` (2) travels in a world's
+      save and another is refused. `examples/worldgen --picture` writes the
+      world as the setup screen draws it (`worldgen::picture`), and the
+      `--settings` table gained `h-corr`. The wars on the new ground
+      (`examples/campaign`, seed 1's world): 6–2 to the Valkyries as
+      before, but 9 battles in 8 campaigns against 16, and two won by
+      holding the factories without a fight — the factories now sit in
+      lowlands one side reaches first.
 - [ ] **W6.5 Water that drains.** A river network from many sources down
       the valleys, joining, wider downstream, with wet meadow along it.
 - [ ] **W6.6 Cover that reads the ground.** Wood on slopes and high
