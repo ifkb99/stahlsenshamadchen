@@ -128,7 +128,7 @@
       "landform_percent": 40, "landform_scale": 300, "ridge_percent": 35, "ridge_scale": 160
     },
     "cover": { "scale": 40, "wood_percent": 28, "hedge_percent": 9, "wet_percent": 20 },
-    "rivers": { "every": 110, "spacing": 4 },
+    "rivers": { "stream": 3, "river": 12, "broad": 60, "floodplain": 2, "meadow_percent": 50 },
     "towns": {
       "every": 24, "spacing": 3, "radius": 3, "factories": 2,
       "worth": 2, "factory_worth": 4, "contested_within": 30
@@ -136,7 +136,7 @@
     "roads": { "extra_links": 2 },
     "terrain": {
       "open": "grass", "wood": "forest", "hedge": "hedgerow", "wet": "mud",
-      "water": "water", "road": "road", "town": "town"
+      "water": "water", "stream": "stream", "road": "road", "town": "town"
     },
     "summary": [
       { "terrain": "factory", "feature": "factory" },
@@ -198,10 +198,10 @@
       "id": "water", "name": "Rainfall", "default": "normal",
       "options": [
         { "id": "dry", "name": "Dry", "text": "Few rivers, firm ground.",
-          "set": { "rivers.every": 220, "cover.wet_percent": 6 } },
+          "set": { "rivers.stream": 6, "rivers.river": 30, "rivers.floodplain": 1, "cover.wet_percent": 6 } },
         { "id": "normal", "name": "Normal", "text": "A few rivers, some soft ground in the low places." },
         { "id": "wet", "name": "Wet", "text": "Many rivers to cross, and mud in every hollow.",
-          "set": { "rivers.every": 60, "cover.wet_percent": 35 } }
+          "set": { "rivers.stream": 2, "rivers.river": 6, "rivers.broad": 30, "rivers.floodplain": 4, "cover.wet_percent": 35 } }
       ]
     },
     {

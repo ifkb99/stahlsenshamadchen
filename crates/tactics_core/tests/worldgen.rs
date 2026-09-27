@@ -93,7 +93,8 @@ fn rivers_run_unbroken_to_the_edge_of_the_world_or_into_another_river() {
         let made = world(&reg, seed);
         assert!(!made.skeleton.rivers.is_empty(), "seed {seed} has no river");
         let mut laid: HashSet<Hex> = HashSet::new();
-        for river in &made.skeleton.rivers {
+        for course in &made.skeleton.rivers {
+            let river = &course.tiles;
             for pair in river.windows(2) {
                 assert_eq!(pair[0].unsigned_distance_to(pair[1]), 1, "a river jumps");
             }
@@ -320,20 +321,20 @@ fn a_world_with_every_setting_at_its_default_is_the_mods_world() {
 }
 
 #[test]
-fn a_larger_map_has_more_towns_and_rivers_at_the_same_density() {
-    // Towns and rivers are densities, so size and settlement compose: a
-    // large map is more country, not the same villages spread thinner.
+fn a_larger_map_has_more_towns_at_the_same_density() {
+    // Towns are a density, so size and settlement compose: a large map is
+    // more country, not the same villages spread thinner. (Rivers are a
+    // drainage network since W6.5, and more land drains into more of them
+    // without being told.)
     let reg = registry();
     let size = |option| rules_for(&reg, &[("size", option)]);
     let (small, standard, large) = (size("small"), size("standard"), size("large"));
     assert!(small.hexes() < standard.hexes() && standard.hexes() < large.hexes());
     let towns = |r: &WorldGen| r.towns.count(r.hexes());
-    let rivers = |r: &WorldGen| r.rivers.count(r.hexes());
     assert!(towns(&small) < towns(&standard) && towns(&standard) < towns(&large));
-    assert!(rivers(&small) <= rivers(&standard) && rivers(&standard) < rivers(&large));
     // And the shipped standard world is the one the mod described by count
     // before the counts were densities.
-    assert_eq!((towns(&standard), rivers(&standard)), (14, 3));
+    assert_eq!(towns(&standard), 14);
 }
 
 #[test]
@@ -527,4 +528,132 @@ fn a_world_made_by_another_generator_is_refused_rather_than_regenerated() {
     // A save from before the version was written down is generator 1.
     json.as_object_mut().unwrap().remove("generator");
     assert!(serde_json::from_value::<GeneratedWorld>(json).is_err());
+}
+
+// --- water that drains (W6.5) -------------------------------------------------
+
+/// The mod's world at a radius a test can afford to walk tile by tile.
+fn sized(reg: &DataRegistry, seed: u64, radius: u32) -> GeneratedWorld {
+    let rules = WorldGen {
+        radius,
+        ..reg.worldgen.clone().expect("the base mod declares a world")
+    };
+    GeneratedWorld::with_rules(rules, reg.scale.battle_map_radius(), seed).expect("rules are good")
+}
+
+#[test]
+fn water_gathers_into_a_network_that_runs_downhill_and_widens() {
+    // The diagnosis: three rivers, each one path from a high point to the
+    // rim, none in the interior, none joining. Drained, the land has
+    // streams that join into rivers, rivers that join each other, and
+    // water that never climbs and never narrows on its way down.
+    let reg = registry();
+    let (mut joined_rivers, mut broad) = (0, 0);
+    for seed in [1, 2] {
+        let made = sized(&reg, seed, 6);
+        let courses = &made.skeleton.rivers;
+        assert!(
+            courses.len() >= 10,
+            "seed {seed}: {} watercourses",
+            courses.len()
+        );
+        for course in courses {
+            // Stream, then river, then broad: a course only grows.
+            assert!(course.river_from <= course.broad_from);
+            let mut last = i32::MAX;
+            for hex in course.own() {
+                let (_, level) = made.tile(*hex).unwrap();
+                // A town or a road built over the water keeps the ground's
+                // level; only the water's own tiles are held to it.
+                if made.tile(*hex).unwrap().0 == reg.worldgen.as_ref().unwrap().terrain.water
+                    || made.tile(*hex).unwrap().0 == reg.worldgen.as_ref().unwrap().terrain.stream
+                {
+                    assert!(level <= last, "seed {seed}: water climbs at {hex:?}");
+                    last = level;
+                }
+            }
+            if course.joins && !course.river().is_empty() {
+                joined_rivers += 1;
+            }
+            if course.broad_from < course.own().len() {
+                broad += 1;
+            }
+        }
+    }
+    assert!(joined_rivers > 0, "no river is a tributary of another");
+    assert!(broad > 0, "no river grows broad");
+}
+
+#[test]
+fn a_stream_can_be_forded_and_a_river_cannot() {
+    // Why there are two kinds of running water: a network of impassable
+    // water would cut the land into pieces joined only at bridges. Small
+    // water is crossed at a wade, slowly; a river wants a bridge.
+    let reg = registry();
+    let palette = &reg.worldgen.as_ref().unwrap().terrain;
+    let stream = reg
+        .terrain(&palette.stream)
+        .expect("the stream is declared");
+    let water = reg.terrain(&palette.water).expect("the river is declared");
+    use tactics_core::data::MovementClass;
+    let (grass, wade) = (
+        reg.terrain(&palette.open)
+            .unwrap()
+            .cost_for(MovementClass::Tracked)
+            .unwrap(),
+        stream
+            .cost_for(MovementClass::Tracked)
+            .expect("a tank can ford a stream"),
+    );
+    assert!(wade > grass, "fording is slower than open ground");
+    assert!(stream.cost_for(MovementClass::Foot).is_some());
+    assert!(water.cost_for(MovementClass::Tracked).is_none());
+    assert!(water.cost_for(MovementClass::Foot).is_none());
+    // And the world has both.
+    let made = sized(&reg, 1, 6);
+    let mut seen = (false, false);
+    for chunk in made.chunks() {
+        for (_, t, _) in made.chunk_tiles(chunk) {
+            seen.0 |= t == palette.stream;
+            seen.1 |= t == palette.water;
+        }
+    }
+    assert_eq!(seen, (true, true));
+}
+
+#[test]
+fn wet_meadow_lies_along_the_rivers() {
+    // Before W6.5 not one wet tile in 17,732 lay within 300 m of water: the
+    // wet ground was noise on the lowest level, and the rivers were laid
+    // across it without touching it. A floodplain is the wettest ground
+    // there is.
+    let reg = registry();
+    let made = sized(&reg, 1, 6);
+    let palette = &made.rules.terrain;
+    let mut tiles: HashMap<Hex, String> = HashMap::new();
+    for chunk in made.chunks() {
+        for (h, t, _) in made.chunk_tiles(chunk) {
+            tiles.insert(h, t.to_string());
+        }
+    }
+    let near: HashSet<Hex> = tiles
+        .iter()
+        .filter(|(_, t)| **t == palette.water)
+        .flat_map(|(h, _)| h.range(made.rules.rivers.floodplain))
+        .collect();
+    let share = |by_river: bool| {
+        let land: Vec<&String> = tiles
+            .iter()
+            .filter(|(h, t)| **t != palette.water && near.contains(*h) == by_river)
+            .map(|(_, t)| t)
+            .collect();
+        land.iter().filter(|t| ***t == palette.wet).count() as f64 / land.len().max(1) as f64
+    };
+    let (by, away) = (share(true), share(false));
+    assert!(
+        by > 3.0 * away,
+        "wet ground is {:.1}% of the floodplain and {:.1}% of the rest",
+        100.0 * by,
+        100.0 * away
+    );
 }

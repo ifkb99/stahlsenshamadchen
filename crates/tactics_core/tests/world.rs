@@ -390,7 +390,11 @@ fn a_battle_on_a_window_of_the_world_is_the_battle_on_the_whole_of_it() {
         radius: 4,
         ..reg.worldgen.clone().unwrap()
     };
-    let made = Arc::new(GeneratedWorld::with_rules(rules, R, 9).unwrap());
+    // A seed on which the crews carry the window across chunk borders. The
+    // claim is about residency, not about a particular world; seed 9 did it
+    // until the rivers moved (W6.5), after which nobody on it paged a chunk,
+    // and seed 8 pages the most of the first fifteen under generator 3.
+    let made = Arc::new(GeneratedWorld::with_rules(rules, R, 8).unwrap());
     let mut whole = HexMap::default();
     for chunk in made.chunks() {
         for (hex, terrain, level) in made.chunk_tiles(chunk) {

@@ -520,6 +520,20 @@ and the seam tests in `tests/ground.rs`.
   on seed 1 with them and −0.12 without (about 0.35 under the old noise):
   the land has regions now, and `the_land_has_regions_larger_than_a_campaign_hex`
   fails with the layers switched off.
+- **Water is a drainage network, and running water comes in two kinds**
+  (W6.5). A priority flood from the rim gives every tile the neighbour its
+  water runs to, and summing tiles downstream gives each its catchment:
+  past `rivers.stream` campaign hexes of catchment it is a **stream**
+  (`terrain.stream`: fordable, slow), past `rivers.river` a **river**
+  (`terrain.water`: a bridge or nothing), past `rivers.broad` three tiles
+  wide. The two kinds are the point: a network of impassable water would
+  cut the land into pieces joined only at bridges
+  (`a_stream_can_be_forded_and_a_river_cannot`). A river's valley floor,
+  within `rivers.floodplain` of its bank and no higher than its water, is
+  wet meadow at `meadow_percent`. The flood reads continuous height, not
+  levels, and ties go to the seeded lot. A `Course` is one watercourse,
+  source first, stream then river then broad; `joins` marks one whose
+  last tile is the river it flows into, and `own()` leaves that tile out.
 - **A world's save carries its generator** (`GENERATOR_VERSION`), and a
   save from another is refused: a world saves as how to make it, so a
   change to *how* would otherwise put different ground under the same

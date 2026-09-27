@@ -70,6 +70,19 @@
     }
   },
   {
+    "id": "stream",
+    "capacity": 2,
+    "name": "Stream",
+    "glyph": "s",
+    "color": "#6b9ad4",
+    "move_cost": {
+      "foot": 2,
+      "wheeled": 4,
+      "tracked": 3,
+      "air": 1
+    }
+  },
+  {
     "id": "mud",
     "capacity": 3,
     "name": "Mud Flats",

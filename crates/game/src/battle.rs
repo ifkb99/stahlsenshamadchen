@@ -682,6 +682,15 @@ fn publish_script_facts(
         danger: battle
             .show_danger
             .then(|| battle.danger.values().filter(|d| **d > 0.0).count() as u32),
+        // Crews on the field, where they stand; one riding in something
+        // stands with her carrier and is found there.
+        places: battle
+            .state
+            .units
+            .iter()
+            .filter(|unit| unit.alive())
+            .map(|unit| (unit.name.clone(), unit.pos))
+            .collect(),
     };
 }
 

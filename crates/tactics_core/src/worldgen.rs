@@ -55,8 +55,9 @@ enum Channel {
 /// Bump it with any change that moves a tile.
 ///
 /// 2 is W6.4: simplex noise in place of lattice value noise, and the
-/// landform and ridge layers.
-pub const GENERATOR_VERSION: u32 = 2;
+/// landform and ridge layers. 3 is W6.5: the drainage network, streams and
+/// floodplain meadows.
+pub const GENERATOR_VERSION: u32 = 3;
 
 /// SplitMix64: the one mixing function the world is made with.
 fn mix(state: u64, value: u64) -> u64 {
@@ -186,8 +187,8 @@ pub struct Town {
 /// order, so the skeleton is the same bytes whenever it is made.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Skeleton {
-    /// Each river, source first; each step is a neighbour of the last.
-    pub rivers: Vec<Vec<Hex>>,
+    /// Every watercourse, source first (WORLD.md W6.5).
+    pub rivers: Vec<Course>,
     /// Each town, in the order they were chosen (best site first).
     pub towns: Vec<Town>,
     /// Each road, from one town's centre to another's; each step is a
@@ -195,11 +196,51 @@ pub struct Skeleton {
     pub roads: Vec<Vec<Hex>>,
 }
 
+/// One watercourse of the drainage network: from where water first gathers
+/// into a stream, down to the rim of the world or to the watercourse it
+/// joins (whose tile is its last). Each step is a neighbour of the last and
+/// runs downhill on the land's continuous height, so a course can only
+/// grow as it goes: it is a stream up to `river_from`, a river from there,
+/// broad from `broad_from`, and either may be `tiles.len()` — never reached.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Course {
+    pub tiles: Vec<Hex>,
+    pub river_from: usize,
+    pub broad_from: usize,
+    /// It ends by joining another course, whose tile its last one is,
+    /// rather than at the rim of the world.
+    pub joins: bool,
+}
+
+impl Course {
+    /// The tiles that are this course's own: all but the confluence.
+    pub fn own(&self) -> &[Hex] {
+        &self.tiles[..self.tiles.len() - self.joins as usize]
+    }
+
+    /// Its own tiles on which it is a river rather than a stream.
+    pub fn river(&self) -> &[Hex] {
+        let own = self.own();
+        &own[self.river_from.min(own.len())..]
+    }
+}
+
+/// What running water a tile holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Water {
+    /// Fordable: `terrain.stream`.
+    Stream,
+    /// A bridge or nothing: `terrain.water`.
+    River,
+}
+
 /// Which features touch one chunk, so a tile can ask without walking the
 /// whole skeleton.
 #[derive(Debug, Clone, Default)]
 struct ChunkFeatures {
-    water: HashMap<Hex, i32>,
+    water: HashMap<Hex, (i32, Water)>,
+    /// A river's valley floor beside its bank: where the meadows are wet.
+    meadow: HashSet<Hex>,
     road: HashSet<Hex>,
     towns: Vec<usize>,
 }
@@ -215,6 +256,8 @@ struct Calibration {
     hedge: f64,
     /// Wet noise below this, on level-0 ground, is wet.
     wet: f64,
+    /// Wet noise below this, on a river's floodplain, is wet meadow.
+    meadow: f64,
 }
 
 /// What a campaign hex is, summarised from its tiles.
@@ -410,6 +453,8 @@ impl GeneratedWorld {
         let c = &self.calibration;
         let terrain = if cover >= c.wood {
             &palette.wood
+        } else if self.is_meadow(hex) && self.wet_noise(hex) < c.meadow {
+            &palette.wet
         } else if cover >= c.hedge {
             &palette.hedge
         } else if level == 0 && self.wet_noise(hex) < c.wet {
@@ -445,8 +490,12 @@ impl GeneratedWorld {
         if features.road.contains(&hex) {
             return Some((&palette.road, level));
         }
-        if let Some(&water) = features.water.get(&hex) {
-            return Some((&palette.water, water));
+        if let Some(&(level, water)) = features.water.get(&hex) {
+            let terrain = match water {
+                Water::Stream => &palette.stream,
+                Water::River => &palette.water,
+            };
+            return Some((terrain, level));
         }
         Some((natural, level))
     }
@@ -474,7 +523,7 @@ impl GeneratedWorld {
                 .iter()
                 .any(|&t| chunk_of(self.skeleton.towns[t].centre, self.chunk_radius) == chunk),
             SkeletonFeature::Road => !f.road.is_empty(),
-            SkeletonFeature::River => !f.water.is_empty(),
+            SkeletonFeature::River => f.water.values().any(|(_, w)| *w == Water::River),
         }
     }
 
@@ -631,12 +680,14 @@ impl GeneratedWorld {
             1.0 - (c.wood_percent + c.hedge_percent) as f64 / 100.0,
         );
         let wet_sample: Vec<f64> = sample.iter().map(|h| self.wet_noise(*h)).collect();
-        let wet = quantile(wet_sample, c.wet_percent as f64 / 100.0);
+        let wet = quantile(wet_sample.clone(), c.wet_percent as f64 / 100.0);
+        let meadow = quantile(wet_sample, self.rules.rivers.meadow_percent as f64 / 100.0);
         Calibration {
             levels,
             wood,
             hedge,
             wet,
+            meadow,
         }
     }
 
@@ -666,112 +717,197 @@ impl GeneratedWorld {
         taken
     }
 
-    /// Each river's source is the highest ground near a chunk's centre,
-    /// highest first. From there it takes the path to the edge of the world
-    /// that climbs least: a step costs one, and a step uphill costs in
-    /// proportion to the rise besides. So it runs down wherever it can and,
-    /// caught in a hollow, spills over the lowest point of its rim — rather
-    /// than filling the hollow tile by tile, which is what "the lowest
-    /// neighbour not yet visited" does and what the first draft did (a
-    /// 2,244-tile river in a world 530 across). A river that reaches one
-    /// laid before it ends there: a confluence.
-    fn lay_rivers(&self) -> Vec<Vec<Hex>> {
-        let r = self.chunk_radius as i32;
-        let count = self.rules.rivers.count(self.rules.hexes());
-        let sources = self.pick_spaced(count, self.rules.rivers.spacing, |c| {
-            let centre = chunk_hexes(c, self.chunk_radius).next()?;
-            let best = centre
-                .range((r / 2) as u32)
-                .step_by(5)
-                .max_by_key(|h| ((self.relief_noise(*h) * 1e9) as i64, self.lot(*h)))?;
-            // Rivers rise in high ground but not on the world's rim, or they
-            // leave it at once.
-            let rim = self.rules.radius.saturating_sub(1);
-            (c.unsigned_distance_to(Hex::ZERO) < rim.max(1))
-                .then(|| ((self.relief_noise(best) * 1e9) as i64, best))
-        });
-        let mut rivers: Vec<Vec<Hex>> = Vec::new();
-        let mut water: HashSet<Hex> = HashSet::new();
-        for source in sources {
-            if water.contains(&source) {
-                continue;
-            }
-            let path = self.run_down(source, &water);
-            water.extend(path.iter().copied());
-            rivers.push(path);
+    /// The drainage network (WORLD.md W6.5). Every tile of the world drains
+    /// somewhere: a priority flood from the rim (Barnes et al., 2014) visits
+    /// the land lowest first, so each tile is reached from the neighbour
+    /// its water runs to, and a hollow fills to its lip and spills over it
+    /// rather than trapping a river. Summing each tile into the one it
+    /// drains to, in reverse order of the flood, gives every tile its
+    /// catchment. Where the catchment reaches `rivers.stream` campaign
+    /// hexes of land the water is a stream, further down a river, and
+    /// broad further still — so rivers rise in the uplands, run down the
+    /// valleys the landform made, gather tributaries and widen as they go,
+    /// which the old rivers (one path from each of three high points to
+    /// the rim) did none of.
+    ///
+    /// The flood reads the land's continuous height, not its levels, so a
+    /// river on a level plain still follows the fall the levels round
+    /// away; ties go to the seeded lot, never a coordinate.
+    fn lay_rivers(&self) -> Vec<Course> {
+        let rules = &self.rules.rivers;
+        if rules.stream == 0 {
+            return Vec::new();
         }
-        rivers
-    }
+        let cr = self.chunk_radius as u64;
+        let per_hex = 3 * cr * cr + 3 * cr + 1;
+        let tiles_of = |hexes: u32| hexes as u64 * per_hex;
+        let hexes: Vec<Hex> = self
+            .chunks()
+            .flat_map(|c| chunk_hexes(c, self.chunk_radius))
+            .collect();
+        let at: HashMap<Hex, usize> = hexes.iter().enumerate().map(|(i, h)| (*h, i)).collect();
+        let height: Vec<f64> = hexes.iter().map(|h| self.relief_noise(*h)).collect();
+        let n = hexes.len();
 
-    /// The least-climbing path from `source` to the rim of the world or to
-    /// water already laid, by Dijkstra.
-    fn run_down(&self, source: Hex, water: &HashSet<Hex>) -> Vec<Hex> {
-        /// What a thousandth of the relief's range costs to climb, in steps.
-        const UPHILL: f64 = 2.0;
-        let mut height: HashMap<Hex, f64> = HashMap::new();
-        let mut h = |hex: Hex| *height.entry(hex).or_insert_with(|| self.relief_noise(hex));
-        let mut best: HashMap<Hex, u64> = HashMap::from([(source, 0)]);
-        let mut came: HashMap<Hex, Hex> = HashMap::new();
-        let mut open: BinaryHeap<Reverse<(u64, i32, i32)>> = BinaryHeap::new();
-        open.push(Reverse((0, source.x, source.y)));
-        let mut end = source;
-        while let Some(Reverse((cost, x, y))) = open.pop() {
-            let at = Hex::new(x, y);
-            if best.get(&at).is_some_and(|b| *b < cost) {
-                continue;
+        // Heights are in [0, 1]; a key of 10^12 steps keeps the fill's
+        // nudge (10^-9) a thousand steps wide.
+        const NUDGE: f64 = 1e-9;
+        let key = |h: f64| (h * 1e12) as u64;
+        const OFF_THE_MAP: usize = usize::MAX;
+        let mut filled = height.clone();
+        let mut down = vec![OFF_THE_MAP; n];
+        let mut seen = vec![false; n];
+        let mut open: BinaryHeap<Reverse<(u64, u64, usize)>> = BinaryHeap::new();
+        for (i, h) in hexes.iter().enumerate() {
+            if h.all_neighbors().iter().any(|nb| !at.contains_key(nb)) {
+                seen[i] = true;
+                open.push(Reverse((key(filled[i]), self.lot(*h), i)));
             }
-            let on_rim = at.all_neighbors().iter().any(|n| !self.contains(*n));
-            if at != source && (on_rim || water.contains(&at)) {
-                end = at;
-                break;
-            }
-            let here = h(at);
-            for next in at.all_neighbors() {
-                if !self.contains(next) {
+        }
+        let mut order = Vec::with_capacity(n);
+        while let Some(Reverse((_, _, i))) = open.pop() {
+            order.push(i);
+            for nb in hexes[i].all_neighbors() {
+                let Some(&j) = at.get(&nb) else {
+                    continue;
+                };
+                if seen[j] {
                     continue;
                 }
-                let rise = (h(next) - here).max(0.0);
-                let step = 1 + (rise * 1000.0 * UPHILL) as u64;
-                let total = cost + step;
-                if best.get(&next).is_none_or(|b| total < *b) {
-                    best.insert(next, total);
-                    came.insert(next, at);
-                    open.push(Reverse((total, next.x, next.y)));
-                }
+                seen[j] = true;
+                filled[j] = height[j].max(filled[i] + NUDGE);
+                down[j] = i;
+                open.push(Reverse((key(filled[j]), self.lot(nb), j)));
             }
         }
-        let mut path = vec![end];
-        let mut at = end;
-        while let Some(prev) = came.get(&at) {
-            path.push(*prev);
-            at = *prev;
+        let mut catchment = vec![1u64; n];
+        for &i in order.iter().rev() {
+            if down[i] != OFF_THE_MAP {
+                catchment[down[i]] += catchment[i];
+            }
         }
-        path.reverse();
-        path
+
+        let (stream, river, broad) = (
+            tiles_of(rules.stream),
+            tiles_of(rules.river.max(rules.stream)),
+            tiles_of(rules.broad.max(rules.river).max(rules.stream)),
+        );
+        let running = |i: usize| catchment[i] >= stream;
+        let mut fed = vec![false; n];
+        for i in 0..n {
+            if running(i) && down[i] != OFF_THE_MAP {
+                fed[down[i]] = true;
+            }
+        }
+        let mut sources: Vec<usize> = (0..n).filter(|&i| running(i) && !fed[i]).collect();
+        sources.sort_by_key(|&i| self.lot(hexes[i]));
+        let mut claimed = vec![false; n];
+        let mut courses = Vec::new();
+        for source in sources {
+            let mut path = Vec::new();
+            let mut i = source;
+            let mut joins = false;
+            loop {
+                path.push(i);
+                if claimed[i] {
+                    joins = true;
+                    break;
+                }
+                claimed[i] = true;
+                if down[i] == OFF_THE_MAP {
+                    break;
+                }
+                i = down[i];
+            }
+            let first = |at_least: u64| {
+                path.iter()
+                    .position(|&i| catchment[i] >= at_least)
+                    .unwrap_or(path.len())
+            };
+            courses.push(Course {
+                river_from: first(river),
+                broad_from: first(broad),
+                joins,
+                tiles: path.iter().map(|&i| hexes[i]).collect(),
+            });
+        }
+        courses
     }
 
     fn index_rivers(&mut self) {
-        for river in &self.skeleton.rivers {
-            // A river runs at the lowest level it has reached, so water never
+        let radius = self.chunk_radius;
+        let floodplain = self.rules.rivers.floodplain;
+        let mut water: Vec<(Hex, i32, Water)> = Vec::new();
+        let mut meadow: Vec<Hex> = Vec::new();
+        for course in &self.skeleton.rivers {
+            // Water runs at the lowest level it has reached, so it never
             // climbs.
             let mut level = i32::MAX;
-            for hex in river {
+            for (i, hex) in course.tiles.iter().enumerate() {
                 level = level.min(self.level_of(self.relief_noise(*hex)));
-                let chunk = chunk_of(*hex, self.chunk_radius);
-                self.index
-                    .entry((chunk.x, chunk.y))
-                    .or_default()
-                    .water
-                    .insert(*hex, level);
+                if i < course.river_from {
+                    water.push((*hex, level, Water::Stream));
+                    continue;
+                }
+                water.push((*hex, level, Water::River));
+                let broad = i >= course.broad_from;
+                if broad {
+                    for nb in hex.all_neighbors() {
+                        if self.contains(nb) {
+                            water.push((nb, level, Water::River));
+                        }
+                    }
+                }
+                // The valley floor beside a river: ground no higher than
+                // the water, within the floodplain of the bank.
+                let reach = floodplain + broad as u32;
+                for h in hex.range(reach) {
+                    if self.contains(h) && self.level_of(self.relief_noise(h)) <= level {
+                        meadow.push(h);
+                    }
+                }
             }
+        }
+        for (hex, level, kind) in water {
+            let chunk = chunk_of(hex, radius);
+            let slot = self.index.entry((chunk.x, chunk.y)).or_default();
+            // A river over a stream, never the other way: a broad river's
+            // bank that a tributary crosses is the river's.
+            match slot.water.get(&hex) {
+                Some((_, Water::River)) if kind == Water::Stream => {}
+                _ => {
+                    slot.water.insert(hex, (level, kind));
+                }
+            }
+        }
+        for hex in meadow {
+            let chunk = chunk_of(hex, radius);
+            self.index
+                .entry((chunk.x, chunk.y))
+                .or_default()
+                .meadow
+                .insert(hex);
         }
     }
 
-    fn is_water(&self, hex: Hex) -> bool {
+    fn water_at(&self, hex: Hex) -> Option<Water> {
         let chunk = chunk_of(hex, self.chunk_radius);
         self.index
             .get(&(chunk.x, chunk.y))
-            .is_some_and(|f| f.water.contains_key(&hex))
+            .and_then(|f| f.water.get(&hex))
+            .map(|(_, w)| *w)
+    }
+
+    /// Any running water, stream or river.
+    fn is_water(&self, hex: Hex) -> bool {
+        self.water_at(hex).is_some()
+    }
+
+    fn is_meadow(&self, hex: Hex) -> bool {
+        let chunk = chunk_of(hex, self.chunk_radius);
+        self.index
+            .get(&(chunk.x, chunk.y))
+            .is_some_and(|f| f.meadow.contains(&hex) && !f.water.contains_key(&hex))
     }
 
     /// A town wants flat, low ground with water close by. Each chunk offers
@@ -819,9 +955,10 @@ impl GeneratedWorld {
         let palette = &self.rules.terrain;
         let (terrain, level) = self.natural(to);
         let (_, was) = self.natural(from);
-        let ground = if self.is_water(to) {
+        let ground = if self.water_at(to) == Some(Water::River) {
             8
-        } else if terrain == palette.wood {
+        } else if self.water_at(to) == Some(Water::Stream) || terrain == palette.wood {
+            // A ford costs a road what a wood does.
             3
         } else if terrain == palette.hedge {
             2
@@ -1028,8 +1165,8 @@ pub fn picture(
         };
         put(&mut pic, *hex, colour);
     }
-    for river in &world.skeleton.rivers {
-        for hex in river {
+    for course in &world.skeleton.rivers {
+        for hex in course.river() {
             put(&mut pic, *hex, WATER);
             put(&mut pic, *hex + Hex::new(1, 0), WATER);
         }

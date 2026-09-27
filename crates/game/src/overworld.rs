@@ -337,6 +337,13 @@ fn publish_script_facts(
         // leaving the field alone would answer a battle's question with a
         // battle's answer two screens after it was true.
         danger: None,
+        // Companies (and any vehicle standing on her own), where they stand.
+        places: overworld
+            .state
+            .columns()
+            .into_iter()
+            .map(|c| (c.name, c.pos))
+            .collect(),
     };
 }
 
