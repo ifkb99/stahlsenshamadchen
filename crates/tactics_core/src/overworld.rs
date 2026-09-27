@@ -771,6 +771,8 @@ pub enum OverworldSetupError {
     Map(#[from] crate::map::MapError),
     #[error(transparent)]
     World(#[from] crate::worldgen::WorldGenError),
+    #[error(transparent)]
+    Setting(#[from] crate::data::SettingError),
 }
 
 /// Armies traverse the overworld as tracked columns with generous climb.
@@ -803,10 +805,25 @@ pub enum Engagement {
 }
 
 impl OverworldState {
+    /// The campaign `map_id` describes, as its author wrote it: on a
+    /// generated map, the world with every setting at its default.
     pub fn from_map(
         registry: &DataRegistry,
         map_id: &str,
         seed: u64,
+    ) -> Result<Self, OverworldSetupError> {
+        Self::from_map_setup(registry, map_id, seed, &crate::data::WorldSetup::default())
+    }
+
+    /// The campaign `map_id` describes, on a world made to the player's
+    /// choices (WORLD.md W6.1): her settings applied to the world's rules,
+    /// and her seed, if she named one, in place of the map's. A drawn
+    /// campaign has no world to choose and ignores `setup`.
+    pub fn from_map_setup(
+        registry: &DataRegistry,
+        map_id: &str,
+        seed: u64,
+        setup: &crate::data::WorldSetup,
     ) -> Result<Self, OverworldSetupError> {
         let file: &MapFile = registry
             .map(map_id)
@@ -832,11 +849,12 @@ impl OverworldState {
                         .rules
                         .clone()
                         .or_else(|| registry.worldgen.clone())
-                        .ok_or(crate::worldgen::WorldGenError::NoRules)?;
+                        .ok_or(crate::worldgen::WorldGenError::NoRules)?
+                        .with_settings(&registry.world_settings, &setup.choices)?;
                     let world = GeneratedWorld::with_rules(
                         rules,
                         registry.scale.battle_map_radius(),
-                        spec.seed.unwrap_or(seed),
+                        setup.seed.or(spec.seed).unwrap_or(seed),
                     )?;
                     let places: Vec<crate::map::Place> = file
                         .armies

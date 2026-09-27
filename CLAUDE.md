@@ -516,6 +516,32 @@ and the seam tests in `tests/ground.rs`.
   it spoils decisions.
 - **Optional, like `command`.** No `worldgen` block is no generator, and
   every scenario and hand-drawn campaign plays as before.
+- **A world setting is data: an option is the `worldgen` fields it sets**
+  (`world_settings` in `mod.json`, W6.1; the designer's ruling that the
+  player chooses her world the way a strategy game's map setup offers
+  it). `WorldGen::with_settings` applies the chosen options in declared
+  order through the same json-path patch `balance --set` uses
+  (`data::patch`), and `from_map_setup` stands a campaign on the result.
+  **A default option sets nothing**, so a world with every setting at its
+  default is the mod's world field for field
+  (`a_world_with_every_setting_at_its_default_is_the_mods_world`), and
+  `validate-mods` warns when a default does. It validates every
+  *combination* of options, not each alone, because a fault can live
+  between two (`a_fault_between_two_settings_fails_validation`,
+  mutation-checked); that walk is about 5 ms of every registry load.
+  **Towns and rivers are densities** (`every` so many campaign hexes), so
+  map size and settlement compose; factories stay a count, because the
+  ending names every one. `examples/worldgen --settings` prints what each
+  option does to the tiles, and `--world size=large,...` reaches both
+  instruments.
+- **The setup screen hands over the campaign it drew** (`setup.rs`,
+  W6.3): each choice builds the whole campaign on a background thread and
+  the preview is its tiles, so Enter moves that `OverworldState` into the
+  map (`PreparedCampaign`) rather than making a second one that could
+  differ. A generated campaign always opens on it; **a tour that is about
+  something else declares `STAHL_WORLD=default`** on its `#!env` line (or
+  a choice, `size=small,seed=4`), or it waits on a screen it never
+  expected.
 - **The game opens on the campaign the mods name** (`campaign` in
   `mod.json`, `frontier_world` in the base mod; `validate-mods` errors on
   anything that is not an overworld map), then on the first overworld map
@@ -1446,7 +1472,7 @@ carries the same parameter; there is no route from a file to a playable battle
 that does not pass a registry. `Element::mission` and `OverworldState::victory` are `#[serde(default)]`
 to the benign value (nobody flagged, elimination only), which is a
 version-6 campaign exactly as it was, so the version did not move for
-them. `SAVE_VERSION` is 9, and **an older save is
+them. `SAVE_VERSION` is 10, and **an older save is
 refused, not migrated** (`SaveError::Version`): the two fields Phase 3
 introduced default to the benign value, so a version-3 file would open with
 every crew quietly back under her formation's mission and a version-4 file
@@ -1456,7 +1482,9 @@ the map, so a version-6 battle would open with no objectives and no
 formations; version 8 stores a map's terrain as a palette and an index per
 tile, and a version-7 map has no palette to parse; version 9 keeps a
 campaign's order of battle as a chain of command, and a version-8 campaign
-has no tree to read. Loud is right while there is no released build to migrate
+has no tree to read; version 10 counts a generated world's towns and rivers
+by density, and a version-9 world's `count` would regenerate as a different
+world with no error. Loud is right while there is no released build to migrate
 from.
 
 ### Seeing the game without playing it

@@ -82,6 +82,13 @@ pub struct ModManifest {
     /// rule as [`Self::scale`].
     #[serde(default)]
     pub worldgen: Option<super::WorldGen>,
+    /// The choices a player makes about a world before a campaign
+    /// (WORLD.md W6.1): map size, woodland, rainfall and the like, each an
+    /// option that sets `worldgen` fields. Merged by id: a later mod's
+    /// setting of the same id replaces the earlier one, and a new id is
+    /// added after the rest.
+    #[serde(default)]
+    pub world_settings: Option<Vec<super::WorldSetting>>,
     /// How fast a column moves across a generated world (WORLD.md W2.3).
     /// Same one-in-effect rule as [`Self::scale`].
     #[serde(default)]

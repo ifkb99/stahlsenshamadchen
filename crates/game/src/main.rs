@@ -9,6 +9,7 @@ mod iso;
 mod map_render;
 mod mods;
 mod overworld;
+mod setup;
 
 use bevy::prelude::*;
 
@@ -17,6 +18,8 @@ pub enum AppState {
     /// Load mods, build art caches.
     #[default]
     Boot,
+    /// A new campaign's world, chosen before it is made (WORLD.md W6.3).
+    WorldSetup,
     /// Strategic layer.
     Overworld,
     /// Tactical layer.
@@ -112,6 +115,7 @@ fn main() -> AppExit {
             camera::CameraPlugin,
             battle::BattlePlugin,
             overworld::OverworldPlugin,
+            setup::SetupPlugin,
             devtools::DevToolsPlugin,
         ))
         .add_systems(Update, map_render::reposition_map)

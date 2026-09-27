@@ -559,7 +559,8 @@ impl GeneratedWorld {
     /// laid before it ends there: a confluence.
     fn lay_rivers(&self) -> Vec<Vec<Hex>> {
         let r = self.chunk_radius as i32;
-        let sources = self.pick_spaced(self.rules.rivers.count, self.rules.rivers.spacing, |c| {
+        let count = self.rules.rivers.count(self.rules.hexes());
+        let sources = self.pick_spaced(count, self.rules.rivers.spacing, |c| {
             let centre = chunk_hexes(c, self.chunk_radius).next()?;
             let best = centre
                 .range((r / 2) as u32)
@@ -660,7 +661,7 @@ impl GeneratedWorld {
     fn site_towns(&self) -> Vec<Town> {
         let t = &self.rules.towns;
         let r = self.chunk_radius as i32;
-        let sites = self.pick_spaced(t.count, t.spacing, |c| {
+        let sites = self.pick_spaced(t.count(self.rules.hexes()), t.spacing, |c| {
             let centre = chunk_hexes(c, self.chunk_radius).next()?;
             centre
                 .range((r / 2) as u32)

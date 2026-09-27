@@ -12,6 +12,7 @@
 //! say only what it wants different.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Everything the generator is told.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,6 +53,147 @@ fn default_residency_margin() -> u32 {
 
 fn default_radius() -> u32 {
     6
+}
+
+impl WorldGen {
+    /// How many campaign hexes a world of these rules holds: a hexagon of
+    /// [`Self::radius`].
+    pub fn hexes(&self) -> u32 {
+        3 * self.radius * self.radius + 3 * self.radius + 1
+    }
+
+    /// These rules as the player chose to have them: every setting's chosen
+    /// option (its default where `choices` says nothing) applied in the
+    /// order the settings are declared, each option's fields patched by
+    /// their json path. A world made with every setting at its default is
+    /// these rules exactly, so long as every default option sets nothing —
+    /// which `validate-mods` warns about when it does not.
+    pub fn with_settings(
+        &self,
+        settings: &[WorldSetting],
+        choices: &BTreeMap<String, String>,
+    ) -> Result<WorldGen, SettingError> {
+        for id in choices.keys() {
+            if !settings.iter().any(|s| &s.id == id) {
+                return Err(SettingError::UnknownSetting(id.clone()));
+            }
+        }
+        let mut json =
+            serde_json::to_value(self).map_err(|e| SettingError::Rules(e.to_string()))?;
+        for setting in settings {
+            let chosen = choices.get(&setting.id).unwrap_or(&setting.default);
+            let option = setting
+                .option(chosen)
+                .ok_or_else(|| SettingError::UnknownOption {
+                    setting: setting.id.clone(),
+                    option: chosen.clone(),
+                })?;
+            for (path, value) in &option.set {
+                super::patch::patch_json(&mut json, path, value.clone()).map_err(|e| {
+                    SettingError::Field {
+                        setting: setting.id.clone(),
+                        option: option.id.clone(),
+                        path: path.clone(),
+                        why: e,
+                    }
+                })?;
+            }
+        }
+        serde_json::from_value(json).map_err(|e| SettingError::Rules(e.to_string()))
+    }
+}
+
+/// One choice the player makes about the world before a campaign, the way a
+/// strategy game's map setup offers "map size" or "rainfall": a name, the
+/// options, and which of them a world gets when nobody chooses (WORLD.md
+/// W6.1). Each option is only the `worldgen` fields it sets, so a setting is
+/// content — a mod adds one, or an option to one, without a line of Rust.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorldSetting {
+    pub id: String,
+    pub name: String,
+    /// The option a world gets when the player says nothing. It should set
+    /// nothing, so that a world with every setting at its default is the
+    /// mod's own world.
+    pub default: String,
+    pub options: Vec<WorldOption>,
+}
+
+impl WorldSetting {
+    /// The option called `id`.
+    pub fn option(&self, id: &str) -> Option<&WorldOption> {
+        self.options.iter().find(|o| o.id == id)
+    }
+}
+
+/// One option of a [`WorldSetting`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorldOption {
+    pub id: String,
+    pub name: String,
+    /// A line for the setup screen saying what the option makes.
+    #[serde(default)]
+    pub text: String,
+    /// The `worldgen` fields this option sets, by json path within the
+    /// block (`cover.wood_percent`, `relief.shares`), and to what.
+    #[serde(default)]
+    pub set: BTreeMap<String, serde_json::Value>,
+}
+
+/// What the player chose for a world: its seed, if she named one, and an
+/// option for any settings she changed. What she did not change is the
+/// setting's default, so an empty choice is the mod's own world.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorldSetup {
+    #[serde(default)]
+    pub seed: Option<u64>,
+    #[serde(default)]
+    pub choices: BTreeMap<String, String>,
+}
+
+impl WorldSetup {
+    /// `size=large,woodland=heavy` — how the instruments and `STAHL_WORLD`
+    /// write a choice. `default` and the empty string are no choice at all;
+    /// `seed=<n>` names the seed.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let mut setup = Self::default();
+        for pair in text.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            if pair == "default" {
+                continue;
+            }
+            let (key, value) = pair
+                .split_once('=')
+                .ok_or_else(|| format!("`{pair}` is not `setting=option`"))?;
+            if key == "seed" {
+                setup.seed = Some(
+                    value
+                        .parse()
+                        .map_err(|_| format!("`{value}` is not a seed"))?,
+                );
+            } else {
+                setup.choices.insert(key.to_string(), value.to_string());
+            }
+        }
+        Ok(setup)
+    }
+}
+
+/// Why a player's choices could not be made into rules.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SettingError {
+    #[error("no world setting is called `{0}`")]
+    UnknownSetting(String),
+    #[error("world setting `{setting}` has no option `{option}`")]
+    UnknownOption { setting: String, option: String },
+    #[error("world setting `{setting}`, option `{option}`: `{path}`: {why}")]
+    Field {
+        setting: String,
+        option: String,
+        path: String,
+        why: String,
+    },
+    #[error("the rules the settings make do not read back: {0}")]
+    Rules(String),
 }
 
 impl Default for WorldGen {
@@ -126,33 +268,56 @@ impl Default for Cover {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Rivers {
-    /// How many rivers the world has.
-    pub count: u32,
+    /// One river for every this many campaign hexes of world — a density,
+    /// not a count, so a larger world has more rivers rather than the same
+    /// few spread thinner, and "map size" and "rainfall" are two settings
+    /// that compose instead of two that fight over one number.
+    pub every: u32,
     /// How far apart their sources must be, in campaign hexes.
     pub spacing: u32,
 }
 
 impl Default for Rivers {
     fn default() -> Self {
+        // Two in the default world of 127 hexes, as `count: 2` was.
         Self {
-            count: 2,
+            every: 63,
             spacing: 3,
         }
     }
+}
+
+impl Rivers {
+    /// How many rivers a world of `hexes` campaign hexes has.
+    pub fn count(&self, hexes: u32) -> u32 {
+        per(hexes, self.every)
+    }
+}
+
+/// `hexes / every`, rounded to the nearest, and never fewer than one while
+/// `every` asks for any at all.
+fn per(hexes: u32, every: u32) -> u32 {
+    if every == 0 {
+        return 0;
+    }
+    ((hexes + every / 2) / every).max(1)
 }
 
 /// Where people live.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Towns {
-    /// How many towns.
-    pub count: u32,
+    /// One town for every this many campaign hexes of world: a density, like
+    /// [`Rivers::every`], and for the same reason.
+    pub every: u32,
     /// How far apart, in campaign hexes, at the least.
     pub spacing: u32,
     /// How far a town reaches from its centre, in tiles.
     pub radius: u32,
     /// How many of them have a factory — the ground a campaign is fought
-    /// over.
+    /// over. A count, not a density: a campaign's ending names every
+    /// factory, so how many there are is the length of the war, and a
+    /// larger map should not quietly make it longer.
     pub factories: u32,
     /// What a town is worth to a fight near it, as an objective's value
     /// (WORLD.md W3.4), and what a factory town is.
@@ -164,8 +329,9 @@ pub struct Towns {
 
 impl Default for Towns {
     fn default() -> Self {
+        // Eight in the default world of 127 hexes, as `count: 8` was.
         Self {
-            count: 8,
+            every: 16,
             spacing: 2,
             radius: 3,
             factories: 2,
@@ -173,6 +339,13 @@ impl Default for Towns {
             factory_worth: 4,
             contested_within: 30,
         }
+    }
+}
+
+impl Towns {
+    /// How many towns a world of `hexes` campaign hexes has.
+    pub fn count(&self, hexes: u32) -> u32 {
+        per(hexes, self.every)
     }
 }
 

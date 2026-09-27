@@ -1315,6 +1315,53 @@ fn a_generated_campaign_saves_as_how_to_make_its_world() {
 }
 
 #[test]
+fn a_campaign_on_a_world_made_to_order_stands_on_that_world_and_saves_as_it() {
+    // The setup screen's choices reach the world the campaign stands on,
+    // her seed replaces the map's, and the save carries the rules the
+    // choices made — so a loaded campaign is on the ground she chose, not
+    // the mod's default ground under her armies.
+    let reg = registry();
+    let setup = tactics_core::data::WorldSetup::parse("size=small,woodland=heavy,seed=9").unwrap();
+    let state = OverworldState::from_map_setup(&reg, "frontier_world", 3, &setup)
+        .expect("a world made to order builds");
+    let world = state.world.as_ref().unwrap();
+    assert_eq!(world.seed, 9, "her seed, not the map's");
+    assert_eq!(world.rules.radius, 7);
+    assert_eq!(world.rules.cover.wood_percent, 45);
+    assert_eq!(state.map.iter().count() as u32, world.rules.hexes());
+    let plain = generated(&reg);
+    assert_ne!(state.map, plain.map, "a different world from the default");
+
+    let text = tactics_core::save::SaveGame::<tactics_core::battle::BattleState>::new(
+        &reg,
+        Some(state.clone()),
+        None,
+    )
+    .to_json()
+    .unwrap();
+    let back = tactics_core::save::SaveGame::from_json(&reg, &text)
+        .unwrap()
+        .0
+        .overworld
+        .unwrap();
+    assert_eq!(back.map, state.map);
+    assert_eq!(back.world.as_ref().unwrap().rules, world.rules);
+    assert_eq!(back.world.as_ref().unwrap().skeleton, world.skeleton);
+}
+
+#[test]
+fn a_war_on_a_small_world_is_fought_to_an_end() {
+    let reg = registry();
+    let options = tactics_core::harness::campaign::CampaignOptions {
+        world: tactics_core::data::WorldSetup::parse("size=small").unwrap(),
+        ..Default::default()
+    };
+    let run = tactics_core::harness::campaign::play(&reg, "frontier_world", 0, &options).unwrap();
+    assert!(run.end.is_some(), "never ended");
+    assert_eq!(run.declined, 0);
+}
+
+#[test]
 fn a_generated_campaign_is_fought_to_an_end_without_declining_a_fight() {
     let reg = registry();
     for seed in 0..3 {

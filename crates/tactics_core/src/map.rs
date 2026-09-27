@@ -1485,11 +1485,14 @@ impl MapFile {
             }
             if let Some(place) = army.place
                 && place.feature == PlaceFeature::Town
-                && place.rank >= rules.towns.count
+                && place.rank >= rules.towns.count(rules.hexes())
             {
                 report.errors.push(format!(
                     "map `{}`: army `{}` stands by town {}, and the world has {}",
-                    self.id, army.name, place.rank, rules.towns.count
+                    self.id,
+                    army.name,
+                    place.rank,
+                    rules.towns.count(rules.hexes())
                 ));
             }
             if army.side as usize >= self.sides.len() {

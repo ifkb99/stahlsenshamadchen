@@ -101,6 +101,17 @@ incremental artifacts, usually after a rustc crash. `rm -rf
 target/debug/incremental`. Symptoms include bisects that give contradictory
 answers.
 
+**A test binary that dies on a signal with no panic message is probably
+this machine's CPU, not the code** (found 2026-09-27). The i9-14900K here,
+on microcode 0x11d, segfaults and hits illegal instructions in safe Rust
+under parallel load. `tests/shots.rs` crashed about one run in four with
+parallel threads and never with `--test-threads=1`, and the same happened on
+a clean build of an older commit. `journalctl -k | grep segfault` put 48 of
+54 crashes on one physical core (CPUs 10 and 11). Check the kernel log before
+debugging. Re-run such a binary single-threaded, or pinned off that core with
+`taskset -c 0-9,12-31`, and count only an assertion failure as red. It is
+also a candidate cause for the corrupt incremental artifacts above.
+
 **This machine needs `STAHL_PRESENT=immediate`.** Without it the Vulkan FIFO
 present path loses the GPU a few seconds in. It is an NVIDIA driver bug, proved
 with `examples/minimal_window.rs`; see TODO under Bugs.

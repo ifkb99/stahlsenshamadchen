@@ -91,6 +91,11 @@ pub struct DataRegistry {
     /// reason [`Self::command`] is: a game with no world generator is not a
     /// generator with timid numbers, it is the absence of one.
     pub worldgen: Option<super::WorldGen>,
+    /// What a player may choose about a world before a campaign, in the
+    /// order the setup screen lists them and the order their options apply
+    /// ([`super::WorldGen::with_settings`]). Empty is no choices: the mod's
+    /// world as it is.
+    pub world_settings: Vec<super::WorldSetting>,
     /// How fast a column moves across a generated world. Defaulted, like
     /// [`Self::planner`]: a column that marches has a pace.
     pub march: super::March,
@@ -184,6 +189,16 @@ impl DataRegistry {
             }
             if let Some(worldgen) = &manifest.worldgen {
                 registry.worldgen = Some(worldgen.clone());
+            }
+            for setting in manifest.world_settings.iter().flatten() {
+                match registry
+                    .world_settings
+                    .iter_mut()
+                    .find(|s| s.id == setting.id)
+                {
+                    Some(slot) => *slot = setting.clone(),
+                    None => registry.world_settings.push(setting.clone()),
+                }
             }
             if let Some(march) = &manifest.march {
                 registry.march = march.clone();
@@ -788,8 +803,27 @@ impl DataRegistry {
     /// hundred makes a world that is not the one its author described.
     fn validate_worldgen(&self, report: &mut ValidationReport) {
         let Some(wg) = &self.worldgen else {
+            if !self.world_settings.is_empty() {
+                report.warn(
+                    "world_settings are declared and no mod declares a worldgen block, so there \
+                     is no world for them to change",
+                );
+            }
             return;
         };
+        self.validate_world_rules(wg, "worldgen", report);
+        self.validate_world_settings(wg, report);
+    }
+
+    /// One set of world rules: the mod's own, or the mod's as some choice of
+    /// settings leaves them. `label` says which, so an error reached only by
+    /// "size: small" says so.
+    fn validate_world_rules(
+        &self,
+        wg: &super::WorldGen,
+        label: &str,
+        report: &mut ValidationReport,
+    ) {
         let p = &wg.terrain;
         for (kind, id) in [
             ("open", &p.open),
@@ -802,14 +836,14 @@ impl DataRegistry {
         ] {
             if self.terrain(id).is_none() {
                 report.error(format!(
-                    "worldgen terrain.{kind} is `{id}`, which no mod declares"
+                    "{label}: terrain.{kind} is `{id}`, which no mod declares"
                 ));
             }
         }
         for rule in &wg.summary {
             if self.terrain(&rule.terrain).is_none() {
                 report.error(format!(
-                    "worldgen summary names `{}`, which no mod declares",
+                    "{label}: summary names `{}`, which no mod declares",
                     rule.terrain
                 ));
             }
@@ -817,7 +851,7 @@ impl DataRegistry {
                 && self.terrain(&share.terrain).is_none()
             {
                 report.error(format!(
-                    "worldgen summary counts `{}`, which no mod declares",
+                    "{label}: summary counts `{}`, which no mod declares",
                     share.terrain
                 ));
             }
@@ -825,32 +859,150 @@ impl DataRegistry {
         if wg.summary.last().is_none_or(|r| {
             r.feature.is_some() || r.mean_elevation_tenths.is_some() || r.share.is_some()
         }) {
-            report.warn(
-                "worldgen summary does not end with a rule that always holds; a campaign hex no \
-                 rule names is called by terrain.open",
-            );
+            report.warn(format!(
+                "{label}: summary does not end with a rule that always holds; a campaign hex no \
+                 rule names is called by terrain.open"
+            ));
         }
         let shares = &wg.relief.shares;
         if shares.is_empty() || shares.len() > 10 {
             report.error(format!(
-                "worldgen relief.shares names {} levels; a world has 1 to 10",
+                "{label}: relief.shares names {} levels; a world has 1 to 10",
                 shares.len()
             ));
         }
         let total: u32 = shares.iter().sum();
         if total != 100 {
-            report.error(format!("worldgen relief.shares adds to {total}, not 100"));
+            report.error(format!("{label}: relief.shares adds to {total}, not 100"));
         }
-        if wg.towns.factories > wg.towns.count {
+        let towns = wg.towns.count(wg.hexes());
+        if wg.towns.factories > towns {
             report.error(format!(
-                "worldgen asks for {} factories in {} towns",
-                wg.towns.factories, wg.towns.count
+                "{label}: asks for {} factories in {towns} towns",
+                wg.towns.factories
             ));
         }
         if wg.cover.wood_percent + wg.cover.hedge_percent > 100 {
-            report.error(
-                "worldgen cover: wood and hedge together are more than the land".to_string(),
+            report.error(format!(
+                "{label}: cover: wood and hedge together are more than the land"
+            ));
+        }
+    }
+
+    /// Every world setting, and every world its options can make.
+    ///
+    /// Each option alone is applied to the mod's rules first, so a bad path
+    /// is reported against the option that wrote it. Then every combination
+    /// of options is made and validated as rules — cheap, since no world is
+    /// generated — because a fault can live between two settings ("small"
+    /// and "sparse" together leaving fewer towns than factories) where
+    /// neither alone would show it.
+    fn validate_world_settings(&self, wg: &super::WorldGen, report: &mut ValidationReport) {
+        use std::collections::{BTreeMap, HashSet};
+        let settings = &self.world_settings;
+        let mut ids = HashSet::new();
+        let mut touched: BTreeMap<&str, &str> = BTreeMap::new();
+        let mut sound = true;
+        for setting in settings {
+            if !ids.insert(setting.id.as_str()) {
+                report.error(format!("world setting `{}` is declared twice", setting.id));
+            }
+            if setting.options.is_empty() {
+                report.error(format!("world setting `{}` offers no options", setting.id));
+                sound = false;
+                continue;
+            }
+            let mut option_ids = HashSet::new();
+            for option in &setting.options {
+                if !option_ids.insert(option.id.as_str()) {
+                    report.error(format!(
+                        "world setting `{}` offers `{}` twice",
+                        setting.id, option.id
+                    ));
+                }
+                for path in option.set.keys() {
+                    if let Some(other) = touched.get(path.as_str())
+                        && *other != setting.id
+                    {
+                        report.warn(format!(
+                            "world settings `{other}` and `{}` both set `{path}`, so the later \
+                             one decides it whatever the first says",
+                            setting.id
+                        ));
+                    }
+                }
+                let alone = BTreeMap::from([(setting.id.clone(), option.id.clone())]);
+                if let Err(e) = wg.with_settings(std::slice::from_ref(setting), &alone) {
+                    report.error(e.to_string());
+                    sound = false;
+                }
+            }
+            for option in &setting.options {
+                for path in option.set.keys() {
+                    touched.insert(path.as_str(), setting.id.as_str());
+                }
+            }
+            match setting.option(&setting.default) {
+                None => {
+                    report.error(format!(
+                        "world setting `{}` defaults to `{}`, which it does not offer",
+                        setting.id, setting.default
+                    ));
+                    sound = false;
+                }
+                Some(default) if !default.set.is_empty() => report.warn(format!(
+                    "world setting `{}`: its default `{}` sets fields, so a world with every \
+                     setting at its default is not the mod's world",
+                    setting.id, default.id
+                )),
+                Some(_) => {}
+            }
+        }
+        if !sound {
+            return;
+        }
+        // Every combination, as long as there are few enough of them to
+        // walk; past that, each option alone (above) is what is checked.
+        let combinations: usize = settings.iter().map(|s| s.options.len()).product();
+        if combinations > 20_000 {
+            report.warn(format!(
+                "world settings offer {combinations} combinations; only each option alone was \
+                 checked"
+            ));
+            return;
+        }
+        let mut seen = HashSet::new();
+        for n in 0..combinations {
+            let mut rest = n;
+            let mut choices = BTreeMap::new();
+            for setting in settings {
+                let option = &setting.options[rest % setting.options.len()];
+                rest /= setting.options.len();
+                choices.insert(setting.id.clone(), option.id.clone());
+            }
+            let Ok(rules) = wg.with_settings(settings, &choices) else {
+                continue;
+            };
+            let label = format!(
+                "worldgen with {}",
+                choices
+                    .iter()
+                    .map(|(s, o)| format!("{s}={o}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
             );
+            let mut one = ValidationReport::default();
+            self.validate_world_rules(&rules, &label, &mut one);
+            // The same fault reached by many combinations is reported once,
+            // by the first of them, or one bad option would print hundreds.
+            for e in one.errors {
+                let key = e
+                    .split_once(": ")
+                    .map_or(e.clone(), |(_, rest)| rest.to_string());
+                if seen.insert(key) {
+                    report.error(e);
+                }
+            }
         }
     }
 
@@ -1226,6 +1378,7 @@ mod tests {
                     morale: None,
                     command: None,
                     worldgen: None,
+                    world_settings: None,
                     march: None,
                     campaign: None,
                     ranks: None,

@@ -8,7 +8,7 @@
 //! hex is named from the tiles inside it and nothing else.
 
 use hexx::Hex;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use tactics_core::data::{DataRegistry, SkeletonFeature, WorldGen};
 use tactics_core::world::{Presence, World, chunk_of};
 use tactics_core::worldgen::GeneratedWorld;
@@ -114,7 +114,11 @@ fn every_town_is_on_the_road_network() {
     for seed in [1, 2, 3] {
         let made = world(&reg, seed);
         let towns = &made.skeleton.towns;
-        assert_eq!(towns.len() as u32, made.rules.towns.count, "seed {seed}");
+        assert_eq!(
+            towns.len() as u32,
+            made.rules.towns.count(made.rules.hexes()),
+            "seed {seed}"
+        );
         // Union the towns each road joins; one component means every town
         // can be driven to from every other.
         let mut parent: Vec<usize> = (0..towns.len()).collect();
@@ -247,4 +251,189 @@ fn a_mod_that_declares_no_world_cannot_make_one() {
     let mut reg = registry();
     reg.worldgen = None;
     assert!(GeneratedWorld::new(&reg, 1).is_err());
+}
+
+// --- a world made to order (W6.1) ---------------------------------------
+
+/// `setting=option` pairs as a choice.
+fn choose(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+    pairs
+        .iter()
+        .map(|(s, o)| (s.to_string(), o.to_string()))
+        .collect()
+}
+
+/// The mod's rules with these choices made, and then shrunk to a world
+/// small enough to generate in a test — except where the choice is the
+/// size, which is what the test is about.
+fn rules_for(reg: &DataRegistry, pairs: &[(&str, &str)]) -> WorldGen {
+    reg.worldgen
+        .as_ref()
+        .expect("the base mod declares a world")
+        .with_settings(&reg.world_settings, &choose(pairs))
+        .expect("a choice the mod offers")
+}
+
+fn made(reg: &DataRegistry, pairs: &[(&str, &str)]) -> GeneratedWorld {
+    let rules = WorldGen {
+        radius: 4,
+        ..rules_for(reg, pairs)
+    };
+    GeneratedWorld::with_rules(rules, reg.scale.battle_map_radius(), 3).expect("rules are good")
+}
+
+/// Share of a world's tiles that are `terrain`, and its mean level.
+fn measure(world: &GeneratedWorld, terrain: &str) -> (f64, f64) {
+    let (mut n, mut hits, mut levels) = (0u64, 0u64, 0i64);
+    for chunk in world.chunks() {
+        for (_, t, level) in world.chunk_tiles(chunk) {
+            n += 1;
+            hits += (t == terrain) as u64;
+            levels += level as i64;
+        }
+    }
+    (hits as f64 / n as f64, levels as f64 / n as f64)
+}
+
+#[test]
+fn a_world_with_every_setting_at_its_default_is_the_mods_world() {
+    // The additivity rule for the setup screen: saying nothing is the world
+    // the mod describes, field for field, so a campaign that never showed a
+    // player the screen is the campaign it always was.
+    let reg = registry();
+    assert!(
+        !reg.world_settings.is_empty(),
+        "the base mod offers settings"
+    );
+    let base = reg.worldgen.clone().unwrap();
+    assert_eq!(
+        base.with_settings(&reg.world_settings, &choose(&[])),
+        Ok(base.clone())
+    );
+    // Naming every default is the same as naming none.
+    let defaults: Vec<(&str, &str)> = reg
+        .world_settings
+        .iter()
+        .map(|s| (s.id.as_str(), s.default.as_str()))
+        .collect();
+    assert_eq!(rules_for(&reg, &defaults), base);
+}
+
+#[test]
+fn a_larger_map_has_more_towns_and_rivers_at_the_same_density() {
+    // Towns and rivers are densities, so size and settlement compose: a
+    // large map is more country, not the same villages spread thinner.
+    let reg = registry();
+    let size = |option| rules_for(&reg, &[("size", option)]);
+    let (small, standard, large) = (size("small"), size("standard"), size("large"));
+    assert!(small.hexes() < standard.hexes() && standard.hexes() < large.hexes());
+    let towns = |r: &WorldGen| r.towns.count(r.hexes());
+    let rivers = |r: &WorldGen| r.rivers.count(r.hexes());
+    assert!(towns(&small) < towns(&standard) && towns(&standard) < towns(&large));
+    assert!(rivers(&small) <= rivers(&standard) && rivers(&standard) < rivers(&large));
+    // And the shipped standard world is the one the mod described by count
+    // before the counts were densities.
+    assert_eq!((towns(&standard), rivers(&standard)), (14, 3));
+}
+
+#[test]
+fn each_setting_moves_the_world_the_way_it_says() {
+    let reg = registry();
+    let wood = &reg.worldgen.as_ref().unwrap().terrain.wood;
+    let hedge = &reg.worldgen.as_ref().unwrap().terrain.hedge;
+    let wet = &reg.worldgen.as_ref().unwrap().terrain.wet;
+
+    let woods: Vec<f64> = ["sparse", "normal", "heavy"]
+        .iter()
+        .map(|o| measure(&made(&reg, &[("woodland", o)]), wood).0)
+        .collect();
+    assert!(woods[0] < woods[1] && woods[1] < woods[2], "{woods:?}");
+
+    let hedges: Vec<f64> = ["open", "mixed", "bocage"]
+        .iter()
+        .map(|o| measure(&made(&reg, &[("fields", o)]), hedge).0)
+        .collect();
+    assert!(hedges[0] < hedges[1] && hedges[1] < hedges[2], "{hedges:?}");
+
+    let wets: Vec<f64> = ["dry", "normal", "wet"]
+        .iter()
+        .map(|o| measure(&made(&reg, &[("water", o)]), wet).0)
+        .collect();
+    assert!(wets[0] < wets[1] && wets[1] < wets[2], "{wets:?}");
+
+    let heights: Vec<f64> = ["flat", "rolling", "hilly", "mountainous"]
+        .iter()
+        .map(|o| measure(&made(&reg, &[("relief", o)]), wood).1)
+        .collect();
+    assert!(
+        heights.windows(2).all(|w| w[0] < w[1]),
+        "mean level by relief: {heights:?}"
+    );
+
+    let towns: Vec<usize> = ["sparse", "normal", "dense"]
+        .iter()
+        .map(|o| made(&reg, &[("settlement", o)]).skeleton.towns.len())
+        .collect();
+    assert!(towns[0] < towns[1] && towns[1] < towns[2], "{towns:?}");
+}
+
+#[test]
+fn a_choice_nobody_offers_is_refused() {
+    let reg = registry();
+    let base = reg.worldgen.clone().unwrap();
+    assert!(matches!(
+        base.with_settings(&reg.world_settings, &choose(&[("gravity", "low")])),
+        Err(tactics_core::data::SettingError::UnknownSetting(_))
+    ));
+    assert!(matches!(
+        base.with_settings(&reg.world_settings, &choose(&[("size", "enormous")])),
+        Err(tactics_core::data::SettingError::UnknownOption { .. })
+    ));
+}
+
+#[test]
+fn an_option_that_names_no_field_fails_validation() {
+    // A setting is data, so a typo in one is a content error, reported
+    // against the option that wrote it — not a world quietly made without it.
+    let mut reg = registry();
+    assert!(reg.validate().is_ok(), "{:?}", reg.validate().errors);
+    reg.world_settings[0].options[0]
+        .set
+        .insert("cover.wood_procent".into(), serde_json::json!(40));
+    let report = reg.validate();
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|e| e.contains("wood_procent") && e.contains(&reg.world_settings[0].id)),
+        "{:?}",
+        report.errors
+    );
+}
+
+#[test]
+fn a_fault_between_two_settings_fails_validation() {
+    // Neither option alone is wrong; together they leave fewer towns than
+    // the campaign has factories, which only the combination can show.
+    let mut reg = registry();
+    let sparse = reg
+        .world_settings
+        .iter_mut()
+        .find(|s| s.id == "settlement")
+        .unwrap()
+        .options
+        .iter_mut()
+        .find(|o| o.id == "sparse")
+        .unwrap();
+    sparse
+        .set
+        .insert("towns.every".into(), serde_json::json!(120));
+    let report = reg.validate();
+    assert!(
+        report.errors.iter().any(|e| e.contains("size=small")
+            && e.contains("settlement=sparse")
+            && e.contains("factories")),
+        "{:?}",
+        report.errors
+    );
 }
