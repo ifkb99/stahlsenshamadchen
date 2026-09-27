@@ -115,23 +115,29 @@ struct Battle {
     exit_timer: Option<Timer>,
 }
 
+/// [`Battle::human_side`], for the one caller that has to ask before there is
+/// a `Battle` to ask: `setup_battle`, pointing the camera.
+fn human_side_of(state: &BattleState, ai: &AiDriver) -> Option<u8> {
+    (0..state.sides.len() as u8)
+        .find(|side| state.sides[*side as usize].ai.is_none() && !ai.controls(*side))
+}
+
+/// [`Battle::view_side`], likewise.
+fn view_side_of(state: &BattleState, ai: &AiDriver) -> u8 {
+    human_side_of(state, ai)
+        .unwrap_or_else(|| state.sides.iter().position(|s| s.ai.is_none()).unwrap_or(0) as u8)
+}
+
 impl Battle {
     /// The side the player commands, if any. Simultaneous rounds mean this no
     /// longer depends on whose turn it is; there is no such thing.
     fn human_side(&self) -> Option<u8> {
-        (0..self.state.sides.len() as u8)
-            .find(|side| self.state.sides[*side as usize].ai.is_none() && !self.ai.controls(*side))
+        human_side_of(&self.state, &self.ai)
     }
 
     /// The side whose fog and orders the screen shows.
     fn view_side(&self) -> u8 {
-        self.human_side().unwrap_or_else(|| {
-            self.state
-                .sides
-                .iter()
-                .position(|s| s.ai.is_none())
-                .unwrap_or(0) as u8
-        })
+        view_side_of(&self.state, &self.ai)
     }
 
     /// Whether the player may issue orders right now.
@@ -790,25 +796,34 @@ fn setup_battle(
         }
     }
 
-    // The view pivots on the map's centroid. Written through `Commands`
+    // The view pivots on the player's own crews. Written through `Commands`
     // rather than a `ResMut` so this system can also take `View`, which reads
     // the same resource — two conflicting accesses would panic at runtime.
-    // A fight on the world has no map of its own to centre on: the view
-    // pivots on the fighting instead.
-    let center = if on_front {
-        let (n, sx, sy) = state
-            .alive_units()
-            .fold((0i64, 0i64, 0i64), |(n, x, y), u| {
-                (n + 1, x + u.pos.x as i64, y + u.pos.y as i64)
-            });
-        if n == 0 {
-            state.world.center()
-        } else {
-            Hex::round([sx as f32 / n as f32, sy as f32 / n as f32])
-        }
-    } else {
-        state.world.center()
+    //
+    // It used to pivot on the map's centroid, and on the front on the
+    // centroid of *everybody* in the fight. A battle map is 41 hexes across
+    // and a side deploys out of one vertex of it, so at an ordinary window
+    // size the first thing the player saw was empty ground between the two
+    // armies, with every crew she commands off the edge of the screen — and
+    // on the front, the midpoint of two forces in contact is often nobody at
+    // all. Her own people are what she is about to give orders to. Nobody of
+    // hers on the field (a spectator's autoplay, a side already gone) falls
+    // back to everybody, then to the ground.
+    let side = view_side_of(&state, &ai);
+    let centroid = |units: &mut dyn Iterator<Item = Hex>| {
+        let (n, sx, sy) = units.fold((0i64, 0i64, 0i64), |(n, x, y), pos| {
+            (n + 1, x + pos.x as i64, y + pos.y as i64)
+        });
+        (n > 0).then(|| Hex::round([sx as f32 / n as f32, sy as f32 / n as f32]))
     };
+    let center = centroid(
+        &mut state
+            .alive_units()
+            .filter(|u| u.side == side)
+            .map(|u| u.pos),
+    )
+    .or_else(|| centroid(&mut state.alive_units().map(|u| u.pos)))
+    .unwrap_or_else(|| state.world.center());
     commands.insert_resource(ViewCenter(center));
     map_render::spawn_map(
         &mut commands,

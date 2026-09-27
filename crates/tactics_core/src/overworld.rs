@@ -410,6 +410,11 @@ pub enum OverworldEvent {
         rounds: u32,
         /// Vehicles each side lost in it, by side.
         hulls_lost: Vec<u32>,
+        /// The side the fight itself decided for, if it was decided: its
+        /// battle ended with a winner. `None` is a fight that ended level, or
+        /// one that was never decided at all — every army drifted out of
+        /// contact and left it, which on one front is the usual ending.
+        winner: Option<u8>,
     },
     /// The fighting is planning its next minute, and a side a person
     /// commands, within her reach, has not given her orders; the clock
@@ -1905,6 +1910,16 @@ impl OverworldState {
         let per_day = Self::ticks_per_day(registry);
         let mut events = Vec::new();
         for _ in 0..ticks {
+            // A war that is over stays over. The fighting can end it in the
+            // middle of a tick (a headquarters destroyed, a commander
+            // killed), and nothing below asked: the same call went on
+            // marching columns, taking towns and running the next dawn, so
+            // a caller who asked for "the rest of the day" — the game's
+            // Enter — was shown the world some hours after the campaign
+            // ended rather than the moment it did.
+            if self.over.is_some() {
+                return events;
+            }
             // A fight she can reach waits for her orders, and so does the
             // clock (WORLD.md W4.4): the pause is news reaching her, and the
             // world does not go on without her while she gives them.
@@ -1914,6 +1929,9 @@ impl OverworldState {
             }
             self.clock += 1;
             events.extend(self.run_front(registry));
+            if self.over.is_some() {
+                return events;
+            }
             events.extend(self.bring_home(registry));
             let marching: Vec<ElementId> = self
                 .columns()
@@ -2704,6 +2722,7 @@ impl OverworldState {
             return Vec::new();
         };
         let rounds = front.battle().round;
+        let winner = front.battle().over.and_then(|result| result.winner);
         let mut hulls_lost = vec![0; front.battle().sides.len()];
         for unit in front.battle().lost_units() {
             hulls_lost[unit.side as usize] += 1;
@@ -2713,7 +2732,11 @@ impl OverworldState {
             events.extend(self.leave_fighting(registry, army));
         }
         self.front = None;
-        events.push(OverworldEvent::FightingOver { rounds, hulls_lost });
+        events.push(OverworldEvent::FightingOver {
+            rounds,
+            hulls_lost,
+            winner,
+        });
         events
     }
 

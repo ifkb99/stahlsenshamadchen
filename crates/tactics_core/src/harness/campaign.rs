@@ -239,12 +239,16 @@ pub fn play(
                 }
                 // The fighting on the ground, fought by the clock (WORLD.md
                 // W3.2, W3.8): when all of it is over, it counts as a battle.
-                OverworldEvent::FightingOver { rounds, hulls_lost } => {
+                OverworldEvent::FightingOver {
+                    rounds,
+                    hulls_lost,
+                    winner,
+                } => {
                     run.battles.push(FieldResult {
                         day: state.turn,
                         map_id: "the ground".into(),
                         attacker_side: 0,
-                        winner: None,
+                        winner,
                         rounds,
                         cut_off: false,
                         hulls_lost,
