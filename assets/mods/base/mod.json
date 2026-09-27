@@ -11,6 +11,7 @@
     "ticks_per_round": 12,
     "elevation_meters": 10,
     "overworld_hex_meters": 4000,
+    "overworld_elevation_meters": 30,
     "overworld_turn_hours": 24
   },
   "balance": {

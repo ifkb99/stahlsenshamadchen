@@ -175,9 +175,10 @@ fn report_scale(registry: &DataRegistry) {
         s.format_elevation(1),
     );
     println!(
-        "  overworld hex {} = {:.0} battle hexes | turn {} h",
+        "  overworld hex {} = {:.0} battle hexes | level {} m | turn {} h",
         s.format_overworld_distance(1),
         s.battle_hexes_per_overworld_hex(),
+        s.overworld_elevation_meters,
         s.overworld_turn_hours,
     );
     println!(

@@ -1231,7 +1231,7 @@ fn a_generated_campaign_map_is_what_its_world_adds_up_to() {
         .world
         .as_ref()
         .expect("a generated campaign keeps its world");
-    assert_eq!(*state.map, world.campaign_map());
+    assert_eq!(*state.map, world.campaign_map(&reg.scale));
     assert_eq!(state.map.len(), world.chunks().count());
     let mut stands: Vec<Hex> = state.columns().iter().map(|a| a.pos).collect();
     for a in &state.columns() {

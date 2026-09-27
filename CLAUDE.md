@@ -1621,6 +1621,7 @@ through it.
 | Round | `round_seconds` | 60 s |
 | Tick | `round_seconds / ticks_per_round` | 5 s (12 ticks) |
 | Elevation level | `elevation_meters` | 10 m |
+| Campaign elevation level | `overworld_elevation_meters` | 30 m |
 | Overworld hex | `overworld_hex_meters` | 4 km = one battle map |
 | Overworld turn | `overworld_turn_hours` | 24 h (a day) |
 
@@ -1724,9 +1725,9 @@ instrument's numbers.
 
 ### Correctness
 
-- **Overworld elevation is priced at the battle scale.** `Scale` has one
-  `elevation_meters`, so `frontier`'s mountains at elevation 2 read as 20 m.
-  Harmless today; a strategic map wants its own vertical scale.
+- ~~**Overworld elevation is priced at the battle scale.**~~ Closed by
+  W6.8: `scale.overworld_elevation_meters` is the campaign's own level, and
+  a generated campaign hex is raised by its land's mean height in it.
 - **The generated maps lean to an end, and three compass ties were not the
   cause.** With the reserve in, the `ground` table read `battle_town`
   **194–382 to the east end over eight seeds**, and exchanging which side

@@ -868,7 +868,11 @@ impl OverworldState {
                         })
                         .collect();
                     let positions = world.place_armies(&places);
-                    (world.campaign_map(), Some(Arc::new(world)), positions)
+                    (
+                        world.campaign_map(&registry.scale),
+                        Some(Arc::new(world)),
+                        positions,
+                    )
                 }
             };
         let mut sides: Vec<OverworldSide> = file

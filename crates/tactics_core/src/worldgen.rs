@@ -281,8 +281,11 @@ struct Calibration {
 pub struct Summary {
     /// The campaign terrain, by the first summary rule that holds.
     pub terrain: String,
-    /// The mean elevation of its land, rounded.
+    /// The mean elevation of its land, in the battle's levels, rounded.
     pub elevation: i32,
+    /// The same mean in tenths of a level, unrounded, for a campaign map
+    /// drawn at a vertical scale of its own ([`GeneratedWorld::campaign_map`]).
+    pub mean_tenths: u32,
 }
 
 /// A world, made: its seed and rules, the skeleton, and what it takes to
@@ -665,18 +668,23 @@ impl GeneratedWorld {
         Some(Summary {
             terrain,
             elevation: ((mean_tenths + 5) / 10) as i32,
+            mean_tenths,
         })
     }
 
     /// The campaign map this world adds up to: every campaign hex, at its
-    /// chunk's coordinates, named and raised by [`Self::summary`]. The
-    /// campaign's coordinates *are* the chunks', so a campaign hex and the
-    /// ground under it are one address.
-    pub fn campaign_map(&self) -> crate::map::HexMap {
+    /// chunk's coordinates, named by [`Self::summary`] and raised by its
+    /// land's mean height at the campaign's own vertical scale
+    /// (`scale.overworld_elevation_meters`, W6.8). The campaign's coordinates
+    /// *are* the chunks', so a campaign hex and the ground under it are one
+    /// address.
+    pub fn campaign_map(&self, scale: &crate::data::Scale) -> crate::map::HexMap {
+        let per_level = scale.elevation_meters / scale.overworld_elevation_meters.max(f32::EPSILON);
         let mut map = crate::map::HexMap::default();
         for chunk in self.chunks() {
             if let Some(summary) = self.summary(chunk) {
-                map.insert(chunk, &summary.terrain, summary.elevation);
+                let level = (summary.mean_tenths as f32 / 10.0 * per_level).round() as i32;
+                map.insert(chunk, &summary.terrain, level);
             }
         }
         map

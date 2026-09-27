@@ -1028,6 +1028,7 @@ impl DataRegistry {
             ("round_seconds", s.round_seconds),
             ("elevation_meters", s.elevation_meters),
             ("overworld_hex_meters", s.overworld_hex_meters),
+            ("overworld_elevation_meters", s.overworld_elevation_meters),
             ("overworld_turn_hours", s.overworld_turn_hours),
         ] {
             if !(value.is_finite() && value > 0.0) {
