@@ -6,14 +6,14 @@
 #     STAHL_SCRIPT=scripts/dev/generated-campaign.txt cargo run -p stahlsenshamädchen
 #
 # frontier_world's 1st Company resolves to the western town, which is the
-# campaign hex at axial (-3, -7) since the world grew to radius 10 — a city,
-# because its tiles hold a town.
+# campaign hex at axial (-1, -8) in seed 1's world under generator 2 (W6.4)
+# — a city, because its tiles hold a town.
 
 at 3.0
 log "generated campaign, day 1"
 shot /tmp/world-01-start.png
 
-hex -3,-7
+hex -1,-8
 wait 0.3
 click left
 wait 0.5

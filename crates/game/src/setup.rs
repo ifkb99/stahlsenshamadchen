@@ -29,7 +29,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use tactics_core::data::{DataRegistry, WorldSetup, parse_color};
+use tactics_core::data::{DataRegistry, WorldSetup};
 use tactics_core::map::MapKind;
 use tactics_core::overworld::OverworldState;
 
@@ -315,9 +315,9 @@ fn poll_preview(
     };
 }
 
-/// The campaign a choice makes, and its picture: a pixel a tile, coloured by
-/// the terrain's own map colour and darkened toward the low ground, the
-/// factories ringed, each side's companies marked where they stand.
+/// The campaign a choice makes, and its picture: `worldgen::picture`, the
+/// drawing `examples/worldgen --picture` writes too, with each side's
+/// companies marked where they stand.
 fn make(registry: &DataRegistry, map_id: &str, choice: &WorldSetup) -> Result<Made, String> {
     let state =
         OverworldState::from_map_setup(registry, map_id, 0, choice).map_err(|e| e.to_string())?;
@@ -325,98 +325,20 @@ fn make(registry: &DataRegistry, map_id: &str, choice: &WorldSetup) -> Result<Ma
         .world
         .clone()
         .ok_or("the campaign has no world to draw")?;
-    let tiles: Vec<(tactics_core::Hex, &str, i32)> =
-        world.chunks().flat_map(|c| world.chunk_tiles(c)).collect();
-    // Pointy-topped axial to a pixel grid: a row per `r`, and within it `q`
-    // shifted by half a row per row, which puts every tile on its own pixel.
-    let px = |h: tactics_core::Hex| ((2 * h.x + h.y).div_euclid(2), h.y);
-    let (min_x, max_x) = tiles
+    let marks: Vec<(tactics_core::Hex, [u8; 3])> = state
+        .columns()
         .iter()
-        .map(|(h, _, _)| px(*h).0)
-        .fold((i32::MAX, i32::MIN), |(a, b), x| (a.min(x), b.max(x)));
-    let (min_y, max_y) = tiles
-        .iter()
-        .map(|(h, _, _)| h.y)
-        .fold((i32::MAX, i32::MIN), |(a, b), y| (a.min(y), b.max(y)));
-    let (width, height) = ((max_x - min_x + 1) as u32, (max_y - min_y + 1) as u32);
-    let mut pixels = vec![0u8; (width * height * 4) as usize];
-    let mut put = |x: i32, y: i32, [r, g, b]: [u8; 3]| {
-        if x < min_x || x > max_x || y < min_y || y > max_y {
-            return;
-        }
-        let i = (((y - min_y) as u32 * width + (x - min_x) as u32) * 4) as usize;
-        pixels[i..i + 4].copy_from_slice(&[r, g, b, 255]);
-    };
-    let mut colours: BTreeMap<&str, [u8; 3]> = BTreeMap::new();
-    let levels: std::collections::HashMap<tactics_core::Hex, i32> =
-        tiles.iter().map(|(h, _, l)| (*h, *l)).collect();
-    let palette = &world.rules.terrain;
-    let mut wood = 0usize;
-    for (hex, terrain, level) in &tiles {
-        let base = *colours.entry(terrain).or_insert_with(|| {
-            registry
-                .terrain(terrain)
-                .and_then(|t| parse_color(&t.color))
-                .unwrap_or([128, 128, 128])
-        });
-        if *terrain == palette.wood {
-            wood += 1;
-        }
-        // Height as a map shows it: higher ground lighter, and every slope
-        // lit from the north-west, so a ridge reads as a ridge at a pixel a
-        // tile. Water keeps its own colour.
-        let colour = if *terrain == palette.water {
-            [60, 120, 215]
-        } else {
-            let upslope = levels
-                .get(&(*hex + tactics_core::Hex::new(0, -1)))
-                .copied()
-                .unwrap_or(*level);
-            let lit = (*level - upslope) as f32 * 0.16;
-            let height = 0.70 + 0.07 * (*level).clamp(0, 9) as f32;
-            base.map(|c| (c as f32 * (height + lit)).clamp(0.0, 255.0) as u8)
-        };
-        let (x, y) = px(*hex);
-        put(x, y, colour);
-    }
-    // The skeleton drawn over it, a touch heavier than the tiles it is made
-    // of: at a pixel a tile a river one tile wide vanishes, and these are
-    // the things a commander plans around.
-    for river in &world.skeleton.rivers {
-        for hex in river {
-            let (x, y) = px(*hex);
-            put(x, y, [60, 120, 215]);
-            put(x + 1, y, [60, 120, 215]);
-        }
-    }
-    for road in &world.skeleton.roads {
-        for hex in road {
-            let (x, y) = px(*hex);
-            put(x, y, [214, 196, 150]);
-        }
-    }
-    for town in &world.skeleton.towns {
-        for hex in town.centre.range(town.radius) {
-            let (x, y) = px(hex);
-            put(x, y, [236, 232, 220]);
-        }
-        if town.factory {
-            for ring in [town.radius + 1, town.radius + 2] {
-                for hex in town.centre.ring(ring) {
-                    let (x, y) = px(hex);
-                    put(x, y, [250, 200, 30]);
-                }
-            }
-        }
-    }
-    for column in state.columns() {
-        let Some(tile) = column.tile else {
-            continue;
-        };
-        let colour = crate::iso::SIDE_COLORS[column.side as usize % crate::iso::SIDE_COLORS.len()];
-        for hex in tile.range(6) {
-            let (x, y) = px(hex);
-            put(x, y, colour);
+        .filter_map(|c| {
+            let colour = crate::iso::SIDE_COLORS[c.side as usize % crate::iso::SIDE_COLORS.len()];
+            c.tile.map(|t| (t, colour))
+        })
+        .collect();
+    let pic = tactics_core::worldgen::picture(registry, &world, &marks);
+    let (mut tiles, mut wood) = (0usize, 0usize);
+    for chunk in world.chunks() {
+        for (_, terrain, _) in world.chunk_tiles(chunk) {
+            tiles += 1;
+            wood += (terrain == world.rules.terrain.wood) as usize;
         }
     }
     let sk = &world.skeleton;
@@ -428,13 +350,13 @@ fn make(registry: &DataRegistry, map_id: &str, choice: &WorldSetup) -> Result<Ma
         sk.towns.len(),
         sk.towns.iter().filter(|t| t.factory).count(),
         sk.rivers.len(),
-        100.0 * wood as f64 / tiles.len().max(1) as f64,
+        100.0 * wood as f64 / tiles.max(1) as f64,
     );
     Ok(Made {
         state,
-        pixels,
-        width,
-        height,
+        pixels: pic.rgba,
+        width: pic.width,
+        height: pic.height,
         summary,
     })
 }
