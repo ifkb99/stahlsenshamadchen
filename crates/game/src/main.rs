@@ -86,6 +86,7 @@ fn main() -> AppExit {
                 // would only blur the texels.
                 .set(ImagePlugin::default_nearest()),
         )
+        .add_systems(PreStartup, install_default_font)
         .insert_resource(ClearColor(Color::srgb(0.09, 0.10, 0.13)))
         .init_state::<AppState>()
         // Declared once for the whole app rather than per screen. Configuring
@@ -115,6 +116,28 @@ fn main() -> AppExit {
         ))
         .add_systems(Update, map_render::reposition_map)
         .run()
+}
+
+/// The face every `TextFont::default()` in the game draws with.
+///
+/// Bevy's built-in default is a subset of Fira Mono that stops at ASCII, so
+/// the log drew a box for every em dash in it ("under fire ▯ breaking for
+/// cover") and the roll drew one in the middle of Greta Müller's name — the
+/// game's own title has an ä in it. Noto Sans Mono covers everything the
+/// source and the mods write (dashes, arrows, umlauts, ±, ×, µ) and is SIL OFL
+/// 1.1; the licence travels beside it in `assets/fonts/OFL.txt`.
+///
+/// It replaces the asset behind the *default* handle rather than being
+/// threaded through every `TextFont`, so a text node written tomorrow gets it
+/// without anybody remembering to ask. Compiled in rather than loaded, because
+/// the default handle has to answer on the first frame and an asset load is
+/// asynchronous.
+const DEFAULT_FONT: &[u8] = include_bytes!("../../../assets/fonts/NotoSansMono-Regular.ttf");
+
+fn install_default_font(mut fonts: ResMut<Assets<Font>>) {
+    fonts
+        .insert(AssetId::default(), Font::from_bytes(DEFAULT_FONT.to_vec()))
+        .expect("the default font handle is a valid asset id");
 }
 
 fn primary_window() -> Window {

@@ -799,9 +799,22 @@ fn pump_events(
                 army_name(&overworld.state, *army)
             ));
         }
-        OverworldEvent::FightingOver { rounds, hulls_lost } => {
+        OverworldEvent::FightingOver {
+            rounds,
+            hulls_lost,
+            winner,
+        } => {
+            let decided = match winner {
+                Some(side) => overworld
+                    .state
+                    .sides
+                    .get(*side as usize)
+                    .map(|s| format!(" {} had the better of it.", s.name))
+                    .unwrap_or_default(),
+                None => String::new(),
+            };
             log.push(format!(
-                "The fighting is over after {rounds} minute(s); vehicles lost {hulls_lost:?}."
+                "The fighting is over after {rounds} minute(s); vehicles lost {hulls_lost:?}.{decided}"
             ));
         }
         OverworldEvent::FightAwaitsOrders { .. } => {

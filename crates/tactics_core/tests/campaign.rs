@@ -1334,7 +1334,8 @@ fn a_generated_campaign_is_fought_to_an_end_without_declining_a_fight() {
 
 /// On the clock, an order sets a march and the day walks it: finish every
 /// side's orders and run the day, returning what it did — stopping at the
-/// first fight, as the clock does.
+/// first fight, as the clock does, and at the end of the war, which a fight
+/// on the ground can bring before the day is out.
 fn run_the_day(reg: &DataRegistry, state: &mut OverworldState) -> Vec<OverworldEvent> {
     let day = state.turn;
     let mut all = Vec::new();
@@ -1346,7 +1347,7 @@ fn run_the_day(reg: &DataRegistry, state: &mut OverworldState) -> Vec<OverworldE
             .iter()
             .any(|e| matches!(e, OverworldEvent::BattleTriggered { .. }));
         all.extend(events);
-        if fight || state.turn > day {
+        if fight || state.turn > day || state.over.is_some() {
             break;
         }
     }
@@ -1747,6 +1748,54 @@ fn a_campaign_in_the_middle_of_a_fight_goes_through_a_save_and_fights_on_the_sam
             .collect()
     };
     assert_eq!(positions(&back), positions(&state));
+}
+
+#[test]
+fn a_campaign_that_has_ended_goes_no_further() {
+    // The fighting on the ground can end the war in the middle of a tick,
+    // and the clock used to go on past it inside the same call: columns
+    // marched, towns changed hands, the next dawn ran, and on seed 1 a whole
+    // new fight was joined and fought after the campaign's winner had been
+    // declared. What may follow `GameEnded` is the fight that ended it
+    // winding down — its armies leaving it, the ground they stood on — and
+    // nothing that is the world going on.
+    let reg = registry();
+    let options = tactics_core::harness::campaign::CampaignOptions {
+        trace: true,
+        ..Default::default()
+    };
+    let mut ended = 0;
+    for seed in 0..4 {
+        let run = tactics_core::harness::campaign::play(&reg, "frontier_world", seed, &options)
+            .expect("it builds");
+        let Some(at) = run
+            .events
+            .iter()
+            .position(|e| matches!(e, OverworldEvent::GameEnded { .. }))
+        else {
+            continue;
+        };
+        ended += 1;
+        let after: Vec<_> = run.events[at + 1..]
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    OverworldEvent::ArmyMoved { .. }
+                        | OverworldEvent::TurnStarted { .. }
+                        | OverworldEvent::ArmyEngaged { .. }
+                        | OverworldEvent::BattleTriggered { .. }
+                        | OverworldEvent::FightAwaitsOrders { .. }
+                        | OverworldEvent::GameEnded { .. }
+                )
+            })
+            .collect();
+        assert!(
+            after.is_empty(),
+            "seed {seed}: the world went on after the campaign ended: {after:?}"
+        );
+    }
+    assert!(ended > 0, "no seed ended, so nothing was tested");
 }
 
 #[test]

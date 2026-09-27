@@ -545,7 +545,12 @@ and the seam tests in `tests/ground.rs`.
   tick, in integer movement banked per tick, with the `march` block's halts
   and hours; the sides order in turn at dawn and the last side's end-of-turn
   runs the day. `advance_clock(ticks)` is the entry real time drives. A
-  drawn campaign keeps its turns: nothing here runs for it.
+  drawn campaign keeps its turns: nothing here runs for it. **A campaign
+  that has ended goes no further**: the fighting can end it mid-tick, and
+  `advance_clock` stops there rather than running on to the dawn it was
+  asked for (it used to, and on one seed a whole fight was fought after the
+  winner was declared); `a_campaign_that_has_ended_goes_no_further`,
+  mutation-checked.
 - **Contact on a clocked campaign is a fight on the ground, not a battle
   event** (W3.2–W3.3): the armies' vehicles are lifted onto the tiles round
   where they stand, the battle ticks with the clock, its AI is planned
