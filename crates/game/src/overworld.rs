@@ -237,7 +237,7 @@ impl Plugin for OverworldPlugin {
             )
             .add_systems(
                 Update,
-                (stream_ground, sync_armies)
+                (stream_ground, spawn_new_markers, sync_armies)
                     .chain()
                     .in_set(ScreenSet::Sync)
                     .run_if(in_state(AppState::Overworld)),
@@ -489,6 +489,60 @@ fn center_camera(focus: &mut CameraFocus, rotation: u32, center: Hex) {
     focus.0 = pos;
 }
 
+/// An army marker for `army`, with the headquarters chevron over it: one
+/// for each column when the campaign screen is built, and one for each node
+/// that takes a place of its own afterwards (`spawn_new_markers`).
+fn spawn_marker(commands: &mut Commands, art: &ArtCache, army: &tactics_core::overworld::Column) {
+    commands
+        .spawn((
+            Sprite {
+                image: art
+                    .armies
+                    .get(&(army.side % iso::SIDE_COLORS.len() as u8))
+                    .cloned()
+                    .unwrap_or_else(|| art.face.clone()),
+                ..default()
+            },
+            Transform::default(),
+            ArmyMarker(army.id),
+            OverworldScope,
+        ))
+        // Spawned for every army and shown for the one carrying the
+        // headquarters, because seniority moves: the army the net is
+        // rooted at changes the moment the first-declared one is
+        // destroyed, and `sync_armies` reads it fresh every frame rather
+        // than waiting to be told.
+        .with_children(|parent| {
+            parent.spawn((
+                Sprite {
+                    image: art.chevron.clone(),
+                    ..default()
+                },
+                Transform::from_translation(Vec3::new(0.0, 26.0, 0.2)),
+                Visibility::Hidden,
+                ArmyChevron(army.id),
+            ));
+        });
+}
+
+/// A marker for every column that has none: a node that took a place of
+/// its own after the screen was built — a vehicle sent out (WORLD.md
+/// W4.6b). One that goes home keeps its marker, hidden by `sync_armies`
+/// while it has no place, for when she is sent again.
+fn spawn_new_markers(
+    mut commands: Commands,
+    art: Res<ArtCache>,
+    overworld: Res<Overworld>,
+    markers: Query<&ArmyMarker>,
+) {
+    let have: std::collections::HashSet<ElementId> = markers.iter().map(|m| m.0).collect();
+    for army in overworld.state.columns() {
+        if !have.contains(&army.id) {
+            spawn_marker(&mut commands, &art, &army);
+        }
+    }
+}
+
 /// Spawn the map tiles, army markers, owner dots, and UI for a state.
 fn spawn_world(
     commands: &mut Commands,
@@ -505,36 +559,7 @@ fn spawn_world(
     commands.insert_resource(CurrentMap(state.map.clone()));
 
     for army in state.columns() {
-        commands
-            .spawn((
-                Sprite {
-                    image: art
-                        .armies
-                        .get(&(army.side % iso::SIDE_COLORS.len() as u8))
-                        .cloned()
-                        .unwrap_or_else(|| art.face.clone()),
-                    ..default()
-                },
-                Transform::default(),
-                ArmyMarker(army.id),
-                OverworldScope,
-            ))
-            // Spawned for every army and shown for the one carrying the
-            // headquarters, because seniority moves: the army the net is
-            // rooted at changes the moment the first-declared one is
-            // destroyed, and `sync_armies` reads it fresh every frame rather
-            // than waiting to be told.
-            .with_children(|parent| {
-                parent.spawn((
-                    Sprite {
-                        image: art.chevron.clone(),
-                        ..default()
-                    },
-                    Transform::from_translation(Vec3::new(0.0, 26.0, 0.2)),
-                    Visibility::Hidden,
-                    ArmyChevron(army.id),
-                ));
-            });
+        spawn_marker(commands, art, &army);
     }
     commands.spawn((
         Sprite {
@@ -936,6 +961,36 @@ fn pump_events(
                     "{chassis} transferred from {} to {}.",
                     army_name(&overworld.state, *from),
                     army_name(&overworld.state, *to)
+                ));
+            }
+        }
+        OverworldEvent::ArmyDetached { army, from } => {
+            if ours(&overworld.state, *army) {
+                log.push(format!(
+                    "{} sent out from {}.",
+                    army_name(&overworld.state, *army),
+                    army_name(&overworld.state, *from)
+                ));
+            }
+        }
+        OverworldEvent::ArmyRecalled { army } => {
+            if ours(&overworld.state, *army) {
+                log.push(format!(
+                    "{} recalled to her company.",
+                    army_name(&overworld.state, *army)
+                ));
+            }
+        }
+        OverworldEvent::ArmyRejoined { army, into } => {
+            if ours(&overworld.state, *into) {
+                let name = overworld
+                    .state
+                    .element(*army)
+                    .map(|e| e.name.clone())
+                    .unwrap_or_default();
+                log.push(format!(
+                    "{name} is back with {}.",
+                    army_name(&overworld.state, *into)
                 ));
             }
         }
@@ -2172,6 +2227,55 @@ fn handle_input(
         return;
     }
 
+    // Sending a vehicle out (WORLD.md W4.6b): with one of her companies
+    // selected and open ground under the cursor, a digit sends that vehicle
+    // there on her own. It is the move order, given to the vehicle's node in
+    // the chain of command rather than the company's; the engine says
+    // whether she can go (on the clock, not the company's last, not the
+    // vehicle her commander rides in).
+    if let Some(from) = overworld.selected
+        && let Some(index) = digit_key(&keys)
+        && let Some(hex) = view.hovered(&overworld.state.map)
+        && overworld.state.army_at(hex).is_none()
+    {
+        let ow = &mut *overworld;
+        let Some(vehicle) = ow.state.members(from).get(index).copied() else {
+            log.push("There is no vehicle by that number in the company.");
+            return;
+        };
+        match ow.state.apply(
+            &mods.0,
+            &OverworldOrder::MoveArmy {
+                army: vehicle,
+                to: hex,
+            },
+        ) {
+            Ok(events) => {
+                ow.anim.extend(events);
+                ow.clear_selection();
+            }
+            Err(e) => log.push(format!("Can't send her there: {e}")),
+        }
+        return;
+    }
+    // `B`: bring a vehicle that was sent out back to her company.
+    if let Some(army) = overworld.selected
+        && keys.just_pressed(KeyCode::KeyB)
+    {
+        let ow = &mut *overworld;
+        match ow
+            .state
+            .apply(&mods.0, &OverworldOrder::Recall { element: army })
+        {
+            Ok(events) => {
+                ow.anim.extend(events);
+                ow.clear_selection();
+            }
+            Err(e) => log.push(format!("Can't recall that: {e}")),
+        }
+        return;
+    }
+
     if !buttons.just_pressed(MouseButton::Left) {
         return;
     }
@@ -2608,6 +2712,12 @@ fn update_ui(
         // an enemy's panel never offers to order it.
         if overworld.selected == Some(army.id) && army.side == state.active_side {
             lines.push("G advance on hovered, H hold, W fall back on hovered".into());
+            if army.units.len() > 1 {
+                lines.push("1-9 on open ground: send that vehicle there".into());
+            }
+            if state.element(army.id).is_some_and(|e| e.vehicle.is_some()) {
+                lines.push("B recall her to her company".into());
+            }
         }
         // Hovering another of her own companies beside the selected one:
         // the digits send the selected company's vehicles here, so number

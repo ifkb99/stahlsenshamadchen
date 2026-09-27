@@ -2410,3 +2410,215 @@ fn a_vehicle_keeps_her_place_in_the_chain_of_command_through_a_fight() {
     }
     assert!(survivors > 0, "somebody came home to be recognised");
 }
+
+// --- sending a vehicle out ------------------------------------------------------
+
+/// A Kuhlmann company with a vehicle to spare, and the node of one her
+/// commander is not riding in.
+fn spare_vehicle(state: &OverworldState) -> (ElementId, ElementId) {
+    let commander = state.sides[0].commander;
+    state
+        .side_armies(0)
+        .filter(|a| a.units.len() >= 2)
+        .find_map(|a| {
+            state
+                .members(a.id)
+                .into_iter()
+                .find(|m| {
+                    let crew = &state.element(*m).unwrap().vehicle.as_ref().unwrap().crew;
+                    commander.is_none_or(|c| !crew.contains(&c))
+                })
+                .map(|m| (a.id, m))
+        })
+        .expect("a company with a vehicle to spare")
+}
+
+/// A campaign hex beside `army` that nobody stands on.
+fn free_beside(state: &OverworldState, army: ElementId) -> Hex {
+    let at = state.army(army).unwrap().pos;
+    at.all_neighbors()
+        .into_iter()
+        .find(|n| state.map.contains(*n) && state.army_at(*n).is_none())
+        .expect("a free hex beside her")
+}
+
+/// Run the clock until `done` holds, or give up.
+fn run_until(
+    reg: &DataRegistry,
+    state: &mut OverworldState,
+    done: impl Fn(&OverworldState) -> bool,
+) {
+    for _ in 0..40_000 {
+        if done(state) {
+            return;
+        }
+        state.advance_clock(reg, 1);
+    }
+}
+
+#[test]
+fn a_vehicle_sent_out_stands_on_her_own_and_holds_there_still_her_companys() {
+    // WORLD.md W4.6b: an order to a vehicle below a company sends her out.
+    // Nothing new is made — she is the same node under the same company,
+    // with a place of her own and a standing order to hold — and when she
+    // gets there she stays until she is recalled.
+    let reg = registry();
+    let mut state = generated(&reg);
+    let (company, scout) = spare_vehicle(&state);
+    let before = state.army(company).unwrap().units.len();
+    let elements = state.elements.len();
+    let to = free_beside(&state, company);
+    let events = state
+        .apply(&reg, &OverworldOrder::MoveArmy { army: scout, to })
+        .unwrap();
+    assert_eq!(
+        events.first(),
+        Some(&OverworldEvent::ArmyDetached {
+            army: scout,
+            from: company
+        })
+    );
+    assert_eq!(state.elements.len(), elements, "nothing new was made");
+    assert_eq!(state.element(scout).unwrap().parent, Some(company));
+    let out = state.army(scout).expect("she stands on her own");
+    assert_eq!(out.units.len(), 1);
+    assert!(out.name.ends_with(&state.army(company).unwrap().name));
+    assert_eq!(state.army(company).unwrap().units.len(), before - 1);
+
+    run_until(&reg, &mut state, |s| s.army(scout).unwrap().march.is_none());
+    assert_eq!(state.army(scout).unwrap().pos, to, "she got there");
+    // Two days later she is still there: a hold, not a round trip.
+    let dawn = state.ticks_to_dawn(&reg) + 2 * 17_280;
+    state.advance_clock(&reg, dawn);
+    assert_eq!(
+        state.army(scout).map(|a| a.pos),
+        Some(to),
+        "holding until recalled"
+    );
+    assert_eq!(state.element(scout).unwrap().parent, Some(company));
+}
+
+#[test]
+fn a_recalled_vehicle_goes_home_and_is_part_of_her_companys_column_again() {
+    let reg = registry();
+    let mut state = generated(&reg);
+    let (company, scout) = spare_vehicle(&state);
+    let before = state.army(company).unwrap().units.clone();
+    let out = free_beside(&state, company);
+    let further = out
+        .all_neighbors()
+        .into_iter()
+        .find(|n| {
+            state.map.contains(*n)
+                && state.army_at(*n).is_none()
+                && n.distance_to(state.army(company).unwrap().pos) == 2
+        })
+        .expect("a hex two away");
+    state
+        .apply(
+            &reg,
+            &OverworldOrder::MoveArmy {
+                army: scout,
+                to: further,
+            },
+        )
+        .unwrap();
+    run_until(&reg, &mut state, |s| s.army(scout).unwrap().march.is_none());
+    assert_eq!(state.army(scout).unwrap().pos, further);
+
+    let events = state
+        .apply(&reg, &OverworldOrder::Recall { element: scout })
+        .unwrap();
+    assert_eq!(events, vec![OverworldEvent::ArmyRecalled { army: scout }]);
+    let mut rejoined = false;
+    for _ in 0..40_000 {
+        rejoined |= state.advance_clock(&reg, 1).iter().any(|e| {
+            *e == OverworldEvent::ArmyRejoined {
+                army: scout,
+                into: company,
+            }
+        });
+        if rejoined {
+            break;
+        }
+    }
+    assert!(rejoined, "she came home");
+    assert!(
+        state.army(scout).is_none(),
+        "she no longer stands on her own"
+    );
+    let element = state.element(scout).unwrap();
+    assert!(element.alive && element.parent == Some(company));
+    assert_eq!(
+        state.army(company).unwrap().units,
+        before,
+        "and her company's column is what it was, in the order it was"
+    );
+}
+
+#[test]
+fn a_vehicle_that_cannot_be_sent_out_is_refused_and_nothing_changes() {
+    use tactics_core::overworld::OverworldError;
+    let reg = registry();
+    let mut state = generated(&reg);
+    let snapshot = format!("{:?}", state.elements);
+    // The vehicle her commander rides in does not go to look.
+    let commander = state.sides[0].commander.expect("the campaign names her");
+    let hers = state
+        .elements
+        .iter()
+        .find(|e| {
+            e.vehicle
+                .as_ref()
+                .is_some_and(|v| v.crew.contains(&commander))
+        })
+        .unwrap()
+        .id;
+    let hq = state.element(hers).unwrap().parent.unwrap();
+    let to = free_beside(&state, hq);
+    assert_eq!(
+        state.apply(&reg, &OverworldOrder::MoveArmy { army: hers, to }),
+        Err(OverworldError::NoDetach)
+    );
+    // A company answers to its side: there is nowhere to recall it to.
+    assert_eq!(
+        state.apply(&reg, &OverworldOrder::Recall { element: hq }),
+        Err(OverworldError::NoRecall)
+    );
+    assert_eq!(
+        format!("{:?}", state.elements),
+        snapshot,
+        "nothing happened"
+    );
+
+    // A company's last vehicle is the company.
+    let (company, _) = spare_vehicle(&state);
+    let mut units = state.army(company).unwrap().units;
+    units.truncate(1);
+    state.set_vehicles(company, units);
+    let last = state.members(company)[0];
+    let to = free_beside(&state, company);
+    assert_eq!(
+        state.apply(&reg, &OverworldOrder::MoveArmy { army: last, to }),
+        Err(OverworldError::NoDetach)
+    );
+
+    // A drawn campaign has no clock for her to march on.
+    let mut drawn = frontier(&reg);
+    let (company, pos) = drawn
+        .side_armies(drawn.active_side)
+        .find(|a| a.units.len() >= 2)
+        .map(|a| (a.id, a.pos))
+        .unwrap();
+    let vehicle = drawn.members(company)[1];
+    assert_eq!(
+        drawn.apply(
+            &reg,
+            &OverworldOrder::MoveArmy {
+                army: vehicle,
+                to: pos.all_neighbors()[0]
+            }
+        ),
+        Err(OverworldError::NoDetach)
+    );
+}

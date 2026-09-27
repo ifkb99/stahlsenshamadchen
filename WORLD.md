@@ -360,7 +360,8 @@ the determinism snapshot passes **unregenerated**.
       without contact, the loser keeps its hex, and nothing changes. Latent
       in battle-as-event on any map; W3 dissolves it (a fight is a bubble
       the attacker keeps searching) rather than a rule being added now.
-- [ ] **W2.4 Halts, and what a halt is for**: a commander may detach an
+- [x] ~~**W2.4 Halts, and what a halt is for**~~ (done as W4.6b, from the
+      chain of command): a commander may detach an
       element to look ahead, which travels as its own coarse entity. The
       halt itself runs on the clock since W3.1 (the last minutes of every
       marching hour); what a commander does with one is still to build.
@@ -531,13 +532,19 @@ the determinism snapshot passes **unregenerated**.
       byte-identical before and after, and so was the determinism snapshot.
       Survivors of a fight are matched back to the vehicles they were, so a
       vehicle keeps her node (tested, mutation-checked). Save version 9.
-- [ ] **W4.6b Detachment as a place in the tree** (W2.4, rulings 8, 10,
-      11): the player gives an order to any node below her companies — a
-      vehicle — and that node takes a place of its own and marches; it is
-      still her company's, holds on arrival until recalled, and a recall
-      marches it back until it stands with its company, when its place is
-      dropped and it is part of the column again. No new army, no rejoin
-      order.
+- [x] ~~**W4.6b Detachment as a place in the tree.**~~ **Done 2026-09-26**
+      (W2.4, rulings 8, 10, 11). The move order given to a vehicle's node
+      sends her out: she takes a place of her own and a standing `Hold`,
+      and is still her company's node. `Recall` takes her orders back; a
+      node standing on its own with no orders of its own goes home, and its
+      place is dropped when it stands with its company. No new army, no
+      rejoin order, and no flag saying either. Neutral where nobody is sent
+      out: both campaigns' event traces byte-identical. Four tests
+      mutation-checked; tour `send-a-vehicle-out`. *Not yet:* sending out a
+      platoon (a node with vehicles under it) — the rule is written for any
+      node, but the content has no platoons in a company; and a
+      detachment's value to a halt (W2.4's "a halt is a moment to send
+      someone to look") is the player's to use, since the AI does not.
 
 ### W5 — presentation
 
