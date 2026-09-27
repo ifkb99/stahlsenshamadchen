@@ -229,7 +229,8 @@ pub(crate) struct ScriptFacts {
     /// least likely to catch.
     pub danger: Option<u32>,
     /// Where each named thing on the screen stands: crews on the battle
-    /// screen, companies on the campaign map, nothing where nothing stands.
+    /// screen, companies on the campaign map (and `beside <company>`, open
+    /// ground next to her), nothing where nothing stands.
     ///
     /// So a script can say `hex "1st Company"` instead of the coordinates the
     /// company happens to stand on. On a generated campaign those move every

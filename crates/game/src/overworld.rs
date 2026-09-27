@@ -337,12 +337,21 @@ fn publish_script_facts(
         // leaving the field alone would answer a battle's question with a
         // battle's answer two screens after it was true.
         danger: None,
-        // Companies (and any vehicle standing on her own), where they stand.
+        // Companies (and any vehicle standing on her own), where they stand;
+        // and "beside <company>", the first hex next to her that is open
+        // ground — on the map, nobody on it — which is where a tour sends a
+        // vehicle out to without a pair of numbers the ground can move.
         places: overworld
             .state
             .columns()
             .into_iter()
-            .map(|c| (c.name, c.pos))
+            .flat_map(|c| {
+                let beside = c.pos.all_neighbors().into_iter().find(|n| {
+                    overworld.state.map.get(*n).is_some() && overworld.state.army_at(*n).is_none()
+                });
+                std::iter::once((c.name.clone(), c.pos))
+                    .chain(beside.map(|b| (format!("beside {}", c.name), b)))
+            })
             .collect(),
     };
 }
