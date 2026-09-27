@@ -131,8 +131,10 @@
     "rivers": { "stream": 3, "river": 12, "broad": 60, "floodplain": 2, "meadow_percent": 50 },
     "towns": {
       "every": 24, "spacing": 3, "radius": 3, "factories": 2,
-      "worth": 2, "factory_worth": 4, "contested_within": 30
+      "worth": 2, "factory_worth": 4, "contested_within": 30,
+      "cities": 3, "city_radius": 5
     },
+    "villages": { "per_ten_hexes": 10, "radius": 1, "spacing": 12 },
     "roads": { "extra_links": 2 },
     "terrain": {
       "open": "grass", "wood": "forest", "hedge": "hedgerow", "wet": "mud",
@@ -208,10 +210,10 @@
       "id": "settlement", "name": "Settlement", "default": "normal",
       "options": [
         { "id": "sparse", "name": "Sparse", "text": "Far-apart towns and few roads.",
-          "set": { "towns.every": 40, "roads.extra_links": 1 } },
+          "set": { "towns.every": 40, "towns.cities": 2, "roads.extra_links": 1, "villages.per_ten_hexes": 4 } },
         { "id": "normal", "name": "Normal", "text": "A town every twenty-odd campaign hexes." },
         { "id": "dense", "name": "Dense", "text": "Towns everywhere, and roads between them all.",
-          "set": { "towns.every": 14, "towns.spacing": 2, "roads.extra_links": 5 } }
+          "set": { "towns.every": 14, "towns.spacing": 2, "towns.cities": 5, "roads.extra_links": 5, "villages.per_ten_hexes": 20, "villages.spacing": 9 } }
       ]
     }
   ],

@@ -38,5 +38,5 @@ pub use scale::Scale;
 pub use templates::{FixAndFlank, TemplateDef, TemplateKind};
 pub use worldgen::{
     Cover, GroundPalette, Relief, Rivers, Roads, SettingError, SkeletonFeature, SummaryRule,
-    TerrainShare, Towns, WorldGen, WorldOption, WorldSetting, WorldSetup,
+    TerrainShare, Towns, Villages, WorldGen, WorldOption, WorldSetting, WorldSetup,
 };

@@ -59,8 +59,8 @@ enum Channel {
 /// 2 is W6.4: simplex noise in place of lattice value noise, and the
 /// landform and ridge layers. 3 is W6.5: the drainage network, streams and
 /// floodplain meadows. 4 is W6.6: woods on high and steep ground, hedges as
-/// the boundaries of fields.
-pub const GENERATOR_VERSION: u32 = 4;
+/// the boundaries of fields. 5 is W6.7: cities, towns by rivers, villages.
+pub const GENERATOR_VERSION: u32 = 5;
 
 /// SplitMix64: the one mixing function the world is made with.
 fn mix(state: u64, value: u64) -> u64 {
@@ -192,8 +192,12 @@ pub struct Town {
 pub struct Skeleton {
     /// Every watercourse, source first (WORLD.md W6.5).
     pub rivers: Vec<Course>,
-    /// Each town, in the order they were chosen (best site first).
+    /// Each town, in the order they were chosen (best site first); the
+    /// first `towns.cities` of them are cities.
     pub towns: Vec<Town>,
+    /// Each village's centre (W6.7), best site first.
+    #[serde(default)]
+    pub villages: Vec<Hex>,
     /// Each road, from one town's centre to another's; each step is a
     /// neighbour of the last.
     pub roads: Vec<Vec<Hex>>,
@@ -242,6 +246,8 @@ enum Water {
 #[derive(Debug, Clone, Default)]
 struct ChunkFeatures {
     water: HashMap<Hex, (i32, Water)>,
+    /// Villages whose houses reach into this chunk, by index.
+    villages: Vec<usize>,
     /// A river's valley floor beside its bank: where the meadows are wet.
     meadow: HashSet<Hex>,
     road: HashSet<Hex>,
@@ -380,6 +386,7 @@ impl GeneratedWorld {
         world.skeleton.rivers = world.lay_rivers();
         world.index_rivers();
         world.skeleton.towns = world.site_towns();
+        world.skeleton.villages = world.site_villages();
         world.skeleton.roads = world.lay_roads();
         world.index_rest();
         Ok(world)
@@ -576,6 +583,8 @@ impl GeneratedWorld {
         if features.towns.iter().any(|&t| {
             let town = &self.skeleton.towns[t];
             hex.unsigned_distance_to(town.centre) <= town.radius
+        }) || features.villages.iter().any(|&v| {
+            hex.unsigned_distance_to(self.skeleton.villages[v]) <= self.rules.villages.radius
         }) {
             return Some((&palette.town, level));
         }
@@ -1051,7 +1060,10 @@ impl GeneratedWorld {
                         .iter()
                         .map(|n| (self.level_of(self.relief_noise(*n)) - level).abs())
                         .sum();
-                    let wet = h.range(4).any(|w| self.is_water(w));
+                    // By a river — not merely by water: since W6.5 a
+                    // stream runs within a few tiles of nearly anywhere,
+                    // and a town wants the river trade and the bridge.
+                    let wet = h.range(4).any(|w| self.water_at(w) == Some(Water::River));
                     let score =
                         100 - 10 * level as i64 - 15 * rough as i64 + if wet { 30 } else { 0 };
                     (score, h)
@@ -1063,10 +1075,59 @@ impl GeneratedWorld {
             .enumerate()
             .map(|(i, centre)| Town {
                 centre,
-                radius: t.radius,
+                radius: if (i as u32) < t.cities && t.city_radius > 0 {
+                    t.city_radius
+                } else {
+                    t.radius
+                },
                 factory: (i as u32) < t.factories,
             })
             .collect()
+    }
+
+    /// The villages (W6.7): the best of a sample of every ninth tile of the
+    /// world, greedily, each `villages.spacing` from every village taken
+    /// before it and clear of every town. A village wants what a town wants
+    /// at a smaller scale — low, level ground, running water close by —
+    /// and none stands in the water or on a wood's edge of a hill.
+    fn site_villages(&self) -> Vec<Hex> {
+        let v = &self.rules.villages;
+        let count = v.count(self.rules.hexes()) as usize;
+        if count == 0 {
+            return Vec::new();
+        }
+        let mut candidates: Vec<(i64, u64, Hex)> = self
+            .chunks()
+            .flat_map(|c| chunk_hexes(c, self.chunk_radius).step_by(9))
+            .filter(|h| !self.is_water(*h))
+            .map(|h| {
+                let here = self.relief_noise(h);
+                let level = self.level_of(here);
+                let rough = self.steepness(h, here);
+                let wet = h.range(3).any(|w| self.is_water(w));
+                let score =
+                    100 - 12 * level as i64 - (rough * 4000.0) as i64 + if wet { 25 } else { 0 };
+                (score, self.lot(h), h)
+            })
+            .collect();
+        candidates.sort_by_key(|(score, lot, _)| (Reverse(*score), *lot));
+        let spacing = v.spacing;
+        let clear_of_towns = |h: Hex| {
+            self.skeleton
+                .towns
+                .iter()
+                .all(|t| h.unsigned_distance_to(t.centre) > t.radius + spacing / 2)
+        };
+        let mut taken: Vec<Hex> = Vec::new();
+        for (_, _, h) in candidates {
+            if taken.len() >= count {
+                break;
+            }
+            if clear_of_towns(h) && taken.iter().all(|t| t.unsigned_distance_to(h) >= spacing) {
+                taken.push(h);
+            }
+        }
+        taken
     }
 
     /// What a road pays to cross `to` from `from`, on the natural ground: a
@@ -1190,6 +1251,21 @@ impl GeneratedWorld {
                     .insert(*hex);
             }
         }
+        for (i, village) in self.skeleton.villages.iter().enumerate() {
+            let mut chunks: Vec<Hex> = village
+                .range(self.rules.villages.radius)
+                .map(|h| chunk_of(h, radius))
+                .collect();
+            chunks.sort_by_key(|c| (c.x, c.y));
+            chunks.dedup();
+            for chunk in chunks {
+                self.index
+                    .entry((chunk.x, chunk.y))
+                    .or_default()
+                    .villages
+                    .push(i);
+            }
+        }
         for (i, town) in self.skeleton.towns.iter().enumerate() {
             let mut chunks: Vec<Hex> = town
                 .centre
@@ -1297,6 +1373,11 @@ pub fn picture(
     for road in &world.skeleton.roads {
         for hex in road {
             put(&mut pic, *hex, [214, 196, 150]);
+        }
+    }
+    for village in &world.skeleton.villages {
+        for hex in village.range(world.rules.villages.radius) {
+            put(&mut pic, hex, [206, 196, 178]);
         }
     }
     for town in &world.skeleton.towns {

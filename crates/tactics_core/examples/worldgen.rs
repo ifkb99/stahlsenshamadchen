@@ -209,6 +209,7 @@ struct Stats {
     rivers: usize,
     river_tiles: usize,
     towns: usize,
+    villages: usize,
     classes: BTreeMap<char, usize>,
     clump: f64,
     height_corr: f64,
@@ -221,7 +222,7 @@ struct Stats {
 }
 
 impl Stats {
-    const HEADER: &str = "  world                  hexes  wood hedge  wet water town  level  rivers  towns   M   W   =   clump  h-corr  wood hi/lo  steep/flat  hedge-nb  wet@water";
+    const HEADER: &str = "  world                  hexes  wood hedge  wet water town  level  rivers  towns vill   M   W   =   clump  h-corr  wood hi/lo  steep/flat  hedge-nb  wet@water";
 
     fn of(world: &GeneratedWorld) -> Self {
         let chunks: Vec<Hex> = world.chunks().collect();
@@ -393,6 +394,7 @@ impl Stats {
                 .count(),
             river_tiles: world.skeleton.rivers.iter().map(|c| c.river().len()).sum(),
             towns: world.skeleton.towns.len(),
+            villages: world.skeleton.villages.len(),
             classes,
             clump,
             height_corr,
@@ -409,7 +411,7 @@ impl Stats {
         let share = |t: &str| self.shares.get(t).copied().unwrap_or(0.0);
         let class = |g: char| self.classes.get(&g).copied().unwrap_or(0);
         format!(
-            "  {label:<22} {:>5} {:>5.1} {:>5.1} {:>4.1} {:>5.2} {:>4.1} {:>6.2}  {:>2} {:>5}  {:>5}  {:>3} {:>3} {:>3}  {:>6.3}  {:>6.2}  {:>4.0}/{:<4.0}  {:>4.0}/{:<4.0}  {:>7.1}  {:>8.0}%",
+            "  {label:<22} {:>5} {:>5.1} {:>5.1} {:>4.1} {:>5.2} {:>4.1} {:>6.2}  {:>2} {:>5}  {:>5} {:>4}  {:>3} {:>3} {:>3}  {:>6.3}  {:>6.2}  {:>4.0}/{:<4.0}  {:>4.0}/{:<4.0}  {:>7.1}  {:>8.0}%",
             self.hexes,
             share("forest"),
             share("hedgerow"),
@@ -420,6 +422,7 @@ impl Stats {
             self.rivers,
             self.river_tiles,
             self.towns,
+            self.villages,
             class('M'),
             class('W'),
             class('='),

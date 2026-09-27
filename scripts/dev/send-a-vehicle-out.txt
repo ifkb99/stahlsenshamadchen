@@ -9,9 +9,9 @@
 #
 # The 1st Company is found by name (`hex "1st Company"`), so the tour
 # follows her wherever the generator stands her; her second vehicle is the
-# recon car. The hex one step down-left of her (offset -1,1) is open ground
-# in seed 1's world under generator 3 — the one pair of numbers here that
-# the ground can still move.
+# recon car, sent to `beside 1st Company` — the first open hex next to her,
+# which the campaign screen publishes — and found again, standing on her
+# own, by her own name ("Luchs Scout Car of 1st Company").
 
 at 3.0
 until idle 10
@@ -20,7 +20,7 @@ hex "1st Company"
 wait 0.3
 click left
 wait 0.3
-hex "1st Company" -1,1
+hex "beside 1st Company"
 wait 0.3
 key Digit2
 until log "sent out from 1st Company" 10
@@ -36,7 +36,7 @@ shot /tmp/detach-02-holding.png
 # Select her where she stands and call her back. On her own she is a
 # place of her own, under her vehicle's name.
 wait 1.0
-hex "1st Company" -1,1
+hex "Luchs Scout Car of 1st Company"
 wait 0.3
 click left
 wait 0.3
