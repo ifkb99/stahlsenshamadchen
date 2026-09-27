@@ -279,33 +279,38 @@ impl Default for Cover {
     }
 }
 
-/// Where the water runs.
+/// Where the water runs (WORLD.md W6.5): a drainage network, not a count
+/// of rivers. Every tile drains somewhere, down to the rim of the world;
+/// what a watercourse is depends on how much land drains through it, in
+/// campaign hexes of catchment, the way a real one does.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Rivers {
-    /// One river for every this many campaign hexes of world — a density,
-    /// not a count, so a larger world has more rivers rather than the same
-    /// few spread thinner, and "map size" and "rainfall" are two settings
-    /// that compose instead of two that fight over one number.
-    pub every: u32,
-    /// How far apart their sources must be, in campaign hexes.
-    pub spacing: u32,
+    /// Catchment, in campaign hexes, at which water gathers into a stream:
+    /// a tile wide, fordable and slow (`terrain.stream`). Zero is no running
+    /// water at all.
+    pub stream: u32,
+    /// Catchment at which a stream is a river: a tile of `terrain.water`,
+    /// crossed at a bridge or not at all.
+    pub river: u32,
+    /// Catchment at which a river is broad: three tiles wide.
+    pub broad: u32,
+    /// How far, in tiles, a river's floodplain reaches from its bank: the
+    /// valley floor beside it, where the meadows are wet.
+    pub floodplain: u32,
+    /// The share of a floodplain, in percent, that is wet meadow.
+    pub meadow_percent: u32,
 }
 
 impl Default for Rivers {
     fn default() -> Self {
-        // Two in the default world of 127 hexes, as `count: 2` was.
         Self {
-            every: 63,
-            spacing: 3,
+            stream: 3,
+            river: 12,
+            broad: 60,
+            floodplain: 2,
+            meadow_percent: 50,
         }
-    }
-}
-
-impl Rivers {
-    /// How many rivers a world of `hexes` campaign hexes has.
-    pub fn count(&self, hexes: u32) -> u32 {
-        per(hexes, self.every)
     }
 }
 
@@ -388,6 +393,8 @@ pub struct GroundPalette {
     pub hedge: String,
     pub wet: String,
     pub water: String,
+    /// Running water too small to need a bridge (WORLD.md W6.5).
+    pub stream: String,
     pub road: String,
     pub town: String,
 }
@@ -400,6 +407,7 @@ impl Default for GroundPalette {
             hedge: "hedgerow".into(),
             wet: "mud".into(),
             water: "water".into(),
+            stream: "stream".into(),
             road: "road".into(),
             town: "town".into(),
         }

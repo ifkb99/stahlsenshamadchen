@@ -831,6 +831,7 @@ impl DataRegistry {
             ("hedge", &p.hedge),
             ("wet", &p.wet),
             ("water", &p.water),
+            ("stream", &p.stream),
             ("road", &p.road),
             ("town", &p.town),
         ] {
@@ -880,6 +881,14 @@ impl DataRegistry {
             report.error(format!(
                 "{label}: asks for {} factories in {towns} towns",
                 wg.towns.factories
+            ));
+        }
+        let r = &wg.rivers;
+        if r.stream > 0 && !(r.stream <= r.river && r.river <= r.broad) {
+            report.error(format!(
+                "{label}: rivers: a stream ({}) must gather less water than a river ({}), and a \
+                 river less than a broad one ({})",
+                r.stream, r.river, r.broad
             ));
         }
         if wg.cover.wood_percent + wg.cover.hedge_percent > 100 {

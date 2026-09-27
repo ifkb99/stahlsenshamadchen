@@ -487,6 +487,7 @@ fn publish_facts(
         log: vec![setup.status.clone()],
         selected: mods.0.world_settings.get(setup.row).map(|s| s.name.clone()),
         danger: None,
+        places: Vec::new(),
     };
 }
 

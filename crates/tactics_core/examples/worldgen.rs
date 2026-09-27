@@ -149,9 +149,14 @@ fn main() {
     );
     let sk = &world.skeleton;
     println!(
-        "skeleton: {} river(s) {:?} tiles long, {} town(s) ({} with a factory), {} road(s) {:?} tiles long",
+        "skeleton: {} watercourse(s), {} of them rivers {:?} tiles of river long, {} town(s) ({} with a factory), {} road(s) {:?} tiles long",
         sk.rivers.len(),
-        sk.rivers.iter().map(Vec::len).collect::<Vec<_>>(),
+        sk.rivers.iter().filter(|c| !c.river().is_empty()).count(),
+        sk.rivers
+            .iter()
+            .map(|c| c.river().len())
+            .filter(|n| *n > 0)
+            .collect::<Vec<_>>(),
         sk.towns.len(),
         sk.towns.iter().filter(|t| t.factory).count(),
         sk.roads.len(),
@@ -341,8 +346,13 @@ impl Stats {
             hexes: summaries.len(),
             shares,
             mean_level: level_sum as f64 / n,
-            rivers: world.skeleton.rivers.len(),
-            river_tiles: world.skeleton.rivers.iter().map(Vec::len).sum(),
+            rivers: world
+                .skeleton
+                .rivers
+                .iter()
+                .filter(|c| !c.river().is_empty())
+                .count(),
+            river_tiles: world.skeleton.rivers.iter().map(|c| c.river().len()).sum(),
             towns: world.skeleton.towns.len(),
             classes,
             clump,

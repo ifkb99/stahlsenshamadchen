@@ -49,6 +49,7 @@
 //! | `at <secs>` | block until this much app time has elapsed |
 //! | `wait <secs>` | block for this long, relative to now |
 //! | `hex <q>,<r>` | put the scripted cursor over an axial hex |
+//! | `hex "<name>" [<dq>,<dr>]` | ...over where a named crew or company stands, plus an offset |
 //! | `focus <q>,<r>` | centre the camera on an axial hex |
 //! | `pixel <x>,<y>` | put the scripted cursor at a window position |
 //! | `cursor off` | hand the cursor back to the real mouse |
@@ -227,6 +228,14 @@ pub(crate) struct ScriptFacts {
     /// tile the same colour, which is the exact failure a screenshot is
     /// least likely to catch.
     pub danger: Option<u32>,
+    /// Where each named thing on the screen stands: crews on the battle
+    /// screen, companies on the campaign map, nothing where nothing stands.
+    ///
+    /// So a script can say `hex "1st Company"` instead of the coordinates the
+    /// company happens to stand on. On a generated campaign those move every
+    /// time the generator does, and two tours broke on the day it first
+    /// changed for no reason but a stale pair of numbers.
+    pub places: Vec<(String, Hex)>,
 }
 
 /// One unit, as a script may ask about her.
@@ -253,6 +262,13 @@ enum Action {
     At(f32),
     Wait(f32),
     Cursor(Option<ScriptedCursor>),
+    /// Put the scripted cursor where something named stands, plus an
+    /// offset: `hex "1st Company"`, `hex "1st Company" -1,1`. Resolved when
+    /// it runs, against [`ScriptFacts::places`].
+    CursorAt {
+        name: String,
+        offset: (i32, i32),
+    },
     Key {
         code: KeyCode,
         hold: Hold,
@@ -472,6 +488,14 @@ fn parse_action(line: &str) -> Option<Action> {
     match verb {
         "at" => rest.parse().ok().map(Action::At),
         "wait" => rest.parse().ok().map(Action::Wait),
+        "hex" if rest.starts_with('"') => {
+            let (name, tail) = parse_quoted(rest)?;
+            let offset = match tail.trim() {
+                "" => (0, 0),
+                pair => parse_pair(pair).map(|(q, r)| (q as i32, r as i32))?,
+            };
+            Some(Action::CursorAt { name, offset })
+        }
         "hex" => parse_pair(rest)
             .map(|(q, r)| Action::Cursor(Some(ScriptedCursor::Hex(Hex::new(q as i32, r as i32))))),
         "pixel" => parse_pair(rest)
@@ -831,6 +855,20 @@ fn run_script(
             }
         }
         Action::Cursor(target) => *cursor = target.unwrap_or(ScriptedCursor::None),
+        Action::CursorAt { name, offset } => {
+            match facts
+                .as_ref()
+                .and_then(|f| f.places.iter().find(|(n, _)| *n == name))
+            {
+                Some((_, at)) => {
+                    *cursor = ScriptedCursor::Hex(*at + Hex::new(offset.0, offset.1));
+                }
+                None => {
+                    script.failures += 1;
+                    warn!("dev script: SCRIPT FAIL: nothing called {name:?} stands on this screen");
+                }
+            }
+        }
         Action::Key { code, hold } => match hold {
             Hold::Tap => {
                 keys.press(code);
@@ -966,7 +1004,28 @@ mod tests {
             log: Vec::new(),
             selected: Some("Grenadier 1".into()),
             danger: Some(4),
+            places: vec![("Grenadier 1".into(), Hex::new(2, -1))],
         }
+    }
+
+    #[test]
+    fn a_hex_can_be_named_by_who_stands_on_it() {
+        // `hex "<name>"` follows a crew or a company wherever the ground has
+        // put her; an offset reaches the ground beside her.
+        assert!(matches!(
+            parse_action(r#"hex "1st Company""#),
+            Some(Action::CursorAt { name, offset: (0, 0) }) if name == "1st Company"
+        ));
+        assert!(matches!(
+            parse_action(r#"hex "1st Company" -1,1"#),
+            Some(Action::CursorAt { name, offset: (-1, 1) }) if name == "1st Company"
+        ));
+        // Coordinates still mean coordinates.
+        assert!(matches!(
+            parse_action("hex 3,-2"),
+            Some(Action::Cursor(Some(ScriptedCursor::Hex(h)))) if h == Hex::new(3, -2)
+        ));
+        assert!(facts().places.iter().any(|(n, _)| n == "Grenadier 1"));
     }
 
     #[test]

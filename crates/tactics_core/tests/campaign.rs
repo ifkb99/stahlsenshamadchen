@@ -2239,30 +2239,51 @@ fn two_fights(reg: &DataRegistry) -> (OverworldState, Vec<(ElementId, ElementId)
     let mut pairs = Vec::new();
     for (ours, theirs) in kuhlmann.iter().zip(&valkyries) {
         let here = state.army(*ours).unwrap().pos;
+        // Staged across whichever neighbouring hex is the shortest march
+        // from her border: since the rivers drain (W6.5) the first free
+        // neighbour can lie across a river with the bridge a long way
+        // round, and a pair that meets late meets after the other fight has
+        // ended the war.
+        let stage = |state: &mut OverworldState, there: Hex| -> Option<usize> {
+            let (from, to) = (world.stand_tile(reg, here), world.stand_tile(reg, there));
+            // The last tile on the way there that is still her hex, and
+            // ground a column can stand on.
+            let border = from
+                .line_to(to)
+                .take_while(|t| tactics_core::world::chunk_of(*t, radius) == here)
+                .filter(|t| {
+                    world.tile(*t).is_some_and(|(terrain, _)| {
+                        reg.terrain(terrain).is_some_and(|d| {
+                            d.cost_for(tactics_core::data::MovementClass::Tracked)
+                                .is_some()
+                        })
+                    })
+                })
+                .last()?;
+            state.place_mut(*ours).unwrap().tile = Some(border);
+            let e = state.place_mut(*theirs).unwrap();
+            e.pos = there;
+            e.tile = Some(to);
+            state
+                .apply(
+                    reg,
+                    &OverworldOrder::MoveArmy {
+                        army: *ours,
+                        to: there,
+                    },
+                )
+                .ok()?;
+            state.army(*ours)?.march.as_ref().map(|m| m.leg.len())
+        };
         let there = here
             .all_neighbors()
             .into_iter()
-            .find(|n| state.army_at(*n).is_none())
-            .unwrap();
-        let (from, to) = (world.stand_tile(reg, here), world.stand_tile(reg, there));
-        let border = from
-            .line_to(to)
-            .take_while(|t| tactics_core::world::chunk_of(*t, radius) == here)
-            .last()
-            .unwrap();
-        state.place_mut(*ours).unwrap().tile = Some(border);
-        let e = state.place_mut(*theirs).unwrap();
-        e.pos = there;
-        e.tile = Some(to);
-        state
-            .apply(
-                reg,
-                &OverworldOrder::MoveArmy {
-                    army: *ours,
-                    to: there,
-                },
-            )
-            .unwrap();
+            .filter(|n| state.army_at(*n).is_none() && state.map.get(*n).is_some())
+            .filter_map(|n| stage(&mut state.clone(), n).map(|leg| (leg, n)))
+            .min_by_key(|(leg, n)| (*leg, n.x, n.y))
+            .map(|(_, n)| n)
+            .expect("a neighbour to stage the enemy on");
+        stage(&mut state, there).expect("the staging chosen above");
         pairs.push((*ours, *theirs));
     }
     state.apply(reg, &OverworldOrder::EndTurn).unwrap();
@@ -2340,7 +2361,13 @@ fn a_fight_that_is_over_in_one_place_lets_its_army_go_while_another_goes_on() {
     // field, and the Kuhlmann company that was fighting them — nobody left
     // within her reach — is a column again once the battle's own stalemate
     // patience has run, while the first pair are still at it.
-    let reg = registry();
+    //
+    // The patience is two rounds here rather than the mod's eight: the
+    // claim is about who is held, not how long she waits, and on the ground
+    // since W6.5 the first pair's fight is over in five rounds — the
+    // headquarters company is destroyed and the war ends with it.
+    let mut reg = registry();
+    reg.balance.stalemate_rounds = 2;
     let (mut state, pairs) = two_fights(&reg);
     let (winner, gone) = pairs[1];
     let front = state.front.as_mut().expect("the fighting began");

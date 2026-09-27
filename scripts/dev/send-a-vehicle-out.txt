@@ -7,19 +7,20 @@
 #   STAHL_CAMPAIGN=frontier_world STAHL_DEBUG=1 \
 #     STAHL_SCRIPT=scripts/dev/send-a-vehicle-out.txt cargo run -p stahlsenshamädchen
 #
-# The 1st Company stands in the western town at axial (-1, -8) (see
-# generated-campaign); its second vehicle is the recon car, and (-2, -7) is
-# the open hex beside it. Both move whenever the generator does
-# (GENERATOR_VERSION): this is seed 1's world under generator 2.
+# The 1st Company is found by name (`hex "1st Company"`), so the tour
+# follows her wherever the generator stands her; her second vehicle is the
+# recon car. The hex one step down-left of her (offset -1,1) is open ground
+# in seed 1's world under generator 3 — the one pair of numbers here that
+# the ground can still move.
 
 at 3.0
 until idle 10
 wait 1.0
-hex -1,-8
+hex "1st Company"
 wait 0.3
 click left
 wait 0.3
-hex -2,-7
+hex "1st Company" -1,1
 wait 0.3
 key Digit2
 until log "sent out from 1st Company" 10
@@ -32,9 +33,10 @@ until turn >= 2 120
 until idle 60
 shot /tmp/detach-02-holding.png
 
-# Select her where she stands and call her back.
+# Select her where she stands and call her back. On her own she is a
+# place of her own, under her vehicle's name.
 wait 1.0
-hex -2,-7
+hex "1st Company" -1,1
 wait 0.3
 click left
 wait 0.3

@@ -684,8 +684,26 @@ is what a loaded campaign stands on.
       before, but 9 battles in 8 campaigns against 16, and two won by
       holding the factories without a fight — the factories now sit in
       lowlands one side reaches first.
-- [ ] **W6.5 Water that drains.** A river network from many sources down
-      the valleys, joining, wider downstream, with wet meadow along it.
+- [x] ~~**W6.5 Water that drains.**~~ **Done 2026-09-27.** A priority
+      flood from the rim drains every tile; catchment decides what the
+      water is — a stream from 3 campaign hexes of it (a new fordable
+      terrain, so the network does not cut the land into islands), a river
+      from 12, broad (three tiles) from 60 — and a river's valley floor is
+      wet meadow. Seed 1: 36 watercourses, 11 of them rivers, 1,474 tiles
+      of river against 3 rivers and 290 tiles before; water 0.64% of the
+      land; wet ground within 300 m of a river 10% against 0–2%. Rainfall
+      now moves the network (dry: 18 courses, 3 rivers; wet: 51 and 25)
+      rather than a count. `GENERATOR_VERSION` 3. Creation is 710 ms for the standard
+      world (617 at W6.4, 290 before it: the three relief layers are most
+      of the cost), 1.3 s for the large one, all on the setup screen's
+      thread. The wars (`examples/campaign`): every seed ends, 5–3 to
+      Kuhlmann on the default world (6–2 to the Valkyries before). Found
+      on the way: on mountainous ground the Valkyries win five of eight by
+      holding the factories with little or no fighting — where the
+      factories fall relative to each side's start is not yet anybody's
+      rule (W6.7). Tours now find a company by name (`hex "1st Company"`,
+      from a new `places` fact) instead of a pair of coordinates the
+      ground moves.
 - [ ] **W6.6 Cover that reads the ground.** Wood on slopes and high
       ground, fields in the lowlands, hedges as field boundaries.
 - [ ] **W6.7 Settlements in a hierarchy** — a city, towns, villages — on
