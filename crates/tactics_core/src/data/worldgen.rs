@@ -261,11 +261,21 @@ pub struct Cover {
     pub scale: u32,
     /// Share of the land under wood, percent.
     pub wood_percent: u32,
-    /// Share of the land in hedged fields, percent: the band of ground just
-    /// short of being woodland, so hedges fringe the woods.
+    /// Share of the land that is hedge, percent: the boundaries of the
+    /// fields in hedgerow country (W6.6), which comes in districts.
     pub hedge_percent: u32,
     /// Share of the lowest ground that is wet, percent.
     pub wet_percent: u32,
+    /// How much the woods lean toward high ground, in percent of the wood
+    /// score (W6.6). Zero is none: woods wherever the cover noise says.
+    pub wood_on_high: u32,
+    /// How much the woods lean toward steep ground, likewise.
+    pub wood_on_slope: u32,
+    /// How wide a field is, roughly, in tiles: the spacing of the hedges in
+    /// hedgerow country.
+    pub field_size: u32,
+    /// How wide a district of hedgerow country is, roughly, in tiles.
+    pub bocage_scale: u32,
 }
 
 impl Default for Cover {
@@ -275,6 +285,10 @@ impl Default for Cover {
             wood_percent: 28,
             hedge_percent: 9,
             wet_percent: 20,
+            wood_on_high: 0,
+            wood_on_slope: 0,
+            field_size: 5,
+            bocage_scale: 90,
         }
     }
 }
