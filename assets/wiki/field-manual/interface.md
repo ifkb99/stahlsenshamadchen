@@ -14,4 +14,9 @@ The side panel always describes what is under the cursor:
 
 The shot preview shows the hit chance with every modifier that produced it,
 the damage against the armour facing the shot would strike, and whether the
-target can return fire.
+target can shoot back.
+
+While planning, your own units draw what they intend to do: an amber line
+along the route each will drive, and a red line to whatever each will
+engage. The banner above the log names the round and which half of it you
+are in.

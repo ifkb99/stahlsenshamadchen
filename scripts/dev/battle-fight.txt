@@ -1,0 +1,75 @@
+# Fight a real battle out, so the things that only happen under fire — morale
+#!env STAHL_BATTLE=river_crossing
+# changes, refusals, casualties — actually reach the log panel.
+#
+#   STAHL_PRESENT=immediate STAHL_DEBUG=1 STAHL_BATTLE=river_crossing \
+#     STAHL_SCRIPT=scripts/dev/battle-fight.txt cargo run -p stahlsenshamädchen
+#
+# Enter commits the round; it is ignored while one is resolving, so each press
+# waits for the twelve ticks to finish animating. That used to be `wait 5` — a
+# guess, and one that made this the slowest tour by far at two minutes of
+# stopwatch regardless of what the machine could manage. `until idle` asks the
+# game instead, so a quiet round costs a second and a loud one takes as long
+# as it takes. Shots are taken along the way rather than at the end, because a
+# finished battle returns to the overworld and takes its log with it.
+#
+# A battle that ends early is `idle` for good, so the remaining presses are
+# no-ops and the tour still reaches `quit` rather than hanging on a round that
+# will never resolve.
+
+at 3.0
+key Enter
+until idle
+key Enter
+until idle
+key Enter
+until idle
+key Enter
+until idle
+shot /tmp/fight-1.png
+key Enter
+until idle
+key Enter
+until idle
+key Enter
+until idle
+key Enter
+until idle
+shot /tmp/fight-2.png
+key Enter
+until idle
+key Enter
+until idle
+key Enter
+until idle
+key Enter
+until idle
+shot /tmp/fight-3.png
+key Enter
+until idle
+key Enter
+until idle
+key Enter
+until idle
+key Enter
+until idle
+shot /tmp/fight-4.png
+key Enter
+until idle
+key Enter
+until idle
+key Enter
+until idle
+key Enter
+until idle
+shot /tmp/fight-5.png
+key Enter
+until idle
+key Enter
+until idle
+key Enter
+until idle
+key Enter
+until idle
+shot /tmp/fight-6.png
+quit

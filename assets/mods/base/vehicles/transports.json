@@ -1,0 +1,127 @@
+[
+    {
+        "id": "halftrack",
+        "open_top": true,
+        "turret": true,
+        "footprint": 2,
+        "name": "Kette Halftrack",
+        "class": "transport",
+        "movement": {
+            "class": "tracked",
+            "points": 5,
+            "max_climb": 1
+        },
+        "armor": {
+            "front": 1,
+            "side": 1,
+            "rear": 1
+        },
+        "vision_range": 8,
+        "concealment": 0,
+        "radio": "receiver",
+        "weapons": [
+            "mg"
+        ],
+        "stowage": {
+            "ball_mg": 2000
+        },
+        "modules": [
+            "main_gun",
+            "tracks",
+            "ammo_rack_sparse",
+            "radio_set"
+        ],
+        "crew_slots": [
+            "commander",
+            "driver"
+        ],
+        "cost": 8,
+        "safety": 4,
+        "capacity": 1,
+        "sprite": "mods/base/sprites/halftrack.png"
+    },
+    {
+        "id": "apc",
+        "turret": true,
+        "footprint": 2,
+        "name": "Kasten Personnel Carrier",
+        "class": "transport",
+        "movement": {
+            "class": "tracked",
+            "points": 6,
+            "max_climb": 1
+        },
+        "armor": {
+            "front": 2,
+            "side": 2,
+            "rear": 1
+        },
+        "vision_range": 8,
+        "concealment": 0,
+        "radio": "field_set",
+        "weapons": [
+            "mg"
+        ],
+        "stowage": {
+            "ball_mg": 2400
+        },
+        "modules": [
+            "main_gun",
+            "tracks",
+            "ammo_rack_sparse",
+            "radio_set"
+        ],
+        "crew_slots": [
+            "commander",
+            "driver"
+        ],
+        "cost": 10,
+        "safety": 4,
+        "capacity": 1,
+        "sprite": "mods/base/sprites/apc.png"
+    },
+    {
+        "id": "ifv",
+        "turret": true,
+        "footprint": 2,
+        "name": "Schütze Fighting Vehicle",
+        "class": "transport",
+        "movement": {
+            "class": "tracked",
+            "points": 6,
+            "max_climb": 1
+        },
+        "armor": {
+            "front": 3,
+            "side": 2,
+            "rear": 2
+        },
+        "vision_range": 9,
+        "concealment": 0,
+        "radio": "field_set",
+        "weapons": [
+            "autocannon_20",
+            "mg"
+        ],
+        "stowage": {
+            "ac_20_ap": 200,
+            "ac_20_he": 400,
+            "ball_mg": 2000
+        },
+        "modules": [
+            "main_gun",
+            "tracks",
+            "ammo_rack",
+            "radio_set"
+        ],
+        "crew_slots": [
+            "commander",
+            "driver",
+            "gunner"
+        ],
+        "cost": 14,
+        "safety": 3,
+        "capacity": 1,
+        "sprite": "mods/base/sprites/ifv.png"
+    }
+]

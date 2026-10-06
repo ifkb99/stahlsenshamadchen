@@ -1,0 +1,82 @@
+[
+    {
+        "id": "rifle_platoon",
+        "turret": true,
+        "footprint": 1,
+        "name": "Rifle Platoon",
+        "class": "infantry",
+        "movement": {
+            "class": "foot",
+            "points": 1,
+            "max_climb": 2
+        },
+        "armor": {
+            "front": 0,
+            "side": 0,
+            "rear": 0
+        },
+        "vision_range": 8,
+        "concealment": 40,
+    "profile": -20,
+        "radio": "man_pack",
+        "weapons": [
+            "rifles",
+            "rpg"
+        ],
+        "stowage": {
+            "rifle_ball": 4000,
+            "rpg_heat": 6
+        },
+        "modules": [
+            "rifle_sections",
+            "field_radio"
+        ],
+        "crew_slots": [
+            "platoon_leader",
+            "section_leader"
+        ],
+        "cost": 5,
+        "safety": 3,
+        "capacity": 0,
+        "sprite": "mods/base/sprites/rifle_platoon.png"
+    },
+    {
+        "id": "scout_section",
+        "turret": true,
+        "footprint": 1,
+        "name": "Scout Section",
+        "class": "infantry",
+        "movement": {
+            "class": "foot",
+            "points": 1,
+            "max_climb": 2
+        },
+        "armor": {
+            "front": 0,
+            "side": 0,
+            "rear": 0
+        },
+        "vision_range": 12,
+        "concealment": 55,
+    "profile": -30,
+        "radio": "man_pack",
+        "weapons": [
+            "rifles"
+        ],
+        "stowage": {
+            "rifle_ball": 1500
+        },
+        "modules": [
+            "scout_team",
+            "field_radio"
+        ],
+        "crew_slots": [
+            "section_leader",
+            "section_leader"
+        ],
+        "cost": 4,
+        "safety": 4,
+        "capacity": 0,
+        "sprite": "mods/base/sprites/scout_section.png"
+    }
+]

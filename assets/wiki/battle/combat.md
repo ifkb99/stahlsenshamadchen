@@ -36,8 +36,20 @@ target is facing. Terrain cover and elevation also reshape the result.
 Blind fire (`B`) is how you shell a suspicious forest without waiting for
 a spotter — or when you are the only eyes left.
 
-## Return fire
+## Rate of fire
 
-A unit that can see its attacker may return fire once per round with a
-direct-fire weapon in range, even if it already spent its own turn. That
-opportunity resets at the start of each new round.
+Every weapon reloads on its own clock, counted in ticks of the
+[round](the-round.md). A machine gun chatters through a round; an 88
+manages a couple of aimed shots; a howitzer gets one. A unit with several
+weapons reloads them independently, so a tank can keep its coaxial gun
+talking while the main gun is being loaded.
+
+## Opportunity fire
+
+Return fire is not a special case. Any crew with a loaded weapon, a target
+in range, and line of sight will shoot during the same tick — including a
+crew that spent the round driving, and a crew you gave no orders at all.
+Being shot at is simply the most common reason to find a target.
+
+Because a tick resolves every shot before counting the dead, two crews can
+kill each other. Nobody shoots first.

@@ -1,0 +1,79 @@
+# The campaign screen: hover a tile, select an army, order it a day's march.
+#!env STAHL_CAMPAIGN=frontier
+#
+#   STAHL_DEBUG=1 STAHL_SCRIPT=scripts/dev/overworld-tour.txt \
+#     cargo run -p stahlsenshamädchen
+#
+# frontier places Kuhlmann's 1st Company at offset [1, 1], which is axial
+# (1, 1) under odd-r offset; 2nd Company sits at [1, 7] -> (-2, 7).
+
+at 3.0
+log "campaign day 1"
+shot /tmp/ow-01-start.png
+
+hex 1,1
+wait 0.3
+log "hovering an army"
+shot /tmp/ow-02-hover.png
+
+click left
+wait 0.5
+log "army selected, movement range shown"
+shot /tmp/ow-03-selected.png
+
+key E
+wait 0.5
+shot /tmp/ow-04-rotated.png
+
+# Standing orders from the map: with the army still selected, hover the
+# eastern city and press G. The log says what was ordered and the panel
+# shows it on the army afterwards.
+hex 12,1
+wait 0.3
+key G
+until idle 10
+expect log "ordered to advance on (12, 1)"
+hex 1,1
+wait 0.3
+click left
+wait 0.3
+key H
+until idle 10
+expect log "ordered to hold"
+shot /tmp/ow-05-ordered.png
+
+# Cross-loading. Put the two companies side by side — 1st Company four
+# hexes south to offset (1, 5), 2nd Company one hex north to (1, 6) — sleep
+# on it, since a column that has marched cannot also have spent the morning
+# cross-loading, and then send 1st Company's first vehicle across.
+hex 1,1
+wait 0.3
+click left
+wait 0.3
+hex -1,5
+wait 0.3
+click left
+until idle 10
+hex -2,7
+wait 0.3
+click left
+wait 0.3
+hex -2,6
+wait 0.3
+click left
+until idle 10
+key Enter
+until idle 60
+until turn >= 2 10
+hex -1,5
+wait 0.3
+click left
+wait 0.3
+hex -2,6
+wait 0.3
+key Digit1
+until idle 10
+expect log "transferred from 1st Company to 2nd Company"
+shot /tmp/ow-06-transferred.png
+
+quit

@@ -5,9 +5,11 @@
         "damage": 2,
         "penetration": 1,
         "damage_type": "small_arms",
-        "range": [1, 2],
+        "ammo": ["ball_mg"],
+        "range": [1, 6],
         "accuracy": 80,
-        "accuracy_falloff": 10
+        "accuracy_falloff": 2,
+        "reload_ticks": 2
     },
     {
         "id": "gun_37",
@@ -15,9 +17,11 @@
         "damage": 4,
         "penetration": 4,
         "damage_type": "kinetic",
-        "range": [1, 3],
+        "ammo": ["ap_37"],
+        "range": [1, 8],
         "accuracy": 70,
-        "accuracy_falloff": 8
+        "accuracy_falloff": 2,
+        "reload_ticks": 2
     },
     {
         "id": "gun_75",
@@ -25,9 +29,11 @@
         "damage": 6,
         "penetration": 6,
         "damage_type": "kinetic",
-        "range": [1, 4],
+        "ammo": ["ap_75", "he_75"],
+        "range": [1, 12],
         "accuracy": 65,
-        "accuracy_falloff": 7
+        "accuracy_falloff": 2,
+        "reload_ticks": 3
     },
     {
         "id": "gun_88",
@@ -35,9 +41,11 @@
         "damage": 8,
         "penetration": 9,
         "damage_type": "kinetic",
-        "range": [1, 5],
+        "ammo": ["ap_88", "he_88"],
+        "range": [1, 16],
         "accuracy": 65,
-        "accuracy_falloff": 5
+        "accuracy_falloff": 1,
+        "reload_ticks": 4
     },
     {
         "id": "howitzer_105",
@@ -45,9 +53,12 @@
         "damage": 7,
         "penetration": 3,
         "damage_type": "explosive",
-        "range": [2, 8],
+        "ammo": ["he_105"],
+        "range": [3, 40],
         "accuracy": 55,
-        "accuracy_falloff": 3,
-        "indirect": true
+        "accuracy_falloff": 0,
+        "indirect": true,
+        "dispersion": 4,
+        "reload_ticks": 6
     }
 ]

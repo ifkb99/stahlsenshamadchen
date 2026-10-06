@@ -1,8 +1,12 @@
-# Stahlsenshamädchen
+# Senshamädchen
 
 A hex-based tactics roguelike in Rust + Bevy, inspired by Girls und Panzer,
-Fire Emblem, and Advance Wars: girls in tanks, fog of war, and an overworld
+Fire Emblem, and Advance Wars: cadets in tanks, fog of war, and an overworld
 campaign feeding tactical hex battles.
+
+Battles are simultaneous (WEGO): every side writes orders for all of its
+units, then the round plays out for both at once. See
+[The battle round](assets/wiki/battle/the-round.md).
 
 ## Running
 
@@ -19,7 +23,7 @@ Full controls, mechanics, and modding notes live in the
 
 | Crate | Role |
 | --- | --- |
-| `crates/tactics_core` | Pure simulation — no Bevy. Orders in, events out. Enables headless AI search, replays, and tests. |
+| `crates/tactics_core` | Pure simulation — no Bevy. Intents in, events out. Enables headless AI search, replays, and tests. |
 | `crates/game` | Bevy presentation: isometric hexes, UI, and the Lua campaign host. |
 
 ## Content

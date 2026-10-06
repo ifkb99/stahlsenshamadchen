@@ -9,15 +9,34 @@
 //!   terrain) and the mod registry that loads and validates them.
 //! - [`map`]: the CDDA-inspired hex map format (palette + ASCII rows +
 //!   elevation) and the runtime [`map::HexMap`].
-//! - [`battle`]: the turn-based battle simulation: orders in, events out.
+//! - [`battle`]: the WEGO battle simulation. Both sides plan a round, then a
+//!   tick loop resolves it: intents in, events out.
+//! - [`roster`]: cadets as mutable per-campaign instances, as opposed to the
+//!   immutable [`data`] definitions they are stamped from.
 //! - [`overworld`]: the strategic layer simulation.
+//! - [`ground`]: reading terrain the way a commander does — vantages, dead
+//!   ground, covered routes — lazily, a region at a time, for a world that
+//!   will not end at the map edge.
+//! - [`field`]: the seam between them — a clash on the campaign map staged
+//!   as a battle, and the battle's result handed back.
+//! - [`save`]: serialising a game in progress, such that reloading it
+//!   produces the same future as not having saved.
 //! - [`ai`]: the swappable [`ai::AiPlanner`] trait and its implementations.
 
 pub mod ai;
 pub mod battle;
 pub mod data;
+pub mod engagement;
+pub mod field;
+pub mod force;
+pub mod ground;
+pub mod harness;
 pub mod map;
 pub mod overworld;
+pub mod roster;
+pub mod save;
+pub mod world;
+pub mod worldgen;
 
 pub use hexx;
 pub use hexx::{EdgeDirection, Hex};

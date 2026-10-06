@@ -1,7 +1,687 @@
 {
-    "id": "base",
-    "name": "Stahlsenshamädchen Base",
-    "version": "0.1.0",
-    "description": "Core content: starter characters, vehicles, weapons, terrain and demo maps.",
-    "dependencies": []
+  "id": "base",
+  "name": "Stahlsenshamädchen Base",
+  "version": "0.1.0",
+  "description": "Core content: starter characters, vehicles, weapons, terrain and demo maps.",
+  "dependencies": [],
+  "campaign": "frontier_world",
+  "scale": {
+    "hex_meters": 100,
+    "round_seconds": 60,
+    "ticks_per_round": 12,
+    "elevation_meters": 10,
+    "overworld_hex_meters": 4000,
+    "overworld_elevation_meters": 30,
+    "overworld_turn_hours": 24
+  },
+  "balance": {
+    "speed_per_driving": 5,
+    "reload_per_loading": 5,
+    "field_repair_percent": 10,
+    "pivot_ticks": 2,
+    "buttoned_ticks": 3,
+    "buttoned_search_percent": 50,
+    "buttoned_reaction_ticks": 1,
+    "buttoning_worth": 1,
+    "route_exposure": {
+      "advance": 1,
+      "assault": 0,
+      "hold": 1,
+      "reconnoitre": 4,
+      "withdraw": 3,
+      "support": 2,
+      "march": 0
+    },
+    "repair_per_maintenance": 3,
+    "athletics_per_climb_level": 2,
+    "concealment_per_fieldcraft": 5,
+    "troops_per_small_arms": 5,
+    "accuracy_per_gunnery": 3,
+    "substitution_penalty": 6,
+    "vision_per_observation": 5,
+    "stray_percent": 25,
+    "pen_scatter": 15,
+    "brewup_percent": 60,
+    "brew_safety_percent": 12,
+    "downhill_bonus": 10,
+    "cover_to_hit_percent": 50,
+    "blind_penalty": 40,
+    "moving_target_per_hex": 5,
+    "firing_on_the_move_per_hex": 8,
+    "clean_penetration_percent": 130,
+    "partial_penetration_percent": 55,
+    "detection_base": 100,
+    "detection_certain_percent": 40,
+    "detection_at_range_percent": 70,
+    "detection_per_hex_moved": 20,
+    "min_hit": 5,
+    "max_hit": 95,
+    "stalemate_rounds": 8,
+    "eye_height_cm": 250,
+    "target_height_cm": 200
+  },
+  "casualties": {
+    "permadeath": true,
+    "harm_kinetic": 55,
+    "harm_explosive": 40,
+    "harm_small_arms": 20,
+    "harm_unattributed": 40,
+    "harm_per_safety": 8,
+    "harm_floor": 5,
+    "harm_ceiling": 95,
+    "adrift_percent": 25,
+    "adrift_days": [
+      1,
+      3
+    ],
+    "severe_percent": 25,
+    "carried_fatal_percent": 0,
+    "severe_per_aid": 5,
+    "carried_fatal_per_aid": 5,
+    "severe_days": [
+      5,
+      10
+    ],
+    "light_days": [
+      1,
+      4
+    ],
+    "carried_days": [
+      3,
+      8
+    ],
+    "grazed_days": [
+      1,
+      4
+    ]
+  },
+  "planner": {
+    "impatience": 0.35,
+    "horizon_rounds": 4,
+    "boarding_rounds": 4.0,
+    "deviation_cost": 12.0,
+    "devolved": 0.6,
+    "exit_urgency": 3.0,
+    "score_worth": 3.0,
+    "order_worth": 0.25,
+    "order_complement": 0.5,
+    "pull_under_fire": 0.25,
+    "distance_decay": 0.15,
+    "plateau": 0.3,
+    "cover_prior": 0.03,
+    "elevation_prior": 0.4,
+    "kill_bonus": 4.0,
+    "attack_worth": 2.0,
+    "attack_floor": 0.5,
+    "withdrawn_attack": 0.0625,
+    "exposure_cap": 4.0,
+    "crowding_adjacent": 0.45,
+    "crowding_near": 0.15,
+    "support_range": 4.0,
+    "out_of_support": 0.12,
+    "advance_slope": 0.3,
+    "search_slope": 0.15
+  },
+  "worldgen": {
+    "radius": 10,
+    "relief": {
+      "scale": 48, "octaves": 3, "shares": [38, 24, 15, 10, 7, 4, 2],
+      "landform_percent": 40, "landform_scale": 300, "ridge_percent": 35, "ridge_scale": 160
+    },
+    "cover": { "scale": 40, "wood_percent": 28, "hedge_percent": 9, "wet_percent": 8, "wood_on_high": 25, "wood_on_slope": 20 },
+    "rivers": { "stream": 3, "river": 12, "broad": 60, "floodplain": 2, "meadow_percent": 50 },
+    "towns": {
+      "every": 24, "spacing": 3, "radius": 3, "factories": 2,
+      "worth": 2, "factory_worth": 4, "contested_within": 30,
+      "cities": 3, "city_radius": 5
+    },
+    "villages": { "per_ten_hexes": 10, "radius": 1, "spacing": 12 },
+    "roads": { "extra_links": 2 },
+    "terrain": {
+      "open": "grass", "wood": "forest", "hedge": "hedgerow", "wet": "mud",
+      "water": "water", "stream": "stream", "road": "road", "town": "town"
+    },
+    "summary": [
+      { "terrain": "factory", "feature": "factory" },
+      { "terrain": "city", "feature": "town" },
+      { "terrain": "mountains", "mean_elevation_tenths": 35 },
+      { "terrain": "deep_forest", "share": { "terrain": "forest", "percent": 40 } },
+      { "terrain": "highway", "feature": "road" },
+      { "terrain": "plains" }
+    ],
+    "residency_margin": 4
+  },
+  "world_settings": [
+    {
+      "id": "size", "name": "Map size", "default": "standard",
+      "options": [
+        { "id": "small", "name": "Small", "text": "60 km across; the armies meet sooner.",
+          "set": { "radius": 7 } },
+        { "id": "standard", "name": "Standard", "text": "84 km across." },
+        { "id": "large", "name": "Large", "text": "108 km across; room to manoeuvre, and a long march to contact.",
+          "set": { "radius": 13 } }
+      ]
+    },
+    {
+      "id": "relief", "name": "Terrain", "default": "rolling",
+      "options": [
+        { "id": "flat", "name": "Flat", "text": "Open plain; little to hide behind, long sight lines.",
+          "set": { "relief.shares": [70, 22, 6, 2], "relief.landform_percent": 65, "relief.ridge_percent": 0 } },
+        { "id": "rolling", "name": "Rolling", "text": "Low hills and gentle ground." },
+        { "id": "hilly", "name": "Hilly", "text": "Ridges and valleys; high ground worth fighting for.",
+          "set": { "relief.shares": [22, 20, 17, 14, 11, 8, 5, 3], "relief.ridge_percent": 45 } },
+        { "id": "mountainous", "name": "Mountainous", "text": "Steep country; the roads are the only easy way through.",
+          "set": {
+            "relief.shares": [12, 13, 13, 12, 11, 10, 9, 8, 7, 5],
+            "relief.landform_percent": 30, "relief.ridge_percent": 55, "relief.ridge_scale": 120
+          } }
+      ]
+    },
+    {
+      "id": "woodland", "name": "Woodland", "default": "normal",
+      "options": [
+        { "id": "sparse", "name": "Sparse", "text": "A copse here and there.",
+          "set": { "cover.wood_percent": 12 } },
+        { "id": "normal", "name": "Normal", "text": "About a quarter of the land under trees." },
+        { "id": "heavy", "name": "Heavy", "text": "Forest country; close fighting and short sight lines.",
+          "set": { "cover.wood_percent": 45 } }
+      ]
+    },
+    {
+      "id": "fields", "name": "Field boundaries", "default": "mixed",
+      "options": [
+        { "id": "open", "name": "Open fields", "text": "Wide unfenced fields.",
+          "set": { "cover.hedge_percent": 2 } },
+        { "id": "mixed", "name": "Mixed", "text": "Some hedged fields." },
+        { "id": "bocage", "name": "Bocage", "text": "Hedgerow country: cover everywhere, and every field a strongpoint.",
+          "set": { "cover.hedge_percent": 22 } }
+      ]
+    },
+    {
+      "id": "water", "name": "Rainfall", "default": "normal",
+      "options": [
+        { "id": "dry", "name": "Dry", "text": "Few rivers, firm ground.",
+          "set": { "rivers.stream": 6, "rivers.river": 30, "rivers.floodplain": 1, "cover.wet_percent": 2 } },
+        { "id": "normal", "name": "Normal", "text": "A few rivers, some soft ground in the low places." },
+        { "id": "wet", "name": "Wet", "text": "Many rivers to cross, and mud in every hollow.",
+          "set": { "rivers.stream": 2, "rivers.river": 6, "rivers.broad": 30, "rivers.floodplain": 4, "cover.wet_percent": 20 } }
+      ]
+    },
+    {
+      "id": "settlement", "name": "Settlement", "default": "normal",
+      "options": [
+        { "id": "sparse", "name": "Sparse", "text": "Far-apart towns and few roads.",
+          "set": { "towns.every": 40, "towns.cities": 2, "roads.extra_links": 1, "villages.per_ten_hexes": 4 } },
+        { "id": "normal", "name": "Normal", "text": "A town every twenty-odd campaign hexes." },
+        { "id": "dense", "name": "Dense", "text": "Towns everywhere, and roads between them all.",
+          "set": { "towns.every": 14, "towns.spacing": 2, "towns.cities": 5, "roads.extra_links": 5, "villages.per_ten_hexes": 20, "villages.spacing": 9 } }
+      ]
+    }
+  ],
+  "march": { "column_percent": 20, "hours_per_day": 4, "halt_minutes_per_hour": 10 },
+  "cores": [
+    {
+      "id": "strength",
+      "name": "Strength",
+      "description": "Physical power. Ramming a shell home, heaving track links, carrying a load on foot."
+    },
+    {
+      "id": "dexterity",
+      "name": "Dexterity",
+      "description": "Coordination. Laying a gun, handling a vehicle, steady hands."
+    },
+    {
+      "id": "intellect",
+      "name": "Intellect",
+      "description": "Reasoning and planning. Reading ground, and understanding an order correctly."
+    },
+    {
+      "id": "health",
+      "name": "Health",
+      "description": "Constitution and stamina. Lasting a long day, and surviving what happens to the vehicle."
+    },
+    {
+      "id": "will",
+      "name": "Will",
+      "description": "Mental resistance. Holding when it would be sensible to run."
+    },
+    {
+      "id": "perception",
+      "name": "Perception",
+      "description": "Noticing. What she sees, hears, and how soon."
+    },
+    {
+      "id": "speed",
+      "name": "Speed",
+      "description": "Reaction time. How quickly she acts once something changes."
+    },
+    {
+      "id": "presence",
+      "name": "Presence",
+      "description": "Authority. Whether an order lands and is obeyed."
+    },
+    {
+      "id": "charm",
+      "name": "Charm",
+      "description": "Rapport. Who she gets on with, and how morale travels."
+    }
+  ],
+  "skills": [
+    {
+      "id": "gunnery",
+      "name": "Gunnery",
+      "cores": {
+        "dexterity": 2,
+        "perception": 1,
+        "speed": 1
+      },
+      "untrained_penalty": 4
+    },
+    {
+      "id": "driving",
+      "name": "Driving",
+      "cores": {
+        "dexterity": 2,
+        "health": 1,
+        "speed": 1
+      },
+      "untrained_penalty": 3
+    },
+    {
+      "id": "loading",
+      "name": "Loading",
+      "cores": {
+        "strength": 2,
+        "dexterity": 1
+      },
+      "untrained_penalty": 3
+    },
+    {
+      "id": "observation",
+      "name": "Observation",
+      "cores": {
+        "perception": 3,
+        "intellect": 1
+      },
+      "untrained_penalty": 2
+    },
+    {
+      "id": "signals",
+      "name": "Signals",
+      "cores": {
+        "intellect": 2,
+        "perception": 1
+      },
+      "untrained_penalty": 4
+    },
+    {
+      "id": "maintenance",
+      "name": "Maintenance",
+      "cores": {
+        "intellect": 2,
+        "dexterity": 1,
+        "strength": 1
+      },
+      "untrained_penalty": 5
+    },
+    {
+      "id": "first_aid",
+      "name": "First Aid",
+      "cores": {
+        "intellect": 2,
+        "dexterity": 1
+      },
+      "untrained_penalty": 5
+    },
+    {
+      "id": "command",
+      "name": "Command",
+      "cores": {
+        "presence": 2,
+        "intellect": 1,
+        "charm": 1
+      },
+      "untrained_penalty": 6
+    },
+    {
+      "id": "discipline",
+      "name": "Discipline",
+      "cores": {
+        "will": 2,
+        "intellect": 1
+      },
+      "untrained_penalty": 3
+    },
+    {
+      "id": "small_arms",
+      "name": "Small Arms",
+      "cores": {
+        "dexterity": 2,
+        "perception": 1
+      },
+      "untrained_penalty": 2
+    },
+    {
+      "id": "fieldcraft",
+      "name": "Fieldcraft",
+      "cores": {
+        "perception": 2,
+        "intellect": 1
+      },
+      "untrained_penalty": 3
+    },
+    {
+      "id": "athletics",
+      "name": "Athletics",
+      "cores": {
+        "health": 2,
+        "strength": 1
+      },
+      "untrained_penalty": 2
+    },
+    {
+      "id": "reactions",
+      "name": "Reactions",
+      "cores": {
+        "speed": 3,
+        "will": 1
+      },
+      "untrained_penalty": 2
+    }
+  ],
+  "roles": [
+    {
+      "id": "commander",
+      "name": "Commander",
+      "skills": [
+        "command",
+        "observation",
+        "signals"
+      ]
+    },
+    {
+      "id": "driver",
+      "name": "Driver",
+      "skills": [
+        "driving",
+        "maintenance"
+      ]
+    },
+    {
+      "id": "gunner",
+      "name": "Gunner",
+      "skills": [
+        "gunnery"
+      ]
+    },
+    {
+      "id": "loader",
+      "name": "Loader",
+      "skills": [
+        "loading",
+        "first_aid"
+      ]
+    },
+    {
+      "id": "radio",
+      "name": "Radio Operator",
+      "skills": [
+        "signals"
+      ]
+    },
+    {
+      "id": "platoon_leader",
+      "name": "Platoon Leader",
+      "skills": [
+        "command",
+        "fieldcraft",
+        "small_arms",
+        "gunnery",
+        "athletics"
+      ]
+    },
+    {
+      "id": "section_leader",
+      "name": "Section Leader",
+      "skills": [
+        "fieldcraft",
+        "small_arms",
+        "observation",
+        "gunnery",
+        "athletics"
+      ]
+    }
+  ],
+  "traits": [
+    {
+      "id": "lead_foot",
+      "name": "Lead foot",
+      "description": "Quick where the going is good, and finds every ditch where it is not.",
+      "effects": [
+        {
+          "skill": "driving",
+          "when": {
+            "terrain": "road"
+          },
+          "modifier": 3
+        },
+        {
+          "skill": "driving",
+          "when": {
+            "not_terrain": "road"
+          },
+          "modifier": -2
+        }
+      ]
+    },
+    {
+      "id": "deliberate",
+      "name": "Deliberate",
+      "description": "Takes her time over the shot, and stops watching anything else while she does.",
+      "effects": [
+        {
+          "skill": "gunnery",
+          "modifier": 2
+        },
+        {
+          "skill": "observation",
+          "modifier": -2
+        }
+      ]
+    },
+    {
+      "id": "eagle_eyed",
+      "name": "Eagle-eyed",
+      "description": "Misses nothing in front of her. Says less about it than you would like.",
+      "effects": [
+        {
+          "skill": "observation",
+          "modifier": 2
+        },
+        {
+          "skill": "signals",
+          "modifier": -1
+        }
+      ]
+    },
+    {
+      "id": "eager",
+      "name": "Eager",
+      "description": "Loads like the war depends on it. Holds fire like it does not.",
+      "effects": [
+        {
+          "skill": "loading",
+          "modifier": 2
+        },
+        {
+          "skill": "discipline",
+          "modifier": -2
+        }
+      ]
+    },
+    {
+      "id": "loner",
+      "name": "Loner",
+      "description": "Steadier with nobody looking over her shoulder.",
+      "effects": [
+        {
+          "skill": "gunnery",
+          "when": "alone",
+          "modifier": 2
+        },
+        {
+          "skill": "gunnery",
+          "when": "crewed",
+          "modifier": -1
+        }
+      ]
+    },
+    {
+      "id": "reckless",
+      "name": "Reckless",
+      "description": "Answers a bad situation by making it louder. Superb with a gun in her hands and no use at all at holding still.",
+      "effects": [
+        {
+          "skill": "gunnery",
+          "modifier": 2
+        },
+        {
+          "skill": "discipline",
+          "modifier": -2
+        },
+        {
+          "defiance": "fight",
+          "modifier": 3
+        }
+      ]
+    },
+    {
+      "id": "craven",
+      "name": "Craven",
+      "description": "Sees exactly how bad it is, sooner than anybody. Not a coward for wanting out, and no less inconvenient for that.",
+      "effects": [
+        {
+          "skill": "observation",
+          "modifier": 2
+        },
+        {
+          "skill": "gunnery",
+          "modifier": -1
+        },
+        {
+          "defiance": "flight",
+          "modifier": 3
+        }
+      ]
+    },
+    {
+      "id": "stolid",
+      "name": "Stolid",
+      "description": "Takes it. Keeps taking it. Will still be sitting there when it stops.",
+      "effects": [
+        {
+          "skill": "discipline",
+          "modifier": 2
+        },
+        {
+          "skill": "driving",
+          "modifier": -1
+        },
+        {
+          "defiance": "freeze",
+          "modifier": 2
+        }
+      ]
+    }
+  ],
+  "reaction": {
+    "skill": "reactions",
+    "base_ticks": 2,
+    "levels_per_tick": 4,
+    "max_ticks": 5
+  },
+  "ranks": [
+    { "id": "sergeant", "name": "Cadet Sergeant" },
+    { "id": "lieutenant", "name": "Cadet Lieutenant" },
+    { "id": "captain", "name": "Cadet Captain" }
+  ],
+  "command": {
+    "radius": 8,
+    "radius_per_signals": 1,
+    "relay": true,
+    "visual_range": 3,
+    "overworld_radius": 4,
+    "review": {
+      "skill": "command",
+      "base_ticks": 1,
+      "levels_per_tick": 4,
+      "max_ticks": 2
+    },
+    "latency": {
+      "skill": "command",
+      "base_ticks": 2,
+      "levels_per_tick": 4,
+      "max_ticks": 4
+    }
+  },
+  "morale": {
+    "skill": "discipline",
+    "rungs": [
+      {
+        "id": "steady",
+        "name": "Steady",
+        "at_pressure": 0,
+        "obeys": true
+      },
+      {
+        "id": "wavering",
+        "name": "Pinned",
+        "at_pressure": 6,
+        "obeys": true,
+        "accuracy": -10,
+        "pinned": true
+      },
+      {
+        "id": "breaking",
+        "name": "Breaking",
+        "at_pressure": 12,
+        "obeys": false,
+        "accuracy": -20
+      }
+    ],
+    "defiance": [
+      {
+        "id": "freeze",
+        "name": "goes to ground",
+        "response": "freeze",
+        "base": 0
+      },
+      {
+        "id": "flight",
+        "name": "falls back",
+        "response": "flight",
+        "core": "speed",
+        "base": 0
+      },
+      {
+        "id": "fight",
+        "name": "fights on",
+        "response": "fight",
+        "core": "will",
+        "base": 0
+      }
+    ],
+    "hit": 3,
+    "bounced": 1,
+    "ally_destroyed": 4,
+    "leader_lost": 4,
+    "recovery": 2,
+    "recovery_per_skill": 4,
+    "recovery_near_leader": 2,
+    "point_worth": 0.5,
+    "near_miss_percent": 50,
+    "through_plate_percent": 0,
+    "targeted": 1,
+    "open_top_percent": 75
+  }
 }

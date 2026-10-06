@@ -1,0 +1,48 @@
+# The generated campaign: the map is a world's campaign hexes, the armies
+# stand where their places resolved, and a day turns over.
+#!env STAHL_CAMPAIGN=frontier_world STAHL_WORLD=default
+#
+#   STAHL_CAMPAIGN=frontier_world STAHL_DEBUG=1 \
+#     STAHL_SCRIPT=scripts/dev/generated-campaign.txt cargo run -p stahlsenshamädchen
+#
+# frontier_world's 1st Company resolves to the western town — a city,
+# because its tiles hold a town — found by name, wherever the generator
+# stands it.
+
+at 3.0
+log "generated campaign, day 1"
+shot /tmp/world-01-start.png
+
+hex "1st Company"
+wait 0.3
+click left
+wait 0.5
+shot /tmp/world-02-selected.png
+
+# Z zooms onto the ground under the selected company, tile by tile, and Z
+# again comes back to the campaign map: one world, two levels.
+key KeyZ
+expect log "On the ground."
+wait 1.0
+shot /tmp/world-02b-ground.png
+key KeyZ
+expect log "Back to the campaign map."
+wait 0.5
+
+# The clock opens stopped; Space runs it, and a couple of seconds at ten
+# game minutes a second is most of an hour of marching; Space stops it.
+until idle 10
+key Space
+expect log "Clock running."
+wait 2.0
+shot /tmp/world-03-clock-running.png
+key Space
+expect log "Clock stopped."
+
+# Enter runs the clock to the next dawn.
+key Enter
+until turn >= 2 120
+until idle 60
+shot /tmp/world-04-next-day.png
+
+quit

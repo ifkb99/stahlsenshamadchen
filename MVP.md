@@ -1,0 +1,177 @@
+# MVP
+
+What is left before the game is a minimum viable product, in one list.
+Written 2026-09-09 at the close of the one-currency arc. The bar is the one
+`assets/wiki/reference/command.md` set: **core gameplay solidified to the
+point of a complete campaign or two.** The life layer — post-battle
+warmth, sound, barks, art — deliberately comes after it, and three boundary
+decisions stand: the first campaign ships **without the requisition loop**,
+**every cadet is a placeholder**, and **campaign length is unnumbered**
+until the gameplay says what a session wants to be.
+
+Each item names where it is tracked in detail. [TODO.md](TODO.md) is the
+gameplay backlog, [DIRECTION.md](DIRECTION.md) the design memo, and
+[CLAUDE.md](CLAUDE.md) the engineering defects; this file only says which
+of those stand between now and an MVP.
+
+## What is already there
+
+The engine is close. Formations, missions, latitude, radios and command
+latency, succession, defiance, detection, ballistics with no hit points,
+infantry and the ride, stacking, objectives and exits, the campaign map
+with standing orders and withdrawal, saves, the academy roll, and the one
+currency every planner and the danger overlay price ground in are built,
+measured and pinned by 290 engine tests, four determinism seeds and eleven
+scripted tours. The AI plays the whole thing against itself and the harness
+can ask what any number does.
+
+## What is left
+
+### A campaign that can be finished
+
+- ~~**A win and a loss the campaign can reach.**~~ **Done 2026-09-09.**
+  The overworld map declares it: `frontier` is won by holding every factory
+  through a night or by destroying the army flagged `headquarters`, both
+  shown on the banner and named in the log when they fire, and the campaign
+  AI hunts the one and shelters the other (CLAUDE.md, *The campaign's
+  ending*; `tests/campaign.rs`). The command *vehicle* inside that army is
+  the next step (TODO, *Units*).
+- ~~**A campaign half to withdrawal.**~~ **Done 2026-09-09.** An army whose
+  every surviving vehicle left by an exit arrives a hex back — along its
+  orders, or away from the enemy — and the victor takes the vacated ground.
+- ~~**Campaign orders from the map.**~~ **Done 2026-09-09.** With an army
+  selected, `G` advances on the hovered hex, `H` holds, `W` falls back on
+  it — the battle screen's keys, through `OverworldOrder::SetMission` — and
+  a digit sends that vehicle of the selected army to one of her own
+  companies under the cursor (`OverworldOrder::TransferUnit`: beside each
+  other, neither marched today, never the last vehicle). Both in
+  `overworld-tour`.
+- **A wider mission vocabulary once the map has something to do** — raid,
+  screen — is explicitly *after* the map has more to do, so not MVP.
+
+### Orders the player can trust
+
+- ~~**Permadeath decided.**~~ **Done 2026-09-10.** The stakes ship on, as
+  content: the base mod declares `casualties.permadeath: true` and a campaign
+  takes it from `from_map`, while the engine's own default stays off so a
+  gentle campaign is a `casualties` block rather than an edit to Rust. The
+  numbers were measured first, on a new `balance --only attrition` table that
+  fights battles and then resolves every casualty through the campaign's own
+  rolls: `severe_percent` stays 25 (0.13 dead per hull destroyed — about one
+  funeral a campaign for a 24-cadet academy), and a cadet carried home hurt in
+  a vehicle that survived is never killed (`carried_fatal_percent: 0`, one
+  grave in nine under the first draft). A binding order can now kill a crew
+  who would have lived, so the player is authoring the loss.
+- ~~**The wound system has no teeth the player can see.**~~ **Done
+  2026-09-10**, and the tooth turned out to be somewhere else. The new
+  `balance --only seats` table fights the five battle maps with one side a
+  seat short, from both ends so the map cancels, and says an empty seat cost
+  *nothing a battlefield could see*: 49.0% against a control of 49.0 over 288
+  battles, with hulls lost and battle length flat. Nor was it the substance —
+  at a stand-in's penalty of 0 the rows are 50.0 and 50.0. The whole cost of
+  a short crew is `balance.substitution_penalty`, a first-draft 2 that
+  nothing had ever measured; the designer's ruling is **6**, where a seat
+  short is worth nine points of win rate and a crew missing somebody starts
+  losing more tanks. A wound is now charged at her station too — `Out` and
+  `Absent` stop working the seat, `Wounded` works it at that penalty — which
+  is what makes the number reach a battle nobody deployed hurt to.
+- ~~**A muster choice for the wounded.**~~ **Done 2026-09-10.** The muster
+  names who is standing down, the tank she is not climbing into and how long
+  she is out, and `A`-`H` calls her up to ride hurt. What the table could not
+  find is a battlefield reason to: standing her down and calling her up are
+  within noise of each other at every penalty swept, and what separates them
+  is the bill — 10.3 cadets pulled from wrecks against 15.3. It ships on
+  those terms, the designer's ruling: a decision about somebody you know
+  rather than about a win rate, with the page saying so in as many words.
+- **Allies boost morale** — the designer's ask of 2026-09-09, mechanism
+  unwritten (TODO, *Combat Sim*).
+- **The two things the currency still cannot say**: `morale.penetrated`
+  undeclared in the base mod, and the spend floor that lets a platoon with
+  no riflemen still frighten (TODO, *Combat Sim*; ARCH-TODO, Wave 4). Small,
+  and each is a number the designer has to own before a campaign is tuned
+  around it. The bare constants in `score_tile` are off this list as of
+  2026-09-11: all eleven of them are `planner` fields now, and all eleven
+  swept null, which is a thing the designer can now be told rather than a
+  thing nobody could ask.
+- **Better control of a unit's route**: waypoints, reverse, a face command
+  (TODO, *Misc*). The single-destination march is what makes orders feel
+  like drift on a winding road.
+- **Placing units in a starting zone before a battle**, with a column
+  spawn for an ambush (TODO, *Misc*).
+
+### Screens the player needs
+
+- **A start menu**: pick a mode, choose a campaign, settings (permadeath
+  lives here), and **activating mods at runtime** — the whole
+  difficulty-is-a-mod design has no switch without it (TODO, *Menus* and
+  *Design Decisions*).
+- **Moving cadets between vehicles and a reserve.** The roll shows the
+  school; nothing lets the player change it. Seats are positional, so this
+  is also the seat-assignment answer cadets.md still owes (TODO, *Menus*;
+  DIRECTION step 3, "still open").
+- **A post-battle report a player can read.** The `playthrough` narrator
+  proves every event carries its story; the screen that tells it with
+  portraits is deferred formatting, not archaeology — but a campaign is not
+  playable without at least the plain version (command.md, *Sequencing*).
+
+### Content a campaign needs
+
+- **A battle map per terrain.** `choose_battle_map` falls through to the
+  first battle map for anything but plains and forest; a fight on a hill or
+  in a town lands on whichever iterates first. `battle_forest` also declares
+  no exit (TODO, *Content gaps*; CLAUDE.md, *Content gaps*).
+- **Cover that does not blind.** Forest and town are the only cover and both
+  block sight, so "cover" and "dead ground" are one word to the evaluator; a
+  hedge, a wall or a treeline is content nobody has written (CLAUDE.md,
+  *Content gaps*).
+- **Crew `river_crossing` and `battle_plains`.** Anonymous crews freeze when
+  they break, which is correct and invisible; crewing the baseline map means
+  regenerating the determinism snapshot deliberately (TODO, *Misc*).
+- **A doctrine that orders a movement to contact.** No shipped doctrine ever
+  issues `Advance` or `Recon`, so nothing in AI play exercises the
+  `Advance`/`Assault` distinction the whole orders memo rests on (TODO,
+  planner item; CLAUDE.md, *Content gaps*).
+- **Rebalance the roster the harness can now see**: `river_crossing`'s
+  orders of battle are 24/76 and a third of every `--sim` sample; the recon
+  car is fodder; infantry lose badly at their price; elastic beats massed
+  16–7 (TODO, *Balance* and *Design Decisions*).
+
+### The minimum of life
+
+- **Placeholder sound**: a gun report, an engine, one music bed. The
+  designer's own note is that even placeholder sfx changes feel enormously
+  (TODO, *Audio*).
+- **The rest of the vehicle roster drawn.** Two of six chassis have sprites;
+  the other four are the generated blob (TODO, *Sprites*).
+- **A side identity that is not blue versus red**, decided now while there
+  are two sides and one key colour (TODO, *Sprites*).
+- **Visual indication of shots and hits** beyond the flash — the designer's
+  list from the memo (DIRECTION, *The complaint*).
+
+### Tooling that keeps the MVP honest
+
+- ~~**Tours in CI.**~~ **done 2026-09-09.** The presentation layer is the
+  half nothing else gates; `.github/workflows/tours.yml` runs the headless
+  runner nightly and on `workflow_dispatch` rather than on push, since it is
+  still an order of magnitude slower without a GPU — measured at 207s of
+  tour time for all eleven (TODO, *Tooling*). `rust.yml` runs build, test,
+  clippy, fmt and validate-mods today.
+- **A headless test of a whole field battle into the roster.**
+  `finish_battle`'s survivor accounting and `apply_battle_result` have no
+  coverage and are the seam where campaign state corrupts silently (TODO,
+  *Tooling*).
+- **A replay viewer** — nearly free on a deterministic sim and the cheapest
+  balance tool there is (TODO, *Tooling*). Useful rather than required.
+
+## Deliberately not MVP
+
+Written down so nobody re-litigates them mid-chunk.
+
+- Requisition, resources, factories, academy mode, ronin mode, diplomacy.
+- Character writing, traits earned from play, cadet portraits and barks.
+- Hex streaming (one continuous world at two zoom levels), and therefore
+  the shape of exits and pursuit.
+- Close assault (storming a building the enemy holds), smoke, hit location
+  within a facing, premium rounds, artillery leading a moving target.
+- A random map generator, shadowcasting field of view, the occupancy index.
+- MCTS, parked at parity.

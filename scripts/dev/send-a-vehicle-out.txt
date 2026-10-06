@@ -1,0 +1,51 @@
+# Sending a vehicle out and calling her back (WORLD.md W4.6b): the 1st
+# Company's recon car goes to the next hex on her own, holds there through
+# the day, and comes home when she is recalled — the same node of the chain
+# of command throughout, standing on her own while she has orders of her own.
+#!env STAHL_CAMPAIGN=frontier_world STAHL_WORLD=default
+#
+#   STAHL_CAMPAIGN=frontier_world STAHL_DEBUG=1 \
+#     STAHL_SCRIPT=scripts/dev/send-a-vehicle-out.txt cargo run -p stahlsenshamädchen
+#
+# The 1st Company is found by name (`hex "1st Company"`), so the tour
+# follows her wherever the generator stands her; her second vehicle is the
+# recon car, sent to `beside 1st Company` — the first open hex next to her,
+# which the campaign screen publishes — and found again, standing on her
+# own, by her own name ("Luchs Scout Car of 1st Company").
+
+at 3.0
+until idle 10
+wait 1.0
+hex "1st Company"
+wait 0.3
+click left
+wait 0.3
+hex "beside 1st Company"
+wait 0.3
+key Digit2
+until log "sent out from 1st Company" 10
+shot /tmp/detach-01-sent.png
+
+# The day runs; she marches and holds where she was sent.
+until idle 10
+key Enter
+until turn >= 2 120
+until idle 60
+shot /tmp/detach-02-holding.png
+
+# Select her where she stands and call her back. On her own she is a
+# place of her own, under her vehicle's name.
+wait 1.0
+hex "Luchs Scout Car of 1st Company"
+wait 0.3
+click left
+wait 0.3
+key KeyB
+until log "recalled to her company" 10
+until idle 10
+key Enter
+until log "is back with 1st Company." 120
+until idle 60
+shot /tmp/detach-03-home.png
+
+quit

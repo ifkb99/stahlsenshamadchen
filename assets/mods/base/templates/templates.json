@@ -1,0 +1,15 @@
+[
+    {
+        "id": "fix_and_flank",
+        "name": "Fix and Flank",
+        "description": "One element takes a firing position on the enemy and holds his attention; the other goes round by the covered way and comes in on his side or his back when the first is in place. The oldest idea in the manual, and the one a crew who has only ever driven at the enemy has never been shown.",
+        "kind": "fix_and_flank",
+        "exposure_price": 3,
+        "standoff": [2, 5],
+        "rounds_of_fire": 4.0,
+        "per_hex_exposed": 1.5,
+        "per_round": 2.0,
+        "alone_share": 1.0,
+        "threshold": 0.0
+    }
+]

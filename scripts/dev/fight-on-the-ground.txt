@@ -1,0 +1,39 @@
+# A fight on the ground: the player sends her 1st Company against the
+# Valkyrie Vanguard, the generated campaign runs on the clock until they
+# make contact, the fight screen opens on it, and she commits minute after
+# minute until it is over — the fight resolved by the world clock, in
+# lockstep with the campaign.
+#
+# She starts it herself. The tour used to wait for the Valkyries to come,
+# and whether they come for a company that sits still is a fact about the
+# campaign AI and the ground (since W6.5 they do not, on seed 1), not about
+# fighting on the ground, which is what this is for.
+#!env STAHL_CAMPAIGN=frontier_world STAHL_WORLD=default
+#
+#   STAHL_CAMPAIGN=frontier_world STAHL_DEBUG=1 \
+#     STAHL_SCRIPT=scripts/dev/fight-on-the-ground.txt cargo run -p stahlsenshamädchen
+
+at 3.0
+until idle 10
+hex "1st Company"
+wait 0.3
+click left
+wait 0.3
+hex "Valkyrie Vanguard"
+wait 0.3
+key KeyG
+until log "1st Company ordered to advance on" 10
+key BracketRight
+key BracketRight
+key BracketRight
+key Space
+until log "The fighting is waiting for your orders." 400
+wait 3.0
+shot /tmp/fight-01-opened.png
+press Enter until log "The fighting is over." 500
+shot /tmp/fight-02-over.png
+# Back on the campaign screen, the clock stopped where the fight left it.
+until log "Clock" 30
+wait 2.0
+shot /tmp/fight-03-back.png
+quit

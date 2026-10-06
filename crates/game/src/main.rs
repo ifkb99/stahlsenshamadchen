@@ -2,11 +2,14 @@
 
 mod battle;
 mod camera;
+#[cfg(feature = "lua-campaigns")]
 mod campaign;
+mod devtools;
 mod iso;
 mod map_render;
 mod mods;
 mod overworld;
+mod setup;
 
 use bevy::prelude::*;
 
@@ -15,13 +18,66 @@ pub enum AppState {
     /// Load mods, build art caches.
     #[default]
     Boot,
+    /// A new campaign's world, chosen before it is made (WORLD.md W6.3).
+    WorldSetup,
     /// Strategic layer.
     Overworld,
     /// Tactical layer.
     Battle,
 }
 
-fn main() {
+/// The phases a screen's frame runs in, in order.
+///
+/// Both screens do the same seven things in the same sequence, which is why
+/// this is one enum and not two: the battle and the campaign map differ in
+/// *which* systems they put in each phase, never in what the phases are or
+/// what order they come in.
+///
+/// **This replaced a `.chain()` of twelve and fourteen systems.** A chain is a
+/// total order expressed by adjacency, so where a system sat in a tuple was
+/// load-bearing and invisible — two of the orderings were load-bearing enough
+/// to carry paragraphs explaining them, and this layer has already lost time
+/// to an ordering fault (`until idle` coming true a frame early, four `Enter`
+/// presses advancing one round, every screenshot after them describing the
+/// wrong turn while the script reported success). A new system now names the
+/// phase it belongs to and inherits that phase's place.
+///
+/// The order is not the obvious one and it is worth knowing why:
+/// **animation comes first**. The paced event queue gates everything behind
+/// it — the simulation refuses to advance while anything is still animating,
+/// and the screen refuses keystrokes for the same reason — so the queue has to
+/// be drained before anyone asks whether it is empty.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ScreenSet {
+    /// Drain the paced event queue and advance sprite animation. First
+    /// because everything after it asks whether this has finished.
+    Animate,
+    /// Let the simulation take a step: AI planning, round resolution.
+    Simulate,
+    /// Read the keyboard and the mouse. After the simulation so a keystroke
+    /// is answered against the state the player was actually looking at.
+    Input,
+    /// Carry the simulation's answer out to the entities that draw it.
+    Sync,
+    /// Everything derived purely for the eye: fog, highlights, markers,
+    /// panels, decaying effects.
+    Present,
+    /// Leaving the screen, and anything that can ask for a state transition.
+    /// Late, so a frame that ends the screen has already been drawn.
+    Lifecycle,
+    /// The dev harness's window onto the frame. Last, so `ScriptFacts`
+    /// describes a settled frame rather than a half-applied one — an `until
+    /// idle` that came true early is exactly the fault above.
+    Facts,
+}
+
+/// Returning [`AppExit`] rather than `()` is what lets a failing dev script
+/// fail the process. `App::run` has always handed back an exit status and
+/// this dropped it, so a scripted tour could watch every assertion fail and
+/// still exit 0 — which is worse than having no assertions, because it looks
+/// like a pass. Bevy's `AppExit` implements `Termination`, so returning it
+/// here is the whole fix; a normal run still exits 0.
+fn main() -> AppExit {
     App::new()
         .add_plugins(
             DefaultPlugins
@@ -33,18 +89,59 @@ fn main() {
                 // would only blur the texels.
                 .set(ImagePlugin::default_nearest()),
         )
+        .add_systems(PreStartup, install_default_font)
         .insert_resource(ClearColor(Color::srgb(0.09, 0.10, 0.13)))
         .init_state::<AppState>()
+        // Declared once for the whole app rather than per screen. Configuring
+        // the same set twice with two `run_if`s would AND them and the phase
+        // would never run at all, so the run conditions stay on the systems
+        // and the *order* lives here.
+        .configure_sets(
+            Update,
+            (
+                ScreenSet::Animate,
+                ScreenSet::Simulate,
+                ScreenSet::Input,
+                ScreenSet::Sync,
+                ScreenSet::Present,
+                ScreenSet::Lifecycle,
+                ScreenSet::Facts,
+            )
+                .chain(),
+        )
         .init_resource::<iso::ViewCenter>()
         .add_plugins((
             mods::ModsPlugin,
-            campaign::CampaignPlugin,
             camera::CameraPlugin,
             battle::BattlePlugin,
             overworld::OverworldPlugin,
+            setup::SetupPlugin,
+            devtools::DevToolsPlugin,
         ))
-        .add_systems(Update, (map_render::reposition_tiles, dev_screenshot))
-        .run();
+        .add_systems(Update, map_render::reposition_map)
+        .run()
+}
+
+/// The face every `TextFont::default()` in the game draws with.
+///
+/// Bevy's built-in default is a subset of Fira Mono that stops at ASCII, so
+/// the log drew a box for every em dash in it ("under fire ▯ breaking for
+/// cover") and the roll drew one in the middle of Greta Müller's name — the
+/// game's own title has an ä in it. Noto Sans Mono covers everything the
+/// source and the mods write (dashes, arrows, umlauts, ±, ×, µ) and is SIL OFL
+/// 1.1; the licence travels beside it in `assets/fonts/OFL.txt`.
+///
+/// It replaces the asset behind the *default* handle rather than being
+/// threaded through every `TextFont`, so a text node written tomorrow gets it
+/// without anybody remembering to ask. Compiled in rather than loaded, because
+/// the default handle has to answer on the first frame and an asset load is
+/// asynchronous.
+const DEFAULT_FONT: &[u8] = include_bytes!("../../../assets/fonts/NotoSansMono-Regular.ttf");
+
+fn install_default_font(mut fonts: ResMut<Assets<Font>>) {
+    fonts
+        .insert(AssetId::default(), Font::from_bytes(DEFAULT_FONT.to_vec()))
+        .expect("the default font handle is a valid asset id");
 }
 
 fn primary_window() -> Window {
@@ -60,24 +157,35 @@ fn primary_window() -> Window {
     Window {
         title: "Stahlsenshamädchen".into(),
         resolution,
+        present_mode: present_mode(),
         ..default()
     }
 }
 
-/// Dev tool: STAHL_SCREENSHOT=out.png captures the window a few seconds in
-/// (delay adjustable with STAHL_SCREENSHOT_AT=<seconds>).
-fn dev_screenshot(mut commands: Commands, time: Res<Time>, mut done: Local<bool>) {
-    let at = std::env::var("STAHL_SCREENSHOT_AT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(4.0);
-    if *done || time.elapsed_secs() < at {
-        return;
-    }
-    *done = true;
-    if let Ok(path) = std::env::var("STAHL_SCREENSHOT") {
-        commands
-            .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
-            .observe(bevy::render::view::screenshot::save_to_disk(path));
+/// How frames are handed to the compositor. Vsync by default, because this is
+/// pixel art and tearing is the one artefact it cannot hide.
+///
+/// `STAHL_PRESENT=immediate|mailbox|no_vsync|fifo` overrides it, and exists
+/// because of a driver bug rather than a preference. On this project's Linux
+/// box — two RTX A4500s, NVIDIA 580.126.20, X11 — the Vulkan FIFO present path
+/// loses the device after a few seconds:
+///
+/// ```text
+/// Caught DeviceLost error: Unknown Unexpected error variant
+///   (driver implementation is at fault)
+/// ```
+///
+/// It is not this game's bug: a stock Bevy app with none of our systems
+/// reproduces it 3 runs out of 3, and the same app under `immediate` survives
+/// 3 out of 3. `crates/game/examples/minimal_window.rs` is that experiment if
+/// it needs re-running after a driver update.
+fn present_mode() -> bevy::window::PresentMode {
+    use bevy::window::PresentMode;
+    match std::env::var("STAHL_PRESENT").as_deref() {
+        Ok("immediate") => PresentMode::Immediate,
+        Ok("mailbox") => PresentMode::Mailbox,
+        Ok("no_vsync") => PresentMode::AutoNoVsync,
+        Ok("fifo") => PresentMode::Fifo,
+        _ => PresentMode::AutoVsync,
     }
 }

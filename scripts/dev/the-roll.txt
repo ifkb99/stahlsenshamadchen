@@ -1,0 +1,40 @@
+# The academy roll: a screen the player opens when she wants it.
+#!env STAHL_CAMPAIGN=frontier
+#
+#   STAHL_PRESENT=immediate STAHL_DEBUG=1 \
+#     STAHL_SCRIPT=scripts/dev/the-roll.txt cargo run -p stahlsenshamädchen
+#
+# No STAHL_BATTLE: the roll is a campaign screen. It is deliberately not the
+# after-action report — that one stops the campaign to be read once, this one
+# answers "who can fight tomorrow" whenever she asks.
+#
+# Everything here waits on the game rather than on a stopwatch. `waiting`
+# means a keystroke goes to a page rather than to the map, which is exactly
+# what opening the roll does, so it is both the wait and the assertion that
+# the page came up at all.
+
+at 2.0
+until idle 60
+shot /tmp/roll-01-campaign.png
+
+# R opens it. Forty-nine cadets across two academies, of which this page
+# shows one: her own school, in order of battle, seat by seat.
+key R
+until waiting 60
+expect waiting
+shot /tmp/roll-02-open.png
+
+# Esc closes it and the map is hers again. The order matters and is why
+# `roster_input` runs after `handle_input`: Esc also drops the map selection,
+# and one keystroke must not do both.
+key Escape
+until idle 60
+expect idle
+shot /tmp/roll-03-closed.png
+
+# ...and R toggles, so the same key that opened it opens it again.
+key R
+until waiting 60
+expect waiting
+
+quit

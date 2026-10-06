@@ -33,19 +33,28 @@
         "00001100110000"
     ],
     "sides": [
-        { "name": "Kuhlmann Academy", "funds": 20 },
-        { "name": "Iron Valkyries", "funds": 20, "ai": { "planner": "utility", "difficulty": 3 } }
+        { "name": "Kuhlmann Academy" },
+        { "name": "Iron Valkyries", "ai": { "planner": "utility", "difficulty": 3, "doctrine": "massed_armor" } }
     ],
+    "victory": {
+        "hold": ["factory"],
+        "hold_days": 3,
+        "decapitation": true,
+        "commander": true
+    },
     "armies": [
         {
             "at": [1, 1],
             "side": 0,
             "name": "1st Company",
             "movement": 4,
+            "headquarters": true,
             "units": [
-                { "at": [2, 3], "side": 0, "vehicle": "medium_tank", "crew": ["anka", "rosa"] },
-                { "at": [1, 2], "side": 0, "vehicle": "recon_car", "crew": ["elsa"] },
-                { "at": [2, 5], "side": 0, "vehicle": "light_tank", "crew": ["juno", "mina"] }
+                { "command": true, "vehicle": "medium_tank", "crew": ["anka", "juno", "mina", "rosa"] },
+                { "vehicle": "recon_car", "crew": ["elsa", "ada"] },
+                { "vehicle": "light_tank", "crew": ["hanne", "yuki", "ilse"] },
+                { "vehicle": "apc", "crew": ["lore", "nele"] },
+                { "vehicle": "rifle_platoon", "crew": ["sigrun", "marlen"] }
             ]
         },
         {
@@ -54,8 +63,10 @@
             "name": "2nd Company",
             "movement": 3,
             "units": [
-                { "at": [1, 4], "side": 0, "vehicle": "artillery", "crew": ["petra"] },
-                { "at": [2, 4], "side": 0, "vehicle": "light_tank", "crew": ["rosa"] }
+                { "vehicle": "artillery", "crew": ["katrin", "doro", "petra", "emmi"] },
+                { "vehicle": "light_tank", "crew": ["vera", "berit", "lotte"] },
+                { "vehicle": "halftrack", "crew": ["wilma", "ines"] },
+                { "vehicle": "rifle_platoon", "crew": ["traudl", "ruth"] }
             ]
         },
         {
@@ -63,10 +74,13 @@
             "side": 1,
             "name": "Valkyrie Vanguard",
             "movement": 4,
+            "headquarters": true,
             "units": [
-                { "at": [11, 3], "side": 1, "vehicle": "medium_tank", "crew": ["irma"] },
-                { "at": [12, 4], "side": 1, "vehicle": "light_tank", "crew": ["sofia"] },
-                { "at": [11, 5], "side": 1, "vehicle": "recon_car", "crew": ["greta"] }
+                { "command": true, "vehicle": "medium_tank", "crew": ["irma", "astrid", "beatrix", "franka"] },
+                { "vehicle": "light_tank", "crew": ["sofia", "kira", "rea"] },
+                { "vehicle": "recon_car", "crew": ["greta", "runa"] },
+                { "vehicle": "apc", "crew": ["britta", "malin"] },
+                { "vehicle": "rifle_platoon", "crew": ["zofia", "marta"] }
             ]
         },
         {
@@ -75,8 +89,10 @@
             "name": "Valkyrie Reserve",
             "movement": 3,
             "units": [
-                { "at": [12, 4], "side": 1, "vehicle": "tank_destroyer", "crew": ["nadja"] },
-                { "at": [11, 4], "side": 1, "vehicle": "heavy_tank", "crew": ["irma"] }
+                { "vehicle": "tank_destroyer", "crew": ["ingrid", "selin", "nadja"] },
+                { "vehicle": "heavy_tank", "crew": ["hedda", "tamara", "carmen", "ludmila", "odette"] },
+                { "vehicle": "halftrack", "crew": ["alma", "cecile"] },
+                { "vehicle": "rifle_platoon", "crew": ["erika", "sanna"] }
             ]
         }
     ]

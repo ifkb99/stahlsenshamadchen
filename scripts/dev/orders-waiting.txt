@@ -1,0 +1,76 @@
+# Orders that wait instead of dying: giving a direct order to a cadet who has
+#!env STAHL_BATTLE=river_crossing
+# driven off the net, seeing it acknowledged rather than refused, and watching
+# it arrive when her platoon closes back up.
+#
+#   STAHL_PRESENT=immediate STAHL_DEBUG=1 STAHL_BATTLE=river_crossing \
+#     STAHL_SCRIPT=scripts/dev/orders-waiting.txt cargo run -p stahlsenshamädchen
+#
+# Hexes are axial. river_crossing's 1st Armored Platoon is Anka Weiss in a
+# medium tank at offset [10, 20] -> axial (0, 20), leading, and Mina Falkenrath
+# in a light tank at offset [11, 26] -> axial (-2, 26). Send Mina five hexes
+# southwest and she is ten from her commander, which is past the base mod's
+# eight-hex radio even with her signals bonus, and far past the three-hex
+# visual net — so from round two she is a cadet who cannot be told anything.
+
+at 3.0
+hex -2,26
+wait 0.4
+click left
+wait 0.5
+hex -5,30
+wait 0.4
+click left
+wait 0.6
+log "Mina ordered away from her platoon"
+key Enter
+until idle
+
+# Round two. She is out of contact — the log said so as she drove out of
+# earshot — and a direct order to her is now *accepted and held* rather than
+# refused: the log acknowledges it, and nothing about her plan changes.
+hex -5,30
+wait 0.4
+click left
+wait 0.5
+hex -6,31
+wait 0.4
+click left
+wait 0.8
+log "a direct order to a cadet who cannot hear it"
+shot /tmp/waiting-01-order.png
+
+# The panel's side of the same fact: F picks up the platoon, and it tags her
+# twice over — out of contact, and with orders waiting for her. The map says
+# it too: the violet under a member who is still on the net goes red under
+# one who is not, and the green ring is Anka's radio horizon, which Mina is
+# plainly outside.
+key F
+wait 0.8
+log "the formation panel and the net: out of contact, orders waiting"
+shot /tmp/waiting-02-panel.png
+
+# Now close the gap by hand: her commander drives southwest after her, which
+# puts Mina back inside the platoon's radio. The order given while the wire
+# was dead is then delivered into the next planning phase — announced in the
+# log, and re-pathed from where Mina actually is rather than replayed from
+# where she was.
+key Escape
+wait 0.3
+hex 0,20
+wait 0.4
+click left
+wait 0.5
+hex -3,25
+wait 0.4
+click left
+wait 0.6
+log "Anka drives after her"
+key Enter
+until idle
+key F
+wait 0.8
+log "contact restored, and the waiting order lands"
+shot /tmp/waiting-03-delivered.png
+
+quit

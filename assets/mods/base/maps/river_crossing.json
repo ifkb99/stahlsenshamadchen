@@ -11,39 +11,330 @@
         "t": "town"
     },
     "rows": [
-        "ggggffwwgggg",
-        "ggffggwwgffg",
-        "ggfgggwwggfg",
-        "gggggmwwmggg",
-        "RRRRRRRRRRRR",
-        "gggggmwwmtgg",
-        "gfggggwwgggg",
-        "gffgggwwgfgg",
-        "ggggggwwgfgg"
+        "          ggggggggggwwggggggggg",
+        "         gggggggggggwwggggggggg",
+        "         ggggffffffggwwggggggggg",
+        "        gggggffffffggwwffffggggg",
+        "        gggggffffffgggwwfffgggggg",
+        "       ggggggffffffgggwwfffgggggg",
+        "       ggggggffffffgggwwfffggggggg",
+        "      ffffffgffffffggggwwgggffffff",
+        "      ffffffggggggggmmmmmmmgfffffff",
+        "     fffffffggggggggmmmmmmmgfffffff",
+        "     fffffffggggggggmmmmmmmgfffffffg",
+        "    gfffffffgggggggggggwwgggfffffffg",
+        "    gfffffffgggggggggggwwgggfffffffgg",
+        "   ggfffffffgggggggggggwwgggfffffffgg",
+        "   ggggggggggggggggggggwwggggggggggggg",
+        "  gggggggggggggggggggggwwggggggggggggg",
+        "  ggggggggggggggggggggwwgggggfffffggggg",
+        " ggggggggffffgggggggggwwggttttttffggggg",
+        " ggggggggffffgggggggggwwggttttttffgggggg",
+        "gggggggggffffggggggggwwgggttttttffgggggg",
+        "RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
+        "ggggggggggggggggggggwwggggttttttgggggggg",
+        " gggggggggggggggggggwwggggttttttgggggggg",
+        " gggggggggggggggggggwwggggttttttggggggg",
+        "  gggggggggggggggggwwgggggggggggggggggg",
+        "  gggggggggggggggggwwggggggggggggggggg",
+        "   gfffffffgggggggwwgggggggggggggggggg",
+        "   gfffffffgggggggwwggggggggggggggggg",
+        "    fffffffgggggggwwggggggfffffffgggg",
+        "    fffffffggggggwwgggggggfffffffggg",
+        "     ffffffgggmmmmmmmgggggfffffffggg",
+        "     ffffffgggmmmmmmmgggggfffffffgg",
+        "      fffffgggmmmmmmmgggggfffffffgg",
+        "      ggggggggfffwwfggggggfffffffg",
+        "       gggggggfffwwfggggggfffffffg",
+        "       gggggggfffwwfggggggggggggg",
+        "        ggggggfffwwfggggggggggggg",
+        "        ggggggfffwwfgggggggggggg",
+        "         gggggggggwwgggggggggggg",
+        "         gggggggggwwggggggggggg",
+        "          ggggggggwwggggggggggg"
     ],
     "elevation": [
-        "000000000112",
-        "000000000122",
-        "000000000012",
-        "000000000011",
-        "000000000001",
-        "000000000011",
-        "000000000111",
-        "000000000112",
-        "000000000112"
+        "          221111100000001111122",
+        "         2221111100000001111122",
+        "         22221111100000001111122",
+        "        222221111100000001111122",
+        "        2222221111100000001111122",
+        "       32222221111100000001111122",
+        "       322222211111000000011111222",
+        "      3332222221111100000001111122",
+        "      33322222211111000000011111222",
+        "     333322222211111000000011111222",
+        "     3333222222111110000000111112222",
+        "    33333222222111110000000111112222",
+        "    333332222221111100000001111122222",
+        "   3333332222221111100000001111122222",
+        "   33333322222211111000000011111222222",
+        "  333333322222211111000000011111222222",
+        "  3333332222221111100000001111122222233",
+        " 33333332222221111100000001111122222233",
+        " 333333322222211111000000011111222222333",
+        "3333333222222111110000000111112222223333",
+        "33333332222221111100000001111122222233333",
+        "3333332222221111100000001111122222233333",
+        " 333332222221111100000001111122222233333",
+        " 33333222222111110000000111112222223333",
+        "  3332222221111100000001111122222233333",
+        "  333222222111110000000111112222223333",
+        "   32222221111100000001111122222233333",
+        "   3222222111110000000111112222223333",
+        "    222222111110000000111112222223333",
+        "    22222111110000000111112222223333",
+        "     2222111110000000111112222223333",
+        "     222211111000000011111222222333",
+        "      22211111000000011111222222333",
+        "      2221111100000001111122222233",
+        "       221111100000001111122222233",
+        "       22111110000000111112222223",
+        "        2111110000000111112222223",
+        "        211111000000011111222222",
+        "         21111100000001111122222",
+        "         2111110000000111112222",
+        "          111110000000111112222"
     ],
     "sides": [
-        { "name": "Kuhlmann Academy" },
-        { "name": "Iron Valkyries", "ai": { "planner": "utility", "difficulty": 3 } }
+        {
+            "name": "Kuhlmann Academy"
+        },
+        {
+            "name": "Iron Valkyries",
+            "ai": {
+                "planner": "command",
+                "difficulty": 3,
+                "doctrine": "elastic_defense"
+            }
+        }
+    ],
+    "formations": [
+        {
+            "id": "kuhlmann_armor",
+            "name": "1st Armored Platoon",
+            "side": 0
+        },
+        {
+            "id": "kuhlmann_recon",
+            "name": "Reconnaissance Section",
+            "side": 0
+        },
+        {
+            "id": "valkyrie_line",
+            "name": "Valkyrie Line",
+            "side": 1
+        },
+        {
+            "id": "valkyrie_screen",
+            "name": "Valkyrie Screen",
+            "side": 1
+        }
     ],
     "units": [
-        { "at": [2, 4], "side": 0, "vehicle": "medium_tank", "crew": ["anka", "rosa"] },
-        { "at": [1, 2], "side": 0, "vehicle": "recon_car", "crew": ["elsa"] },
-        { "at": [1, 6], "side": 0, "vehicle": "light_tank", "crew": ["juno", "mina"] },
-        { "at": [0, 4], "side": 0, "vehicle": "artillery", "crew": ["petra"] },
-        { "at": [10, 4], "side": 1, "vehicle": "medium_tank", "crew": ["irma"] },
-        { "at": [10, 2], "side": 1, "vehicle": "light_tank", "crew": ["sofia"] },
-        { "at": [10, 6], "side": 1, "vehicle": "tank_destroyer", "crew": ["nadja"] },
-        { "at": [8, 1], "side": 1, "vehicle": "recon_car", "crew": ["greta"] }
-    ]
+        {
+            "at": [
+                10,
+                20
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "crew": [
+                "anka",
+                "rosa"
+            ],
+            "formation": "kuhlmann_armor",
+            "leads": true
+        },
+        {
+            "at": [
+                12,
+                14
+            ],
+            "side": 0,
+            "vehicle": "recon_car",
+            "crew": [
+                "elsa"
+            ],
+            "formation": "kuhlmann_recon",
+            "leads": true
+        },
+        {
+            "at": [
+                11,
+                26
+            ],
+            "side": 0,
+            "vehicle": "light_tank",
+            "crew": [
+                "mina",
+                "juno"
+            ],
+            "formation": "kuhlmann_armor"
+        },
+        {
+            "at": [
+                6,
+                20
+            ],
+            "side": 0,
+            "vehicle": "artillery",
+            "crew": [
+                "petra"
+            ],
+            "formation": "kuhlmann_recon"
+        },
+        {
+            "at": [
+                30,
+                20
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "crew": [
+                "irma"
+            ],
+            "formation": "valkyrie_line",
+            "leads": true
+        },
+        {
+            "at": [
+                28,
+                14
+            ],
+            "side": 1,
+            "vehicle": "light_tank",
+            "crew": [
+                "sofia"
+            ],
+            "formation": "valkyrie_screen"
+        },
+        {
+            "at": [
+                30,
+                26
+            ],
+            "side": 1,
+            "vehicle": "tank_destroyer",
+            "crew": [
+                "nadja"
+            ],
+            "formation": "valkyrie_line"
+        },
+        {
+            "at": [
+                27,
+                20
+            ],
+            "side": 1,
+            "vehicle": "recon_car",
+            "crew": [
+                "greta"
+            ],
+            "formation": "valkyrie_screen",
+            "leads": true
+        }
+    ],
+    "objectives": [
+        {
+            "id": "bridge",
+            "name": "The Road Bridge",
+            "at": [
+                [
+                    20,
+                    20
+                ],
+                [
+                    21,
+                    20
+                ],
+                [
+                    22,
+                    20
+                ]
+            ],
+            "value": 3
+        },
+        {
+            "id": "north_ford",
+            "name": "The Upper Ford",
+            "at": [
+                [
+                    22,
+                    9
+                ],
+                [
+                    23,
+                    9
+                ],
+                [
+                    24,
+                    9
+                ]
+            ],
+            "value": 2
+        },
+        {
+            "id": "south_ford",
+            "name": "The Lower Ford",
+            "at": [
+                [
+                    16,
+                    31
+                ],
+                [
+                    17,
+                    31
+                ],
+                [
+                    18,
+                    31
+                ]
+            ],
+            "value": 2
+        },
+        {
+            "id": "west_road",
+            "name": "The Western Road",
+            "at": [
+                [
+                    0,
+                    20
+                ],
+                [
+                    0,
+                    19
+                ],
+                [
+                    0,
+                    21
+                ]
+            ],
+            "value": 1,
+            "kind": "exit",
+            "side": 0
+        },
+        {
+            "id": "east_road",
+            "name": "The Eastern Road",
+            "at": [
+                [
+                    40,
+                    20
+                ],
+                [
+                    39,
+                    19
+                ],
+                [
+                    39,
+                    21
+                ]
+            ],
+            "value": 1,
+            "kind": "exit",
+            "side": 1
+        }
+    ],
+    "victory_score": 60
 }

@@ -1,0 +1,74 @@
+[
+    {
+        "id": "main_gun",
+        "name": "Main Armament",
+        "effect": "gun",
+        "size": 3,
+        "toughness": 1,
+        "description": "The gun and everything that lays it: breech, mount, sights, traverse. It does not take much to stop a gun working, and a tank that cannot shoot is a very expensive place for four cadets to sit."
+    },
+    {
+        "id": "tracks",
+        "name": "Running Gear",
+        "effect": "mobility",
+        "size": 4,
+        "toughness": 2,
+        "description": "Tracks, road wheels, final drives — or on a wheeled car, the axles and steering. The biggest thing on the outside and the easiest to hit, which is why it takes two: the first hit throws a link or wrecks a wheel and she limps, the second leaves her where she stands and the rest of the battle happens around her."
+    },
+    {
+        "id": "ammo_rack",
+        "name": "Ammunition Stowage",
+        "effect": "ammo",
+        "size": 2,
+        "toughness": 1,
+        "description": "Where the shells live. Small, well tucked away, and the one thing aboard whose destruction is usually the end of the vehicle and the crew — the roll is scaled by what is still in it, so a tank that has spent her day shooting is a harder tank to kill than one that has not."
+    },
+    {
+        "id": "radio_set",
+        "name": "Wireless Set",
+        "effect": "radio",
+        "size": 1,
+        "toughness": 1,
+        "description": "The set and its aerial. The smallest target on this list and the least immediately dangerous to lose, which is exactly what makes it insidious: nobody notices she has gone off the net until the orders stop being followed."
+    },
+    {
+        "id": "ammo_rack_bulk",
+        "name": "Bulk Ammunition Stowage",
+        "effect": "ammo",
+        "size": 3,
+        "toughness": 1,
+        "description": "Shells racked wherever they fit — sponsons, hull floor, behind the driver. The price of a long magazine is that a round coming through has more of it to find, and the mediums and the gun carriers pay it."
+    },
+    {
+        "id": "ammo_rack_sparse",
+        "name": "Low Ammunition Stowage",
+        "effect": "ammo",
+        "size": 1,
+        "toughness": 1,
+        "description": "A short ration of rounds kept low in the hull, under the fighting compartment. Hard for a penetration to find — the tank destroyer's casemate and the scout car's belts carry little and carry it well."
+    },
+    {
+        "id": "rifle_sections",
+        "name": "Rifle Sections",
+        "effect": "troops",
+        "size": 8,
+        "toughness": 6,
+        "description": "The platoon itself: three sections of riflemen and the gun groups, abstracted into one thing that can be worn down. Much the biggest target in the unit, because a burst into a platoon in the open finds soldiers and not the two cadets running it — which is what makes 'leaders last' arithmetic rather than a rule. Six hits is six sections-worth of casualties, and it reads as a strength bar: at half of them she shoots half as hard, and at none of them she is a remnant with her leaders still alive and nothing left to lead."
+    },
+    {
+        "id": "scout_team",
+        "name": "Scout Team",
+        "effect": "troops",
+        "size": 4,
+        "toughness": 3,
+        "description": "A handful of soldiers whose job is to look and not be looked at. Half the platoon's mass and half its staying power, and the reason a scout section that is found is a scout section that is finished."
+    },
+    {
+        "id": "field_radio",
+        "name": "Man-Pack Set",
+        "effect": "radio",
+        "size": 1,
+        "toughness": 1,
+        "description": "A wireless set with straps, carried by somebody who would rather be carrying ammunition. The same small target as a tank's set and rather more exposed: when it goes the platoon is back to runners, flags and whatever they were last told."
+    }
+]

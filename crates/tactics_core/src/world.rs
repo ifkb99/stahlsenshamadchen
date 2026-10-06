@@ -1,0 +1,620 @@
+//! The ground, and the two derived grids that answer questions about it, with
+//! one owner.
+//!
+//! WORLD.md, W0.3. A battle used to hold three things — `map`, `sight` and
+//! `moves` — that had to agree and were each built from the others by
+//! whoever set the battle up. That was fine while a battle's ground was one
+//! map loaded once; it is not fine for a world whose tiles arrive a chunk at a
+//! time, where the three have to change together or a crew can drive across
+//! ground she cannot see or see across ground that is not there. So there is
+//! one type, and **one door** a tile comes in by, [`World::insert`], which
+//! writes the tile and resolves it into both grids in the same call.
+//!
+//! This is what `ground::Patch` was — "the shape a streamed world will have",
+//! used by the terrain reader's tests to hold it to working across a seam —
+//! promoted to the thing a battle stands on. There is now one implementation
+//! of [`Ground`] that owns ground, and a battle answers the four questions by
+//! asking it.
+//!
+//! **Saving.** A world is saved as its tiles and nothing else: the file format
+//! is a plain [`HexMap`], exactly what a battle's `map` was. The grids are
+//! derived from the tiles and the terrain definitions, so a world comes off
+//! disk *unbuilt* and [`crate::battle::SavedBattle::rehydrate`] rebuilds it
+//! through [`World::rebuilt`] — which destructures this struct by name, so a
+//! derived structure added here tomorrow does not compile until somebody has
+//! said how it is rebuilt.
+
+use crate::battle::{MoveGrid, SightGrid};
+use crate::data::{DataRegistry, MovementClass};
+use crate::ground::Ground;
+use crate::map::{HexMap, Tile};
+use crate::worldgen::GeneratedWorld;
+use hexx::Hex;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+/// The chunk a hex belongs to, for chunks of `radius`: which campaign hex it
+/// lies under (WORLD.md, W1.1).
+///
+/// The tiling is `hexx`'s hexagons-of-hexagons — the same one
+/// [`crate::ground::region_of`] reads terrain in — so a chunk of radius 20 is
+/// the 1261-tile hexagon a battle map already is, and a campaign hex is
+/// exactly one of them. The chunk lattice is turned about 29° against the
+/// tile grid (the centre of chunk `(1, 0)` is tile `(2r + 1, -r)`), so
+/// "east" on the campaign map is not a tile direction: nothing that decides
+/// anything may read a chunk coordinate ahead of a real key, the same rule
+/// every other coordinate lives under.
+///
+/// Written in integers rather than through `Hex::to_lower_res`, which
+/// divides in `f32`. That is exact at every size this game will use, but
+/// determinism is load-bearing and `div_euclid` does not need an argument;
+/// `a_chunk_is_the_chunk_hexx_would_name` holds the two to the same answer.
+pub fn chunk_of(hex: Hex, radius: u32) -> Hex {
+    let [x, y, z] = hex.to_cubic_array();
+    let area = Hex::range_count(radius) as i32;
+    let shift = 3 * radius as i32 + 2;
+    let a = (y + shift * x).div_euclid(area);
+    let b = (z + shift * y).div_euclid(area);
+    let c = (x + shift * z).div_euclid(area);
+    Hex::new((1 + a - b).div_euclid(3), (1 + b - c).div_euclid(3))
+}
+
+/// The tile at the centre of `chunk`.
+pub fn chunk_centre(chunk: Hex, radius: u32) -> Hex {
+    chunk.to_higher_res(radius)
+}
+
+/// Every tile in `chunk`, ring by ring out from its centre — a pure function
+/// of coordinates, so the order is the same on every machine.
+pub fn chunk_hexes(chunk: Hex, radius: u32) -> impl Iterator<Item = Hex> {
+    chunk_centre(chunk, radius).spiral_range(0..=radius)
+}
+
+/// What names an engagement, for the purpose of rolling its dice
+/// (WORLD.md, W0.6): when it began, where, and between whom.
+///
+/// An engagement's dice are a pure function of its world's seed and this
+/// key, and of nothing else — not how many battles were fought before it,
+/// not what else is happening in the world, not what is loaded. Two fights
+/// running at once each draw from their own stream, and a campaign loaded
+/// from a save fights the battle it would have fought.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EngagementKey {
+    /// When it began: the campaign's day today, the world clock's tick once
+    /// there is one.
+    pub when: u64,
+    /// Where: the contested tile.
+    pub at: Hex,
+    /// Who: the side that attacked and the side that was attacked, by the
+    /// ids their armies carry.
+    pub attacker: u32,
+    pub defender: u32,
+}
+
+/// The seed an engagement's dice start from.
+///
+/// SplitMix64 folded over the key's fields, written out rather than going
+/// through `std::hash`, whose output the standard library does not promise
+/// to keep from one Rust release to the next — and a save that fights a
+/// different battle after a compiler upgrade is a determinism bug.
+pub fn engagement_seed(world_seed: u64, key: EngagementKey) -> u64 {
+    fn mix(state: u64, value: u64) -> u64 {
+        let mut z = (state ^ value).wrapping_add(0x9E37_79B9_7F4A_7C15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+    [
+        key.when,
+        key.at.x as u32 as u64,
+        key.at.y as u32 as u64,
+        key.attacker as u64,
+        key.defender as u64,
+    ]
+    .into_iter()
+    .fold(mix(0, world_seed), mix)
+}
+
+/// What a world can say about a hex.
+///
+/// Three answers where there used to be two (WORLD.md, W0.4). A lookup that
+/// finds nothing meant "not part of the world" while the world was one map,
+/// and a sight line rightly treats that as open sky — the ray is passing
+/// over the edge of the known world. Once the world is a window onto
+/// something larger, "nothing here" can also mean "not loaded", and open sky
+/// is then a wrong answer: a ridge in an unloaded chunk would stop blocking,
+/// and whether a crew can see a tank would depend on what was paged in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presence<'a> {
+    /// A tile is known here.
+    Known(Tile<'a>),
+    /// There is no ground here and never will be: past the edge of the
+    /// world, or a gap a map declares.
+    Outside,
+    /// There is ground here, but its chunk is not resident. Nothing that
+    /// decides anything may read this; the residency rule (W1.5) is what
+    /// keeps it from being asked.
+    Unloaded,
+}
+
+/// Which of the world's ground is held in memory.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+enum Residency {
+    /// All of it: a closed map, whose every tile was loaded with it. A hex
+    /// with no tile is outside. Every battle is one of these today.
+    #[default]
+    Whole,
+    /// A chunk at a time. A hex whose chunk is resident but holds no tile is
+    /// outside; a hex whose chunk is not resident is unloaded.
+    Chunks {
+        radius: u32,
+        /// Resident chunks as `(x, y)`, because `Hex` has no order and a set
+        /// walked in hash order would put the compass in the load order.
+        resident: BTreeSet<(i32, i32)>,
+    },
+}
+
+/// Tiles, and what they mean to a crew's eyes and to her tracks.
+#[derive(Debug, Clone, Default)]
+pub struct World {
+    tiles: HexMap,
+    sight: SightGrid,
+    moves: MoveGrid,
+    residency: Residency,
+    /// Where a chunked world's ground comes from when a chunk is needed:
+    /// the generated world it is a window onto. `None` for a whole world,
+    /// and for a chunked one whose chunks are handed to it by hand.
+    source: Option<Arc<GeneratedWorld>>,
+    /// Ground that is no longer what the generator made — a blown bridge, an
+    /// engineer's road — by hex, for a window onto a generated world. Laid
+    /// over a chunk every time it is loaded, and saved, so an edit survives
+    /// the chunk being forgotten and the game being closed (WORLD.md W1.6).
+    /// Empty for a whole world, whose tiles are saved as they are.
+    edits: std::collections::BTreeMap<(i32, i32), (String, i32)>,
+    /// A window that came off disk knows which chunks were resident but has
+    /// not loaded them yet; [`World::rebuilt`] does.
+    pending: bool,
+}
+
+/// Every chunk whose ground any of `reaches` could touch: for each `(hex,
+/// reach)`, every chunk with a tile within `reach` of `hex`.
+///
+/// A pure function of its argument, which is what makes residency the same
+/// on every machine (WORLD.md W1.5): it is never a matter of what happened
+/// to be loaded before. Conservative by a chunk's radius — a chunk is kept
+/// when its centre is within `reach + radius` of the hex — because loading a
+/// chunk too many costs a fifth of a millisecond and loading one too few
+/// makes a sight line lie.
+pub fn needed_chunks(
+    reaches: impl IntoIterator<Item = (Hex, u32)>,
+    chunk_radius: u32,
+) -> BTreeSet<(i32, i32)> {
+    let mut needed = BTreeSet::new();
+    for (hex, reach) in reaches {
+        let home = chunk_of(hex, chunk_radius);
+        let span = reach + chunk_radius;
+        // A chunk's centres are at least `radius + 1` tiles apart, so the
+        // chunks within `span` of `hex` are within this many chunk steps.
+        let steps = span / (chunk_radius + 1) + 2;
+        for chunk in home.range(steps) {
+            if chunk_centre(chunk, chunk_radius).unsigned_distance_to(hex) <= span {
+                needed.insert((chunk.x, chunk.y));
+            }
+        }
+    }
+    needed
+}
+
+impl World {
+    /// A world made of one map, where it lies.
+    pub fn build(registry: &DataRegistry, map: HexMap) -> Self {
+        let mut world = Self::default();
+        world.add(registry, &map, Hex::ZERO);
+        world
+    }
+
+    /// Fold a map in, shifted by `offset`. A tile already known at a hex is
+    /// replaced, as a streamed region replaces what was known of it.
+    pub fn add(&mut self, registry: &DataRegistry, map: &HexMap, offset: Hex) {
+        for (hex, tile) in map.iter() {
+            self.insert(registry, hex + offset, tile.terrain, tile.elevation);
+        }
+    }
+
+    /// Put one tile into the world and resolve it into both grids. The one
+    /// door ground comes in by, so the tiles and what is derived from them
+    /// cannot disagree.
+    pub fn insert(&mut self, registry: &DataRegistry, hex: Hex, terrain: &str, elevation: i32) {
+        let tile = Tile { terrain, elevation };
+        self.sight.insert(registry, hex, tile);
+        self.moves.insert(registry, hex, tile);
+        self.tiles.insert(hex, terrain, elevation);
+    }
+
+    /// Rebuild everything derived from the tiles, as a world that came off
+    /// disk needs. Destructures by name so that a cache added to [`World`]
+    /// stops this compiling until it is rebuilt here too.
+    pub fn rebuilt(self, registry: &DataRegistry) -> Self {
+        let World {
+            tiles,
+            sight: _,
+            moves: _,
+            residency,
+            source,
+            edits,
+            pending: _,
+        } = self;
+        match (&residency, &source) {
+            // A window: its ground is the generator's plus the edits, loaded
+            // chunk by chunk exactly as it was before it was saved.
+            (Residency::Chunks { radius, resident }, Some(_)) => {
+                let mut world = Self {
+                    residency: Residency::Chunks {
+                        radius: *radius,
+                        resident: BTreeSet::new(),
+                    },
+                    source: source.clone(),
+                    edits,
+                    ..Self::default()
+                };
+                let needed = resident.clone();
+                world.settle(registry, &needed);
+                world
+            }
+            _ => Self {
+                residency,
+                source,
+                edits,
+                ..Self::build(registry, tiles)
+            },
+        }
+    }
+
+    /// Change the ground at `hex`, and remember the change: a window onto a
+    /// generated world lays it over the chunk every time the chunk is loaded
+    /// and carries it in a save.
+    pub fn edit(&mut self, registry: &DataRegistry, hex: Hex, terrain: &str, elevation: i32) {
+        if self.source.is_some() {
+            self.edits
+                .insert((hex.x, hex.y), (terrain.to_string(), elevation));
+        }
+        self.insert(registry, hex, terrain, elevation);
+    }
+
+    /// An empty window onto a generated world, which loads its chunks from
+    /// it as [`Self::settle`] asks.
+    pub fn window_onto(source: Arc<GeneratedWorld>) -> Self {
+        Self {
+            source: Some(source.clone()),
+            ..Self::chunked(source.chunk_radius)
+        }
+    }
+
+    /// The generated world this one is a window onto, if it is one.
+    pub fn source(&self) -> Option<&Arc<GeneratedWorld>> {
+        self.source.as_ref()
+    }
+
+    /// Whether `hex` is ground this world holds or could load: a known tile,
+    /// or a hex its source has.
+    pub fn has_ground(&self, hex: Hex) -> bool {
+        self.contains(hex) || self.source.as_ref().is_some_and(|s| s.contains(hex))
+    }
+
+    /// Make the resident chunks exactly `needed`: load the ones missing from
+    /// the source, forget the rest. Returns whether anything changed. A
+    /// whole world, or one with no source, is left alone.
+    pub fn settle(&mut self, registry: &DataRegistry, needed: &BTreeSet<(i32, i32)>) -> bool {
+        let Some(source) = self.source.clone() else {
+            return false;
+        };
+        let Residency::Chunks { resident, .. } = &self.residency else {
+            return false;
+        };
+        if resident == needed {
+            return false;
+        }
+        let stale: Vec<Hex> = resident
+            .difference(needed)
+            .map(|&(x, y)| Hex::new(x, y))
+            .collect();
+        let fresh: Vec<Hex> = needed
+            .difference(resident)
+            .map(|&(x, y)| Hex::new(x, y))
+            .collect();
+        for chunk in stale {
+            self.unload_chunk(chunk);
+        }
+        for chunk in fresh {
+            self.load_chunk(registry, chunk, source.chunk_tiles(chunk));
+        }
+        true
+    }
+
+    /// Whether this world is held a chunk at a time.
+    pub fn is_chunked(&self) -> bool {
+        matches!(self.residency, Residency::Chunks { .. })
+    }
+
+    /// The radius of a chunk, for a world held a chunk at a time.
+    pub fn chunk_radius(&self) -> Option<u32> {
+        match self.residency {
+            Residency::Whole => None,
+            Residency::Chunks { radius, .. } => Some(radius),
+        }
+    }
+
+    /// An empty world held a chunk at a time, chunks of `radius`.
+    pub fn chunked(radius: u32) -> Self {
+        Self {
+            residency: Residency::Chunks {
+                radius,
+                resident: BTreeSet::new(),
+            },
+            ..Self::default()
+        }
+    }
+
+    /// Load one chunk's ground: every tile `tiles` yields that lies in
+    /// `chunk`, and the chunk is resident afterwards whether or not it had any
+    /// (a chunk past the edge of the world is resident and empty, which is how
+    /// the world says *outside* rather than *unloaded*).
+    ///
+    /// # Panics
+    ///
+    /// On a world that is not chunked, or on a tile outside `chunk` — ground
+    /// arriving under the wrong campaign hex is a generator bug, and folding
+    /// it in would make residency lie.
+    pub fn load_chunk<'a>(
+        &mut self,
+        registry: &DataRegistry,
+        chunk: Hex,
+        tiles: impl IntoIterator<Item = (Hex, &'a str, i32)>,
+    ) {
+        let Residency::Chunks { radius, .. } = self.residency else {
+            panic!("load_chunk on a world that is not held a chunk at a time");
+        };
+        for (hex, terrain, elevation) in tiles {
+            assert_eq!(
+                chunk_of(hex, radius),
+                chunk,
+                "tile {hex:?} does not lie in chunk {chunk:?}"
+            );
+            self.insert(registry, hex, terrain, elevation);
+        }
+        let edited: Vec<(Hex, String, i32)> = self
+            .edits
+            .iter()
+            .map(|(&(x, y), (t, e))| (Hex::new(x, y), t.clone(), *e))
+            .filter(|(h, _, _)| chunk_of(*h, radius) == chunk)
+            .collect();
+        for (hex, terrain, elevation) in edited {
+            self.insert(registry, hex, &terrain, elevation);
+        }
+        if let Residency::Chunks { resident, .. } = &mut self.residency {
+            resident.insert((chunk.x, chunk.y));
+        }
+    }
+
+    /// Forget one chunk's ground; its hexes read as unloaded afterwards.
+    pub fn unload_chunk(&mut self, chunk: Hex) {
+        let Residency::Chunks { radius, resident } = &mut self.residency else {
+            panic!("unload_chunk on a world that is not held a chunk at a time");
+        };
+        let radius = *radius;
+        resident.remove(&(chunk.x, chunk.y));
+        for hex in chunk_hexes(chunk, radius) {
+            self.tiles.remove(hex);
+            self.sight.remove(hex);
+            self.moves.remove(hex);
+        }
+    }
+
+    /// The chunks held in memory, in coordinate order; `None` for a world
+    /// that is held whole.
+    pub fn resident_chunks(&self) -> Option<impl Iterator<Item = Hex> + '_> {
+        match &self.residency {
+            Residency::Whole => None,
+            Residency::Chunks { resident, .. } => {
+                Some(resident.iter().map(|&(x, y)| Hex::new(x, y)))
+            }
+        }
+    }
+
+    /// What the world can say about `hex`: see [`Presence`].
+    pub fn presence(&self, hex: Hex) -> Presence<'_> {
+        if let Some(tile) = self.tiles.get(hex) {
+            return Presence::Known(tile);
+        }
+        match &self.residency {
+            Residency::Whole => Presence::Outside,
+            Residency::Chunks { radius, resident } => {
+                let chunk = chunk_of(hex, *radius);
+                if resident.contains(&(chunk.x, chunk.y)) {
+                    Presence::Outside
+                } else {
+                    Presence::Unloaded
+                }
+            }
+        }
+    }
+
+    /// Whether a crew at `from` could see a hull at `to`, geometry only.
+    ///
+    /// The one question the engine asks of the sight grid, asked through the
+    /// world so the world can refuse to answer it wrongly. In a debug build
+    /// of a chunked world, a line that crosses an unloaded hex panics: the
+    /// grid would read that hex as open sky, and the residency rule exists so
+    /// that never happens. A whole world pays nothing for the check.
+    pub fn sight_clear(&self, from: Hex, to: Hex) -> bool {
+        #[cfg(debug_assertions)]
+        if matches!(self.residency, Residency::Chunks { .. }) {
+            for hex in from.line_to(to) {
+                assert!(
+                    self.presence(hex) != Presence::Unloaded,
+                    "sight line {from:?} -> {to:?} crosses {hex:?}, which is not loaded"
+                );
+            }
+        }
+        self.sight.clear(from, to)
+    }
+
+    /// Whether the derived grids hold anything — false for a world that has
+    /// tiles and came off disk, and for the empty world.
+    pub fn is_built(&self) -> bool {
+        !self.pending
+            && (self.tiles.is_empty() || (!self.sight.is_empty() && !self.moves.is_empty()))
+    }
+
+    /// The tiles themselves.
+    pub fn tiles(&self) -> &HexMap {
+        &self.tiles
+    }
+
+    /// Line of sight, resolved per tile.
+    pub fn sight(&self) -> &SightGrid {
+        &self.sight
+    }
+
+    /// Step costs, resolved per tile.
+    pub fn moves(&self) -> &MoveGrid {
+        &self.moves
+    }
+
+    /// The tile at `hex`, if the world has one there.
+    pub fn get(&self, hex: Hex) -> Option<Tile<'_>> {
+        self.tiles.get(hex)
+    }
+
+    /// Whether the world has a tile at `hex`.
+    pub fn contains(&self, hex: Hex) -> bool {
+        self.tiles.contains(hex)
+    }
+
+    /// Every tile, in no particular order: sort before letting the order
+    /// reach anything a battle decides.
+    pub fn iter(&self) -> impl Iterator<Item = (Hex, Tile<'_>)> {
+        self.tiles.iter()
+    }
+
+    /// How many tiles are known.
+    pub fn len(&self) -> usize {
+        self.tiles.len()
+    }
+
+    /// Whether nothing is known yet.
+    pub fn is_empty(&self) -> bool {
+        self.tiles.is_empty()
+    }
+
+    /// Centre of mass of the known tiles; see [`HexMap::center`].
+    pub fn center(&self) -> Hex {
+        self.tiles.center()
+    }
+}
+
+impl Ground for World {
+    fn terrain_id(&self, hex: Hex) -> Option<&str> {
+        self.tiles.get(hex).map(|t| t.terrain)
+    }
+    fn elevation(&self, hex: Hex) -> Option<i32> {
+        self.tiles.get(hex).map(|t| t.elevation)
+    }
+    fn sight_clear(&self, from: Hex, to: Hex) -> bool {
+        World::sight_clear(self, from, to)
+    }
+    fn step_cost(&self, class: MovementClass, max_climb: i32, from: Hex, to: Hex) -> Option<u32> {
+        self.moves.cost(class, max_climb, from, to)
+    }
+}
+
+/// A window onto a generated world, as it is saved: how to make the world
+/// again, which chunks were held, and what has changed since it was made.
+#[derive(Serialize, Deserialize)]
+struct SavedWindow {
+    generated: GeneratedWorld,
+    resident: Vec<(i32, i32)>,
+    #[serde(default)]
+    edits: Vec<((i32, i32), String, i32)>,
+}
+
+/// Either shape a world comes off disk in.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SavedWorld {
+    Window(Box<SavedWindow>),
+    Whole(HexMap),
+}
+
+/// A whole world is saved as its tiles: the same bytes a battle's `map`
+/// always was, so no save written before the world existed changed shape.
+/// A window onto a generated world is saved as the generator's inputs, the
+/// resident chunks and the edits (WORLD.md W1.6) — a few hundred bytes for
+/// a world of any size. A chunked world with no source cannot be made again
+/// and is refused rather than saved as a whole one with its unloaded ground
+/// suddenly outside.
+impl Serialize for World {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match (&self.residency, &self.source) {
+            (Residency::Whole, _) => self.tiles.serialize(s),
+            (Residency::Chunks { resident, .. }, Some(source)) => {
+                #[derive(Serialize)]
+                struct Out<'a> {
+                    generated: &'a GeneratedWorld,
+                    resident: Vec<(i32, i32)>,
+                    edits: Vec<((i32, i32), &'a str, i32)>,
+                }
+                Out {
+                    generated: source,
+                    resident: resident.iter().copied().collect(),
+                    edits: self
+                        .edits
+                        .iter()
+                        .map(|(k, (t, e))| (*k, t.as_str(), *e))
+                        .collect(),
+                }
+                .serialize(s)
+            }
+            (Residency::Chunks { .. }, None) => Err(serde::ser::Error::custom(
+                "a world held a chunk at a time with no generator behind it cannot be saved",
+            )),
+        }
+    }
+}
+
+/// Loaded with nothing derived yet; [`World::rebuilt`] finishes it.
+impl<'de> Deserialize<'de> for World {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match SavedWorld::deserialize(d)? {
+            SavedWorld::Whole(tiles) => Self {
+                tiles,
+                ..Self::default()
+            },
+            SavedWorld::Window(saved) => {
+                let saved = *saved;
+                Self {
+                    residency: Residency::Chunks {
+                        radius: saved.generated.chunk_radius,
+                        resident: saved.resident.into_iter().collect(),
+                    },
+                    source: Some(Arc::new(saved.generated)),
+                    edits: saved
+                        .edits
+                        .into_iter()
+                        .map(|(k, t, e)| (k, (t, e)))
+                        .collect(),
+                    pending: true,
+                    ..Self::default()
+                }
+            }
+        })
+    }
+}
+
+/// Equal when the ground is: the grids are functions of it.
+impl PartialEq for World {
+    fn eq(&self, other: &Self) -> bool {
+        self.tiles == other.tiles
+    }
+}

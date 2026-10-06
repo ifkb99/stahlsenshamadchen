@@ -1,0 +1,6 @@
+# Pinned so that CI's `cargo fmt --check` gate cannot start failing because a
+# newer rustfmt changed its defaults. `edition` is inherited from Cargo.toml,
+# but `style_edition` is what actually decides formatting rules — including the
+# 2024 import ordering that made adopting rustfmt a repo-wide diff — so it is
+# stated here rather than left implicit.
+style_edition = "2024"
