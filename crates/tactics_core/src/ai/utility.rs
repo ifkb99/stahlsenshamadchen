@@ -99,6 +99,11 @@ pub struct UtilityPlanner {
     rng: ChaCha8Rng,
     /// Orders decided for a unit but not yet handed out.
     pending: VecDeque<Order>,
+    /// Where to record every goal decision, if anywhere — the imitation set
+    /// for a learned chooser (REIMAGINED.md L0.3). `None` everywhere a
+    /// battle is played; set only by [`Self::tapped`]. Recording reads the
+    /// state and takes no rng, so a tapped battle is the same battle.
+    pub tap: Option<super::features::GoalTap>,
 }
 
 impl UtilityPlanner {
@@ -115,6 +120,15 @@ impl UtilityPlanner {
             foresight: super::difficulty_foresight(difficulty),
             rng: ChaCha8Rng::seed_from_u64(seed),
             pending: VecDeque::new(),
+            tap: None,
+        }
+    }
+
+    /// The same planner, recording every goal decision it takes into `tap`.
+    pub fn tapped(self, tap: super::features::GoalTap) -> Self {
+        Self {
+            tap: Some(tap),
+            ..self
         }
     }
 
@@ -482,7 +496,16 @@ impl UtilityPlanner {
                     foresight: self.foresight,
                     rng: &mut self.rng,
                 };
-                chooser.choose(registry, state, unit, &options)
+                let chosen = chooser.choose(registry, state, unit, &options);
+                if let Some(tap) = &self.tap {
+                    let mut record =
+                        super::features::describe(registry, state, &self.evaluator, unit, &options);
+                    record.chosen = options.iter().position(|g| *g == chosen);
+                    if let Ok(mut records) = tap.lock() {
+                        records.push(record);
+                    }
+                }
+                chosen
             }
         };
 

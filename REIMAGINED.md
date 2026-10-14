@@ -289,15 +289,29 @@ Platoon against platoon is the training ground before that.
 changes; the determinism snapshot passes unregenerated throughout.
 
 - [x] L0.1 Branch `feat/reimagined`, and this memo.
-- [ ] L0.2 Goal features: a fixed description of each candidate goal and
+- [x] L0.2 Goal features: a fixed description of each candidate goal and
       of the chooser's context (her traits, her order, her state), pure Rust
       in `tactics_core::ai::features`. The utility chooser's own reading of
       each candidate (worth, road, exposure, who gets there first, the
       deviation charge) is part of the description, so the first network
       can reach the teacher by reading its arithmetic.
-- [ ] L0.3 The imitation set: `examples/goal_dataset` fights battles under
+- [x] L0.3 The imitation set: `examples/goal_dataset` fights battles under
       the utility AI and records every goal decision — context, candidates,
       the one chosen — as JSON lines.
+      *Landed 2026-10-14.* `UtilityChooser::choose` split into
+      `goal::read_candidates` (the facts) and the judgment, behaviour-neutral
+      (snapshot unregenerated); `ai::features::describe` turns a decision into
+      a context row (28 fixed + one flag per order verb) and a 21-wide row per
+      candidate; `UtilityPlanner::tapped` / `SideCommand::tapped` record
+      decisions without touching the rng. `tests/learning.rs`: a recorded
+      battle is the battle unrecorded; every record is its schema's width; a
+      crew and her mirror twin on `battle_hills` are described identically
+      (mutation-checked with a coordinate slipped into a feature). 32 battles
+      record 1,833 decisions in 0.3 s, **4.2 candidates each** — the list is
+      short, which is L1.2's problem. Baselines to beat: "always the first
+      candidate" agrees with the teacher 69%, "the highest `worth`" 91%; at
+      difficulty 5 the teacher is a fixed function of features all in the
+      record, so imitation should approach 100%.
 - [ ] L0.4 `training/`, a uv project with PyTorch: a candidate-scoring
       network trained to imitate, reporting agreement with the teacher.
 - [ ] L0.5 `LearnedChooser: GoalChooser` in Rust, reading the network's

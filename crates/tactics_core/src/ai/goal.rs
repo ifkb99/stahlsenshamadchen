@@ -501,43 +501,84 @@ pub struct UtilityChooser<'a> {
     pub rng: &'a mut ChaCha8Rng,
 }
 
-impl GoalChooser for UtilityChooser<'_> {
-    fn choose(
-        &mut self,
-        registry: &DataRegistry,
-        state: &BattleState,
-        unit: UnitId,
-        candidates: &[Goal],
-    ) -> Goal {
-        let Some(me) = state.unit(unit) else {
-            return Goal::Hold;
-        };
-        let speed = registry
-            .vehicle(&me.vehicle)
-            .map(|v| v.movement.points.max(1))
-            .unwrap_or(1) as f32;
-        // Priced once for the whole list rather than once per candidate.
-        // Every goal is a place to drive from the same hex, so one Dijkstra
-        // answers all of them — and the A* per candidate this replaced cost
-        // five to ten times as much per planned order.
-        let planner = &registry.planner;
-        // What she was told to do, so the deviation charge below knows what
-        // it is a deviation *from*. `None` for a crew with no orders, and
-        // then nothing is charged: initiative is about setting orders aside,
-        // and a crew who has none is not defying anybody by choosing ground.
-        let ordered = ordered_goal(state, unit);
-        let initiative = self.evaluator.doctrine.initiative;
-        let roads = roads(registry, state, unit, planner.horizon_rounds);
-        // Who could shoot at the march, and from how far. Fog-honest: a crew
-        // cannot route around a gun nobody has seen, and letting her would
-        // leak the enemy's whole order of battle into her pathfinding.
-        let guns: Vec<(Hex, i32)> = state
-            .known_enemies(registry, crate::battle::Knower::Crew(me.id))
-            .into_iter()
-            .map(|enemy| (enemy.pos, longest_shot(registry, enemy)))
-            .collect();
-        let mut best: Option<(f32, Goal)> = None;
-        for goal in candidates {
+/// What the hand-written chooser reads of one candidate, before it judges it.
+///
+/// The facts and not the price: what being there is worth to her doctrine,
+/// how long the drive is as the crow flies and over the real ground, how much
+/// of it is under a known gun, how soon the nearest known enemy could be there
+/// instead, and whether taking it would be setting her orders aside.
+/// [`UtilityChooser`] turns these into one number with her foresight, her
+/// doctrine and her blur; [`super::features`] hands them to a learned chooser
+/// as part of what it sees, so the first network can reach its teacher by
+/// reading the teacher's own arithmetic rather than rediscovering it.
+///
+/// Split out of `UtilityChooser::choose` (2026-10-14, REIMAGINED.md L0.2)
+/// without changing what it computes or the order it computes it in: the
+/// only random draw in the chooser is the blur, which is still drawn once per
+/// candidate in list order after every reading is taken, and nothing a
+/// reading asks touches the rng.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Reading {
+    pub goal: Goal,
+    /// The hex the goal is about: her own for `Hold`.
+    pub hex: Hex,
+    /// `score_tile` at that hex, under her doctrine.
+    pub worth: f32,
+    /// Rounds of driving if the map were flat and empty.
+    pub crow: f32,
+    /// Rounds of driving over the real ground (see `drive`).
+    pub road: f32,
+    /// Share of that road a known gun can see, 0..=1.
+    pub exposed: f32,
+    /// Rounds the nearest known enemy needs to get there. Infinite when she
+    /// knows of nobody.
+    pub theirs: f32,
+    /// Whether this is ground of her own choosing while she is under orders
+    /// that name other ground — the candidate the deviation charge is
+    /// levied on.
+    pub deviates: bool,
+}
+
+/// Read every candidate the way [`UtilityChooser`] does, in list order.
+///
+/// One Dijkstra and one walk of the known enemies for the whole list, as
+/// before: every goal is a place to drive from the same hex.
+pub fn read_candidates(
+    registry: &DataRegistry,
+    state: &BattleState,
+    evaluator: &super::Evaluator,
+    unit: UnitId,
+    candidates: &[Goal],
+) -> Vec<Reading> {
+    let Some(me) = state.unit(unit) else {
+        return Vec::new();
+    };
+    let speed = registry
+        .vehicle(&me.vehicle)
+        .map(|v| v.movement.points.max(1))
+        .unwrap_or(1) as f32;
+    // Priced once for the whole list rather than once per candidate.
+    // Every goal is a place to drive from the same hex, so one Dijkstra
+    // answers all of them — and the A* per candidate this replaced cost
+    // five to ten times as much per planned order.
+    //
+    // What she was told to do, so the deviation flag knows what it is a
+    // deviation *from*. `None` for a crew with no orders, and then nothing
+    // deviates: initiative is about setting orders aside, and a crew who has
+    // none is not defying anybody by choosing ground.
+    let ordered = ordered_goal(state, unit);
+    let roads = roads(registry, state, unit, registry.planner.horizon_rounds);
+    // Who could shoot at the march, and from how far. Fog-honest: a crew
+    // cannot route around a gun nobody has seen, and letting her would
+    // leak the enemy's whole order of battle into her pathfinding.
+    let guns: Vec<(Hex, i32)> = state
+        .known_enemies(registry, crate::battle::Knower::Crew(me.id))
+        .into_iter()
+        .map(|enemy| (enemy.pos, longest_shot(registry, enemy)))
+        .collect();
+    candidates
+        .iter()
+        .map(|goal| {
             let hex = match goal {
                 Goal::Hold => me.pos,
                 Goal::Take(hex) => *hex,
@@ -563,9 +604,39 @@ impl GoalChooser for UtilityChooser<'_> {
             // the memo drew. She may take the good firing position instead of
             // the exact map reference; she may not decide the other objective
             // was the better idea.
-            let mine = ordered.is_some_and(|order| *goal != order) && *goal != Goal::Hold;
-            let worth = self.evaluator.score_tile(registry, state, unit, hex).score;
+            let deviates = ordered.is_some_and(|order| *goal != order) && *goal != Goal::Hold;
+            let worth = evaluator.score_tile(registry, state, unit, hex).score;
             let drive = drive(registry, state, unit, &roads, &guns, hex, speed);
+            Reading {
+                goal: *goal,
+                hex,
+                worth,
+                crow: drive.crow,
+                road: drive.road,
+                exposed: drive.exposed,
+                theirs: drive.theirs,
+                deviates,
+            }
+        })
+        .collect()
+}
+
+impl GoalChooser for UtilityChooser<'_> {
+    fn choose(
+        &mut self,
+        registry: &DataRegistry,
+        state: &BattleState,
+        unit: UnitId,
+        candidates: &[Goal],
+    ) -> Goal {
+        if state.unit(unit).is_none() {
+            return Goal::Hold;
+        }
+        let planner = &registry.planner;
+        let initiative = self.evaluator.doctrine.initiative;
+        let readings = read_candidates(registry, state, self.evaluator, unit, candidates);
+        let mut best: Option<(f32, Goal)> = None;
+        for reading in &readings {
             let doctrine = &self.evaluator.doctrine;
             let sight = self.foresight.clamp(0.0, 1.0);
             let blur = if self.noise > 0.0 {
@@ -579,7 +650,7 @@ impl GoalChooser for UtilityChooser<'_> {
             // of it reads the ground. Blended rather than switched, so a
             // difficulty level in between is a commander who half-reads the
             // map rather than one who flips a coin about it.
-            let rounds = drive.crow * (1.0 - sight) + drive.road * sight;
+            let rounds = reading.crow * (1.0 - sight) + reading.road * sight;
             // The two things she may not notice at all. Both are in rounds
             // and both are priced per round, so they read against each other
             // and against `impatience` with no conversion to remember: the
@@ -587,8 +658,8 @@ impl GoalChooser for UtilityChooser<'_> {
             // somebody else gets to first. Doctrine says how much she minds;
             // foresight says whether she sees it; either at zero is the
             // chooser before it could see a road at all.
-            let exposed = rounds * drive.exposed * sight;
-            let late = (rounds - drive.theirs).max(0.0) * sight;
+            let exposed = rounds * reading.exposed * sight;
+            let late = (rounds - reading.theirs).max(0.0) * sight;
             // Acting on her own idea under orders costs her something, and
             // her doctrine's `initiative` is how little. A price rather than
             // a veto: at full initiative she weighs her orders as one option
@@ -602,12 +673,12 @@ impl GoalChooser for UtilityChooser<'_> {
             // would move a game a doctrine with no initiative plays — and
             // "stay where I am" is not a rival plan, it is the absence of
             // one.
-            let defiance = if mine {
+            let defiance = if reading.deviates {
                 planner.deviation_cost * (1.0 - initiative).clamp(0.0, 1.0)
             } else {
                 0.0
             };
-            let value = worth
+            let value = reading.worth
                 - planner.impatience * rounds
                 - doctrine.route_caution * exposed
                 - doctrine.contest_aversion * late
@@ -617,7 +688,7 @@ impl GoalChooser for UtilityChooser<'_> {
             // list's order is the tie-break. That is why `candidates` is
             // ordered rather than gathered.
             if best.is_none_or(|(v, _)| value > v) {
-                best = Some((value, *goal));
+                best = Some((value, reading.goal));
             }
         }
         best.map(|(_, goal)| goal).unwrap_or(Goal::Hold)

@@ -147,6 +147,11 @@ pub struct SideCommand {
     /// (`crate::ai::plan::playout`): she carries the plans she was handed out
     /// and makes none of her own, or every playout would play out playouts.
     playing_out: bool,
+    /// Where her executors record their goal decisions, if anywhere
+    /// ([`Self::tapped`]). Handed to every executor as it is built and to the
+    /// fallback. A playout's commander is built fresh and never tapped, so
+    /// what a playout imagined is never mistaken for what a crew decided.
+    tap: Option<super::features::GoalTap>,
 }
 
 impl SideCommand {
@@ -161,6 +166,7 @@ impl SideCommand {
             side_doctrine: None,
             built: false,
             reviews_missions: true,
+            tap: None,
             reviewed_round: None,
             next_review: None,
             known_leaders: Vec::new(),
@@ -176,6 +182,14 @@ impl SideCommand {
     /// the same executors, carrying out the plans on the board and making
     /// none — so a playout measures the plan it was handed, and never
     /// recurses into playouts of its own.
+    /// The same commander, with every goal decision her executors take
+    /// recorded into `tap` (REIMAGINED.md L0.3). Changes nothing she does.
+    pub fn tapped(mut self, tap: super::features::GoalTap) -> Self {
+        self.fallback.tap = Some(tap.clone());
+        self.tap = Some(tap);
+        self
+    }
+
     pub fn for_playout(config: &AiConfig, seed: u64, data: &DataRegistry) -> Self {
         Self {
             playing_out: true,
@@ -231,16 +245,19 @@ impl SideCommand {
                 .as_deref()
                 .and_then(|id| registry.doctrine(id).cloned())
                 .unwrap_or_else(|| side_doctrine.clone());
-            self.executors.insert(
-                index,
-                UtilityPlanner::new(
+            self.executors.insert(index, {
+                let executor = UtilityPlanner::new(
                     Evaluator::new(doctrine),
                     self.config.difficulty,
                     // Distinct stream per formation, or two platoons under
                     // the same noise level would blunder identically.
                     self.seed ^ ((index as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
-                ),
-            );
+                );
+                match &self.tap {
+                    Some(tap) => executor.tapped(tap.clone()),
+                    None => executor,
+                }
+            });
         }
         self.commander = state
             .command
