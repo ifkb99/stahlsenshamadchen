@@ -137,9 +137,15 @@ the game. `--sim` fights whole battles. The rules for reading it:
   verdict: *equal-key tiebreak* (two hexes of one objective the same distance
   from her, settled by the coordinate the invariants allow to go last — a
   coin, not a defect) or *different key* (a rule read the compass). The
-  ridge arena comes back with nothing but the coin; **the skill arena does
-  not** (a *different key* root in round 3 on every seed, on develop before
-  2026-09-23 as well — an earlier note here said both were clean).
+  ridge arena comes back with nothing but the coin. **The skill arena's
+  round-3 "different key" root was the probe's own blind spot** (found
+  2026-10-14): it compared goals only, and in round 2 two light tanks drove
+  for the centre hex — its own reflection — and the first to move in
+  unit-id order took it, so the next round's decision was made on a board
+  that was no longer a mirror. It now checks positions after every round
+  too, labels a split at an axis hex *resolution order*, and `--explain`
+  sets both twins' goal candidates side by side, feature by feature, with
+  whether the board was still a mirror.
   `--map battle_hills` or `battle_town` plays a generated battle map instead,
   twins paired by reflected placement, and `--no-search` removes the search
   roll so a divergence at first contact is a rule and not a die.
@@ -482,6 +488,12 @@ else. Tests: `tests/learning.rs`.
   `learned_command` and `random_goals` read `DataRegistry::goal_net`, and
   with no network `learned` is the utility planner battle for battle. No mod
   ships a network yet.
+- **Places are unlabelled** (`planner.goal_places`, 0 shipped): spread over
+  her reach by cost, distance and facing — keys a reflection preserves —
+  each the best place to stand in its patch. The features that make one a
+  flank are facts (`aspect_min`, `crossfire`, `seen_by`...), never a name:
+  REIMAGINED.md's ruling that tactics emerge. Zero draws no road and is the
+  list before places existed.
 
 ### The world
 
@@ -1722,8 +1734,13 @@ through `weapon.reload(&registry.scale)`, never the field.
   terrain costs and a dot product of two differences qualify. **A coordinate
   does not**, and no total order on coordinates can: it asks which way is
   west, and every crew then edges that way wherever the real keys tie. It
-  shipped twice in `ai/` and once in the sight geometry, and cost about two
-  points of win rate. Where a total order is still needed (`reachable`
+  shipped three times in `ai/` and once in the sight geometry, and cost about two
+  points of win rate. (The third: the evaluator's support term took the
+  nearest friend by `(distance, x, y)` and asked only her for a sight line;
+  `tests/learning.rs`'s twin test found it on 2026-10-14.) **A greedy walk
+  over a ranked list is a tiebreak too**: taking one member of a tie and
+  then refusing its mirror image for standing too near is the coordinate
+  deciding a set, so `goal::places` takes a tie group whole. Where a total order is still needed (`reachable`
   returns a `HashMap`), put the coordinate key **last**.
   `a_march_is_the_same_march_from_either_end`,
   `a_reflection_leaves_a_bearing_alone_and_turns_a_coordinate_around` and
@@ -1778,7 +1795,13 @@ instrument's numbers.
   tank's goal in round 4 (*different key*); the skill arena has had one in
   round 3 since before any of this. There is at least one more rule reading
   the compass, and until it is found the `ground` rows of the generated
-  maps are measuring it.
+  maps are measuring it. (2026-10-14: the skill arena's root turned out to
+  be the probe missing a round-2 split at the centre hex, not a compass —
+  see `examples/mirror`; and the support-term compass found that day is not
+  this one either: town read 218–358 over eight seeds before and after it.
+  The probe now reports position splits after resolution, so the generated
+  maps' roots read as round-3 *position only*, mostly where combat dice had
+  already unmirrored the board — `--explain` says which.)
 - **Difficulty discriminates on the ridge and not on the old arena — but
   only just.** At 8 seeds × 36 (576 a row) on `ridge_arena`, 5 over 1 is
   **51.4%** and 5 over 3 **49.7%** since the ladder scaled by damage spent

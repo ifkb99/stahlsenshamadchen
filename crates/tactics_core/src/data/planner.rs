@@ -151,6 +151,11 @@ fn distance_decay() -> f32 {
     0.15
 }
 
+/// Serde's default for [`PlannerRules::place_spacing`].
+fn place_spacing() -> u32 {
+    3
+}
+
 /// Serde's default for [`PlannerRules::plateau`].
 fn plateau() -> f32 {
     0.3
@@ -887,6 +892,30 @@ pub struct PlannerRules {
     /// her nothing to do and a very dull one.
     #[serde(default = "search_slope")]
     pub search_slope: f32,
+    /// How many places of her own a crew's goal list offers beyond the ground
+    /// that means something by name — objectives, her orders, this round's
+    /// sweep tile and holding (REIMAGINED.md L1.2).
+    ///
+    /// A *place* is a hex she has a road to inside `horizon_rounds`, and it
+    /// carries no label: not "flank", not "overwatch", not "hull-down". What
+    /// makes one of them a flank is a fact about it — where the enemy is
+    /// facing, who can see it, which friend is shooting at the same man — and
+    /// those facts are what a learned chooser is shown
+    /// (`ai::features`). The tactic is the choice, not the candidate, so it
+    /// can emerge rather than be designed. They are drawn covered ground
+    /// first, then high, then cheap, at least `place_spacing` apart, coordinate
+    /// last; under orders only by a doctrine with initiative, and only ground
+    /// no further from the ordered hex than she already is, so a place is a
+    /// way of carrying out the order and never of walking away from it.
+    ///
+    /// **Zero is the list before places existed**, by construction: none are
+    /// drawn and no road is searched for them.
+    #[serde(default)]
+    pub goal_places: u32,
+    /// The least distance between two places on one crew's list, in hexes.
+    /// Two hexes side by side are one intention, not two.
+    #[serde(default = "place_spacing")]
+    pub place_spacing: u32,
 }
 
 impl Default for PlannerRules {
@@ -930,6 +959,8 @@ impl Default for PlannerRules {
             out_of_support: out_of_support(),
             advance_slope: advance_slope(),
             search_slope: search_slope(),
+            goal_places: 0,
+            place_spacing: place_spacing(),
         }
     }
 }

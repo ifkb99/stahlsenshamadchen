@@ -175,6 +175,7 @@ fn main() {
     if args.iter().any(|a| a == "--no-search") {
         registry.balance.detection_certain_percent = 100;
     }
+    let explain = args.iter().any(|a| a == "--explain");
     let arena = match flag(&args, "--arena") {
         None => DEFAULT_ARENA,
         Some(name) => arena_named(name).unwrap_or_else(|| {
@@ -220,7 +221,7 @@ fn main() {
 
     let mut findings: Vec<Finding> = Vec::new();
     for &seed in &seeds {
-        findings.extend(play(&registry, &board, seed, difficulty, rounds));
+        findings.extend(play(&registry, &board, seed, difficulty, rounds, explain));
     }
     report(&board, &seeds, &findings);
 }
@@ -237,6 +238,8 @@ where a mirrored battle stops being mirrored
   --rounds N         how far to follow each battle (default 8)
   --no-search        find everybody in sight at once: no search roll, so a
                      divergence before the first shot is a rule, not a die
+  --explain          at each battle's first root, set both crews' goal
+                     candidates side by side, feature by feature
 
   At difficulty 5 every divergence is a rule reading something the
   reflection does not preserve, except a tiebreak between candidates whose
@@ -396,6 +399,7 @@ fn play(
     seed: u64,
     difficulty: u8,
     rounds: usize,
+    explain: bool,
 ) -> Vec<Finding> {
     // The same offset `balance`'s own arena duels use, so a divergence found
     // here is one of the battles the skill table actually fought.
@@ -424,6 +428,8 @@ fn play(
     }
 
     for round in 1..=rounds {
+        // The board as both crews read it when they decided, for `--explain`.
+        let before = explain.then(|| state.clone());
         ai.plan_round(registry, &mut state);
         // Read the plan before it is resolved: a divergence in where a crew
         // has *decided* to go precedes one in where she ends up, and reporting
@@ -454,14 +460,191 @@ fn play(
             for f in found.iter_mut().skip(1) {
                 f.downstream = true;
             }
+            if let Some(before) = &before {
+                let (a, b) = pairs[found[0].pair];
+                explain_root(registry, board, before, seed, round, a, b);
+            }
             return found;
         }
         state.resolve_round(registry);
+        // And after the round is resolved, where everybody ended up. Goals
+        // can stay mirrored while positions part: two crews whose goal is one
+        // hex on the axis — its own reflection — both drive for it, and the
+        // first to move in unit-id order gets it. Without this the probe saw
+        // nothing that round and blamed the next round's decision, made on a
+        // board that was no longer a mirror (2026-10-14: every skill-arena
+        // "different key" root was this).
+        let mut parted: Vec<Finding> = Vec::new();
+        for (pair, &(a, b)) in pairs.iter().enumerate() {
+            let (Some(a), Some(b)) = (
+                state.units.iter().find(|u| u.id == a && u.alive()),
+                state.units.iter().find(|u| u.id == b && u.alive()),
+            ) else {
+                continue;
+            };
+            if board.mirror(a.pos) != b.pos {
+                let axis = match (a.goal, b.goal) {
+                    (Some(Goal::Take(x)), Some(Goal::Take(y)))
+                        if x == y && board.mirror(x) == x =>
+                    {
+                        format!(
+                            " — both for {:?}, a hex on the axis: resolution order",
+                            rel(board, x)
+                        )
+                    }
+                    _ => String::new(),
+                };
+                parted.push(Finding {
+                    seed,
+                    round,
+                    pair,
+                    vehicle: a.vehicle.clone(),
+                    kind: Kind::Position,
+                    detail: format!(
+                        "after resolution A at {:?} | B at {:?}, reflecting to {:?}{axis}",
+                        rel(board, a.pos),
+                        rel(board, b.pos),
+                        rel(board, board.mirror(b.pos))
+                    ),
+                    downstream: false,
+                });
+            }
+        }
+        if !parted.is_empty() {
+            for f in parted.iter_mut().skip(1) {
+                f.downstream = true;
+            }
+            return parted;
+        }
         if state.is_over() {
             break;
         }
     }
     Vec::new()
+}
+
+/// Why the first root happened, read off the board both crews decided on.
+///
+/// Each crew's goal candidates are described by `ai::features::describe` —
+/// the teacher's own reading of each, and the relational facts — and every
+/// candidate of A's is set beside the one of B's on the reflected hex. On a
+/// board that is still mirrored every feature should match; the ones that do
+/// not are the rule reading the compass, by name. The sweep tile is left off
+/// both lists (it is a separate computation), so a root the sweep decided
+/// shows as matching candidates and that is itself an answer.
+fn explain_root(
+    registry: &DataRegistry,
+    board: &Board,
+    state: &BattleState,
+    seed: u64,
+    round: usize,
+    a: UnitId,
+    b: UnitId,
+) {
+    use tactics_core::ai::features::{CANDIDATE, context_names, describe};
+    use tactics_core::ai::goal::candidates;
+    let evaluator = tactics_core::ai::Evaluator::new(Default::default());
+    let read = |id: UnitId| {
+        let mission = state.formation_of(id).and_then(|f| f.mission_for(id));
+        let options = candidates(registry, state, id, mission, None, 0.0);
+        let record = describe(registry, state, &evaluator, id, &options);
+        (options, record)
+    };
+    let ((ga, ra), (gb, rb)) = (read(a), read(b));
+    let close = |x: f32, y: f32| (x - y).abs() <= 1e-3 * (1.0 + x.abs().max(y.abs()));
+    println!(
+        "\nexplain: seed {seed}, round {round}, units {} and {}",
+        a.0, b.0
+    );
+    let live = |id: UnitId| state.unit(id).and_then(|u| u.goal);
+    println!(
+        "  goals carried into the round: A {:?}, B {:?}",
+        live(a),
+        live(b)
+    );
+    // Is the board still a mirror? The probe compares decisions, so a board
+    // the dice have already unmirrored — a shot fired and missed reveals its
+    // gun to the other side whatever it hit — reads as a rule reading the
+    // compass. Say so first.
+    let mut unmirrored = Vec::new();
+    for u in state.units.iter().filter(|u| u.side == 0) {
+        let Some(t) = state
+            .units
+            .iter()
+            .find(|t| t.side == 1 && t.vehicle == u.vehicle && t.pos == board.mirror(u.pos))
+        else {
+            unmirrored.push(format!("unit {} has nobody on her reflected hex", u.id.0));
+            continue;
+        };
+        if u.pressure != t.pressure || u.fate != t.fate || u.cooldowns != t.cooldowns {
+            unmirrored.push(format!(
+                "units {} and {}: pressure {} / {}, cooldowns {:?} / {:?}",
+                u.id.0, t.id.0, u.pressure, t.pressure, u.cooldowns, t.cooldowns
+            ));
+        }
+        let (ru, rt) = (
+            state.fog.side(1).revealed.contains(&u.id),
+            state.fog.side(0).revealed.contains(&t.id),
+        );
+        if ru != rt {
+            unmirrored.push(format!(
+                "unit {} revealed by her guns {ru}, her twin {} {rt}",
+                u.id.0, t.id.0
+            ));
+        }
+    }
+    if unmirrored.is_empty() {
+        println!("  the board is still a mirror: positions, nerve, guns and muzzle flashes");
+    } else {
+        println!("  the board had already stopped being a mirror:");
+        for line in &unmirrored {
+            println!("    {line}");
+        }
+    }
+    // What each side knows, layer by layer: what its fog has acquired, what
+    // its commander's picture holds, and whether the crew hears the net.
+    for (who, id) in [("A", a), ("B", b)] {
+        let side = state.unit(id).map(|u| u.side).unwrap_or(0);
+        let mut spotted: Vec<u32> = state.fog.side(side).spotted.iter().map(|u| u.0).collect();
+        spotted.sort_unstable();
+        let mut picture: Vec<u32> = state.picture(side).iter().map(|c| c.unit.0).collect();
+        picture.sort_unstable();
+        println!(
+            "  {who}: side {side} fog spotted {spotted:?}, picture {picture:?}, hears the net {}",
+            state.hears_orders(id)
+        );
+    }
+    let names = context_names();
+    for (i, name) in names.iter().enumerate() {
+        if !close(ra.context[i], rb.context[i]) {
+            println!("  context {name}: A {} B {}", ra.context[i], rb.context[i]);
+        }
+    }
+    let mut unmatched = 0;
+    for (goal, row) in ga.iter().zip(&ra.candidates) {
+        let twin = match goal {
+            Goal::Hold => Goal::Hold,
+            Goal::Take(h) => Goal::Take(board.mirror(*h)),
+        };
+        let Some(j) = gb.iter().position(|g| *g == twin) else {
+            unmatched += 1;
+            println!("  A's {goal:?} has no reflection on B's list");
+            continue;
+        };
+        let other = &rb.candidates[j];
+        let diffs: Vec<String> = CANDIDATE
+            .iter()
+            .enumerate()
+            .filter(|(k, _)| !close(row[*k], other[*k]))
+            .map(|(k, name)| format!("{name} A {} B {}", row[k], other[k]))
+            .collect();
+        if !diffs.is_empty() {
+            println!("  {goal:?}: {}", diffs.join(", "));
+        }
+    }
+    if unmatched == 0 && gb.len() == ga.len() {
+        println!("  (lists are reflections of each other)");
+    }
 }
 
 /// Is side B's crew doing the reflection of what side A's is doing?

@@ -270,25 +270,39 @@ impl Evaluator {
         // and interlocking fires in one line. Friends still count from
         // where they are heading, not where they stand, so a formation
         // converges instead of chasing.
+        //
+        // **Every friend at the nearest distance is asked for the sight line,
+        // not one of them.** This used to take the nearest friend by
+        // `(distance, x, y)` and ask only her, so where two friends stood
+        // equally near — one masked, one not — the *coordinate* decided
+        // whether the tile was supported: a compass, and the "at least one
+        // more rule reading the compass" CLAUDE.md had been looking for since
+        // 2026-09-23. The mirror-twin test in `tests/learning.rs` found it on
+        // 2026-10-14, as two reflected places priced 0.216 apart, and zeroing
+        // the planner weights one at a time named this term.
         let mass = {
             let support = planner.support_range;
-            let nearest = state
+            let friends: Vec<(i32, Hex)> = state
                 .side_units(me.side)
                 .filter(|other| other.id != unit)
                 .map(|other| {
                     let at = other.planned_destination();
                     (at.distance_to(tile), at)
                 })
-                .min_by_key(|(dist, at)| (*dist, at.x, at.y));
+                .collect();
+            let nearest = friends.iter().map(|(dist, _)| *dist).min();
             match nearest {
                 None => 0.0,
-                Some((dist, at)) => {
+                Some(dist) => {
                     let crowding = match dist {
                         1 => -planner.crowding_adjacent,
                         2 => -planner.crowding_near,
                         _ => 0.0,
                     };
-                    let supported = dist as f32 <= support && state.world.sight_clear(at, tile);
+                    let supported = dist as f32 <= support
+                        && friends
+                            .iter()
+                            .any(|(d, at)| *d == dist && state.world.sight_clear(*at, tile));
                     let apart = if supported {
                         0.0
                     } else {

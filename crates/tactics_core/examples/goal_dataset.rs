@@ -36,7 +36,8 @@ goal_dataset: record the utility AI's goal decisions for imitation
   --games N        battles to fight (default 64)
   --seed S         first battle's seed (default 0)
   --difficulty D   the teacher's difficulty, 1..=5 (default 5)
-  --out PATH       where to write JSON lines (default target/goal_dataset/train.jsonl)";
+  --out PATH       where to write JSON lines (default target/goal_dataset/train.jsonl)
+  --places N       planner.goal_places for the teacher (default the mod's)";
 
 /// The doctrines a battle draws from. `drill` is left out for the reason the
 /// `mustered` table leaves it out: a fixture with no appetite and no interest
@@ -143,7 +144,10 @@ fn main() {
         std::path::PathBuf::from(flag(&args, "--out").unwrap_or("target/goal_dataset/train.jsonl"));
 
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
-    let (reg, _) = DataRegistry::load_dir(&root).expect("mods load");
+    let (mut reg, _) = DataRegistry::load_dir(&root).expect("mods load");
+    if let Some(n) = flag(&args, "--places") {
+        reg.planner.goal_places = n.parse().expect("--places");
+    }
     let mut maps: Vec<&str> = reg
         .maps
         .values()
@@ -187,6 +191,7 @@ fn main() {
         "difficulty": difficulty,
         "games": games,
         "first_seed": first,
+        "goal_places": reg.planner.goal_places,
     });
     let schema_path = out.with_extension("schema.json");
     std::fs::write(

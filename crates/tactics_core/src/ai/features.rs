@@ -44,9 +44,10 @@
 
 use super::Evaluator;
 use super::goal::{Reading, read_candidates};
-use crate::battle::{BattleState, Goal, Knower, Mission, UnitId, incoming};
+use crate::battle::{BattleState, Goal, Knower, Mission, UnitId, along_the_bearing, incoming};
 use crate::data::DataRegistry;
 use crate::map::ObjectiveKind;
+use hexx::Hex;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
@@ -58,6 +59,92 @@ pub const NOBODY_COMING: f32 = 60.0;
 /// How near a friend has to be to a candidate to count as beside it, in
 /// hexes. Two is the overwatch distance a section keeps on this scale.
 const FRIENDS_NEAR: u32 = 2;
+
+/// Hexes standing in for "nobody there at all" in a distance feature: past
+/// any weapon's reach and any battle map's width that matters.
+const FAR: f32 = 40.0;
+
+/// Who is where, read once per decision rather than once per candidate.
+///
+/// Enemies are the ones *she* knows of (`Knower::Crew`), with the way each
+/// hull faces and how far each one's guns reach; friends are every crew of
+/// her side on the field but her, with where she means to go.
+struct Scene {
+    reach: i32,
+    enemies: Vec<Party>,
+    friends: Vec<Party>,
+}
+
+struct Party {
+    pos: Hex,
+    /// The hull's facing as a direction, for the aspect a place shows her.
+    facing: Hex,
+    reach: i32,
+    /// Where a friend's goal is taking her, if anywhere.
+    heading: Option<Hex>,
+}
+
+fn reach_of(registry: &DataRegistry, unit: &crate::battle::Unit) -> i32 {
+    registry
+        .vehicle(&unit.vehicle)
+        .map(|v| {
+            v.weapons
+                .iter()
+                .filter_map(|w| registry.weapon(w))
+                .map(|w| w.range[1] as i32)
+                .max()
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
+}
+
+fn scene(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> Scene {
+    let Some(me) = state.unit(unit) else {
+        return Scene {
+            reach: 0,
+            enemies: Vec::new(),
+            friends: Vec::new(),
+        };
+    };
+    let party = |u: &crate::battle::Unit| Party {
+        pos: u.pos,
+        facing: Hex::from(u.facing),
+        reach: reach_of(registry, u),
+        heading: match u.goal {
+            Some(Goal::Take(hex)) => Some(hex),
+            _ => None,
+        },
+    };
+    Scene {
+        reach: reach_of(registry, me),
+        enemies: state
+            .known_enemies(registry, Knower::Crew(unit))
+            .into_iter()
+            .map(party)
+            .collect(),
+        friends: state
+            .alive_units()
+            .filter(|u| u.side == me.side && u.id != unit && u.aboard.is_none())
+            .map(party)
+            .collect(),
+    }
+}
+
+/// The cosine of the angle between two hex differences, through the cube
+/// dot product — a quantity a reflection preserves, because it negates
+/// neither or both. Zero for a zero vector.
+fn cosine(a: Hex, b: Hex) -> f32 {
+    let (ab, aa, bb) = (
+        along_the_bearing(a, b) as f32,
+        along_the_bearing(a, a) as f32,
+        along_the_bearing(b, b) as f32,
+    );
+    if aa == 0.0 || bb == 0.0 {
+        0.0
+    } else {
+        ab / (aa * bb).sqrt()
+    }
+}
 
 /// The context features, in order. The doctrine's numbers come after the
 /// state, then one flag per verb of the order vocabulary
@@ -117,6 +204,17 @@ pub const CANDIDATE: &[&str] = &[
     "climb",
     "cover",
     "friends_near",
+    // The relational facts (L1.2): what makes a place a flank, a crossfire,
+    // an overwatch or a mistake, written as geometry and never as a name.
+    "enemy_distance",
+    "closing",
+    "seen_by",
+    "targets",
+    "aspect_min",
+    "aspect_nearest",
+    "crossfire",
+    "friends_heading_near",
+    "friend_distance",
 ];
 
 /// Every context feature's name, in order: the fixed ones, then
@@ -176,10 +274,13 @@ pub fn describe(
         round: state.round,
         unit: unit.index() as u32,
         context: context(registry, state, evaluator, unit),
-        candidates: readings
-            .iter()
-            .map(|reading| candidate(registry, state, unit, reading))
-            .collect(),
+        candidates: {
+            let scene = scene(registry, state, unit);
+            readings
+                .iter()
+                .map(|reading| candidate(registry, state, unit, &scene, reading))
+                .collect()
+        },
         chosen: None,
     }
 }
@@ -277,6 +378,7 @@ fn candidate(
     registry: &DataRegistry,
     state: &BattleState,
     unit: UnitId,
+    scene: &Scene,
     reading: &Reading,
 ) -> Vec<f32> {
     let Some(me) = state.unit(unit) else {
@@ -322,6 +424,62 @@ fn candidate(
         })
         .count() as f32;
 
+    // The relational facts. Distances and counts, and cosines of angles
+    // between differences — never a bearing, which a reflection turns round.
+    let sight = |from: Hex, to: Hex| state.world.sight_clear(from, to);
+    let nearest_enemy = scene
+        .enemies
+        .iter()
+        .min_by_key(|e| (e.pos.distance_to(hex), e.pos.distance_to(me.pos)));
+    let enemy_distance = nearest_enemy.map_or(FAR, |e| (e.pos.distance_to(hex) as f32).min(FAR));
+    // How much nearer the nearest enemy this place takes her.
+    let closing = nearest_enemy.map_or(0.0, |e| {
+        e.pos.distance_to(me.pos) as f32 - e.pos.distance_to(hex) as f32
+    });
+    let seen_by = scene
+        .enemies
+        .iter()
+        .filter(|e| e.pos.distance_to(hex) <= e.reach && sight(e.pos, hex))
+        .count() as f32;
+    let targets: Vec<&Party> = scene
+        .enemies
+        .iter()
+        .filter(|e| e.pos.distance_to(hex) <= scene.reach && sight(hex, e.pos))
+        .collect();
+    // The aspect she would show an enemy's hull from here: +1 straight in
+    // front of him, −1 straight behind. The least over everyone she could
+    // shoot from here is how far round him this place gets her.
+    let aspect = |e: &Party| cosine(e.facing, hex - e.pos);
+    let aspect_min = targets.iter().map(|e| aspect(e)).fold(1.0f32, f32::min);
+    let aspect_min = if targets.is_empty() { 0.0 } else { aspect_min };
+    let aspect_nearest = nearest_enemy.map_or(0.0, aspect);
+    // Crossfire: for each enemy she could shoot from here, the widest angle
+    // between her line onto him and a friend's who can shoot him too, as
+    // (1 − cos) / 2 — zero side by side, one from opposite sides.
+    let crossfire = targets
+        .iter()
+        .flat_map(|e| {
+            scene
+                .friends
+                .iter()
+                .filter(|f| f.pos.distance_to(e.pos) <= f.reach && sight(f.pos, e.pos))
+                .map(|f| (1.0 - cosine(hex - e.pos, f.pos - e.pos)) / 2.0)
+        })
+        .fold(0.0f32, f32::max);
+    let friends_heading_near = scene
+        .friends
+        .iter()
+        .filter(|f| {
+            f.heading
+                .is_some_and(|h| h.distance_to(hex) as u32 <= FRIENDS_NEAR)
+        })
+        .count() as f32;
+    let friend_distance = scene
+        .friends
+        .iter()
+        .map(|f| f.pos.distance_to(hex) as f32)
+        .fold(FAR, f32::min);
+
     let out = vec![
         flag(reading.goal == Goal::Hold),
         flag(ordered),
@@ -344,6 +502,15 @@ fn candidate(
         (elevation(hex) - elevation(me.pos)) as f32,
         cover,
         friends_near,
+        enemy_distance,
+        closing,
+        seen_by,
+        targets.len() as f32,
+        aspect_min,
+        aspect_nearest,
+        crossfire,
+        friends_heading_near,
+        friend_distance,
     ];
     debug_assert_eq!(out.len(), CANDIDATE.len());
     out

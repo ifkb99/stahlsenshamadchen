@@ -769,6 +769,15 @@ pub struct Roads {
 }
 
 impl Roads {
+    /// Every hex a road was found to, with its cost: cheapest first, then
+    /// the coordinate, so the order is total and the coordinate only ever
+    /// settles a tie between equally dear hexes.
+    pub fn reached(&self) -> Vec<(Hex, u32)> {
+        let mut out: Vec<(Hex, u32)> = self.cost.iter().map(|(h, c)| (*h, *c)).collect();
+        out.sort_by_key(|(h, c)| (*c, h.x, h.y));
+        out
+    }
+
     /// Terrain cost of the cheapest road to `hex`, if one was found inside
     /// the horizon.
     pub fn cost(&self, hex: Hex) -> Option<u32> {

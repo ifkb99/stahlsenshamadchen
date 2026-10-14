@@ -255,6 +255,71 @@ Two companies in open battle on a generated map, on the world clock, with
 the player as one company's commander giving orders to learned cadets.
 Platoon against platoon is the training ground before that.
 
+## Tactics emerge; they are not named (2026-10-14)
+
+The designer's ruling: the networks should learn tactics without the
+tactics having names, so they can develop and adapt freely. Two places a
+name would creep in, and both are kept out:
+
+- **The candidate list is places, not tactics.** No candidate is a "flank"
+  or an "overwatch position"; `planner.goal_places` offers spread-out hexes
+  she can reach, each the best place to stand in its patch, unlabelled.
+- **The features are facts, not flags.** What makes a place a flank is the
+  aspect it shows the enemy's hull, who can see it, and which friend is
+  shooting the same man from where — and those are what the network sees,
+  as distances, counts and cosines of angles between differences (never a
+  signed angle, which a reflection turns round; the twin test enforces it).
+
+Coordination needs three more things, built in later stages: she sees her
+friends' intentions (their goals are in the features already), the reward is
+partly shared (L1.4), and eventually the network relates candidates,
+friends and enemies to each other directly (a small attention model over the
+sets, once the hand-made summaries are learned from). Names exist only for
+the player and the instruments: "going round their left" is read off the
+geometry of a choice after it is made, for the radio and the VN, and the
+same post-hoc labels are what measure whether tactics emerged — the share of
+hits on side and rear plate, the crossfire rate, a halted friend covering a
+moving one. **If a tactic never emerges, ask whether the rules reward it**
+before asking anything of the network.
+
+## A model of the enemy
+
+The designer's question (2026-10-14): combatants usually have some idea of
+how their enemy is equipped and how he operates; do the networks?
+
+**Today, only of the enemies she can see, and only of their hardware.**
+Every feature about the enemy comes from `known_enemies` with her own
+knowledge — fog-honest — and the arithmetic behind `incoming` and `worth`
+reads each known enemy's real guns and armour, so she knows exactly what a
+*seen* tank can do to her. She knows nothing of the enemy she has not seen,
+nothing of where a lost contact has gone, and nothing of how he fights.
+
+Three layers would give her one, in order of cost:
+
+1. **What he fields.** An intelligence prior: the order of battle she was
+   briefed on (what the enemy academy fields, how many), less what she has
+   seen. Features: expected unseen strength by kind of threat (armour,
+   anti-tank, artillery, infantry) and a per-candidate "fire from the
+   unseen" estimate over ground nobody has looked at. In a campaign the prior
+   is earned — scouting and earlier battles fill it in — which makes
+   reconnaissance worth something to a learned chooser for the first time.
+2. **Where he has been.** Lost contacts kept with their age (the picture
+   already holds contacts; the feature is how stale each one is), so "he
+   was in that wood two rounds ago" is something she can act on.
+3. **How he fights.** Two halves. *Implicitly*, a policy trained in a league
+   of opponents — every shipped doctrine, past versions of itself — learns
+   what enemies tend to do, and conditioned on which academy she faces
+   (an embedding of the enemy's doctrine, as her own traits are) she can
+   learn that Kuhlmann's crews hold and the Valkyries' push. *Explicitly*,
+   an auxiliary head that predicts where each known enemy will be in a few
+   rounds, trained supervised from the rollouts' own futures (the labels are
+   free). It sharpens what the network learns and it is legible: "she
+   expects them at the ford" is a readout, not a guess.
+
+And it joins learning across battles: a cadet who has fought the Valkyries
+before can carry what she learned of them in her experience record, so
+knowing your enemy is something a campaign teaches.
+
 ## Not doing, now
 
 - The visual novel, beyond what a battle needs to record for a recap.
@@ -354,11 +419,46 @@ whether they did.
 **L1 — the training ground.**
 
 - [ ] L1.1 Platoon against platoon on small generated maps, many per seed.
-- [ ] L1.2 Widen the candidates: `ground`'s vantages and firing positions,
-      positions relative to the known enemy and to friends.
+- [x] L1.2 **Candidates are places; features are relational facts** (the
+      designer's ruling below). `planner.goal_places` (0 shipped, so the game
+      and the snapshot are unchanged) offers that many unlabelled places from
+      her reachable roads; `ai::features` gained nine relational facts
+      (`enemy_distance`, `closing`, `seen_by`, `targets`, `aspect_min`,
+      `aspect_nearest`, `crossfire`, `friends_heading_near`,
+      `friend_distance`). *Landed 2026-10-14*, at 16 places on the ridge,
+      difficulty 5, four seeds × 72:
+      - **21.3 candidates a decision**, against 4.2.
+      - **Utility beats a coin 218–70 (75.7%)**, against 60% on the short
+        list. Read with care: part of that is a coin having more bad places to
+        pick, and what RL needs is places *better* than the teacher's choice,
+        which only RL can show.
+      - The imitator reaches **97.5% held-out** over 21 candidates (always-first
+        59%, highest-worth 89%) and fights the teacher to **146 of 288
+        (50.7%)**.
+      - The twin test, run with places on and the sides staged in sight of
+        each other, caught **two compasses** on its first runs: the sampler's
+        own greedy spread (a tie group is now taken whole), and an old one in
+        the evaluator's support term — the nearest friend chosen by
+        `(distance, x, y)` and asked alone for a sight line. Fixed by asking
+        every friend at that distance; snapshot unmoved. It is not the cause
+        of the generated maps' lean (town 218–358 before and after, eight
+        seeds).
+      - `examples/mirror` gained `--explain` (both twins' candidates set side
+        by side, feature by feature, and whether the board was still a
+        mirror) and now checks positions *after* each round resolves. That
+        corrected it: **every skill-arena "different key" root was a round-2
+        split it could not see** — two light tanks driving for the centre hex,
+        which is its own reflection, and the first to move in unit-id order
+        taking it. A first-mover rule for a contested hex, not a compass, and
+        a candidate rule change for later (who arrives first should not be
+        who has the lower id).
 - [ ] L1.3 The rollout bridge: Rust battles on every core, decisions batched
       to a Python learner (PyO3, or a socket).
 - [ ] L1.4 Rewards by order verb plus survival, and the personality weights.
+- [ ] L1.5 The enemy model's first two layers: the briefed order of battle
+      less what has been seen, and lost contacts with their age (*A model of
+      the enemy*). The third — a league, an enemy-doctrine embedding, the
+      prediction head — belongs with L2.
 
 **L2 — cadets.**
 

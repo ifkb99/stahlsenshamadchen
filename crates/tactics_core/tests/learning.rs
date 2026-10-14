@@ -114,12 +114,27 @@ fn every_record_is_the_width_its_schema_names_with_the_choice_on_its_own_list() 
 /// crew stamped anonymous, and pair each side-0 crew with the side-1 crew on
 /// her reflected hex. The reflection is the generator's own: the row kept,
 /// column `c` sent to `2·radius − row % 2 − c`.
-fn mirrored_hills(reg: &DataRegistry) -> (BattleState, Vec<(usize, usize)>) {
+///
+/// `closer` moves every crew that many columns toward the axis, each twin by
+/// the reflected amount, so that the two sides can be staged in sight of each
+/// other and the relational features have somebody to be about.
+fn mirrored_hills(reg: &DataRegistry, closer: i32) -> (BattleState, Vec<(usize, usize)>) {
     let file = reg.map("battle_hills").expect("battle_hills ships");
     let map = Battlefield::from_map_file(file).expect("the map builds");
+    let span = 2 * reg.scale.battle_map_radius() as i32;
     let mut placements = file.units.clone();
+    let toward = |[c, r]: [i32; 2]| {
+        let axis2 = span - r.rem_euclid(2);
+        if 2 * c < axis2 {
+            [c + closer, r]
+        } else {
+            [c - closer, r]
+        }
+    };
     for p in &mut placements {
         p.crew.clear();
+        p.at = toward(p.at);
+        p.aboard_at = p.aboard_at.map(toward);
     }
     let sides = file
         .sides
@@ -133,7 +148,6 @@ fn mirrored_hills(reg: &DataRegistry) -> (BattleState, Vec<(usize, usize)>) {
     let state =
         BattleState::from_placements(reg, map, sides, &placements, &crews, Arc::new(roster), 3)
             .expect("battle_hills stages");
-    let span = 2 * reg.scale.battle_map_radius() as i32;
     let mirror = |h| {
         let [c, r] = tactics_core::hex_to_offset(h);
         tactics_core::offset_to_hex(span - r.rem_euclid(2) - c, r)
@@ -163,22 +177,25 @@ fn close(a: &[f32], b: &[f32]) -> bool {
             .all(|(x, y)| (x - y).abs() <= 1e-3 * (1.0 + x.abs().max(y.abs())))
 }
 
-#[test]
-fn a_crew_and_her_mirror_twin_are_described_identically() {
-    // Detection dice taken out, or the twins' first looks are different
-    // throws and so is what each of them knows.
-    let reg = common::seen(common::registry());
-    let (state, pairs) = mirrored_hills(&reg);
+/// Every crew and her twin, described, compared row for row once each list is
+/// sorted. Returns how many enemies the side-0 crews knew of, summed, so a
+/// caller can require that the stage was about somebody.
+fn twins_agree(reg: &DataRegistry, closer: i32) -> usize {
+    let (state, pairs) = mirrored_hills(reg, closer);
     assert!(!pairs.is_empty());
     let evaluator = Evaluator::new(reg.doctrine("massed_armor").cloned().expect("doctrine"));
+    let mut known = 0;
     for (a, b) in pairs {
         let (ua, ub) = (&state.units[a], &state.units[b]);
         if ua.aboard.is_some() {
             continue;
         }
+        known += state
+            .known_enemies(reg, tactics_core::battle::Knower::Crew(ua.id))
+            .len();
         let describe_one = |unit: &tactics_core::battle::Unit| {
-            let options = candidates(&reg, &state, unit.id, None, None, 0.0);
-            describe(&reg, &state, &evaluator, unit.id, &options)
+            let options = candidates(reg, &state, unit.id, None, None, 0.0);
+            describe(reg, &state, &evaluator, unit.id, &options)
         };
         let (ra, rb) = (describe_one(ua), describe_one(ub));
         assert!(
@@ -203,6 +220,69 @@ fn a_crew_and_her_mirror_twin_are_described_identically() {
             );
         }
     }
+    known
+}
+
+#[test]
+fn a_crew_and_her_mirror_twin_are_described_identically() {
+    // Detection dice taken out, or the twins' first looks are different
+    // throws and so is what each of them knows.
+    let reg = common::seen(common::registry());
+    twins_agree(&reg, 0);
+
+    // And with places of her own on the list and the two sides staged in
+    // sight of each other, which is where the sampler and the relational
+    // features (aspect, crossfire, who sees the place) have something to say.
+    let mut reg = reg;
+    reg.planner.goal_places = 16;
+    let known = twins_agree(&reg, 7);
+    assert!(known > 0, "the close stage put nobody in anybody's sight");
+}
+
+#[test]
+fn places_widen_the_list_spaced_apart_and_zero_is_the_list_before_them() {
+    let mut reg = common::registry();
+    let state = BattleState::from_map(&reg, "river_crossing", 7).expect("baseline map");
+    let unit = state
+        .units
+        .iter()
+        .find(|u| u.aboard.is_none())
+        .expect("a crew")
+        .id;
+    let before = candidates(&reg, &state, unit, None, None, 0.0);
+    reg.planner.goal_places = 12;
+    reg.planner.place_spacing = 3;
+    let after = candidates(&reg, &state, unit, None, None, 0.0);
+    assert!(
+        after.len() > before.len(),
+        "{} candidates with places, {} without",
+        after.len(),
+        before.len()
+    );
+    // Every candidate the list had, it still has, in the same order.
+    let kept: Vec<_> = after.iter().filter(|g| before.contains(g)).collect();
+    assert_eq!(kept, before.iter().collect::<Vec<_>>());
+    let added: Vec<_> = after
+        .iter()
+        .filter_map(|g| match g {
+            Goal::Take(hex) if !before.contains(g) => Some(*hex),
+            _ => None,
+        })
+        .collect();
+    // A tie group is taken whole (see `goal::places`), so the list may run a
+    // little past the number asked for, never far.
+    assert!(
+        !added.is_empty() && added.len() <= 18,
+        "{} places",
+        added.len()
+    );
+    // Representatives may sit nearer each other than the spacing, but never
+    // on top of one another.
+    for (i, a) in added.iter().enumerate() {
+        assert!(added[i + 1..].iter().all(|b| b != a), "a place drawn twice");
+    }
+    reg.planner.goal_places = 0;
+    assert_eq!(candidates(&reg, &state, unit, None, None, 0.0), before);
 }
 
 // --- the network ------------------------------------------------------------

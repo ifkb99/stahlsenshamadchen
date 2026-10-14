@@ -169,6 +169,14 @@ pub fn candidates(
         {
             push(mine);
         }
+        // Places of her own, by the same rule as the sweep tile: only a
+        // doctrine with initiative sees any, and only ground that carries the
+        // order out (see `places`).
+        if initiative > 0.0 {
+            for place in places(registry, state, unit, Some(hex)) {
+                push(place);
+            }
+        }
         out.push(Goal::Hold);
         return out;
     }
@@ -230,8 +238,137 @@ pub fn candidates(
         push(hex);
     }
 
+    for place in places(registry, state, unit, None) {
+        push(place);
+    }
+
     out.push(Goal::Hold);
     out
+}
+
+/// Places of her own: hexes she has a road to, spread out, with no label
+/// ([`PlannerRules::goal_places`](crate::data::PlannerRules::goal_places)).
+///
+/// Two steps, and only the second has an opinion. **The spread** walks
+/// everything she can reach inside the horizon, cheapest first, and takes a
+/// hex as a centre when it is at least `place_spacing` from every centre so
+/// far — an even net over her reach, near ground before far, that knows
+/// nothing about the terrain. **The representative** of each centre is the
+/// best place to stand in its patch (the hexes nearer it than the spacing):
+/// most cover, then highest, then cheapest. That is the one judgment the
+/// sampler makes, and it is "if you went over there, where would you stand",
+/// not "go round his flank" — which of the places is worth going to is the
+/// chooser's to work out from the facts.
+///
+/// Every key a reflection preserves comes first and the coordinate last, so
+/// a crew and her mirror twin draw each other's reflections wherever their
+/// ground is reflected; `a_crew_and_her_mirror_twin_are_described_identically`
+/// runs with places on.
+///
+/// Under orders (`toward` the ordered hex) only ground no further from it
+/// than she already stands is drawn: a place under orders is a way to carry
+/// the order out.
+fn places(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    toward: Option<Hex>,
+) -> Vec<Hex> {
+    let planner = &registry.planner;
+    let wanted = planner.goal_places as usize;
+    let Some(me) = state.unit(unit) else {
+        return Vec::new();
+    };
+    if wanted == 0 {
+        return Vec::new();
+    }
+    let spacing = planner.place_spacing.max(1);
+    let pool: Vec<(Hex, u32)> = roads(registry, state, unit, planner.horizon_rounds)
+        .reached()
+        .into_iter()
+        .filter(|(hex, _)| *hex != me.pos)
+        .filter(|(hex, _)| toward.is_none_or(|t| hex.distance_to(t) <= me.pos.distance_to(t)))
+        .filter(|(hex, _)| !claimed_by_another(registry, state, unit, *hex))
+        .collect();
+
+    // The spread, ranked by quantities a reflection preserves — road cost,
+    // distance from her, how far along her facing — and taken **a tie group
+    // at a time**: every member of a group that clears the spacing against
+    // what was picked before the group is taken, whatever its neighbours in
+    // the group do. A greedy walk that took one hex of a tie and then
+    // refused its mirror image for being too near was a compass — the
+    // coordinate deciding which of two reflected hexes got in, and so which
+    // places either twin was offered; the mirror-twin test caught it on its
+    // first run with places on. A group may take the list past `wanted`;
+    // groups are small, and a cap that split one would be the compass again.
+    let facing = Hex::from(me.facing);
+    let key = |hex: Hex, cost: u32| {
+        (
+            cost,
+            hex.distance_to(me.pos),
+            std::cmp::Reverse(crate::battle::along_the_bearing(hex - me.pos, facing)),
+        )
+    };
+    let mut ranked: Vec<(Hex, u32)> = pool.clone();
+    ranked.sort_by_key(|(hex, cost)| (key(*hex, *cost), hex.x, hex.y));
+    let mut centres: Vec<Hex> = Vec::new();
+    let mut i = 0;
+    while i < ranked.len() && centres.len() < wanted {
+        let group_key = key(ranked[i].0, ranked[i].1);
+        let mut j = i;
+        while j < ranked.len() && key(ranked[j].0, ranked[j].1) == group_key {
+            j += 1;
+        }
+        let before = centres.len();
+        for (hex, _) in &ranked[i..j] {
+            if centres[..before]
+                .iter()
+                .all(|c| c.distance_to(*hex) as u32 >= spacing)
+            {
+                centres.push(*hex);
+            }
+        }
+        i = j;
+    }
+
+    // The representatives: the best place to stand in each patch, and every
+    // hex tied for best, for the same reason the spread takes groups.
+    let stand = |hex: Hex, cost: u32| {
+        let cover = state
+            .terrain_at(hex)
+            .and_then(|id| registry.terrain(id))
+            .map(|t| t.cover)
+            .unwrap_or(0);
+        let height = state.world.get(hex).map(|t| t.elevation).unwrap_or(0);
+        (
+            std::cmp::Reverse(cover),
+            std::cmp::Reverse(height),
+            cost,
+            hex.distance_to(me.pos),
+        )
+    };
+    let mut picked: Vec<Hex> = Vec::new();
+    for centre in centres {
+        let patch: Vec<&(Hex, u32)> = pool
+            .iter()
+            .filter(|(hex, _)| (hex.distance_to(centre) as u32) < spacing)
+            .collect();
+        let Some(best) = patch.iter().map(|(hex, cost)| stand(*hex, *cost)).min() else {
+            continue;
+        };
+        let mut tied: Vec<Hex> = patch
+            .iter()
+            .filter(|(hex, cost)| stand(*hex, *cost) == best)
+            .map(|(hex, _)| *hex)
+            .collect();
+        tied.sort_by_key(|hex| (hex.x, hex.y));
+        for hex in tied {
+            if !picked.contains(&hex) {
+                picked.push(hex);
+            }
+        }
+    }
+    picked
 }
 
 /// The ground this crew's standing orders name, if she has any and they name
