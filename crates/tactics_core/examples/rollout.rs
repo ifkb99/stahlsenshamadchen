@@ -35,6 +35,8 @@ rollout: battles for reinforcement learning, learner against the utility AI
   --games N           battles (default 256)
   --seed S            first battle (default 0)
   --temperature T     the learner's sampling temperature (default 1.0)
+  --opponents A,B     league networks the learner also fights, in turn with
+                      the utility AI (two games each, so both seatings)
   --events LIST       planner.goal_events: contact,hit,friend_lost,pinned,order, or all
   --places N          planner.goal_places (default 16)
   --arena NAME        battlefield (default ridge_arena)
@@ -64,6 +66,11 @@ struct Battle {
     ledger: Vec<Entry>,
     /// `[round, side 0's score, side 1's score]`, round 0 being the start.
     scores: Vec<[u32; 3]>,
+    /// The score that wins the battle outright, if the scenario names one:
+    /// what a point of objective margin is a share of.
+    victory_score: Option<u32>,
+    /// Who the learner fought: `utility`, or a league network's file name.
+    opponent: String,
     /// Strikes on armour — hits and bounces — by the face they struck,
     /// `[front, side, rear]`: the learner's on the enemy, and the enemy's on
     /// the learner. The instrument for whether she learned to get round, a
@@ -98,6 +105,20 @@ struct Setup<'a> {
     arena: &'static tactics_core::harness::arena::Arena,
     brain: GoalBrain,
     difficulty: u8,
+    /// The league: past networks the learner also fights, each taking its
+    /// turn with the utility AI by game number (`--opponents`). A learner
+    /// that only ever meets one opponent learns that opponent.
+    opponents: Vec<(String, std::sync::Arc<tactics_core::data::GoalNet>)>,
+}
+
+/// Who the learner fights in `game`: the utility AI, or one of the league's
+/// networks, in turn.
+fn opponent<'a>(
+    setup: &'a Setup,
+    game: u64,
+) -> Option<&'a (String, std::sync::Arc<tactics_core::data::GoalNet>)> {
+    let turn = (game / 2) as usize % (setup.opponents.len() + 1);
+    turn.checked_sub(1).and_then(|i| setup.opponents.get(i))
 }
 
 fn fight(setup: &Setup, game: u64) -> Option<Battle> {
@@ -120,7 +141,12 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
                     .tapped(tap.clone()),
             )
         } else {
-            make_battle_planner(&config, seed, reg)
+            match opponent(setup, game) {
+                Some((_, net)) => {
+                    Box::new(UtilityPlanner::from_config(&config, seed, reg).with_net(net.clone()))
+                }
+                None => make_battle_planner(&config, seed, reg),
+            }
         };
         ai.insert(side, planner);
     }
@@ -168,6 +194,8 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
         scores,
         struck_by_learner: by,
         struck_on_learner: on,
+        victory_score: state.scenario.victory_score(),
+        opponent: opponent(setup, game).map_or("utility".to_string(), |(name, _)| name.clone()),
     })
 }
 
@@ -209,6 +237,23 @@ fn main() {
         arena,
         brain: GoalBrain::Explore { net, temperature },
         difficulty,
+        opponents: flag(&args, "--opponents")
+            .map(|list| {
+                list.split(',')
+                    .filter(|p| !p.is_empty())
+                    .map(|p| {
+                        let net = load_goal_net(std::path::Path::new(p)).unwrap_or_else(|err| {
+                            eprintln!("error: --opponents {p}: {err}");
+                            std::process::exit(1);
+                        });
+                        let name = std::path::Path::new(p)
+                            .file_name()
+                            .map_or(p.to_string(), |n| n.to_string_lossy().into_owned());
+                        (name, net)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     };
 
     let jobs: Vec<u64> = (first..first + games).collect();
@@ -249,6 +294,18 @@ fn main() {
             f.iter().sum::<u32>()
         )
     };
+    let mut against: std::collections::BTreeMap<&str, [u32; 3]> = Default::default();
+    for battle in fought.iter().flatten() {
+        let row = against.entry(battle.opponent.as_str()).or_default();
+        match battle.winner {
+            Some(w) if w == battle.learner => row[0] += 1,
+            Some(_) => row[1] += 1,
+            None => row[2] += 1,
+        }
+    }
+    for (name, [w, l, d]) in &against {
+        println!("  against {name}: won {w}, lost {l}, drew {d}");
+    }
     println!("  struck by the learner: {}", share(by));
     println!("  struck on the learner: {}", share(on));
 }

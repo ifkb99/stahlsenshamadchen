@@ -11,9 +11,24 @@ the engine reads, probe included.
 **The engine has no opinion about rewards.** It records what happened — every
 crew's condition and both sides' scores, every round — and this file decides
 what that was worth, so the weights below can be changed and re-run without a
-rebuild. They are REIMAGINED.md's rule in numbers: the mission first (the
-battle's outcome and its objective score, shared by the whole side), and the
-crew's own survival second (charged to her alone).
+rebuild.
+
+**The mission vastly outweighs everything else, and the higher the level of
+command it belongs to, the more it weighs** (the designer's ruling,
+2026-10-14): war > strategic objective > operational objective > tactical
+objective, and losses and survival below them all. Each tier is a weight an
+order of magnitude above the next:
+
+- `war` and `strategic` — winning the campaign and its objectives. Nothing a
+  battle-level rollout records reaches them yet; they are here so a campaign
+  trainer adds terms, not a scale.
+- `operational` — the battle: ±1 for its outcome, and the objective margin as
+  a share of the score that wins it outright (`victory_score`), shared by the
+  whole side. A side that waits forfeits what the other holds.
+- `tactical` — her own order carried out; nothing yet on a battle with no
+  orders (the arenas), so it weighs and reads nothing there.
+- `attrition` and `self` — the enemy's substance destroyed and the side's own
+  lost, and her own skin, charged to her alone.
 
 **A decision is an option, not a step.** A cadet chooses a goal and carries it
 for several rounds, so decision i is credited with the rewards of the rounds
@@ -45,7 +60,7 @@ jax.config.update("jax_default_matmul_precision", "highest")
 def round_rewards(battle, w):
     """Per round, for the learner's side: the team's reward, and each of its
     crews' own share. Round k's reward is what changed between ledger rounds
-    k-1 and k."""
+    k-1 and k, priced by tier (see the module doc)."""
     learner = battle["learner"]
     rounds = battle["rounds"]
     left = defaultdict(dict)  # round -> unit -> left
@@ -59,6 +74,8 @@ def round_rewards(battle, w):
     our_full = max(1, sum(full[u] for u in ours))
     their_full = max(1, sum(full[u] for u in theirs))
     score = {r: (s0, s1) for r, s0, s1 in battle["scores"]}
+    # A point of margin is this share of a battle won outright.
+    per_point = 1.0 / max(1, battle.get("victory_score") or 40)
 
     def margin(r):
         s0, s1 = score[r]
@@ -68,11 +85,11 @@ def round_rewards(battle, w):
     for k in range(1, rounds + 1):
         dealt = sum(left[k - 1][u] - left[k][u] for u in theirs) / their_full
         taken = sum(left[k - 1][u] - left[k][u] for u in ours) / our_full
-        r = w["dealt"] * dealt - w["taken"] * taken + w["score"] * (margin(k) - margin(k - 1))
+        operational = per_point * (margin(k) - margin(k - 1))
         if k == rounds:
             winner = battle["winner"]
-            r += w["win"] * (0 if winner is None else (1 if winner == learner else -1))
-        team[k] = r
+            operational += 0 if winner is None else (1 if winner == learner else -1)
+        team[k] = w["operational"] * operational + w["attrition"] * (dealt - taken)
         own[k] = {u: -w["self"] * (left[k - 1][u] - left[k][u]) / max(1, full[u]) for u in ours}
     return team, own
 
@@ -194,10 +211,15 @@ def main():
     ap.add_argument("--clip", type=float, default=0.2)
     ap.add_argument("--entropy", type=float, default=0.01)
     ap.add_argument("--seed", type=int, default=0)
-    for name, default in [("dealt", 1.0), ("taken", 1.0), ("score", 0.05), ("win", 1.0), ("self", 0.5)]:
+    # The tiers, an order of magnitude apart. `war`, `strategic` and
+    # `tactical` read nothing on an arena battle and are kept so the scale is
+    # set once.
+    tiers = [("war", 1000.0), ("strategic", 100.0), ("operational", 10.0), ("tactical", 1.0),
+             ("attrition", 0.1), ("self", 0.05)]
+    for name, default in tiers:
         ap.add_argument(f"--w-{name}", type=float, default=default)
     args = ap.parse_args()
-    w = {k: getattr(args, f"w_{k}") for k in ("dealt", "taken", "score", "win", "self")}
+    w = {k: getattr(args, f"w_{k}") for k, _ in tiers}
 
     battles = [json.loads(l) for l in args.rollouts.open()]
     rows = transitions(battles, w, args.gamma)

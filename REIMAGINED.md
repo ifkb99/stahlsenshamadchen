@@ -101,6 +101,19 @@ survival of the people under it, weighted by who she is.
   **reported** rather than merely seen, *support* is fire delivered for the
   element supported, *withdraw* is arriving with what she left with.
 
+**The mission vastly outweighs everything else, and it weighs more the
+higher in the chain of command it belongs** (the designer's ruling,
+2026-10-14): war > strategic objective > operational objective > tactical
+objective, with losses and survival below them all. `training/ppo.py` writes
+it as tiers an order of magnitude apart — `war` 1000, `strategic` 100,
+`operational` 10 (the battle's outcome, ±1, and its objective margin as a
+share of the score that wins it outright), `tactical` 1 (her order carried
+out), `attrition` 0.1, `self` 0.05. A battle-level rollout reaches only the
+operational tier and below; the higher tiers are there so a campaign trainer
+adds terms rather than a new scale. The first runs weighted the objective at
+0.05 a point and the mission did not come first — two learned sides then
+drew every battle without firing, each waiting for the other.
+
 Two rules about the reward that are easy to break:
 
 - **The survival weight is the dial between the playtest's two
@@ -633,6 +646,24 @@ whether they did.
     and objectives that a waiting side forfeits, are the next run's
     question; a mirrored meeting engagement with no clock is a stalemate
     for any two players who have learned that the defender wins.
+
+  *The mission first (2026-10-14, the tiered reward; two arms from scratch,
+  40 iterations, every event on, measured on eight untouched seeds):*
+  - **The stalemate broke**: self-play went from 288 draws in 288 to 0 —
+    144–144 over ~7.2 rounds (arm A).
+  - **Against the teacher, 335 of 576 (58.2%, ~3.9 sd)** with the utility AI
+    as the only opponent (A), and 328 (56.9%) with a league of four past
+    checkpoints added (B) — the league bought nothing measurable in 40
+    iterations of its own lineage.
+  - **So most of the old 73% was exploiting the teacher's aggression.** The
+    old policy's final objective margin was **−7.0** (it conceded the ridge
+    and won by killing the side that came for it); the mission-first
+    policy's is **+6.2** (the teacher −0.4), it wins by reaching the score
+    47 times in 1,024 against the teacher's 15, aims 97% of its decisions at
+    objective ground, never sits still, and goes by ground fewer enemies can
+    see (0.43 against 0.63), struck 7,102 times to the teacher's 8,623 while
+    striking about as often. It flanks no more than the teacher (78% front):
+    the job is the crest, not the tank.
 
 **L3 — the commander**, over frozen cadets. **L4 — alternation and a
 league.** **L5 — across battles**: trait drift (1), learned plays (2), then
