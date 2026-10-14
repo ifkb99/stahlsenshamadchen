@@ -58,6 +58,11 @@ impl ValidationReport {
 #[derive(Debug, Default, Clone)]
 pub struct DataRegistry {
     pub mods: Vec<ModManifest>,
+    /// The trained goal chooser the `learned` planners run, if there is one
+    /// (REIMAGINED.md L0.5). No mod ships one yet: it is set by whoever
+    /// loads a trained network (`examples/learned`, the harness), and with
+    /// none the `learned` planners are the utility planners they replace.
+    pub goal_net: Option<std::sync::Arc<super::GoalNet>>,
     /// What hexes, rounds and ticks mean. Unlike the definition maps this is
     /// a single value rather than a merge: see [`Self::load_dir`].
     pub scale: Scale,

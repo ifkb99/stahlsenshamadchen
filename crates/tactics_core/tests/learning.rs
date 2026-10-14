@@ -1,21 +1,31 @@
 //! What a learned goal chooser is fed, and the guarantee that feeding it
 //! changes nothing (REIMAGINED.md, L0).
 //!
-//! Three rules. Recording a decision is a reading of the state and takes no
-//! dice, so a battle fought with its decisions recorded is the battle fought
-//! without. Every record is the shape its schema says, with the choice on its
-//! own list. And a record holds no coordinate: a crew and her mirror twin on
-//! a mirrored field are described identically, because a network shown which
-//! way is west would learn it.
+//! Three rules about the record. Recording a decision is a reading of the
+//! state and takes no dice, so a battle fought with its decisions recorded is
+//! the battle fought without. Every record is the shape its schema says, with
+//! the choice on its own list. And a record holds no coordinate: a crew and
+//! her mirror twin on a mirrored field are described identically, because a
+//! network shown which way is west would learn it.
+//!
+//! And four about the network (L0.5). It is refused if it was trained on
+//! other features, or if the engine's arithmetic disagrees with the
+//! trainer's on its own probe; it scores by exactly the arithmetic it was
+//! trained with; the chooser takes what it scores highest; and a `learned`
+//! planner with no network is the utility planner, battle for battle.
 
 mod common;
 
 use std::sync::{Arc, Mutex};
 use tactics_core::ai::features::{CANDIDATE, GoalTap, context_names, describe};
+use tactics_core::ai::goal::GoalChooser;
 use tactics_core::ai::goal::candidates;
+use tactics_core::ai::learned::LearnedChooser;
+use tactics_core::ai::make_battle_planner;
 use tactics_core::ai::{AiConfig, AiDriver, Evaluator, SideCommand, UtilityPlanner};
+use tactics_core::battle::Goal;
 use tactics_core::battle::{BattleState, SideState};
-use tactics_core::data::DataRegistry;
+use tactics_core::data::{DataRegistry, GoalNet, Layer, NetError, Probe};
 use tactics_core::map::Battlefield;
 use tactics_core::roster::Roster;
 
@@ -193,4 +203,167 @@ fn a_crew_and_her_mirror_twin_are_described_identically() {
             );
         }
     }
+}
+
+// --- the network ------------------------------------------------------------
+
+/// A one-layer network over the engine's own feature list: a single score,
+/// `weight` times the named candidate feature.
+fn one_feature_net(feature: &str, weight: f32) -> GoalNet {
+    let context = context_names();
+    let width = context.len() + CANDIDATE.len();
+    let at = context.len()
+        + CANDIDATE
+            .iter()
+            .position(|f| *f == feature)
+            .expect("a feature");
+    let mut w = vec![vec![0.0]; width];
+    w[at][0] = weight;
+    GoalNet {
+        context,
+        candidate: CANDIDATE.iter().map(|s| s.to_string()).collect(),
+        mean: vec![0.0; width],
+        std: vec![1.0; width],
+        layers: vec![Layer { w, b: vec![0.0] }],
+        trained_on: Default::default(),
+        probe: Vec::new(),
+    }
+}
+
+#[test]
+fn a_network_trained_on_other_features_is_refused() {
+    let mut net = one_feature_net("hold", 1.0);
+    net.context[0] = "something_else".into();
+    let err = net.check(&context_names(), CANDIDATE).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            NetError::Features {
+                which: "context",
+                ..
+            }
+        ),
+        "{err}"
+    );
+
+    let mut net = one_feature_net("hold", 1.0);
+    net.candidate.pop();
+    let err = net.check(&context_names(), CANDIDATE).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            NetError::Features {
+                which: "candidate",
+                ..
+            }
+        ),
+        "{err}"
+    );
+
+    assert!(
+        one_feature_net("hold", 1.0)
+            .check(&context_names(), CANDIDATE)
+            .is_ok()
+    );
+}
+
+#[test]
+fn a_network_scores_by_the_arithmetic_it_was_trained_with() {
+    // Two inputs, two hidden units, one output, standardised: hand-computed.
+    // x = (3, 1) standardised by mean (1, 1) and std (2, 1) is (1, 0).
+    // hidden = relu(x · w1 + b1) = relu((1·2 + 0, 1·-3 + 0) + (0.5, 0.5))
+    //        = relu(2.5, -2.5) = (2.5, 0) — the ReLU is what the second unit is
+    //   there to test. output = 2.5·4 + 0·10 + 1 = 11.
+    let net = GoalNet {
+        context: vec!["a".into()],
+        candidate: vec!["b".into()],
+        mean: vec![1.0, 1.0],
+        std: vec![2.0, 1.0],
+        layers: vec![
+            Layer {
+                w: vec![vec![2.0, -3.0], vec![7.0, 7.0]],
+                b: vec![0.5, 0.5],
+            },
+            Layer {
+                w: vec![vec![4.0], vec![10.0]],
+                b: vec![1.0],
+            },
+        ],
+        trained_on: Default::default(),
+        probe: Vec::new(),
+    };
+    assert!(net.check(&["a".to_string()], &["b"]).is_ok());
+    assert!((net.score(&[3.0], &[1.0]) - 11.0).abs() < 1e-5);
+}
+
+#[test]
+fn a_network_whose_arithmetic_disagrees_with_its_trainer_is_refused() {
+    let context = context_names();
+    let mut row = vec![0.0; CANDIDATE.len()];
+    row[0] = 1.0; // `hold`
+    let probe = |score| Probe {
+        context: vec![0.0; context.len()],
+        candidate: row.clone(),
+        score,
+    };
+    let mut net = one_feature_net("hold", 2.0);
+    net.probe = vec![probe(2.0)];
+    assert!(net.check(&context, CANDIDATE).is_ok());
+    net.probe = vec![probe(2.1)];
+    let err = net.check(&context, CANDIDATE).unwrap_err();
+    assert!(matches!(err, NetError::Probe { .. }), "{err}");
+}
+
+#[test]
+fn a_learned_chooser_takes_the_candidate_its_network_scores_highest() {
+    let reg = common::registry();
+    let state = BattleState::from_map(&reg, "river_crossing", 7).expect("baseline map");
+    let unit = state
+        .units
+        .iter()
+        .find(|u| u.aboard.is_none())
+        .expect("a crew")
+        .id;
+    let options = candidates(&reg, &state, unit, None, None, 0.0);
+    assert!(options.contains(&Goal::Hold) && options.len() > 1);
+    let evaluator = Evaluator::new(Default::default());
+    for (weight, wants_hold) in [(1.0, true), (-1.0, false)] {
+        let net = one_feature_net("hold", weight);
+        let chosen = LearnedChooser {
+            net: &net,
+            evaluator: &evaluator,
+        }
+        .choose(&reg, &state, unit, &options);
+        assert_eq!(
+            chosen == Goal::Hold,
+            wants_hold,
+            "weight {weight} chose {chosen:?}"
+        );
+    }
+}
+
+#[test]
+fn a_learned_planner_with_no_network_is_the_utility_planner() {
+    let reg = common::registry();
+    assert!(reg.goal_net.is_none(), "the base mod ships no network");
+    let fight_with = |planner: &str| {
+        let mut state = BattleState::from_map(&reg, "river_crossing", 7).expect("baseline map");
+        let mut ai = AiDriver::new();
+        for side in 0..2u8 {
+            let config = AiConfig {
+                planner: planner.into(),
+                difficulty: 3,
+                doctrine: Some("massed_armor".into()),
+            };
+            ai.insert(side, make_battle_planner(&config, 40 + side as u64, &reg));
+        }
+        let mut events = Vec::new();
+        for _ in 0..6 {
+            ai.plan_round(&reg, &mut state);
+            events.extend(state.resolve_round(&reg).iter().map(|e| format!("{e:?}")));
+        }
+        events
+    };
+    assert_eq!(fight_with("learned"), fight_with("utility"));
+    assert_eq!(fight_with("learned_command"), fight_with("command"));
 }

@@ -152,6 +152,9 @@ pub struct SideCommand {
     /// fallback. A playout's commander is built fresh and never tapped, so
     /// what a playout imagined is never mistaken for what a crew decided.
     tap: Option<super::features::GoalTap>,
+    /// Who chooses her executors' goals ([`Self::with_brain`]); handed out
+    /// the way the tap is.
+    brain: super::learned::GoalBrain,
 }
 
 impl SideCommand {
@@ -167,6 +170,7 @@ impl SideCommand {
             built: false,
             reviews_missions: true,
             tap: None,
+            brain: super::learned::GoalBrain::Utility,
             reviewed_round: None,
             next_review: None,
             known_leaders: Vec::new(),
@@ -188,6 +192,28 @@ impl SideCommand {
         self.fallback.tap = Some(tap.clone());
         self.tap = Some(tap);
         self
+    }
+
+    /// The same commander, with her executors choosing goals by `net`
+    /// (REIMAGINED.md L0.5). Her mission review is untouched: the network
+    /// sits a level below it.
+    pub fn with_net(self, net: std::sync::Arc<crate::data::GoalNet>) -> Self {
+        self.with_brain(super::learned::GoalBrain::Learned(net))
+    }
+
+    /// The same commander, with `brain` choosing her executors' goals.
+    pub fn with_brain(mut self, brain: super::learned::GoalBrain) -> Self {
+        self.fallback.brain = brain.clone();
+        self.brain = brain;
+        self
+    }
+
+    /// Hand a freshly built executor whatever this commander's executors
+    /// carry: the tap and the goal brain.
+    fn equip(&self, mut executor: UtilityPlanner) -> UtilityPlanner {
+        executor.tap = self.tap.clone();
+        executor.brain = self.brain.clone();
+        executor
     }
 
     pub fn for_playout(config: &AiConfig, seed: u64, data: &DataRegistry) -> Self {
@@ -253,10 +279,7 @@ impl SideCommand {
                     // the same noise level would blunder identically.
                     self.seed ^ ((index as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
                 );
-                match &self.tap {
-                    Some(tap) => executor.tapped(tap.clone()),
-                    None => executor,
-                }
+                self.equip(executor)
             });
         }
         self.commander = state

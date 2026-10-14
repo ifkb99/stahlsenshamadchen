@@ -104,6 +104,10 @@ pub struct UtilityPlanner {
     /// battle is played; set only by [`Self::tapped`]. Recording reads the
     /// state and takes no rng, so a tapped battle is the same battle.
     pub tap: Option<super::features::GoalTap>,
+    /// Who chooses her goals ([`Self::with_brain`]): the hand-written
+    /// chooser unless told otherwise. Everything else she does is this
+    /// planner's either way.
+    pub brain: super::learned::GoalBrain,
 }
 
 impl UtilityPlanner {
@@ -121,7 +125,18 @@ impl UtilityPlanner {
             rng: ChaCha8Rng::seed_from_u64(seed),
             pending: VecDeque::new(),
             tap: None,
+            brain: super::learned::GoalBrain::Utility,
         }
+    }
+
+    /// The same planner, with `brain` choosing her goals.
+    pub fn with_brain(self, brain: super::learned::GoalBrain) -> Self {
+        Self { brain, ..self }
+    }
+
+    /// The same planner, choosing goals with `net` (REIMAGINED.md L0.5).
+    pub fn with_net(self, net: std::sync::Arc<crate::data::GoalNet>) -> Self {
+        self.with_brain(super::learned::GoalBrain::Learned(net))
     }
 
     /// The same planner, recording every goal decision it takes into `tap`.
@@ -490,13 +505,23 @@ impl UtilityPlanner {
                     Some(best_dest),
                     self.evaluator.doctrine.initiative,
                 );
-                let mut chooser = goal::UtilityChooser {
-                    evaluator: &self.evaluator,
-                    noise: self.noise,
-                    foresight: self.foresight,
-                    rng: &mut self.rng,
+                let chosen = match &self.brain {
+                    super::learned::GoalBrain::Learned(net) => super::learned::LearnedChooser {
+                        net,
+                        evaluator: &self.evaluator,
+                    }
+                    .choose(registry, state, unit, &options),
+                    super::learned::GoalBrain::Random if !options.is_empty() => {
+                        options[self.rng.random_range(0..options.len())]
+                    }
+                    _ => goal::UtilityChooser {
+                        evaluator: &self.evaluator,
+                        noise: self.noise,
+                        foresight: self.foresight,
+                        rng: &mut self.rng,
+                    }
+                    .choose(registry, state, unit, &options),
                 };
-                let chosen = chooser.choose(registry, state, unit, &options);
                 if let Some(tap) = &self.tap {
                     let mut record =
                         super::features::describe(registry, state, &self.evaluator, unit, &options);

@@ -26,6 +26,7 @@ mod driver;
 mod eval;
 pub mod features;
 pub mod goal;
+pub mod learned;
 mod mcts;
 pub mod plan;
 mod utility;
@@ -84,7 +85,14 @@ fn default_difficulty() -> u8 {
 
 /// Planner names the engine ships. Map validation warns about anything else,
 /// since planners are Rust rather than mod data.
-pub const BUILTIN_PLANNERS: &[&str] = &["utility", "mcts", "command"];
+pub const BUILTIN_PLANNERS: &[&str] = &[
+    "utility",
+    "mcts",
+    "command",
+    "learned",
+    "learned_command",
+    "random_goals",
+];
 
 /// How a planner is built.
 ///
@@ -124,6 +132,32 @@ impl PlannerRegistry {
         });
         registry.register("command", |config, seed, data, _planners| {
             Box::new(SideCommand::from_config(config, seed, data))
+        });
+        // The learned goal chooser behind the same two shapes: the bare
+        // executor, and the executor under a commander. Each reads the
+        // registry's network, and with none is exactly the planner it is
+        // named after — a map can ask for one before any mod ships a net.
+        registry.register("learned", |config, seed, data, _planners| {
+            let planner = UtilityPlanner::from_config(config, seed, data);
+            Box::new(match &data.goal_net {
+                Some(net) => planner.with_net(net.clone()),
+                None => planner,
+            })
+        });
+        // A coin for a goal chooser: the instrument that says how much the
+        // goal decision is worth at all (`learned::GoalBrain::Random`).
+        registry.register("random_goals", |config, seed, data, _planners| {
+            Box::new(
+                UtilityPlanner::from_config(config, seed, data)
+                    .with_brain(learned::GoalBrain::Random),
+            )
+        });
+        registry.register("learned_command", |config, seed, data, _planners| {
+            let side = SideCommand::from_config(config, seed, data);
+            Box::new(match &data.goal_net {
+                Some(net) => side.with_net(net.clone()),
+                None => side,
+            })
         });
         registry
     }

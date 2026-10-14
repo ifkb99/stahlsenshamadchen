@@ -105,6 +105,10 @@ fn main() {
     let brain_games: usize = flag(&args, "--brain-games")
         .and_then(|v| v.parse().ok())
         .unwrap_or(6);
+    // The planner the brains table sets against `utility`. MCTS by default,
+    // which is what the table was built to ask about; `learned` or
+    // `learned_command` with `--net` asks about a trained goal chooser.
+    let brain_vs = flag(&args, "--brain-vs").unwrap_or("mcts").to_string();
     let brain_difficulty: u8 = flag(&args, "--brain-difficulty")
         .and_then(|v| v.parse().ok())
         .unwrap_or(3);
@@ -191,7 +195,19 @@ fn main() {
         return;
     }
 
-    let registry = configure(&root, &overrides);
+    let mut registry = configure(&root, &overrides);
+    // A trained goal network, for the `learned` planners. Loading checks it
+    // against the features the engine describes and against the trainer's
+    // own scores, so a stale network is refused here rather than measured.
+    if let Some(path) = flag(&args, "--net") {
+        match tactics_core::ai::learned::load_goal_net(std::path::Path::new(path)) {
+            Ok(net) => registry.goal_net = Some(net),
+            Err(err) => {
+                eprintln!("error: --net {path}: {err}");
+                std::process::exit(1);
+            }
+        }
+    }
 
     analytic(&registry, &cfg);
     if sim {
@@ -203,7 +219,14 @@ fn main() {
         }
     }
     if brains {
-        brains_table(&registry, cfg.arena, brain_games, brain_difficulty);
+        brains_table(
+            &registry,
+            cfg.arena,
+            brain_games,
+            brain_difficulty,
+            &brain_vs,
+            seed,
+        );
     } else {
         println!("\n(pass --sim to fight {games} battles and see what these numbers do)");
     }
@@ -248,7 +271,9 @@ what to run
                          sample this project's numbers were measured on). Two
                          runs at different seeds are two samples of one game.
   --points N             requisition budget per side in the mustered table (60)
-  --brains               which planner is better; --brain-games, --brain-difficulty
+  --brains               which planner is better; --brain-games, --brain-difficulty,
+                         --brain-vs <planner> (default mcts) against utility
+  --net <path>           a trained goal network for the `learned` planners
   --only A,B             print only these tables. One of: roster, detect, hit,
                          pen, kills, flight, flags, sim, delegation, mustered,
                          skill, ground, attrition, seats
@@ -3130,7 +3155,14 @@ fn arena_duel(
 /// The two same-brain rows are the control and are the first thing to read:
 /// on a mirrored arena they should sit near parity, and how far they miss it
 /// is the noise floor every other row has to beat before it means anything.
-fn brains_table(reg: &DataRegistry, arena: &Arena, games: usize, difficulty: u8) {
+fn brains_table(
+    reg: &DataRegistry,
+    arena: &Arena,
+    games: usize,
+    difficulty: u8,
+    vs: &str,
+    offset: u64,
+) {
     heading(&format!(
         "brains: {games} battles per pairing on {}, difficulty {difficulty} both sides",
         arena.name
@@ -3141,9 +3173,9 @@ fn brains_table(reg: &DataRegistry, arena: &Arena, games: usize, difficulty: u8)
     );
     for (a, b) in [
         ("utility", "utility"),
-        ("mcts", "mcts"),
-        ("mcts", "utility"),
-        ("utility", "mcts"),
+        (vs, vs),
+        (vs, "utility"),
+        ("utility", vs),
     ] {
         let cfg = |planner: &str| AiConfig {
             planner: planner.into(),
@@ -3151,8 +3183,10 @@ fn brains_table(reg: &DataRegistry, arena: &Arena, games: usize, difficulty: u8)
             doctrine: None,
         };
         let (a_cfg, b_cfg) = (cfg(a), cfg(b));
+        // `--seed` shifts the sample like every other fought-out table, so
+        // this one can be re-drawn too. Zero is the sample it always drew.
         let fought = fight_all(reg, games, |reg, seed| {
-            arena_duel(reg, arena, seed, &a_cfg, &b_cfg)
+            arena_duel(reg, arena, offset + seed, &a_cfg, &b_cfg)
         });
 
         let (mut a_wins, mut b_wins, mut draws) = (0, 0, 0);

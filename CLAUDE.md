@@ -41,6 +41,10 @@ cargo run --release -p tactics_core --example balance -- --brains --brain-games 
 cargo run --release -p tactics_core --example balance -- --help  # every flag, with examples
 cargo run --release -p tactics_core --example campaign [seed [to]]  # whole campaigns, every side a machine (the mod's `campaign`)
 cargo run --release -p tactics_core --example worldgen [seed]  # a generated world, drawn; -- --chunk q,r for one hex
+cargo run --release -p tactics_core --example goal_dataset -- --games 1024  # the utility AI's goal decisions, as training data
+(cd training && uv run imitate.py ../target/goal_dataset/train.jsonl --out ../target/goal_net.json)  # imitate them (JAX)
+cargo run --release -p tactics_core --example balance -- --brains --brain-vs learned \
+    --net target/goal_net.json --brain-difficulty 5 --brain-games 36 --arena ridge_arena  # ...and fight it
 cargo run --release -p tactics_core --example campaign -- --map frontier  # the drawn campaign
 # in the game's generated campaign: Space runs the clock, [ ] its speed, Enter to dawn, Z zooms onto the ground
 
@@ -447,6 +451,37 @@ json path through `harness::overrides`, a bare name being a `planner` field);
   eight or nine), and with pinning and focused fixing fire the play is still
   neutral: −6 and +5 wins in 360 on the maps. PLANNING.md step 4 has why —
   tank against tank, the fire that would pin a crew kills her first.
+
+### Learned goals
+
+REIMAGINED.md, L0. A trained network can replace `GoalChooser` and nothing
+else. Tests: `tests/learning.rs`.
+
+- **What the network sees is `ai::features::describe`, and nothing else**:
+  the dataset is written by it and the chooser is fed by it, so training and
+  play are one function. It holds **no coordinate and no side number** (the
+  tiebreak invariant, for a policy's inputs), and
+  `a_crew_and_her_mirror_twin_are_described_identically` fails if one gets
+  in (mutation-checked).
+- **`goal::read_candidates` is the utility chooser's own reading**, split
+  out of `choose` behaviour-neutrally; a record carries it so a student can
+  reach the teacher by reading her arithmetic.
+- **Recording is a tap, not a planner** (`UtilityPlanner::tapped`,
+  `SideCommand::tapped`): it reads state and draws no dice, and a playout's
+  commander is built fresh and never tapped.
+- **A network is content with a contract.** `data::GoalNet` carries the
+  feature names it was trained on and a probe of the trainer's own scores;
+  `ai::learned::load_goal_net` refuses a network whose names differ from
+  the engine's or whose probe the engine scores differently. Adding a
+  feature therefore refuses every old network — the retraining REIMAGINED.md
+  accepts, said out loud. The trainer computes the probe in NumPy, because
+  JAX on an Ampere GPU multiplies in TF32.
+- **`GoalBrain` says who chooses**: `Utility` (default), `Learned(net)`, or
+  `Random`, the instrument for how much the goal decision is worth (a coin
+  loses 40–60 to the teacher on the ridge). The planners `learned`,
+  `learned_command` and `random_goals` read `DataRegistry::goal_net`, and
+  with no network `learned` is the utility planner battle for battle. No mod
+  ships a network yet.
 
 ### The world
 

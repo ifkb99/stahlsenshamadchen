@@ -10,6 +10,7 @@ mod manifest;
 mod march;
 mod modules;
 mod morale;
+mod net;
 pub mod patch;
 mod planner;
 mod registry;
@@ -32,6 +33,7 @@ pub use modules::{ModuleDef, ModuleEffect, STANDARD_MODULES};
 pub use morale::{
     DefianceDef, DefianceResponse, MoraleRules, MoraleRung, RoundPressure, ShotFelt, holds_together,
 };
+pub use net::{GoalNet, Layer, NetError, Probe};
 pub use planner::PlannerRules;
 pub use registry::{DataError, DataRegistry, ValidationReport, parse_color};
 pub use scale::Scale;

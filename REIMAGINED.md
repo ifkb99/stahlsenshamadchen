@@ -185,7 +185,7 @@ research-grade and is not on this plan.
   network for a handful of candidates is a small multilayer perceptron, a
   few dozen lines of Rust with weights read from a file — no dependency in
   `tactics_core`, microseconds a decision, and the GPU stays free to draw.
-  Training runs in Python and PyTorch, on the GPU.
+  Training runs in Python and JAX, on the GPU.
 
 ## Living with retraining
 
@@ -312,12 +312,44 @@ changes; the determinism snapshot passes unregenerated throughout.
       candidate" agrees with the teacher 69%, "the highest `worth`" 91%; at
       difficulty 5 the teacher is a fixed function of features all in the
       record, so imitation should approach 100%.
-- [ ] L0.4 `training/`, a uv project with PyTorch: a candidate-scoring
-      network trained to imitate, reporting agreement with the teacher.
-- [ ] L0.5 `LearnedChooser: GoalChooser` in Rust, reading the network's
-      weights; a plain multilayer perceptron, no new dependency.
-- [ ] L0.6 Bar: the imitating network fights the utility AI to parity on
-      `ridge_arena`, seed-swept, inside the spread.
+- [x] L0.4 `training/`, a uv project on **JAX** (the designer's preference;
+      jax 0.11.2 with the CUDA 13 plugin, optax 0.2.8, numpy 2.5.4, Python
+      3.14): `imitate.py` trains a candidate scorer (an MLP over
+      `concat(context, candidate)`, 64-64 ReLU, softmax over the list) and
+      writes it as JSON. *Landed 2026-10-14*: 1,024 battles, 60,802
+      decisions, a tenth of the battles held out at random — **98.7%
+      held-out agreement** (always-first 65%, highest-worth 91%) after 7.7 s
+      on one A4500. The first split held out `game % 10`, which the dataset
+      maps to one battlefield under one planner; it read 97.1% and was wrong.
+- [x] L0.5 The network is content: `data::GoalNet` (layers, standardisation,
+      the feature names it was trained on, a probe), `DataRegistry::goal_net`,
+      and `ai::learned::LearnedChooser`; a plain forward pass, no dependency.
+      `ai::learned::GoalBrain` says who chooses a crew's goals — `Utility`,
+      `Learned(net)`, or `Random` — and the planner names `learned`,
+      `learned_command` and `random_goals` reach every instrument; a `learned`
+      planner with no network is the utility planner, battle for battle.
+      **Loading checks the names and the arithmetic**: a network trained on
+      other features is refused, and so is one whose probe the engine scores
+      differently. The probe caught a real fault on its first run — JAX's
+      default matmul precision on an Ampere card is TF32, a part in a
+      thousand off, so the trainer computes the probe in NumPy float32.
+      `balance --brains --brain-vs <planner> --net <path>` measures it, and
+      `--seed` now shifts the brains table like every other.
+- [x] L0.6 Bar met: on `ridge_arena`, difficulty 5, 36 battles a seating,
+      seeds 0/1000/2000/3000, the learned chooser wins **145 of 288 (50.3%)**
+      against the utility chooser it imitates.
+
+**What L0 found.** `random_goals` — a coin choosing among the same
+candidates — loses to the utility chooser **115–173 (40%)** on the same
+ridge sample, about 3.4 standard deviations: the goal decision is worth
+some ten points of win rate. So the layer has headroom and reinforcement
+learning has a signal, but it is modest, and two things cap it: the
+executor carries much of a battle on its own (its sweep tile is always a
+candidate, and the shot is not the chooser's), and a ridge battle is over in
+about seven rounds with 4.2 candidates a decision. Widening the candidates
+(L1.2) and longer platoon fights (L1.1) are what make the decision matter
+more, and `random_goals` against `utility` is the instrument that says
+whether they did.
 
 **L1 — the training ground.**
 
