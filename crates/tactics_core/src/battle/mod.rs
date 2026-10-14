@@ -31,9 +31,9 @@ pub use combat::{
     preview_attack, round_worth, spent_share, struck_facing, weapon_ready,
 };
 pub use command::{
-    CommandState, Contact, CutOff, Formation, FormationId, Goal, Knower, Latitude, March, Mission,
-    MissionChange, OperationalCommand, PersonalOrder, Plan, PlanPhase, WaitingOrders,
-    formation_exit, nearest_exit,
+    CommandState, Contact, CutOff, Formation, FormationId, Goal, GoalTriggers, GoalWitness, Knower,
+    Latitude, March, Mission, MissionChange, OperationalCommand, PersonalOrder, Plan, PlanPhase,
+    WaitingOrders, formation_exit, nearest_exit,
 };
 pub use danger::{
     Bearing, Incoming, drill_destination, fire_on, fire_on_as, incoming, incoming_from,
@@ -490,6 +490,11 @@ pub struct Unit {
     /// clears, because fresh orders end her own errand too.
     #[serde(default)]
     pub goal: Option<crate::battle::Goal>,
+    /// The world her goal was chosen in (`GoalWitness`), so the events
+    /// `planner.goal_events` names can end it. Kept after the goal ends, so a
+    /// crew re-deciding knows what she was doing.
+    #[serde(default)]
+    pub goal_witness: Option<crate::battle::GoalWitness>,
 }
 
 impl Unit {
@@ -1546,6 +1551,7 @@ impl BattleState {
             buttoned: 0,
             orders: None,
             goal: None,
+            goal_witness: None,
         });
         Ok(id)
     }

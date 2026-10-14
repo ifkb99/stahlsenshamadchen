@@ -246,6 +246,36 @@ pub fn candidates(
     out
 }
 
+/// The candidate list with her interrupted goal put back on it, just ahead
+/// of holding, when an event ended it (`planner.goal_events`): thinking again
+/// is allowed to mean carrying on. A goal that ended by being finished is
+/// not put back, and neither is one already on the list.
+pub fn with_interrupted(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    mut options: Vec<Goal>,
+) -> Vec<Goal> {
+    let Some(me) = state.unit(unit) else {
+        return options;
+    };
+    let Some(witness) = me.goal_witness.as_ref().filter(|w| w.interrupted) else {
+        return options;
+    };
+    if let Goal::Take(hex) = witness.goal
+        && hex != me.pos
+        && !options.contains(&witness.goal)
+        && !witness.goal.finished(registry, state, unit)
+    {
+        let at = options
+            .iter()
+            .position(|g| *g == Goal::Hold)
+            .unwrap_or(options.len());
+        options.insert(at, witness.goal);
+    }
+    options
+}
+
 /// Places of her own: hexes she has a road to, spread out, with no label
 /// ([`PlannerRules::goal_places`](crate::data::PlannerRules::goal_places)).
 ///

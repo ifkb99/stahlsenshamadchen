@@ -34,7 +34,7 @@ pub use morale::{
     DefianceDef, DefianceResponse, MoraleRules, MoraleRung, RoundPressure, ShotFelt, holds_together,
 };
 pub use net::{GoalNet, Layer, NetError, Probe};
-pub use planner::PlannerRules;
+pub use planner::{GoalEvents, PlannerRules};
 pub use registry::{DataError, DataRegistry, ValidationReport, parse_color};
 pub use scale::Scale;
 pub use templates::{FixAndFlank, TemplateDef, TemplateKind};

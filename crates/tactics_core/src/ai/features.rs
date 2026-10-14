@@ -179,6 +179,13 @@ const CONTEXT_FIXED: &[&str] = &[
     "contest_aversion",
     "screening",
     "has_order",
+    // What has happened since her last goal was chosen (`GoalTriggers`),
+    // whether or not the mod listens for it: news she can act on.
+    "since_contact",
+    "since_hit",
+    "since_friend_lost",
+    "since_pinned",
+    "since_order",
 ];
 
 /// The candidate features, in order.
@@ -215,6 +222,8 @@ pub const CANDIDATE: &[&str] = &[
     "crossfire",
     "friends_heading_near",
     "friend_distance",
+    // The goal she was carrying when she stopped to think again.
+    "current",
 ];
 
 /// Every context feature's name, in order: the fixed ones, then
@@ -376,6 +385,18 @@ fn context(
         d.screening,
         flag(mission.is_some()),
     ];
+    let since = me
+        .goal_witness
+        .as_ref()
+        .map(|w| w.triggers(registry, state, unit))
+        .unwrap_or_default();
+    out.extend([
+        flag(since.contact),
+        flag(since.hit),
+        flag(since.friend_lost),
+        flag(since.pinned),
+        flag(since.order),
+    ]);
     let verb = mission.map(|m| m.verb());
     out.extend(
         Mission::vocabulary()
@@ -523,6 +544,11 @@ fn candidate(
         crossfire,
         friends_heading_near,
         friend_distance,
+        flag(
+            me.goal_witness
+                .as_ref()
+                .is_some_and(|w| w.goal == reading.goal),
+        ),
     ];
     debug_assert_eq!(out.len(), CANDIDATE.len());
     out

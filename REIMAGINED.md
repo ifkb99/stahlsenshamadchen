@@ -320,6 +320,77 @@ And it joins learning across battles: a cadet who has fought the Valkyries
 before can carry what she learned of them in her experience record, so
 knowing your enemy is something a campaign teaches.
 
+## An OODA skeleton with learned stages (ruled 2026-10-14)
+
+A known structure rather than everything learned end to end. **Observe**
+stays the engine's (the fog, detection, the net, `known_enemies`) and so
+does **Act** (the executor: pathing, fire, the drill); **Orient** (the
+features, the ground reading, later the enemy model and her experience) and
+**Decide** (the goal chooser) are learned — which is the shape the code
+already has. Why: the fog stays honest by construction, because observe is
+the only door to the state; every stage has a readout, which is how a cadet
+explains herself and how we debug her (the twin test found its compasses
+because the stages are apart); it constrains *where* decisions sit and not
+*which* tactics emerge; and Boyd's two real ideas land on things being
+built — orientation is where culture and experience shape perception (her
+traits, doctrine, experience record), and tempo is the decision rate. The
+cost is that the boundaries are hand-placed; if a policy ever needs to
+direct its own attention, observe gains a learned *where to look* input
+rather than being replaced.
+
+## Decision tempo, from the record (2026-10-14)
+
+How often decisions are made against execution, researched for the
+designer. The answer: **decisions are event-driven, rare against execution,
+and each echelon decides on a slower clock than the one below it.**
+
+- **Each echelon hands most of its time down.** The one-third/two-thirds
+  rule (FM 3-20.15): a platoon leader takes about a third of the available
+  time to plan and issue the order and leaves two-thirds to her vehicle
+  commanders; modern standing procedures push it to a fifth.
+- **At the bottom a decision is a choice of drill.** Battle drills exist for
+  situations "requiring instantaneous response" and are executed by
+  instinct (FM 7-8); after reacting to contact the squad leader decides
+  between flanking, breaking contact and a base of fire — a short typed
+  choice an event triggers, which is the goal layer's shape.
+- **Most decisions are recognition, and the errors are of orientation.**
+  Klein's group (ARI RN 90-51, armoured platoon leader exercises) probed 57
+  decision points: options deliberated in about half, analogues used in
+  about half, and errors came less from missing cues than from
+  *misinterpreting their importance* — orient is where commanders fail.
+- **Units fail at execution more than decision.** RAND's NTC study (MR846):
+  "companies plan better than they execute" and "maneuver better than they
+  control direct fires".
+- **Soviet doctrine pre-computed decisions** (norms and nomograms, so a
+  commander did not re-solve recurring problems under fire) where mission
+  command pushes them down — a ready-made academy axis: how often her crews
+  decide for themselves.
+- **Decisive fights are short**: 73 Easting, 23 minutes from first contact
+  to the halt; a ridge battle here is about seven rounds of a minute.
+
+So the clocks, roughly (the seconds-to-hours bands are general knowledge,
+not a figure from these sources): crew drill and gunnery in seconds (the
+executor, per tick); a crew's manoeuvre in a minute or two, *on events*
+(the goal layer); a platoon leader in minutes; a company commander in tens of
+minutes (plans, playouts); battalion planning in hours (the campaign day).
+What it changed here: a cadet used to re-decide only when her goal
+finished, about twice a battle. **`planner.goal_events`** ends a goal on
+the events crews re-decide on — contact, a hit, a friend lost, being pinned,
+new orders — each a difference from a `GoalWitness` kept with the goal, and
+puts the interrupted goal back on her list so thinking again can mean
+carrying on. It is L2.5's first, hand-written half. Off by default.
+
+**On constructed scenarios**: as a teacher to distil, little — imitation
+anchors a network to its teacher's ceiling, as measured; written TTPs
+(bounding overwatch, fix-and-flank) earn a place only as demonstrations to
+seed exploration toward coordination that random search finds rarely, and
+only if it never emerges. As the training distribution, essential and
+*generated* (L1.1). As an **exam suite**, worth building from the history: a
+covering-force delay, a meeting engagement, a hasty river crossing, a
+defence from battle positions, an ambush at a defile — vignettes where we
+know what good looks like and score whether that kind of behaviour emerged,
+without ever naming it to the network. L2.6.
+
 ## Where to spend thinking (2026-10-14)
 
 Distilled from a look at "semantic if" (TypeSafe's Jev and the open SemIf):
@@ -375,10 +446,6 @@ computation. Two places it lands:
 - **Promotion**: what earns it, and whether the player can decline it.
 - **Who learns trust from whom** when the commander is an AI cadet rather
   than the player.
-- **A known structure or everything learned?** Proposed (2026-10-14): an
-  OODA-shaped skeleton with learned stages — observe stays the engine's
-  (fog, the net), orient and decide are learned, act stays the executor's —
-  which is the shape the code already has. Awaiting the designer's ruling.
 
 ## Checklist
 
@@ -533,7 +600,39 @@ whether they did.
       share down; a pinned advance recovers.
 - [ ] L2.4 Playable: the player commands learned cadets on the world clock.
 - [ ] L2.5 Learned termination with a deliberation cost: when a cadet
-      re-decides (*Where to spend thinking*).
+      re-decides (*Where to spend thinking*). First half, hand-written event
+      triggers (`planner.goal_events`), landed 2026-10-14 — see below.
+- [ ] L2.6 An exam suite of Cold War vignettes (*Decision tempo*).
+
+  *What event triggers did (2026-10-14, ridge, 16 places, difficulty 5, all
+  five events on for every crew):*
+  - **Decisions 2.4×** (27,822 → 66,372 over 512 battle-map battles; ~16 a
+    battle on the ridge against ~7). Battles bloodier and a little shorter
+    (6.3 rounds against 7.0); utility over a coin 203–85 (70.5%, from 75.7%
+    — a coin that reconsiders on contact is less of a coin).
+  - **RL from scratch now beats the teacher.** A fresh network, 40
+    iterations of 1,024 battles (~13 minutes): on eight seeds nothing had
+    touched, **422 of 576 (73.3%)** against the utility chooser (one sd is
+    12). Checkpoints 15 and 25 read 407 and 412: most of it is learned by
+    iteration 15.
+  - **What it learned, by the instrument PLANNING.md has used since
+    September** (1,024 battles each, near-deterministic): its strikes on
+    front plate **71%** against the imitator's 78% (rear 5% → 9%); it is
+    struck **4,524** times against 8,623 while striking more (8,955 against
+    8,206), and what strikes it lands on its front plate 83% of the time
+    against 74%. It holds 28% of its decisions (the teacher never does),
+    moves in shorter bounds (3.4 hexes against 4.9) yet closes further
+    (+2.06 against +1.44 a decision), onto ground fewer enemies can see
+    (0.42 against 0.63). Getting round, keeping its front to the enemy, and
+    being hit half as often — fire and movement, named to it nowhere.
+  - **Against itself it does not fight**: 36 draws of 36, nobody lost, 9
+    rounds each. The likely cause is the reward, not the network: the
+    objective margin was weighted 0.05 a point, so the crest (3 a round) was
+    worth ~0.15 a round against the losses of taking it — the mission was
+    *not* first, against the designer's rule. Raising the mission's weight,
+    and objectives that a waiting side forfeits, are the next run's
+    question; a mirrored meeting engagement with no clock is a stalemate
+    for any two players who have learned that the defender wins.
 
 **L3 — the commander**, over frozen cadets. **L4 — alternation and a
 league.** **L5 — across battles**: trait drift (1), learned plays (2), then

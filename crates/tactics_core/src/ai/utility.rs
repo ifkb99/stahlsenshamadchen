@@ -505,6 +505,7 @@ impl UtilityPlanner {
                     Some(best_dest),
                     self.evaluator.doctrine.initiative,
                 );
+                let options = goal::with_interrupted(registry, state, unit, options);
                 // An exploring network describes the decision once and hands
                 // the same description, with its log-probability, to the tap.
                 let mut sampled: Option<super::features::GoalRecord> = None;

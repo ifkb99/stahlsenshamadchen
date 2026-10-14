@@ -22,7 +22,8 @@ use std::sync::{Arc, Mutex};
 use tactics_core::ai::features::{GoalRecord, GoalTap};
 use tactics_core::ai::learned::{GoalBrain, load_goal_net};
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, UtilityPlanner, make_battle_planner};
-use tactics_core::battle::{BattleState, Order};
+use tactics_core::battle::{BattleState, Event, Order};
+use tactics_core::data::ArmorFacing;
 use tactics_core::data::DataRegistry;
 use tactics_core::harness::arena::{DEFAULT_ARENA, arena_named};
 use tactics_core::harness::parallel::run_all;
@@ -34,6 +35,7 @@ rollout: battles for reinforcement learning, learner against the utility AI
   --games N           battles (default 256)
   --seed S            first battle (default 0)
   --temperature T     the learner's sampling temperature (default 1.0)
+  --events LIST       planner.goal_events: contact,hit,friend_lost,pinned,order, or all
   --places N          planner.goal_places (default 16)
   --arena NAME        battlefield (default ridge_arena)
   --difficulty D      the opponent's difficulty (default 5)
@@ -62,6 +64,12 @@ struct Battle {
     ledger: Vec<Entry>,
     /// `[round, side 0's score, side 1's score]`, round 0 being the start.
     scores: Vec<[u32; 3]>,
+    /// Strikes on armour — hits and bounces — by the face they struck,
+    /// `[front, side, rear]`: the learner's on the enemy, and the enemy's on
+    /// the learner. The instrument for whether she learned to get round, a
+    /// label read after the fact and never shown to the network.
+    struck_by_learner: [u32; 3],
+    struck_on_learner: [u32; 3],
 }
 
 fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
@@ -120,9 +128,30 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
     let mut scores = vec![[0, state.score(0), state.score(1)]];
     ledger(reg, &state, 0, &mut entries);
     let mut rounds = 0;
+    let (mut by, mut on) = ([0u32; 3], [0u32; 3]);
     while !state.is_over() && rounds < MAX_ROUNDS {
         ai.plan_round(reg, &mut state);
-        state.resolve_round(reg);
+        for event in state.resolve_round(reg) {
+            let (attacker, facing) = match event {
+                Event::ShotHit {
+                    attacker, facing, ..
+                }
+                | Event::ShotBounced {
+                    attacker, facing, ..
+                } => (attacker, facing),
+                _ => continue,
+            };
+            let face = match facing {
+                ArmorFacing::Front => 0,
+                ArmorFacing::Side => 1,
+                ArmorFacing::Rear => 2,
+            };
+            match state.unit(attacker).map(|u| u.side) {
+                Some(side) if side == learner => by[face] += 1,
+                Some(_) => on[face] += 1,
+                None => {}
+            }
+        }
         rounds += 1;
         ledger(reg, &state, rounds, &mut entries);
         scores.push([rounds, state.score(0), state.score(1)]);
@@ -137,6 +166,8 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
         decisions,
         ledger: entries,
         scores,
+        struck_by_learner: by,
+        struck_on_learner: on,
     })
 }
 
@@ -162,6 +193,12 @@ fn main() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
     let (mut reg, _) = DataRegistry::load_dir(&root).expect("mods load");
     reg.planner.goal_places = parse("--places", 16.0) as u32;
+    if let Some(list) = flag(&args, "--events") {
+        reg.planner.goal_events = tactics_core::data::GoalEvents::parse(list).unwrap_or_else(|e| {
+            eprintln!("error: --events: {e}");
+            std::process::exit(1);
+        });
+    }
     let path = flag(&args, "--net").expect("--net");
     let net = load_goal_net(std::path::Path::new(path)).unwrap_or_else(|err| {
         eprintln!("error: --net {path}: {err}");
@@ -182,6 +219,7 @@ fn main() {
     }
     let mut file = std::io::BufWriter::new(std::fs::File::create(&out).expect("open output"));
     let (mut won, mut lost, mut drawn, mut decisions) = (0, 0, 0, 0usize);
+    let (mut by, mut on) = ([0u32; 3], [0u32; 3]);
     for battle in fought.iter().flatten() {
         match battle.winner {
             Some(w) if w == battle.learner => won += 1,
@@ -189,6 +227,10 @@ fn main() {
             None => drawn += 1,
         }
         decisions += battle.decisions.len();
+        for i in 0..3 {
+            by[i] += battle.struck_by_learner[i];
+            on[i] += battle.struck_on_learner[i];
+        }
         serde_json::to_writer(&mut file, battle).expect("write battle");
         file.write_all(b"\n").expect("write battle");
     }
@@ -197,4 +239,16 @@ fn main() {
         "{games} battles on {}: learner won {won}, lost {lost}, drew {drawn}; {decisions} decisions",
         arena.id
     );
+    let share = |f: [u32; 3]| {
+        let total = f.iter().sum::<u32>().max(1) as f32;
+        format!(
+            "front {:.0}% side {:.0}% rear {:.0}% of {}",
+            100.0 * f[0] as f32 / total,
+            100.0 * f[1] as f32 / total,
+            100.0 * f[2] as f32 / total,
+            f.iter().sum::<u32>()
+        )
+    };
+    println!("  struck by the learner: {}", share(by));
+    println!("  struck on the learner: {}", share(on));
 }

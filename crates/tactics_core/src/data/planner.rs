@@ -151,6 +151,67 @@ fn distance_decay() -> f32 {
     0.15
 }
 
+/// The things that happen to a crew which make her think again about where
+/// she is going (REIMAGINED.md, *Decision tempo*): the events the record says
+/// real crews re-decide on, rather than a timer. Each is a difference from
+/// the world her goal was chosen in (`battle::GoalWitness`). All `false` is
+/// the game before.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GoalEvents {
+    /// She knows of an enemy she did not know of when she chose the goal.
+    pub contact: bool,
+    /// She has lost substance since she chose it.
+    pub hit: bool,
+    /// A friend of hers has been lost since.
+    pub friend_lost: bool,
+    /// She is pinned, and was not when she chose it.
+    pub pinned: bool,
+    /// Her orders are not the ones she chose it under.
+    pub order: bool,
+}
+
+impl GoalEvents {
+    /// Whether any event is listened for at all.
+    pub fn any(&self) -> bool {
+        self.contact || self.hit || self.friend_lost || self.pinned || self.order
+    }
+
+    /// Every event.
+    pub fn all() -> Self {
+        Self {
+            contact: true,
+            hit: true,
+            friend_lost: true,
+            pinned: true,
+            order: true,
+        }
+    }
+
+    /// Parse a comma-separated list of the field names, or `all`, or `none`
+    /// — the instruments' flag.
+    pub fn parse(list: &str) -> Result<Self, String> {
+        let mut out = Self::default();
+        for name in list.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+            match name {
+                "all" => out = Self::all(),
+                "none" => out = Self::default(),
+                "contact" => out.contact = true,
+                "hit" => out.hit = true,
+                "friend_lost" => out.friend_lost = true,
+                "pinned" => out.pinned = true,
+                "order" => out.order = true,
+                other => {
+                    return Err(format!(
+                        "no goal event `{other}`; there is contact, hit, friend_lost, pinned, order, all, none"
+                    ));
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
 /// Serde's default for [`PlannerRules::place_spacing`].
 fn place_spacing() -> u32 {
     3
@@ -916,6 +977,18 @@ pub struct PlannerRules {
     /// Two hexes side by side are one intention, not two.
     #[serde(default = "place_spacing")]
     pub place_spacing: u32,
+    /// The events that end a crew's goal so she chooses again
+    /// ([`GoalEvents`]), beside the ending `Goal::finished` already reads
+    /// (arrived, or the ground filled). Each goal keeps a witness of the
+    /// world it was chosen in, and an event is a difference from it.
+    ///
+    /// **None of them is the game before**: a goal ends only when it is finished, as
+    /// it always did. With events a crew re-decides about as often as the
+    /// record says crews do — on contact, under fire, when a friend goes,
+    /// when her orders change — and the goal she was carrying goes back on
+    /// her list, so thinking again can mean carrying on.
+    #[serde(default)]
+    pub goal_events: GoalEvents,
 }
 
 impl Default for PlannerRules {
@@ -961,6 +1034,7 @@ impl Default for PlannerRules {
             search_slope: search_slope(),
             goal_places: 0,
             place_spacing: place_spacing(),
+            goal_events: GoalEvents::default(),
         }
     }
 }

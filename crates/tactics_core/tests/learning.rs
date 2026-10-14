@@ -519,3 +519,122 @@ fn an_exploring_network_samples_from_its_own_softmax_and_says_how_likely_its_cho
     // And the dice are the planner's, so the same seed explores the same way.
     assert_eq!(first, explored(&reg, brain));
 }
+
+// --- goal events ------------------------------------------------------------
+
+#[test]
+fn a_witness_sees_contact_nerve_and_orders_change_and_nothing_when_nothing_has() {
+    use tactics_core::battle::{GoalTriggers, GoalWitness, Knower};
+    let reg = common::seen(common::registry());
+    let (mut state, pairs) = mirrored_hills(&reg, 7);
+    let unit = pairs
+        .iter()
+        .map(|(a, _)| state.units[*a].id)
+        .find(|id| !state.known_enemies(&reg, Knower::Crew(*id)).is_empty())
+        .expect("the close stage puts somebody in sight");
+    let goal = Goal::Take(state.unit(unit).unwrap().pos);
+    let witness = GoalWitness::now(&reg, &state, unit, goal).expect("a witness");
+    assert_eq!(
+        witness.triggers(&reg, &state, unit),
+        GoalTriggers::default(),
+        "nothing has happened since she chose"
+    );
+
+    // An enemy she did not know of then.
+    let mut blind = witness.clone();
+    blind.known.clear();
+    assert!(blind.triggers(&reg, &state, unit).contact);
+
+    // Pinned now and not then.
+    let pinned_at = reg
+        .morale
+        .rungs
+        .iter()
+        .find(|r| r.pinned)
+        .map(|r| r.at_pressure)
+        .expect("the base mod has a pinned rung");
+    state
+        .units
+        .iter_mut()
+        .find(|u| u.id == unit)
+        .unwrap()
+        .pressure = pinned_at;
+    let t = witness.triggers(&reg, &state, unit);
+    assert!(t.pinned && !t.contact);
+
+    // A listener hears only what it listens for.
+    let listen = tactics_core::data::GoalEvents {
+        contact: true,
+        ..Default::default()
+    };
+    assert!(!t.any(&listen));
+    assert!(t.any(&tactics_core::data::GoalEvents::all()));
+}
+
+#[test]
+fn an_interrupted_goal_goes_back_on_the_list_and_a_finished_one_does_not() {
+    use tactics_core::ai::goal::with_interrupted;
+    use tactics_core::battle::GoalWitness;
+    let reg = common::registry();
+    let mut state = BattleState::from_map(&reg, "river_crossing", 7).expect("baseline map");
+    let unit = state
+        .units
+        .iter()
+        .find(|u| u.aboard.is_none())
+        .expect("a crew")
+        .id;
+    let options = candidates(&reg, &state, unit, None, None, 0.0);
+    // Somewhere she is not, and not already on her list.
+    let far = state
+        .units
+        .iter()
+        .filter(|u| u.side != state.unit(unit).unwrap().side)
+        .map(|u| u.pos)
+        .find(|h| !options.contains(&Goal::Take(*h)))
+        .expect("an enemy's hex");
+    let mut witness = GoalWitness::now(&reg, &state, unit, Goal::Take(far)).unwrap();
+    state
+        .units
+        .iter_mut()
+        .find(|u| u.id == unit)
+        .unwrap()
+        .goal_witness = Some(witness.clone());
+    assert_eq!(
+        with_interrupted(&reg, &state, unit, options.clone()),
+        options,
+        "a goal that was not interrupted is not put back"
+    );
+    witness.interrupted = true;
+    state
+        .units
+        .iter_mut()
+        .find(|u| u.id == unit)
+        .unwrap()
+        .goal_witness = Some(witness);
+    let back = with_interrupted(&reg, &state, unit, options.clone());
+    assert_eq!(back.len(), options.len() + 1);
+    let at = back
+        .iter()
+        .position(|g| *g == Goal::Take(far))
+        .expect("put back");
+    assert_eq!(back[at + 1], Goal::Hold, "just ahead of holding");
+}
+
+#[test]
+fn crews_listening_for_events_decide_more_often_and_listening_for_none_is_the_game_before() {
+    let mut reg = common::registry();
+    let count = |reg: &DataRegistry| {
+        let tap: GoalTap = Arc::new(Mutex::new(Vec::new()));
+        let _ = fight(reg, Some(tap.clone()));
+        tap.lock().map(|r| r.len()).unwrap_or(0)
+    };
+    let (quiet_events, quiet) = (fight(&reg, None).0, count(&reg));
+    reg.planner.goal_events = tactics_core::data::GoalEvents::all();
+    let listening = count(&reg);
+    assert!(
+        listening > quiet,
+        "{listening} decisions listening for every event, {quiet} for none"
+    );
+    reg.planner.goal_events = Default::default();
+    assert_eq!(fight(&reg, None).0, quiet_events);
+}

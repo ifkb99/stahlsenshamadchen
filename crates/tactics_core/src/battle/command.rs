@@ -355,6 +355,120 @@ pub enum Goal {
     Hold,
 }
 
+/// The world a goal was chosen in, kept so that what has changed since can
+/// end it ([`crate::data::PlannerRules::goal_events`]).
+///
+/// On the `Unit` beside the goal and saved with it, for the reason the goal
+/// is: a battle forked through a save must have the same future.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoalWitness {
+    /// The goal this witnessed.
+    pub goal: Goal,
+    /// The enemies she knew of, by id, sorted.
+    pub known: Vec<UnitId>,
+    /// Her substance.
+    pub left: u32,
+    /// Friends of hers on the field.
+    pub friends: u32,
+    pub pinned: bool,
+    /// The orders she was under.
+    pub mission: Option<Mission>,
+    /// Whether the goal was ended by an event rather than finished, so that
+    /// choosing it again is carrying on and not setting out.
+    #[serde(default)]
+    pub interrupted: bool,
+}
+
+/// Which of [`crate::data::GoalEvents`] have happened since her goal was
+/// chosen, all of them, whether or not a mod listens for them — a learned
+/// chooser is shown them as part of what she knows (`ai::features`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GoalTriggers {
+    pub contact: bool,
+    pub hit: bool,
+    pub friend_lost: bool,
+    pub pinned: bool,
+    pub order: bool,
+}
+
+impl GoalTriggers {
+    /// Whether any event `listen` names has happened.
+    pub fn any(&self, listen: &crate::data::GoalEvents) -> bool {
+        (listen.contact && self.contact)
+            || (listen.hit && self.hit)
+            || (listen.friend_lost && self.friend_lost)
+            || (listen.pinned && self.pinned)
+            || (listen.order && self.order)
+    }
+}
+
+impl GoalWitness {
+    /// The world as `unit` sees it now, choosing `goal`.
+    pub fn now(
+        registry: &DataRegistry,
+        state: &BattleState,
+        unit: UnitId,
+        goal: Goal,
+    ) -> Option<Self> {
+        let me = state.unit(unit)?;
+        let mut known: Vec<UnitId> = state
+            .known_enemies(registry, Knower::Crew(unit))
+            .into_iter()
+            .map(|u| u.id)
+            .collect();
+        known.sort();
+        Some(Self {
+            goal,
+            known,
+            left: state.substance(registry, me).0,
+            friends: friends_of(state, me),
+            pinned: registry.morale.rung(me.pressure).pinned,
+            mission: state
+                .command
+                .formation_of(unit)
+                .and_then(|f| f.mission_for(unit))
+                .cloned(),
+            interrupted: false,
+        })
+    }
+
+    /// What has happened to `unit` since this was witnessed.
+    pub fn triggers(
+        &self,
+        registry: &DataRegistry,
+        state: &BattleState,
+        unit: UnitId,
+    ) -> GoalTriggers {
+        let Some(me) = state.unit(unit) else {
+            return GoalTriggers::default();
+        };
+        let now = state
+            .known_enemies(registry, Knower::Crew(unit))
+            .into_iter()
+            .map(|u| u.id)
+            .any(|id| self.known.binary_search(&id).is_err());
+        GoalTriggers {
+            contact: now,
+            hit: state.substance(registry, me).0 < self.left,
+            friend_lost: friends_of(state, me) < self.friends,
+            pinned: registry.morale.rung(me.pressure).pinned && !self.pinned,
+            order: state
+                .command
+                .formation_of(unit)
+                .and_then(|f| f.mission_for(unit))
+                != self.mission.as_ref(),
+        }
+    }
+}
+
+fn friends_of(state: &BattleState, me: &Unit) -> u32 {
+    state
+        .units
+        .iter()
+        .filter(|u| u.side == me.side && u.id != me.id && u.alive())
+        .count() as u32
+}
+
 impl Goal {
     /// Whether this goal is over — achieved, or no longer worth carrying.
     ///

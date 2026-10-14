@@ -803,10 +803,25 @@ impl BattleState {
             Order::SetGoal { unit, goal } => {
                 self.planning_unit_side(*unit)?;
                 let changed = self.unit(*unit).is_some_and(|u| u.goal != Some(*goal));
+                // Choosing again the goal an event interrupted is carrying on,
+                // not setting out, and says nothing over the net.
+                let resumed = self.unit(*unit).is_some_and(|u| {
+                    u.goal_witness
+                        .as_ref()
+                        .is_some_and(|w| w.interrupted && w.goal == *goal)
+                });
+                let witness = if changed {
+                    super::GoalWitness::now(registry, self, *unit, *goal)
+                } else {
+                    None
+                };
                 if let Some(u) = self.unit_mut(*unit) {
                     u.goal = Some(*goal);
+                    if witness.is_some() {
+                        u.goal_witness = witness;
+                    }
                 }
-                Ok(if changed {
+                Ok(if changed && !resumed {
                     vec![Event::SetOut {
                         unit: *unit,
                         goal: *goal,
@@ -2512,6 +2527,31 @@ impl BattleState {
         for id in done {
             if let Some(u) = self.unit_mut(id) {
                 u.goal = None;
+            }
+        }
+        // And a goal something has happened to since it was chosen, if the
+        // mod says crews think again when it does (`planner.goal_events`).
+        // None, which is what ships, is the game before.
+        let listen = registry.planner.goal_events;
+        if listen.any() {
+            let interrupted: Vec<UnitId> = self
+                .units
+                .iter()
+                .filter(|u| u.alive() && u.goal.is_some())
+                .filter(|u| {
+                    u.goal_witness
+                        .as_ref()
+                        .is_some_and(|w| w.triggers(registry, self, u.id).any(&listen))
+                })
+                .map(|u| u.id)
+                .collect();
+            for id in interrupted {
+                if let Some(u) = self.unit_mut(id) {
+                    u.goal = None;
+                    if let Some(w) = u.goal_witness.as_mut() {
+                        w.interrupted = true;
+                    }
+                }
             }
         }
         // Plans advance at the top of the round, so a promoted leg steers the

@@ -29,13 +29,26 @@ def cargo(example, *args):
     return subprocess.run(cmd, cwd=ROOT, check=True, capture_output=True, text=True).stdout
 
 
-def evaluate(net, places, arena, games):
+EVENTS = ["contact", "hit", "friend_lost", "pinned", "order"]
+
+
+def event_sets(events):
+    """`balance --set` arguments turning on the goal events in `events`."""
+    names = EVENTS if events == "all" else [e for e in events.split(",") if e and e != "none"]
+    out = []
+    for name in names:
+        out += ["--set", f"planner.goal_events.{name}=true"]
+    return out
+
+
+def evaluate(net, places, arena, games, events="none"):
     """Learned against utility, both seatings, four seeds: (learned wins, battles)."""
     won = total = 0
     for seed in EVAL_SEEDS:
         out = cargo("balance", "--only", "skill", "--brains", "--brain-vs", "learned",
                     "--brain-games", str(games), "--brain-difficulty", "5", "--arena", arena,
-                    "--set", f"planner.goal_places={places}", "--net", str(net), "--seed", str(seed))
+                    "--set", f"planner.goal_places={places}", *event_sets(events),
+                    "--net", str(net), "--seed", str(seed))
         for line in out.splitlines():
             m = re.match(r"\s+(learned|utility) vs (learned|utility)\s+(\d+)\s+(\d+)", line)
             if not m or m.group(1) == m.group(2):
@@ -54,6 +67,7 @@ def main():
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--places", type=int, default=16)
     ap.add_argument("--arena", default="ridge_arena")
+    ap.add_argument("--events", default="none", help="planner.goal_events for every battle: a list, all, or none")
     ap.add_argument("--eval-every", type=int, default=5)
     ap.add_argument("--eval-games", type=int, default=36)
     ap.add_argument("--dir", type=pathlib.Path, default=ROOT / "target" / "rl" / "run")
@@ -67,7 +81,7 @@ def main():
 
     net = args.start.resolve()
     critic = None
-    won, total = evaluate(net, args.places, args.arena, args.eval_games)
+    won, total = evaluate(net, args.places, args.arena, args.eval_games, args.events)
     print(f"start: learned {won}/{total} ({100 * won / total:.1f}%) against utility")
     with log.open("w", newline="") as f:
         writer = csv.writer(f)
@@ -78,7 +92,8 @@ def main():
             rollouts = args.dir / f"rollouts{it}.jsonl"
             out = cargo("rollout", "--net", str(net), "--games", str(args.games),
                         "--seed", str(it * args.games), "--temperature", str(args.temperature),
-                        "--places", str(args.places), "--arena", args.arena, "--out", str(rollouts))
+                        "--places", str(args.places), "--arena", args.arena, "--events", args.events,
+                        "--out", str(rollouts))
             m = re.search(r"learner won (\d+), lost (\d+)", out)
             rw, rl = (int(m.group(1)), int(m.group(2))) if m else ("", "")
             new = args.dir / f"net{it}.json"
@@ -91,7 +106,7 @@ def main():
             rollouts.unlink()  # a rollout is spent once it has been learned from
             ew = et = ""
             if it % args.eval_every == 0 or it == args.iterations:
-                ew, et = evaluate(net, args.places, args.arena, args.eval_games)
+                ew, et = evaluate(net, args.places, args.arena, args.eval_games, args.events)
             dt = time.time() - t0
             line = ppo.strip().splitlines()[-1] if ppo.strip() else ""
             ev = f"  eval {ew}/{et} ({100 * ew / et:.1f}%)" if et else ""

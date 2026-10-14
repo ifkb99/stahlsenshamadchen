@@ -498,6 +498,16 @@ else. Tests: `tests/learning.rs`.
   `balance --brains` **on seeds no rollout or evaluation used**: the loop's
   own eval seeds are reused every few iterations, and the best checkpoint on
   them read 55% where fresh seeds read parity.
+- **A goal remembers the world it was chosen in** (`GoalWitness`, on the
+  `Unit` beside `goal`, saved), and `planner.goal_events` (all off shipped:
+  the game before, snapshot unmoved) ends it on contact, a hit, a friend
+  lost, being pinned or new orders — at the top of the round, where finished
+  goals are cleared. The interrupted goal goes back on her list
+  (`goal::with_interrupted`) and choosing it again says nothing over the net.
+  The triggers are features whether or not a mod listens.
+  `crews_listening_for_events_decide_more_often_...` is mutation-checked.
+  `examples/rollout` tallies strikes by armour face for both sides — the
+  emergence instrument, a label read after the fact.
 - **Places are unlabelled** (`planner.goal_places`, 0 shipped): spread over
   her reach by cost, distance and facing — keys a reflection preserves —
   each the best place to stand in its patch. The features that make one a
