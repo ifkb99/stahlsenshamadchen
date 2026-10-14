@@ -320,9 +320,37 @@ And it joins learning across battles: a cadet who has fought the Valkyries
 before can carry what she learned of them in her experience record, so
 knowing your enemy is something a campaign teaches.
 
+## Where to spend thinking (2026-10-14)
+
+Distilled from a look at "semantic if" (TypeSafe's Jev and the open SemIf):
+a cheap, typed decision whose job is to say whether something expensive is
+worth doing. The language-model half of it is ruled out — a 4B model will
+not run on every player's machine, so story features do not lean on one —
+but the pattern is already the shape of the goal layer (options declared at
+runtime, scored in one pass, no generation), and its other half is the
+question of **when to think at all**: rational metareasoning, the value of a
+computation. Two places it lands:
+
+- **When a cadet re-decides.** Today a goal ends by a fixed list
+  (`Goal::finished`). A learned *termination* — the options framework's
+  other half, learned with a small **deliberation cost** per re-decision
+  (Harb et al., "When Waiting Is Not an Option") — lets her reconsider when
+  the world has actually changed (a new contact, a friend down) rather than
+  on fixed triggers, and tells us where the decisions are worth their cost.
+  L2.5.
+- **When the commander plays out.** The plan review plays out every
+  nomination, 4 samples of 5 real rounds, on every pulse and interrupt. A
+  gate that plays out only when the model's top options are close (their
+  margin under what a playout could plausibly change) spends the cycles
+  where the choice is in doubt. **Deferred until a shipped doctrine teaches a
+  play**: today no shipped battle plans, so a gate would save nothing a
+  player meets; `examples/plans` is its instrument when it does.
+
 ## Not doing, now
 
 - The visual novel, beyond what a battle needs to record for a recap.
+- A language model anywhere a player's machine has to run it (story,
+  dialogue, order parsing): not every device can.
 - The drawn campaign (`frontier`), the campaign planner and its
   headquarters rule; they keep working and are not developed.
 - Cross-machine bit-exact determinism.
@@ -347,6 +375,10 @@ knowing your enemy is something a campaign teaches.
 - **Promotion**: what earns it, and whether the player can decline it.
 - **Who learns trust from whom** when the commander is an AI cadet rather
   than the player.
+- **A known structure or everything learned?** Proposed (2026-10-14): an
+  OODA-shaped skeleton with learned stages — observe stays the engine's
+  (fog, the net), orient and decide are learned, act stays the executor's —
+  which is the shape the code already has. Awaiting the designer's ruling.
 
 ## Checklist
 
@@ -452,9 +484,41 @@ whether they did.
         taking it. A first-mover rule for a contested hex, not a compass, and
         a candidate rule change for later (who arrives first should not be
         who has the lower id).
-- [ ] L1.3 The rollout bridge: Rust battles on every core, decisions batched
-      to a Python learner (PyO3, or a socket).
-- [ ] L1.4 Rewards by order verb plus survival, and the personality weights.
+- [x] L1.3 The loop, with no bridge at all: the network is microseconds on a
+      CPU, so **Rust plays and infers** (`examples/rollout`, every core, the
+      learner *sampling* through `GoalBrain::Explore` and recording each
+      choice's log-probability) and writes finished battles with a per-round
+      **ledger** of every crew's condition and both scores; **JAX learns**
+      (`training/ppo.py`, PPO with a critic only Python runs); `loop.py`
+      repeats it on fresh seeds and measures with `balance --brains` on seeds
+      no rollout uses. About 13 s an iteration of 1,024 ridge battles.
+      `Arena::stage` moved into the harness so the rollouts and the brains
+      table fight the same battles (brains table byte-identical).
+- [~] L1.4 Rewards, first cut: the engine has no opinion about them — the
+      trainer reads the ledger. The mission first and shared by the side
+      (enemy substance destroyed, own lost, the objective margin, ±1 for the
+      battle), her own survival second and hers alone; a decision is credited
+      with the rounds it governed (semi-Markov TD, GAE over each crew's
+      decisions). **Still to do**: rewards by order verb, and the personality
+      weights per cadet.
+
+  *What the first runs said (2026-10-14, ridge, 16 places, difficulty 5):*
+  - **Warm-started from the imitator, it does not move**: 30 iterations, eval
+    flat at 50%. The imitator's softmax is peaked (entropy ~0.9 over 21
+    candidates) and PPO's small steps stay in the teacher's basin.
+  - **From scratch it learns the teacher's level**: a near-random network
+    (12.5% deterministic) reached 53–56% on the loop's own eval seeds within
+    10–15 iterations — about 15,000 battles, three and a half minutes — and
+    held there for 40. **On eight seeds nothing had touched, it is parity**:
+    301, 300 and 291 of 576 for three checkpoints (±12 is one sd). The 55%
+    was choosing the best checkpoint on reused seeds.
+  - So the loop learns, the reward is coherent, and the ceiling with these
+    features on this arena is so far the hand-written chooser's. What to try
+    against it: a warm start at a higher temperature (or entropy bonus) so the
+    imitator explores; more decisions per battle (L2.5's learned re-decision,
+    and longer platoon fights, L1.1 — two decisions a crew a battle is little
+    to learn from); self-play rather than one fixed opponent; and varied
+    ground, because one arena's dice are all it has seen.
 - [ ] L1.5 The enemy model's first two layers: the briefed order of battle
       less what has been seen, and lost contacts with their age (*A model of
       the enemy*). The third — a league, an enemy-doctrine embedding, the
@@ -468,6 +532,8 @@ whether they did.
 - [ ] L2.3 Bar: beats the utility AI seed-swept on `ridge_arena`; front-plate
       share down; a pinned advance recovers.
 - [ ] L2.4 Playable: the player commands learned cadets on the world clock.
+- [ ] L2.5 Learned termination with a deliberation cost: when a cadet
+      re-decides (*Where to spend thinking*).
 
 **L3 — the commander**, over frozen cadets. **L4 — alternation and a
 league.** **L5 — across battles**: trait drift (1), learned plays (2), then

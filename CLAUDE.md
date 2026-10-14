@@ -45,6 +45,7 @@ cargo run --release -p tactics_core --example goal_dataset -- --games 1024  # th
 (cd training && uv run imitate.py ../target/goal_dataset/train.jsonl --out ../target/goal_net.json)  # imitate them (JAX)
 cargo run --release -p tactics_core --example balance -- --brains --brain-vs learned \
     --net target/goal_net.json --brain-difficulty 5 --brain-games 36 --arena ridge_arena  # ...and fight it
+(cd training && uv run loop.py --start ../target/goal_net.json --iterations 40)  # reinforcement learning: rollouts in Rust, PPO in JAX
 cargo run --release -p tactics_core --example campaign -- --map frontier  # the drawn campaign
 # in the game's generated campaign: Space runs the clock, [ ] its speed, Enter to dawn, Z zooms onto the ground
 
@@ -488,6 +489,15 @@ else. Tests: `tests/learning.rs`.
   `learned_command` and `random_goals` read `DataRegistry::goal_net`, and
   with no network `learned` is the utility planner battle for battle. No mod
   ships a network yet.
+- **Training plays in Rust and learns in Python, and only finished battles
+  cross.** `GoalBrain::Explore` samples the network's softmax with the
+  planner's rng and records each choice's log-probability;
+  `examples/rollout` writes battles with a per-round ledger and **no
+  reward** — rewards are the trainer's business (`training/ppo.py`), so they
+  change without a rebuild. A trainer's numbers are only quoted measured by
+  `balance --brains` **on seeds no rollout or evaluation used**: the loop's
+  own eval seeds are reused every few iterations, and the best checkpoint on
+  them read 55% where fresh seeds read parity.
 - **Places are unlabelled** (`planner.goal_places`, 0 shipped): spread over
   her reach by cost, distance and facing — keys a reflection preserves —
   each the best place to stand in its patch. The features that make one a

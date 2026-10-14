@@ -248,6 +248,16 @@ pub struct GoalRecord {
     /// was not on the list, which a chooser should never do and a trainer
     /// should drop.
     pub chosen: Option<usize>,
+    /// Her side, so a trainer can keep the learner's decisions and drop the
+    /// opponent's.
+    #[serde(default)]
+    pub side: u8,
+    /// The log-probability the chooser gave `chosen`, when it sampled rather
+    /// than took the best (`GoalBrain::Explore`) — the old policy's half of
+    /// the ratio a policy-gradient update needs. `None` for a deterministic
+    /// choice.
+    #[serde(default)]
+    pub logp: Option<f32>,
 }
 
 /// Where a tapped planner writes its decisions. Shared because the harness
@@ -282,6 +292,8 @@ pub fn describe(
                 .collect()
         },
         chosen: None,
+        side: state.unit(unit).map(|u| u.side).unwrap_or(0),
+        logp: None,
     }
 }
 

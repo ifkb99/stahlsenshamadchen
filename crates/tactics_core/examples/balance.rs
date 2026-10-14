@@ -3023,65 +3023,6 @@ fn muster_deployment(arena: &Arena, wanted: usize) -> Vec<(Hex, Hex)> {
 // and mirrored, and `tests/arena.rs` asserts all of it. A map whose halves
 // have to be *compared* to know they match is a map that will drift.
 
-fn symmetric_arena(reg: &DataRegistry, arena: &Arena, seed: u64) -> Option<BattleState> {
-    let map = arena.map()?;
-
-    // One pair per chassis, and the pairs line up with `arena_deployment`'s
-    // flip pairs — so the force is symmetric across the axis of advance as
-    // well as through the centre. See the note on `arena_deployment`: a
-    // laterally asymmetric force on laterally symmetric ground puts the
-    // left-or-right confound straight back.
-    let roster_of = [
-        "medium_tank",
-        "medium_tank",
-        "tank_destroyer",
-        "tank_destroyer",
-    ];
-    let mut placements = Vec::new();
-    // The i-th vehicle of each side stands on the i-th mirror pair, so the two
-    // forces are one force and its reflection. `arena_deployment` is the only
-    // thing that knows where that is, which is what stops the two halves from
-    // being written down twice and drifting.
-    for ((west, east), vehicle) in arena.deployment().into_iter().zip(roster_of) {
-        for (side, hex) in [(0u8, west), (1u8, east)] {
-            placements.push(UnitPlacement {
-                aboard_at: None,
-                at: tactics_core::hex_to_offset(hex),
-                side,
-                vehicle: vehicle.to_string(),
-                crew: Vec::new(),
-                name: Some(format!("{vehicle} {side}")),
-                facing: None,
-                formation: None,
-                leads: false,
-            });
-        }
-    }
-    let sides = vec![
-        SideState {
-            name: "A".into(),
-            ai: None,
-        },
-        SideState {
-            name: "B".into(),
-            ai: None,
-        },
-    ];
-    let (roster, crews) = Roster::stamp_for(reg, &placements);
-    Some(
-        BattleState::from_placements(
-            reg,
-            map,
-            sides,
-            &placements,
-            &crews,
-            std::sync::Arc::new(roster),
-            seed,
-        )
-        .expect("the staged placements are content the base mod ships"),
-    )
-}
-
 /// One battle's outcome, reduced to what the tables count.
 struct Outcome {
     winner: Option<u8>,
@@ -3122,7 +3063,7 @@ fn arena_duel(
     a: &AiConfig,
     b: &AiConfig,
 ) -> Option<Outcome> {
-    let mut state = symmetric_arena(reg, arena, 9000 + seed)?;
+    let mut state = arena.stage(reg, 9000 + seed)?;
     let mut ai = AiDriver::new();
     for (side, cfg) in [(0u8, a), (1u8, b)] {
         ai.insert(side, make_battle_planner(cfg, seed * 2 + side as u64, reg));

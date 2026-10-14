@@ -28,12 +28,50 @@ use std::sync::Arc;
 /// learned chooser has to find, and the signal reinforcement learning has to
 /// learn from. A goal layer a coin can run as well as the teacher is a layer
 /// whose decisions do not decide anything.
+///
+/// `Explore` is the network *sampling* from its own softmax at a temperature
+/// instead of taking its best: how a policy in training tries things. It
+/// records the log-probability of what it chose (`GoalRecord::logp`), which is
+/// the half of a policy-gradient ratio only the actor knows. It draws from the
+/// planner's rng, so an exploring battle is still reproducible from its seed.
 #[derive(Debug, Clone, Default)]
 pub enum GoalBrain {
     #[default]
     Utility,
     Learned(Arc<GoalNet>),
+    Explore {
+        net: Arc<GoalNet>,
+        temperature: f32,
+    },
     Random,
+}
+
+/// Every candidate's score under `net`, beside the description that was
+/// scored. One description per decision, shared by the chooser and the tap.
+pub fn score_candidates(
+    net: &GoalNet,
+    registry: &DataRegistry,
+    state: &BattleState,
+    evaluator: &Evaluator,
+    unit: UnitId,
+    candidates: &[Goal],
+) -> (crate::ai::features::GoalRecord, Vec<f32>) {
+    let record = describe(registry, state, evaluator, unit, candidates);
+    let scores = record
+        .candidates
+        .iter()
+        .map(|row| net.score(&record.context, row))
+        .collect();
+    (record, scores)
+}
+
+/// Log-softmax of `scores / temperature`, stable.
+pub fn log_softmax(scores: &[f32], temperature: f32) -> Vec<f32> {
+    let t = temperature.max(1e-6);
+    let max = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let sum: f32 = scores.iter().map(|s| ((s - max) / t).exp()).sum();
+    let log_sum = sum.ln();
+    scores.iter().map(|s| (s - max) / t - log_sum).collect()
 }
 
 /// Chooses a goal by the network's score.

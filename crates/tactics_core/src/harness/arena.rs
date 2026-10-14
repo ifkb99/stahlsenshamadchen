@@ -93,7 +93,10 @@
 //! is `|t| <= R`, `|s - t| <= 2R` and `|s + t| <= 2R`.
 
 use crate::Hex;
-use crate::map::{Battlefield, MapFile};
+use crate::battle::{BattleState, SideState};
+use crate::data::DataRegistry;
+use crate::map::{Battlefield, MapFile, UnitPlacement};
+use crate::roster::Roster;
 use std::collections::HashMap;
 
 /// One layer of terrain: the palette glyph, and every hex it covers. Layers
@@ -168,6 +171,72 @@ pub fn arena_named(id: &str) -> Option<&'static Arena> {
 }
 
 impl Arena {
+    /// The skill table's battle on this arena: one pair of each chassis on
+    /// each deployment pair, anonymously crewed, so the two forces are one
+    /// force and its reflection. `None` when the arena's map does not build.
+    ///
+    /// Here rather than in `examples/balance` so that the brains and skill
+    /// tables and `examples/rollout` fight literally the same battles.
+    pub fn stage(&self, reg: &DataRegistry, seed: u64) -> Option<BattleState> {
+        let arena = self;
+        let map = arena.map()?;
+
+        // One pair per chassis, and the pairs line up with `arena_deployment`'s
+        // flip pairs — so the force is symmetric across the axis of advance as
+        // well as through the centre. See the note on `arena_deployment`: a
+        // laterally asymmetric force on laterally symmetric ground puts the
+        // left-or-right confound straight back.
+        let roster_of = [
+            "medium_tank",
+            "medium_tank",
+            "tank_destroyer",
+            "tank_destroyer",
+        ];
+        let mut placements = Vec::new();
+        // The i-th vehicle of each side stands on the i-th mirror pair, so the two
+        // forces are one force and its reflection. `arena_deployment` is the only
+        // thing that knows where that is, which is what stops the two halves from
+        // being written down twice and drifting.
+        for ((west, east), vehicle) in arena.deployment().into_iter().zip(roster_of) {
+            for (side, hex) in [(0u8, west), (1u8, east)] {
+                placements.push(UnitPlacement {
+                    aboard_at: None,
+                    at: crate::hex_to_offset(hex),
+                    side,
+                    vehicle: vehicle.to_string(),
+                    crew: Vec::new(),
+                    name: Some(format!("{vehicle} {side}")),
+                    facing: None,
+                    formation: None,
+                    leads: false,
+                });
+            }
+        }
+        let sides = vec![
+            SideState {
+                name: "A".into(),
+                ai: None,
+            },
+            SideState {
+                name: "B".into(),
+                ai: None,
+            },
+        ];
+        let (roster, crews) = Roster::stamp_for(reg, &placements);
+        Some(
+            BattleState::from_placements(
+                reg,
+                map,
+                sides,
+                &placements,
+                &crews,
+                std::sync::Arc::new(roster),
+                seed,
+            )
+            .expect("the staged placements are content the base mod ships"),
+        )
+    }
+
     /// The middle, in axial coordinates.
     pub fn centre_hex(&self) -> Hex {
         crate::offset_to_hex(self.centre[0], self.centre[1])

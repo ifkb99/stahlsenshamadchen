@@ -505,12 +505,42 @@ impl UtilityPlanner {
                     Some(best_dest),
                     self.evaluator.doctrine.initiative,
                 );
+                // An exploring network describes the decision once and hands
+                // the same description, with its log-probability, to the tap.
+                let mut sampled: Option<super::features::GoalRecord> = None;
                 let chosen = match &self.brain {
                     super::learned::GoalBrain::Learned(net) => super::learned::LearnedChooser {
                         net,
                         evaluator: &self.evaluator,
                     }
                     .choose(registry, state, unit, &options),
+                    super::learned::GoalBrain::Explore { net, temperature }
+                        if !options.is_empty() =>
+                    {
+                        let (mut record, scores) = super::learned::score_candidates(
+                            net,
+                            registry,
+                            state,
+                            &self.evaluator,
+                            unit,
+                            &options,
+                        );
+                        let logp = super::learned::log_softmax(&scores, *temperature);
+                        let draw: f32 = self.rng.random_range(0.0..1.0);
+                        let mut acc = 0.0;
+                        let mut pick = logp.len() - 1;
+                        for (i, lp) in logp.iter().enumerate() {
+                            acc += lp.exp();
+                            if draw < acc {
+                                pick = i;
+                                break;
+                            }
+                        }
+                        record.chosen = Some(pick);
+                        record.logp = Some(logp[pick]);
+                        sampled = Some(record);
+                        options[pick]
+                    }
                     super::learned::GoalBrain::Random if !options.is_empty() => {
                         options[self.rng.random_range(0..options.len())]
                     }
@@ -523,9 +553,17 @@ impl UtilityPlanner {
                     .choose(registry, state, unit, &options),
                 };
                 if let Some(tap) = &self.tap {
-                    let mut record =
-                        super::features::describe(registry, state, &self.evaluator, unit, &options);
-                    record.chosen = options.iter().position(|g| *g == chosen);
+                    let record = sampled.unwrap_or_else(|| {
+                        let mut record = super::features::describe(
+                            registry,
+                            state,
+                            &self.evaluator,
+                            unit,
+                            &options,
+                        );
+                        record.chosen = options.iter().position(|g| *g == chosen);
+                        record
+                    });
                     if let Ok(mut records) = tap.lock() {
                         records.push(record);
                     }

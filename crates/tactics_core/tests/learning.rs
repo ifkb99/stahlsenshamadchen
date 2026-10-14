@@ -447,3 +447,75 @@ fn a_learned_planner_with_no_network_is_the_utility_planner() {
     assert_eq!(fight_with("learned"), fight_with("utility"));
     assert_eq!(fight_with("learned_command"), fight_with("command"));
 }
+
+// --- exploring --------------------------------------------------------------
+
+/// A few rounds of `river_crossing` with side 0's goals chosen by `brain`,
+/// tapped, and the records it took.
+fn explored(
+    reg: &DataRegistry,
+    brain: tactics_core::ai::learned::GoalBrain,
+) -> Vec<tactics_core::ai::features::GoalRecord> {
+    let tap: GoalTap = Arc::new(Mutex::new(Vec::new()));
+    let mut state = BattleState::from_map(reg, "river_crossing", 7).expect("baseline map");
+    let mut ai = AiDriver::new();
+    let learner = UtilityPlanner::from_config(&config("utility", "massed_armor"), 11, reg)
+        .with_brain(brain)
+        .tapped(tap.clone());
+    ai.insert(0, Box::new(learner));
+    ai.insert(
+        1,
+        Box::new(UtilityPlanner::from_config(
+            &config("utility", "elastic_defense"),
+            12,
+            reg,
+        )),
+    );
+    for _ in 0..6 {
+        if state.is_over() {
+            break;
+        }
+        ai.plan_round(reg, &mut state);
+        state.resolve_round(reg);
+    }
+    tap.lock().expect("tap").clone()
+}
+
+#[test]
+fn an_exploring_network_samples_from_its_own_softmax_and_says_how_likely_its_choice_was() {
+    use tactics_core::ai::learned::{GoalBrain, log_softmax};
+    let probs: f32 = log_softmax(&[1.0, 2.0, -3.0, 0.5], 0.7)
+        .iter()
+        .map(|l| l.exp())
+        .sum();
+    assert!((probs - 1.0).abs() < 1e-5, "a softmax that sums to {probs}");
+
+    let reg = common::registry();
+    let net = Arc::new(one_feature_net("hold", 0.0));
+    let brain = GoalBrain::Explore {
+        net,
+        temperature: 1.0,
+    };
+    let first = explored(&reg, brain.clone());
+    assert!(!first.is_empty());
+    for record in &first {
+        let logp = record
+            .logp
+            .expect("an exploring choice carries its log-probability");
+        // A network that scores everything zero is uniform over the list.
+        let uniform = -(record.candidates.len() as f32).ln();
+        assert!(
+            (logp - uniform).abs() < 1e-4,
+            "logp {logp} against uniform {uniform}"
+        );
+        assert!(record.chosen.is_some_and(|i| i < record.candidates.len()));
+        assert_eq!(record.side, 0);
+    }
+    // Uniform over several candidates, it does not always take the first.
+    assert!(
+        first.iter().any(|r| r.chosen != Some(0)),
+        "a sampling chooser that never strayed from the head of the list"
+    );
+    // And the dice are the planner's, so the same seed explores the same way.
+    assert_eq!(first, explored(&reg, brain));
+}
