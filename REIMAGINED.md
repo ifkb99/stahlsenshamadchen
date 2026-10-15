@@ -722,6 +722,20 @@ them. **Nothing in the AI lays smoke**; when and where to is a decision
 for the learner — the obvious next candidate, beside the places it
 already chooses among.
 
+**Cut off (2026-10-15):** the line of retreat, read at the scale of one
+crew: she is cut off when the guns that can reach her leave no open half of
+the compass (front and rear, not front and side), and pays `morale.cut_off`
+(3, about a hit) at the top of every round she is. Quick test, the probe's
+rear start (front and rear at once): 533 / 530 / 532 wins at 0 / 3 / 6 —
+**no measurable effect**: tank duels are decided by the shooting inside
+three rounds. It should speak where nerve decides, infantry caught in a
+pincer, which the probe does not stage.
+
+**All five in, together** (forces, the teacher in both seats, two untouched
+blocks): covering 47.6%, motor rifle 56.1 (a little strong since flank
+shock), tank company 49.9, cavalry 48.8, Western team 48.7; the teacher's
+strikes 78% front, 17% side, 5% rear.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or

@@ -318,6 +318,15 @@ pub struct MoraleRules {
     /// and is never scaled.
     #[serde(default = "hundred")]
     pub flank_percent: u32,
+    /// Pressure each round on a crew who is **cut off**: the guns that can
+    /// reach her leave no open half of the compass — every half-circle of
+    /// directions round her holds one — so there is no way back that is not
+    /// under fire (`battle::cut_off`; the designer's ruling that a threat
+    /// to the line of retreat breaks a crew rather than wearing her down).
+    /// Charged at the top of the round, before she sheds any. Zero, the
+    /// default, is the game before.
+    #[serde(default)]
+    pub cut_off: u32,
 }
 
 fn hundred() -> u32 {
@@ -444,6 +453,7 @@ impl Default for MoraleRules {
             targeted: 0,
             open_top_percent: 100,
             flank_percent: 100,
+            cut_off: 0,
         }
     }
 }

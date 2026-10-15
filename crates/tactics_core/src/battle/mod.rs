@@ -36,7 +36,7 @@ pub use command::{
     WaitingOrders, formation_exit, nearest_exit,
 };
 pub use danger::{
-    Bearing, Incoming, drill_destination, fire_on, fire_on_as, incoming, incoming_from,
+    Bearing, Incoming, cut_off, drill_destination, fire_on, fire_on_as, incoming, incoming_from,
     noticed_threats, threatened, threats,
 };
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};

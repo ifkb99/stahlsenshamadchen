@@ -1291,6 +1291,13 @@ every rule mutation-checked. Measured by `examples/flank` (`--hedge`, `--set`).
   lays it at once, a howitzer when the shell lands. Shipped: `smoke_75`
   (one hex, 90 s, four in the medium), `smoke_105` (a hex and its ring,
   120 s, six in the battery). **Nothing in the AI fires smoke yet.**
+- **A crew can be cut off** (`battle::cut_off`, `morale.cut_off` — 3 a
+  round shipped, 0 the game before): the guns she knows can reach her leave
+  no open half of the compass — every run of three neighbouring hex
+  directions holds one — so front and rear cuts her off and front and side
+  does not. Charged at the top of the round in `begin_round`, before
+  recovery, on where everybody stood when the round ended; nobody is asked
+  at a price of zero.
 - **Awareness has a direction.** A looker keeps
   `balance.flank_search_percent` (100) of her chance against somebody
   outside her frontal arc — measured from `laid`, because the commander's

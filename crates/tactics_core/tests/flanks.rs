@@ -10,6 +10,7 @@
 //! - the shock of the flank
 //! - prepared positions
 //! - smoke
+//! - cut off
 
 use tactics_core::battle::{BattleState, Event, FireIntent, Order, SideState, UnitId, hit_chance};
 use tactics_core::data::DataRegistry;
@@ -624,4 +625,60 @@ fn a_gun_with_no_smoke_round_cannot_be_told_to_fire_smoke() {
 fn commit_and_resolve(reg: &DataRegistry, state: &mut BattleState) -> Vec<Event> {
     commit_all(reg, state);
     state.resolve_round(reg)
+}
+
+// --- cut off ------------------------------------------------------------------
+
+/// A squad facing west with a scout car off each of `guns`: her pressure
+/// after one round at the mod's `cut_off` price `price`, and whether the
+/// rule calls her cut off at the start. Nobody fires (every gun's cooldown
+/// runs past the round — the threat walk reads what a gun could do, not
+/// whether it is ready) and nobody recovers, so the difference two prices
+/// make is the charge and nothing else.
+fn caught(reg: &DataRegistry, guns: &[[i32; 2]], price: u32) -> (u32, bool) {
+    let mut reg = reg.clone();
+    reg.morale.cut_off = price;
+    reg.morale.recovery = 0;
+    reg.morale.recovery_per_skill = 0;
+    reg.morale.recovery_near_leader = 0;
+    let mut squad = unit_at([6, 6], 0, "rifle_squad", "Squad");
+    squad.facing = Some(tactics_core::map::Facing::West);
+    let mut placements = vec![squad];
+    placements.extend(guns.iter().map(|at| unit_at(*at, 1, "recon_car", "Gun")));
+    let mut state = stage(&reg, &["ggggggggggggg"; 13], None, placements, 61);
+    for unit in state.units.iter_mut() {
+        for cd in &mut unit.cooldowns {
+            *cd = 1000;
+        }
+    }
+    let cut = tactics_core::battle::cut_off(&reg, &state, UnitId(0));
+    commit_all(&reg, &mut state);
+    state.resolve_round(&reg);
+    let her = state.unit(UnitId(0)).filter(|u| u.alive());
+    assert!(
+        her.is_some(),
+        "the stage needs her to live through the round"
+    );
+    (her.map_or(0, |u| u.pressure), cut)
+}
+
+#[test]
+fn guns_on_both_sides_of_her_cut_her_off_and_guns_on_one_side_do_not() {
+    let reg = all_round(seen(laid(registry_wireless())));
+    // West and east, five hexes off: no half of the compass is free of a gun.
+    let pincer = [[1, 6], [11, 6]];
+    // West and north: the whole south-east is open.
+    let corner = [[1, 6], [6, 1]];
+    let (free, cut) = caught(&reg, &pincer, 0);
+    assert!(cut, "front and rear is cut off");
+    let (charged, _) = caught(&reg, &pincer, 5);
+    assert_eq!(
+        charged,
+        free + 5,
+        "and costs her the price at the top of the round"
+    );
+    let (free, cut) = caught(&reg, &corner, 0);
+    assert!(!cut, "front and side leaves a way out");
+    let (charged, _) = caught(&reg, &corner, 5);
+    assert_eq!(charged, free, "and costs nothing");
 }

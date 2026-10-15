@@ -320,6 +320,28 @@ pub fn threatened(registry: &DataRegistry, state: &BattleState, unit: UnitId) ->
 /// the bearings carry a weapon, a hit chance and a cadence that neither
 /// caller wants, but taking the ids off the one walk is what keeps "who can
 /// shoot her" from having two answers.
+/// Whether `unit` is cut off: the guns that can reach her where she stands
+/// ([`threats`], what she knows of) leave no open half of the compass. Read
+/// in the six hex directions: she is cut off when every run of three
+/// neighbouring directions — every half-circle — holds a gun bearing on her,
+/// which takes at least two of them, and front-and-rear does it where
+/// front-and-side does not. Directions between differences, so a reflection
+/// reads it the same way.
+pub fn cut_off(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> bool {
+    let Some(me) = state.unit(unit) else {
+        return false;
+    };
+    let mut from = [false; 6];
+    for enemy in threats(registry, state, unit) {
+        if let Some(e) = state.unit(enemy)
+            && e.pos != me.pos
+        {
+            from[me.pos.main_direction_to(e.pos).index() as usize] = true;
+        }
+    }
+    (0..6).all(|d| (0..3).any(|k| from[(d + k) % 6]))
+}
+
 pub fn threats(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> Vec<UnitId> {
     let Some(me) = state.unit(unit) else {
         return Vec::new();

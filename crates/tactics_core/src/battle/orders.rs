@@ -2490,6 +2490,25 @@ impl BattleState {
         // is what makes discipline worth training rather than merely a saving
         // throw at the worst moment.
         let ids: Vec<UnitId> = self.units.iter().map(|u| u.id).collect();
+        // Cut off, on where everybody stood when the round ended: the price
+        // goes on before she sheds any (`morale.cut_off`, zero the game
+        // before and then nobody is asked).
+        let cut: Vec<UnitId> = if registry.morale.cut_off > 0 {
+            ids.iter()
+                .copied()
+                .filter(|id| {
+                    self.unit(*id).is_some_and(|u| u.aboard.is_none())
+                        && super::danger::cut_off(registry, self, *id)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        for id in &cut {
+            if let Some(unit) = self.lookup_mut(*id) {
+                unit.pressure += registry.morale.cut_off;
+            }
+        }
         for id in ids {
             let level = self.lookup(id).map(|u| {
                 self.roster.crew_skill(

@@ -690,6 +690,7 @@
     "through_plate_percent": 0,
     "targeted": 1,
     "open_top_percent": 75,
-    "flank_percent": 150
+    "flank_percent": 150,
+    "cut_off": 3
   }
 }
