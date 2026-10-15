@@ -736,6 +736,23 @@ blocks): covering 47.6%, motor rifle 56.1 (a little strong since flank
 shock), tank company 49.9, cavalry 48.8, Western team 48.7; the teacher's
 strikes 78% front, 17% side, 5% rear.
 
+**The network's side (2026-10-15, 04dffde).** The menu spreads its places
+in bands of drive time, a share to each round of the horizon (places two
+rounds out or more: 9% → 33% of the menu), and `planner.approach_places`
+adds, for each enemy she knows of, ground from which she can damage him,
+spread over his front, sides and rear. The new facts are the resolver's on
+both sides' stats — `hurts`, `hurt_by`, `outranges`, `outranged`,
+`strikes_flank`, `shown_flank` (by the facing she would arrive with),
+`fixed`, `buttoned_targets`, and in context `dug_in` and `cut_off`. The far
+places exposed a compass in the teacher's own reading (exposure along
+whichever of two equal roads the heap kept first), fixed by reading the
+least-watched of every cheapest road. The instruments read after the fact:
+fix-and-flank sequences (struck front by one crew, then side or rear by
+another within three rounds) and standoff shots; the teacher, 1.07 a battle
+and 48% of aimed shots from beyond the target's reach. A 128-128 network
+from scratch is training on it: 100 iterations of 2,048 battles, generated
+ground, every force, every event, 16 places and 3 approach places.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or

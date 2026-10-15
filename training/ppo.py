@@ -145,13 +145,15 @@ def value_init(key, width, hidden=(64, 64)):
 def value_input(x, mask):
     """What the critic sees: her context and the candidates pooled — the mean
     and the max of every candidate feature — so it knows what was on offer
-    without a slot per candidate."""
+    without a slot per candidate. In NumPy, on the host: the padded set is
+    decisions times the longest menu times every feature, gigabytes once the
+    menu carries approach places, and it never needs to be on the GPU whole."""
     m = mask[..., None]
-    count = jnp.maximum(m.sum(1), 1.0)
+    count = np.maximum(m.sum(1), 1.0)
     mean = (x * m).sum(1) / count
-    big = jnp.where(m, x, -1e9).max(1)
-    big = jnp.where(count > 0, big, 0.0)
-    return jnp.concatenate([mean, big], axis=-1)
+    big = np.where(m, x, -1e9).max(1)
+    big = np.where(count > 0, big, 0.0)
+    return np.concatenate([mean, big], axis=-1).astype(np.float32)
 
 
 def value(params, v):
@@ -236,8 +238,9 @@ def main():
         critic = [{"w": jnp.asarray(l["w"]), "b": jnp.asarray(l["b"])} for l in json.loads(args.value.read_text())["layers"]]
     else:
         critic = value_init(key, vin_width)
-    vin = value_input(jnp.asarray(xs), jnp.asarray(mask))
-    v_now = np.asarray(value(critic, vin))
+    vin = value_input(xs, mask)
+    v_now = np.concatenate([np.asarray(value(critic, jnp.asarray(vin[i : i + 65536])))
+                            for i in range(0, len(vin), 65536)])
     adv = advantages(rows, v_now, args.lam)
     returns = adv + v_now
     # How much of what happened the critic saw coming: near zero is a critic
@@ -267,13 +270,14 @@ def main():
         upd, st = opt.update(g, st, p)
         return optax.apply_updates(p, upd), st, aux
 
-    data = [jnp.asarray(a) for a in (xs, mask)] + [vin] + [jnp.asarray(a) for a in (chosen, old_logp, adv_n, returns)]
+    # Kept on the host and sent a batch at a time (see `value_input`).
+    data = [xs, mask, vin, chosen, old_logp, adv_n.astype(np.float32), returns.astype(np.float32)]
     rng = np.random.default_rng(args.seed)
     for epoch in range(args.epochs):
         order = rng.permutation(len(rows))
         for i in range(0, len(order), args.batch):
             idx = order[i : i + args.batch]
-            params, state, aux = step(params, state, *(d[idx] for d in data))
+            params, state, aux = step(params, state, *(jnp.asarray(d[idx]) for d in data))
     pg, vl, ent, drift = (float(a) for a in aux)
 
     wins = sum(1 for b in battles if b["winner"] == b["learner"])
