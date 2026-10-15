@@ -638,3 +638,49 @@ fn crews_listening_for_events_decide_more_often_and_listening_for_none_is_the_ga
     reg.planner.goal_events = Default::default();
     assert_eq!(fight(&reg, None).0, quiet_events);
 }
+
+// --- generated ground -------------------------------------------------------
+
+#[test]
+fn a_generated_battlefield_is_a_function_of_its_seed_with_forces_on_ground_they_can_stand_on() {
+    use tactics_core::harness::arena::arena_named;
+    use tactics_core::harness::generated::field;
+    let reg = common::registry();
+    let arena = arena_named("ridge_arena").expect("the ridge arena");
+    let tracked = |id: &str| {
+        reg.terrain(id)
+            .and_then(|t| t.cost_for(tactics_core::data::MovementClass::Tracked))
+            .is_some()
+    };
+    let mut crests = Vec::new();
+    for seed in 0..6 {
+        let made = field(&reg, arena, seed).expect("the base mod has a world generator");
+        let again = field(&reg, arena, seed).expect("and again");
+        assert_eq!(made.field, again.field, "seed {seed} made two battlefields");
+        assert_eq!(made.deployment, again.deployment);
+        assert_eq!(made.deployment.len(), arena.deployment().len());
+        let objectives = made.field.scenario.objectives();
+        assert!(!objectives.is_empty(), "seed {seed}: nothing worth having");
+        let crest = objectives[0].anchor();
+        assert!(
+            crest.distance_to(arena.centre_hex()) <= 4,
+            "seed {seed}: the crest wandered"
+        );
+        crests.push(made.field.terrain.get(crest).map(|t| t.elevation));
+        for (a, b) in made.deployment {
+            for hex in [a, b] {
+                let tile = made.field.terrain.get(hex).expect("deployed on the map");
+                assert!(
+                    tracked(tile.terrain),
+                    "seed {seed}: deployed into {}",
+                    tile.terrain
+                );
+            }
+        }
+    }
+    // Different seeds are different ground.
+    assert!(
+        crests.windows(2).any(|w| w[0] != w[1]),
+        "six seeds, one crest height: {crests:?}"
+    );
+}

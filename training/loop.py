@@ -66,6 +66,24 @@ def evaluate(net, places, arena, games, events="none"):
     return won, total, draws, selfs
 
 
+def evaluate_generated(net, places, arena, games, events="none", seed=1_000_000):
+    """The same two questions on generated ground, by rollouts with the
+    learner taking its best choice: against the utility AI, and against
+    itself. Worlds from `seed / 2` up, which no training rollout reaches."""
+    common = ["--net", str(net), "--deterministic", "--ground", "generated", "--arena", arena,
+              "--places", str(places), "--events", events, "--out", str(ROOT / "target" / "rl" / "eval.jsonl")]
+    out = cargo("rollout", *common, "--games", str(games), "--seed", str(seed))
+    m = re.search(r"against utility: won (\d+), lost (\d+), drew (\d+)", out)
+    won, total = (int(m.group(1)), sum(int(g) for g in m.groups())) if m else (0, 0)
+    # Against itself: every other pair of games is against the utility AI,
+    # so twice the games for the same number of self-play battles.
+    out = cargo("rollout", *common, "--games", str(2 * games), "--seed", str(seed + 4 * games),
+                "--opponents", str(net))
+    m = re.search(r"against [^:]*\.json: won (\d+), lost (\d+), drew (\d+)", out)
+    draws, selfs = (int(m.group(3)), sum(int(g) for g in m.groups())) if m else (0, 0)
+    return won, total, draws, selfs
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--start", type=pathlib.Path, required=True)
@@ -74,6 +92,8 @@ def main():
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--places", type=int, default=16)
     ap.add_argument("--arena", default="ridge_arena")
+    ap.add_argument("--ground", default="arena", choices=["arena", "generated"],
+                    help="train and evaluate on the arena, or on a fresh generated world every two games")
     ap.add_argument("--events", default="none", help="planner.goal_events for every battle: a list, all, or none")
     ap.add_argument("--eval-every", type=int, default=5)
     ap.add_argument("--league", type=int, default=0, help="past checkpoints kept as opponents (0: utility only)")
@@ -94,7 +114,9 @@ def main():
     # every `--league-every` iterations), so it cannot learn just the one
     # opponent — and meets players as patient as itself.
     league: list[pathlib.Path] = []
-    won, total, draws, selfs = evaluate(net, args.places, args.arena, args.eval_games, args.events)
+    judge = evaluate_generated if args.ground == "generated" else evaluate
+    games = 8 * args.eval_games if args.ground == "generated" else args.eval_games
+    won, total, draws, selfs = judge(net, args.places, args.arena, games, args.events)
     print(f"start: learned {won}/{total} ({100 * won / total:.1f}%) against utility; "
           f"against itself {draws}/{selfs} drawn")
     with log.open("w", newline="") as f:
@@ -109,6 +131,7 @@ def main():
             out = cargo("rollout", "--net", str(net), "--games", str(args.games), *opponents,
                         "--seed", str(it * args.games), "--temperature", str(args.temperature),
                         "--places", str(args.places), "--arena", args.arena, "--events", args.events,
+                        "--ground", args.ground,
                         "--out", str(rollouts))
             m = re.search(r"learner won (\d+), lost (\d+)", out)
             rw, rl = (int(m.group(1)), int(m.group(2))) if m else ("", "")
@@ -122,7 +145,7 @@ def main():
             rollouts.unlink()  # a rollout is spent once it has been learned from
             ew = et = sd = st = ""
             if it % args.eval_every == 0 or it == args.iterations:
-                ew, et, sd, st = evaluate(net, args.places, args.arena, args.eval_games, args.events)
+                ew, et, sd, st = judge(net, args.places, args.arena, games, args.events)
             if args.league and it % args.league_every == 0:
                 league.append(net)
                 del league[: max(0, len(league) - args.league)]

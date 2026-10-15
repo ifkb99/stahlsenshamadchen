@@ -25,7 +25,8 @@ use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, UtilityPlanner, make_battl
 use tactics_core::battle::{BattleState, Event, Order};
 use tactics_core::data::ArmorFacing;
 use tactics_core::data::DataRegistry;
-use tactics_core::harness::arena::{DEFAULT_ARENA, arena_named};
+use tactics_core::harness::arena::{Arena, DEFAULT_ARENA, arena_named};
+use tactics_core::harness::generated;
 use tactics_core::harness::parallel::run_all;
 
 const USAGE: &str = "\
@@ -39,7 +40,11 @@ rollout: battles for reinforcement learning, learner against the utility AI
                       the utility AI (two games each, so both seatings)
   --events LIST       planner.goal_events: contact,hit,friend_lost,pinned,order, or all
   --places N          planner.goal_places (default 16)
-  --arena NAME        battlefield (default ridge_arena)
+  --arena NAME        battlefield (default ridge_arena); with --ground generated,
+                      whose forces and deployment are moved onto generated ground
+  --ground generated  a fresh generated world every two games (one per seat)
+  --deterministic     the learner takes its best choice instead of sampling
+                      (evaluation; no log-probabilities are recorded)
   --difficulty D      the opponent's difficulty (default 5)
   --out PATH          JSON lines, one battle each (default target/rl/rollouts.jsonl)";
 
@@ -109,6 +114,10 @@ struct Setup<'a> {
     /// turn with the utility AI by game number (`--opponents`). A learner
     /// that only ever meets one opponent learns that opponent.
     opponents: Vec<(String, std::sync::Arc<tactics_core::data::GoalNet>)>,
+    /// Fight on a world the generator makes from the game's seed
+    /// (`harness::generated`) instead of on the arena's own ground: two games
+    /// a world, so the learner has each seat on it.
+    generated: bool,
 }
 
 /// Who the learner fights in `game`: the utility AI, or one of the league's
@@ -123,7 +132,12 @@ fn opponent<'a>(
 
 fn fight(setup: &Setup, game: u64) -> Option<Battle> {
     let reg = setup.reg;
-    let mut state = setup.arena.stage(reg, 9000 + game)?;
+    let mut state = if setup.generated {
+        let made = generated::field(reg, setup.arena, game / 2)?;
+        Arena::stage_on(reg, made.field, made.deployment, 9000 + game)
+    } else {
+        setup.arena.stage(reg, 9000 + game)?
+    };
     let learner = (game % 2) as u8;
     let tap: GoalTap = Arc::new(Mutex::new(Vec::new()));
     let config = AiConfig {
@@ -235,8 +249,13 @@ fn main() {
     let setup = Setup {
         reg: &reg,
         arena,
-        brain: GoalBrain::Explore { net, temperature },
+        brain: if args.iter().any(|a| a == "--deterministic") {
+            GoalBrain::Learned(net)
+        } else {
+            GoalBrain::Explore { net, temperature }
+        },
         difficulty,
+        generated: flag(&args, "--ground") == Some("generated"),
         opponents: flag(&args, "--opponents")
             .map(|list| {
                 list.split(',')

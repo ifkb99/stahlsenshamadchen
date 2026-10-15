@@ -777,6 +777,12 @@ impl Scenario {
         }
     }
 
+    /// This scenario, won outright by the first side to `score` points.
+    pub fn with_victory_score(mut self, score: u32) -> Self {
+        self.victory_score = Some(score);
+        self
+    }
+
     /// This scenario with `objective` added after the ones it has.
     pub fn with_objective(mut self, objective: Objective) -> Self {
         self.objectives.push(objective);

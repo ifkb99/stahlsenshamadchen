@@ -178,9 +178,19 @@ impl Arena {
     /// Here rather than in `examples/balance` so that the brains and skill
     /// tables and `examples/rollout` fight literally the same battles.
     pub fn stage(&self, reg: &DataRegistry, seed: u64) -> Option<BattleState> {
-        let arena = self;
-        let map = arena.map()?;
+        let map = self.map()?;
+        Some(Self::stage_on(reg, map, self.deployment(), seed))
+    }
 
+    /// [`Self::stage`]'s forces on any battlefield, deployed pair by pair on
+    /// `deployment` (side 0's hex, side 1's hex) — the same battle on other
+    /// ground (`harness::generated`).
+    pub fn stage_on(
+        reg: &DataRegistry,
+        map: Battlefield,
+        deployment: Vec<(Hex, Hex)>,
+        seed: u64,
+    ) -> BattleState {
         // One pair per chassis, and the pairs line up with `arena_deployment`'s
         // flip pairs — so the force is symmetric across the axis of advance as
         // well as through the centre. See the note on `arena_deployment`: a
@@ -197,7 +207,7 @@ impl Arena {
         // forces are one force and its reflection. `arena_deployment` is the only
         // thing that knows where that is, which is what stops the two halves from
         // being written down twice and drifting.
-        for ((west, east), vehicle) in arena.deployment().into_iter().zip(roster_of) {
+        for ((west, east), vehicle) in deployment.into_iter().zip(roster_of) {
             for (side, hex) in [(0u8, west), (1u8, east)] {
                 placements.push(UnitPlacement {
                     aboard_at: None,
@@ -223,18 +233,16 @@ impl Arena {
             },
         ];
         let (roster, crews) = Roster::stamp_for(reg, &placements);
-        Some(
-            BattleState::from_placements(
-                reg,
-                map,
-                sides,
-                &placements,
-                &crews,
-                std::sync::Arc::new(roster),
-                seed,
-            )
-            .expect("the staged placements are content the base mod ships"),
+        BattleState::from_placements(
+            reg,
+            map,
+            sides,
+            &placements,
+            &crews,
+            std::sync::Arc::new(roster),
+            seed,
         )
+        .expect("the staged placements are content the base mod ships")
     }
 
     /// The middle, in axial coordinates.

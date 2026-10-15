@@ -448,6 +448,35 @@ computation. Two places it lands:
   content's resolution should rise, and `hex_meters` is data. Decided after
   L2, if the policy turns out to be limited by the grid.
 
+## Infantry: composition and grain (proposed 2026-10-14)
+
+The designer's question: is the weight of infantry against vehicles right
+for the early Cold War? On the record, no, twice over.
+
+- **Composition.** A 1969 CIA estimate gives a Soviet motor rifle division
+  ~186 tanks and ~200 APCs (about three tanks per rifle platoon) and a tank
+  division ~314 tanks and ~80 APCs (about twelve); a US ROAD armored
+  division ran six tank battalions to five mechanized (about seven per
+  platoon, from general knowledge, not verified here). Fights were fought
+  by company teams: a US tank company with a mech platoon attached or the
+  reverse, a Soviet motor rifle company (nine squads in nine BTRs) with a
+  tank platoon of three. The shipped battle maps field ~7 armoured vehicles
+  a side to one rifle platoon and one scout section.
+- **Grain, the bigger one.** A `rifle_platoon` is one unit — thirty
+  soldiers, one hex, one carrier — beside tanks that are one unit each. A
+  rifle platoon was three or four squads in three or four carriers, the
+  same grain as a tank platoon's three to five tanks. So a platoon decides
+  once to a tank platoon's five, one carrier hit takes the whole platoon,
+  and a learner barely meets infantry at all.
+- **Price** (5 points to a medium tank's 16) should be set by the `mustered`
+  instrument once the grain is right, not imported: the period's own firepower
+  indices (WEI/WUV) were subjective and abandoned.
+
+Proposal, awaiting the designer: a `rifle_squad` (about ten, a carrier
+each), company-team orders of battle by doctrine (a Western team of a tank
+platoon and a mech platoon; a Soviet motor rifle company of nine squads in
+nine BTRs and three tanks), then repricing. It changes every shipped battle.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or
@@ -530,7 +559,30 @@ whether they did.
 
 **L1 — the training ground.**
 
-- [ ] L1.1 Platoon against platoon on small generated maps, many per seed.
+- [~] L1.1 **Generated ground** (`harness::generated`): a seed is a small
+      world and the battlefield its centre chunk — one battle map of relief,
+      woods, hedges, streams, rivers and villages — with an arena's forces and
+      deployment moved onto passable ground and the objectives read off it
+      (the highest ground near the centre worth 3, the highest on each flank
+      worth 2). Two games a world, one per seat. `rollout --ground generated`
+      and `--deterministic`; `loop.py --ground generated` evaluates on worlds
+      training never reaches. Generated battles run 7.6 rounds (3–16), none
+      drawn, 70 of 256 won by the score. Platoon-scale forces are still to
+      come (see *Infantry*, below).
+
+  *What it said (2026-10-14, every event on, mission-first reward):*
+  - **The ridge policy does not transfer**: the 58% mission-first network
+    goes 124–132 (48%) on generated ground. It had learned the ridge.
+  - **Trained on generated ground, it reaches parity and stops**: from
+    scratch, 12.5% to ~50% within ten iterations and 47.6–52.8% thereafter;
+    continued from the ridge policy, 45–54%. Every reading is inside ±8.5
+    of 144 at 288 battles. It learns to play unseen ground as well as the
+    hand-written chooser does, quickly, and not better in 40 iterations.
+  - Candidates for the gap, cheapest first: a longer run with bigger batches
+    (ground variety is variance, and the critic explains ~0.28 of returns);
+    a wider network (64-64 was sized for one arena); features about the
+    ground around her and not only about each candidate; and the forces
+    themselves, which are four tanks a side.
 - [x] L1.2 **Candidates are places; features are relational facts** (the
       designer's ruling below). `planner.goal_places` (0 shipped, so the game
       and the snapshot are unchanged) offers that many unlabelled places from
