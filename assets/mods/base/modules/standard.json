@@ -70,5 +70,13 @@
         "size": 1,
         "toughness": 1,
         "description": "A wireless set with straps, carried by somebody who would rather be carrying ammunition. The same small target as a tank's set and rather more exposed: when it goes the platoon is back to runners, flags and whatever they were last told."
+    },
+    {
+        "id": "rifle_team",
+        "name": "Rifle Squad",
+        "effect": "troops",
+        "size": 8,
+        "toughness": 2,
+        "description": "A squad of about ten: riflemen and a light machine gun around the cadet leading them. A third of a rifle platoon, and the reason the squad fires at a third of the platoon's rate — three squads together are the platoon's volume of fire, shot for shot, and the same fear in whoever it lands on. Two hits and she is leading nobody."
     }
 ]

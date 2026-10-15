@@ -78,5 +78,45 @@
         "safety": 4,
         "capacity": 0,
         "sprite": "mods/base/sprites/scout_section.png"
+    },
+    {
+        "id": "rifle_squad",
+        "turret": true,
+        "footprint": 1,
+        "name": "Rifle Squad",
+        "class": "infantry",
+        "movement": {
+            "class": "foot",
+            "points": 1,
+            "max_climb": 2
+        },
+        "armor": {
+            "front": 0,
+            "side": 0,
+            "rear": 0
+        },
+        "vision_range": 8,
+        "concealment": 45,
+        "profile": -25,
+        "radio": "man_pack",
+        "weapons": [
+            "squad_rifles",
+            "rpg"
+        ],
+        "stowage": {
+            "rifle_ball": 1400,
+            "rpg_heat": 2
+        },
+        "modules": [
+            "rifle_team",
+            "field_radio"
+        ],
+        "crew_slots": [
+            "section_leader"
+        ],
+        "cost": 0,
+        "safety": 3,
+        "capacity": 0,
+        "sprite": "mods/base/sprites/rifle_platoon.png"
     }
 ]

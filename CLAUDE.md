@@ -508,6 +508,13 @@ else. Tests: `tests/learning.rs`.
   `crews_listening_for_events_decide_more_often_...` is mutation-checked.
   `examples/rollout` tallies strikes by armour face for both sides — the
   emergence instrument, a label read after the fact.
+- **Forces are data and doctrine comes with them** (`forces/`,
+  `ForceDef`; the designer's ruling that a doctrine comes from what a side
+  has). `harness::forces::stage` stages two on any battlefield; rollouts
+  with `--forces` draw a matchup per world and report per force. A
+  `rifle_squad` costs 0 — not for sale to `force::muster`, which counts
+  appetite per chassis and over-buys infantry when a second infantry chassis
+  is on offer; it comes in forces until the builder knows a mech platoon.
 - **Places are unlabelled** (`planner.goal_places`, 0 shipped): spread over
   her reach by cost, distance and facing — keys a reflection preserves —
   each the best place to stand in its patch. The features that make one a

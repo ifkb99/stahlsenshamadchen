@@ -472,10 +472,38 @@ for the early Cold War? On the record, no, twice over.
   instrument once the grain is right, not imported: the period's own firepower
   indices (WEI/WUV) were subjective and abandoned.
 
-Proposal, awaiting the designer: a `rifle_squad` (about ten, a carrier
-each), company-team orders of battle by doctrine (a Western team of a tank
-platoon and a mech platoon; a Soviet motor rifle company of nine squads in
-nine BTRs and three tanks), then repricing. It changes every shipped battle.
+**Ruled 2026-10-14: adopted**, and with it a principle — **doctrine comes
+from what a side has** (its training, its equipment, its manpower), and the
+networks must not overfit to one method. Built:
+
+- `rifle_squad`: about ten (troops size 8, toughness 2), one cadet seat, a
+  squad's rifles (`squad_rifles`: the platoon's round at a third of its rate,
+  so three squads are the platoon's fire and fear shot for shot) and its own
+  RPG with two rounds. **Not for sale (`cost` 0)**: squads come in forces,
+  aboard their carriers, until the army builder (`force::muster`) knows a
+  mechanised platoon — at 2 points it bought squads as pocket change and
+  elastic defence stopped buying its howitzer, because appetite is counted
+  per chassis and the squad split infantry's.
+- **Forces are data** (`forces/` in a mod, `ForceDef`, validated): a force
+  names its doctrine beside its units. The base mod ships five company teams
+  — a Western team (three tanks, three squads in three APCs, bounding
+  overwatch), a Soviet motor rifle company (six squads in six open carriers,
+  two tanks, massed armour), a Soviet tank company (four tanks, two squads),
+  a Western armoured cavalry troop (recon pull) and a covering force
+  (delaying action).
+- `harness::forces::stage` puts two forces on any battlefield;
+  `rollout --forces all` draws a matchup a world, both seatings, each side
+  fighting by its own force's doctrine, and reports the learner's record
+  *per force* so overfitting to one method shows as one force carrying the
+  average. The network sees its doctrine (already) and both sides'
+  composition (`own_armour`, `own_infantry`, `own_carriers`, `known_armour`,
+  `known_infantry`).
+
+Still to do: the shipped battle maps and the campaign's armies keep their
+platoons — moving them to squads needs seats the academy roll does not have
+(three squads and three carriers are nine cadets where a platoon and a
+halftrack were four), which is a roster decision; and repricing through the
+`mustered` instrument once the builder can buy a mechanised platoon whole.
 
 ## Open questions
 

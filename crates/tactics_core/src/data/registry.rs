@@ -134,6 +134,8 @@ pub struct DataRegistry {
     pub doctrines: HashMap<String, DoctrineDef>,
     /// Tactical templates by id ([`super::TemplateDef`]).
     pub templates: HashMap<String, super::TemplateDef>,
+    /// Forces by id ([`super::ForceDef`]): what a side brings, by doctrine.
+    pub forces: HashMap<String, super::ForceDef>,
     pub maps: HashMap<String, MapFile>,
 }
 
@@ -322,6 +324,10 @@ impl DataRegistry {
         self.templates.get(id)
     }
 
+    pub fn force(&self, id: &str) -> Option<&super::ForceDef> {
+        self.forces.get(id)
+    }
+
     pub fn map(&self, id: &str) -> Option<&MapFile> {
         self.maps.get(id)
     }
@@ -353,6 +359,9 @@ impl DataRegistry {
         })?;
         load_defs(&dir.join("templates"), report, |d: super::TemplateDef| {
             self.templates.insert(d.id.clone(), d);
+        })?;
+        load_defs(&dir.join("forces"), report, |d: super::ForceDef| {
+            self.forces.insert(d.id.clone(), d);
         })?;
         load_defs(&dir.join("maps"), report, |d: MapFile| {
             self.maps.insert(d.id.clone(), d);
@@ -388,6 +397,43 @@ impl DataRegistry {
                     "character `{}` holds rank `{rank}`, which no mod's `ranks` ladder declares",
                     c.id
                 ));
+            }
+        }
+        // A force must be made of things that exist, fight by a doctrine
+        // that exists, and put its passengers in carriers with room.
+        let mut forces: Vec<&super::ForceDef> = self.forces.values().collect();
+        forces.sort_by(|a, b| a.id.cmp(&b.id));
+        for force in forces {
+            if self.doctrine(&force.doctrine).is_none() {
+                report.error(format!(
+                    "force `{}` fights by doctrine `{}`, which no mod declares",
+                    force.id, force.doctrine
+                ));
+            }
+            for unit in &force.units {
+                let Some(vehicle) = self.vehicle(&unit.vehicle) else {
+                    report.error(format!(
+                        "force `{}` fields `{}`, which no mod declares",
+                        force.id, unit.vehicle
+                    ));
+                    continue;
+                };
+                if let Some(rider) = &unit.carries {
+                    match self.vehicle(rider) {
+                        None => report.error(format!(
+                            "force `{}`: `{}` carries `{rider}`, which no mod declares",
+                            force.id, unit.vehicle
+                        )),
+                        Some(p) if p.footprint() > vehicle.capacity => report.error(format!(
+                            "force `{}`: `{}` has room for {} and `{rider}` takes {}",
+                            force.id,
+                            unit.vehicle,
+                            vehicle.capacity,
+                            p.footprint()
+                        )),
+                        Some(_) => {}
+                    }
+                }
             }
         }
         // A template nobody declared is a play nobody can run: refused, like

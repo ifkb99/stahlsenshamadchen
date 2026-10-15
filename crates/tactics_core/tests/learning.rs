@@ -684,3 +684,42 @@ fn a_generated_battlefield_is_a_function_of_its_seed_with_forces_on_ground_they_
         "six seeds, one crest height: {crests:?}"
     );
 }
+
+// --- forces -----------------------------------------------------------------
+
+#[test]
+fn every_shipped_force_stages_against_every_other_with_its_infantry_aboard() {
+    use tactics_core::harness::arena::arena_named;
+    use tactics_core::harness::{forces, generated};
+    let reg = common::registry();
+    let arena = arena_named("ridge_arena").expect("the ridge arena");
+    let mut all: Vec<_> = reg.forces.values().collect();
+    all.sort_by(|a, b| a.id.cmp(&b.id));
+    assert!(
+        all.len() >= 2,
+        "the base mod ships forces to draw matchups from"
+    );
+    for (i, a) in all.iter().enumerate() {
+        let b = all[(i + 1) % all.len()];
+        let made = generated::field(&reg, arena, i as u64).expect("a generated field");
+        let state = forces::stage(&reg, made.field, &made.deployment, [a, b], 1)
+            .unwrap_or_else(|| panic!("{} against {} did not stage", a.id, b.id));
+        for (side, force) in [(0u8, *a), (1u8, b)] {
+            let fielded: u32 = force.units.iter().map(|u| u.count).sum();
+            let riders: u32 = force
+                .units
+                .iter()
+                .filter(|u| u.carries.is_some())
+                .map(|u| u.count)
+                .sum();
+            let on_side: Vec<_> = state.units.iter().filter(|u| u.side == side).collect();
+            assert_eq!(on_side.len() as u32, fielded + riders, "{}", force.id);
+            assert_eq!(
+                on_side.iter().filter(|u| u.aboard.is_some()).count() as u32,
+                riders,
+                "{}: every passenger starts aboard",
+                force.id
+            );
+        }
+    }
+}

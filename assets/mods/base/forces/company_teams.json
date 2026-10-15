@@ -1,0 +1,55 @@
+[
+    {
+        "id": "western_team",
+        "name": "Western company team",
+        "description": "A tank platoon with a mechanised platoon cross-attached: the balanced team NATO armies fought in, three squads riding three carriers beside three tanks.",
+        "doctrine": "bounding_overwatch",
+        "units": [
+            { "vehicle": "medium_tank", "count": 3 },
+            { "vehicle": "apc", "count": 3, "carries": "rifle_squad" }
+        ]
+    },
+    {
+        "id": "soviet_motor_rifle",
+        "name": "Soviet motor rifle company",
+        "description": "Infantry-heavy: two motor rifle platoons, a squad to each open-topped carrier, with a tank section. The motor rifle division fielded about three tanks to every rifle platoon.",
+        "doctrine": "massed_armor",
+        "units": [
+            { "vehicle": "halftrack", "count": 6, "carries": "rifle_squad" },
+            { "vehicle": "medium_tank", "count": 2 }
+        ]
+    },
+    {
+        "id": "soviet_tank_company",
+        "name": "Soviet tank company",
+        "description": "Armour-heavy: four tanks with a motor rifle section riding along. The tank division fielded about twelve tanks to every rifle platoon.",
+        "doctrine": "massed_armor",
+        "units": [
+            { "vehicle": "medium_tank", "count": 4 },
+            { "vehicle": "halftrack", "count": 2, "carries": "rifle_squad" }
+        ]
+    },
+    {
+        "id": "western_cavalry",
+        "name": "Western armored cavalry troop",
+        "description": "Eyes first: scout cars and light tanks screening, a medium tank and a mechanised section behind them.",
+        "doctrine": "recon_pull",
+        "units": [
+            { "vehicle": "recon_car", "count": 2 },
+            { "vehicle": "light_tank", "count": 2 },
+            { "vehicle": "medium_tank" },
+            { "vehicle": "apc", "count": 2, "carries": "rifle_squad" }
+        ]
+    },
+    {
+        "id": "covering_force",
+        "name": "Covering force",
+        "description": "Built to trade ground for time: tank destroyers to make an advance pay for every bound, tanks to cover the withdrawal, a squad to hold the ground in between.",
+        "doctrine": "delaying_action",
+        "units": [
+            { "vehicle": "tank_destroyer", "count": 2 },
+            { "vehicle": "medium_tank", "count": 2 },
+            { "vehicle": "apc", "carries": "rifle_squad" }
+        ]
+    }
+]

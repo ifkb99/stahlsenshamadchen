@@ -26,8 +26,8 @@ use tactics_core::battle::{BattleState, Event, Order};
 use tactics_core::data::ArmorFacing;
 use tactics_core::data::DataRegistry;
 use tactics_core::harness::arena::{Arena, DEFAULT_ARENA, arena_named};
-use tactics_core::harness::generated;
 use tactics_core::harness::parallel::run_all;
+use tactics_core::harness::{forces, generated};
 
 const USAGE: &str = "\
 rollout: battles for reinforcement learning, learner against the utility AI
@@ -43,6 +43,8 @@ rollout: battles for reinforcement learning, learner against the utility AI
   --arena NAME        battlefield (default ridge_arena); with --ground generated,
                       whose forces and deployment are moved onto generated ground
   --ground generated  a fresh generated world every two games (one per seat)
+  --forces LIST|all   draw each world's matchup from these forces (forces/ in
+                      the mod), each side fighting by its force's doctrine
   --deterministic     the learner takes its best choice instead of sampling
                       (evaluation; no log-probabilities are recorded)
   --difficulty D      the opponent's difficulty (default 5)
@@ -76,6 +78,8 @@ struct Battle {
     victory_score: Option<u32>,
     /// Who the learner fought: `utility`, or a league network's file name.
     opponent: String,
+    /// The two forces, side 0's first, when drawn from `--forces`.
+    forces: Option<[String; 2]>,
     /// Strikes on armour — hits and bounces — by the face they struck,
     /// `[front, side, rear]`: the learner's on the enemy, and the enemy's on
     /// the learner. The instrument for whether she learned to get round, a
@@ -118,6 +122,10 @@ struct Setup<'a> {
     /// (`harness::generated`) instead of on the arena's own ground: two games
     /// a world, so the learner has each seat on it.
     generated: bool,
+    /// The forces battles are drawn from (`--forces`): each world gets a
+    /// matchup, both seatings, each side fighting by its force's doctrine.
+    /// Empty is the arena's own symmetric force.
+    forces: Vec<&'a tactics_core::data::ForceDef>,
 }
 
 /// Who the learner fights in `game`: the utility AI, or one of the league's
@@ -130,23 +138,51 @@ fn opponent<'a>(
     turn.checked_sub(1).and_then(|i| setup.opponents.get(i))
 }
 
+/// The two forces that meet on world `game / 2`, side 0's first: drawn from
+/// the list by the world's seed, the same for both games on it, so the
+/// learner fights each matchup from both ends.
+fn matchup<'a>(setup: &Setup<'a>, game: u64) -> Option<[&'a tactics_core::data::ForceDef; 2]> {
+    let n = setup.forces.len() as u64;
+    if n == 0 {
+        return None;
+    }
+    // SplitMix64, written out: the draw must not move with the platform.
+    let mix = |mut z: u64| {
+        z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    };
+    let world = game / 2;
+    let a = (mix(world) % n) as usize;
+    let b = (mix(world ^ 0xA5A5_A5A5) % n) as usize;
+    Some([setup.forces[a], setup.forces[b]])
+}
+
 fn fight(setup: &Setup, game: u64) -> Option<Battle> {
     let reg = setup.reg;
-    let mut state = if setup.generated {
+    let matchup = matchup(setup, game);
+    let (field, deployment) = if setup.generated {
         let made = generated::field(reg, setup.arena, game / 2)?;
-        Arena::stage_on(reg, made.field, made.deployment, 9000 + game)
+        (made.field, made.deployment)
     } else {
-        setup.arena.stage(reg, 9000 + game)?
+        (setup.arena.map()?, setup.arena.deployment())
+    };
+    let mut state = match matchup {
+        Some(pair) => forces::stage(reg, field, &deployment, pair, 9000 + game)?,
+        None => Arena::stage_on(reg, field, deployment, 9000 + game),
     };
     let learner = (game % 2) as u8;
     let tap: GoalTap = Arc::new(Mutex::new(Vec::new()));
-    let config = AiConfig {
-        planner: "utility".into(),
-        difficulty: setup.difficulty,
-        doctrine: None,
-    };
     let mut ai = AiDriver::new();
     for side in 0..2u8 {
+        // Each side fights by its own force's doctrine: the doctrine comes
+        // from what it has.
+        let config = AiConfig {
+            planner: "utility".into(),
+            difficulty: setup.difficulty,
+            doctrine: matchup.map(|pair| pair[side as usize].doctrine.clone()),
+        };
         let seed = game.wrapping_mul(2).wrapping_add(side as u64);
         let planner: Box<dyn AiPlanner<BattleState, Order>> = if side == learner {
             Box::new(
@@ -210,6 +246,7 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
         struck_on_learner: on,
         victory_score: state.scenario.victory_score(),
         opponent: opponent(setup, game).map_or("utility".to_string(), |(name, _)| name.clone()),
+        forces: matchup.map(|pair| [pair[0].id.clone(), pair[1].id.clone()]),
     })
 }
 
@@ -256,6 +293,23 @@ fn main() {
         },
         difficulty,
         generated: flag(&args, "--ground") == Some("generated"),
+        forces: match flag(&args, "--forces") {
+            None => Vec::new(),
+            Some("all") => {
+                let mut all: Vec<_> = reg.forces.values().collect();
+                all.sort_by(|a, b| a.id.cmp(&b.id));
+                all
+            }
+            Some(list) => list
+                .split(',')
+                .map(|id| {
+                    reg.force(id).unwrap_or_else(|| {
+                        eprintln!("error: --forces: no force `{id}`");
+                        std::process::exit(1);
+                    })
+                })
+                .collect(),
+        },
         opponents: flag(&args, "--opponents")
             .map(|list| {
                 list.split(',')
@@ -324,6 +378,21 @@ fn main() {
     }
     for (name, [w, l, d]) in &against {
         println!("  against {name}: won {w}, lost {l}, drew {d}");
+    }
+    let mut with: std::collections::BTreeMap<&str, [u32; 3]> = Default::default();
+    for battle in fought.iter().flatten() {
+        let Some(pair) = &battle.forces else { continue };
+        let row = with
+            .entry(pair[battle.learner as usize].as_str())
+            .or_default();
+        match battle.winner {
+            Some(w) if w == battle.learner => row[0] += 1,
+            Some(_) => row[1] += 1,
+            None => row[2] += 1,
+        }
+    }
+    for (name, [w, l, d]) in &with {
+        println!("  learner as {name}: won {w}, lost {l}, drew {d}");
     }
     println!("  struck by the learner: {}", share(by));
     println!("  struck on the learner: {}", share(on));

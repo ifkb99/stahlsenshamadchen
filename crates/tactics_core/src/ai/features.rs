@@ -186,6 +186,15 @@ const CONTEXT_FIXED: &[&str] = &[
     "since_friend_lost",
     "since_pinned",
     "since_order",
+    // What each side is made of — the equipment a doctrine comes from
+    // (REIMAGINED.md, *Infantry*): her own side's on the field, and what she
+    // knows of the enemy's. Armour is plate of 3 or more and not on foot,
+    // infantry is on foot, a carrier has room aboard.
+    "own_armour",
+    "own_infantry",
+    "own_carriers",
+    "known_armour",
+    "known_infantry",
 ];
 
 /// The candidate features, in order.
@@ -397,6 +406,28 @@ fn context(
         flag(since.pinned),
         flag(since.order),
     ]);
+    let kind = |u: &crate::battle::Unit| {
+        let v = registry.vehicle(&u.vehicle);
+        let foot = v.is_some_and(|v| v.movement.class == crate::data::MovementClass::Foot);
+        let armour = v.is_some_and(|v| v.armor.front >= 3) && !foot;
+        let carrier = v.is_some_and(|v| v.capacity > 0);
+        (armour, foot, carrier)
+    };
+    let mut own = [0.0f32; 3];
+    for u in state.alive_units().filter(|u| u.side == me.side) {
+        let (a, f, c) = kind(u);
+        own[0] += flag(a);
+        own[1] += flag(f);
+        own[2] += flag(c);
+    }
+    let mut known = [0.0f32; 2];
+    for u in state.known_enemies(registry, Knower::Crew(unit)) {
+        let (a, f, _) = kind(u);
+        known[0] += flag(a);
+        known[1] += flag(f);
+    }
+    out.extend(own);
+    out.extend(known);
     let verb = mission.map(|m| m.verb());
     out.extend(
         Mission::vocabulary()

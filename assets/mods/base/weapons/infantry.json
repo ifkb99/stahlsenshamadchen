@@ -34,5 +34,17 @@
         "accuracy": 70,
         "accuracy_falloff": 3,
         "reload_ticks": 1
+    },
+    {
+        "id": "squad_rifles",
+        "name": "Squad Small Arms",
+        "damage": 3,
+        "penetration": 1,
+        "damage_type": "small_arms",
+        "ammo": ["rifle_ball"],
+        "range": [1, 4],
+        "accuracy": 70,
+        "accuracy_falloff": 8,
+        "reload_ticks": 6
     }
 ]
