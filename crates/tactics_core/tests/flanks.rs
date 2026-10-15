@@ -9,6 +9,7 @@
 //! - awareness has a direction
 //! - the shock of the flank
 //! - prepared positions
+//! - smoke
 
 use tactics_core::battle::{BattleState, Event, FireIntent, Order, SideState, UnitId, hit_chance};
 use tactics_core::data::DataRegistry;
@@ -528,4 +529,99 @@ fn a_scrape_faces_the_enemy_it_was_dug_against() {
         half,
         "half from her side"
     );
+}
+
+// --- smoke --------------------------------------------------------------------
+
+#[test]
+fn a_smoke_round_blinds_the_line_it_lands_on_and_clears_in_its_time() {
+    let reg = laid(seen(registry_wireless()));
+    let mut state = stage(
+        &reg,
+        &["ggggggggg"; 3],
+        None,
+        vec![
+            unit_at([1, 1], 0, "medium_tank", "Smoker"),
+            unit_at([7, 1], 1, "medium_tank", "Watched"),
+        ],
+        51,
+    );
+    let (a, b) = (
+        state.unit(UnitId(0)).unwrap().pos,
+        state.unit(UnitId(1)).unwrap().pos,
+    );
+    assert!(state.sees_through(a, b), "open grass: they see each other");
+    let between = tactics_core::offset_to_hex(4, 1);
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: UnitId(0),
+                fire: FireIntent::Smoke {
+                    at: between,
+                    weapon: 0,
+                },
+            },
+        )
+        .unwrap();
+    // The other side holds its fire, so the stage is about the cloud.
+    state
+        .apply(
+            &reg,
+            &Order::SetFire {
+                unit: UnitId(1),
+                fire: FireIntent::Hold,
+            },
+        )
+        .unwrap();
+    let events = commit_and_resolve(&reg, &mut state);
+    assert!(
+        events.iter().any(|e| matches!(e, Event::SmokeLaid { .. })),
+        "the round goes down as smoke"
+    );
+    assert!(state.smoked(between));
+    assert!(!state.sees_through(a, b), "and the line across it is blind");
+    let spent = state.unit(UnitId(0)).unwrap().ammo.get("smoke_75").copied();
+    assert_eq!(spent, Some(3), "one of her four smoke rounds");
+    // Ninety seconds is eighteen ticks; two more rounds see it gone.
+    for _ in 0..2 {
+        commit_and_resolve(&reg, &mut state);
+    }
+    assert!(!state.smoked(between), "the cloud has cleared");
+    assert!(
+        state.sees_through(a, b),
+        "and they can see each other again"
+    );
+}
+
+#[test]
+fn a_gun_with_no_smoke_round_cannot_be_told_to_fire_smoke() {
+    let reg = registry_wireless();
+    let mut state = stage(
+        &reg,
+        &["ggggggggg"; 3],
+        None,
+        vec![
+            unit_at([1, 1], 0, "light_tank", "No smoke"),
+            unit_at([7, 1], 1, "medium_tank", "Far"),
+        ],
+        52,
+    );
+    let refused = state.apply(
+        &reg,
+        &Order::SetFire {
+            unit: UnitId(0),
+            fire: FireIntent::Smoke {
+                at: tactics_core::offset_to_hex(4, 1),
+                weapon: 0,
+            },
+        },
+    );
+    assert!(refused.is_err(), "the 37 carries no smoke: {refused:?}");
+}
+
+/// Commit both sides and play the round out.
+fn commit_and_resolve(reg: &DataRegistry, state: &mut BattleState) -> Vec<Event> {
+    commit_all(reg, state);
+    state.resolve_round(reg)
 }

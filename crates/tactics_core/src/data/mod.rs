@@ -19,7 +19,7 @@ mod scale;
 mod templates;
 mod worldgen;
 
-pub use ammo::{AmmoClass, AmmoDef};
+pub use ammo::{AmmoClass, AmmoDef, SmokeDef};
 pub use balance::{Balance, ReactionRules, RouteExposure};
 pub use casualties::Casualties;
 pub use command::{CommandRules, RankDef};

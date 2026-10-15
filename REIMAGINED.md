@@ -708,6 +708,20 @@ test, `prices` at 2,048 worlds with every flank rule on: a squad aboard
 went from 0.8 to 1.6 points and one on foot from 0.3 to 0.8 — doubled and
 still small, because where the teacher puts infantry is the bigger problem.
 
+**Smoke (2026-10-15):** a round can be smoke (`AmmoDef::smoke`, radius and
+seconds); the 75 carries four (one hex, 90 s) and the 105 six (a hex and its
+ring, 120 s). Sight in a battle has one door, `BattleState::sees_through`,
+so a cloud blinds spotting, shots and the planner alike. It is fired only
+by order (`FireIntent::Smoke`) — the loader never picks it, and the
+snapshot did not move with smoke in every rack. Quick test, `flank --round
+--smoke` (a screen standing three rounds along the flanker's way, 800 a
+row, ±20): goes-round wins 411 → 432 in the open, 294 → 303 behind the
+hedge — a little, inside the noise: the screen covers the middle of her
+route, she starts it in plain sight, and the cloud blinds her as well as
+them. **Nothing in the AI lays smoke**; when and where to is a decision
+for the learner — the obvious next candidate, beside the places it
+already chooses among.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or

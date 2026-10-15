@@ -167,6 +167,16 @@ impl FogMap {
     /// map carries empty ones — and `visible_key` is *indexed* by side during
     /// recompute, so an empty one panics rather than merely recomputing. The
     /// sizes cannot come from serde because they depend on the side count.
+    /// Drop every crew's cached view, so the next recompute looks again:
+    /// smoke laid or cleared changes what anybody can see without anybody
+    /// moving, and the caches are keyed on where they stand.
+    pub fn forget_vision(&mut self) {
+        self.vision.clear();
+        for key in &mut self.visible_key {
+            key.clear();
+        }
+    }
+
     pub fn rehydrate(&mut self) {
         self.vision.clear();
         self.visible_key = vec![Vec::new(); self.sides.len()];
@@ -517,7 +527,7 @@ pub fn los_clear(registry: &DataRegistry, map: &HexMap, from: Hex, to: Hex) -> b
 /// Every tile visible from `pos` at `range`, ignoring any cache.
 fn look(state: &BattleState, pos: Hex, range: u32) -> HashSet<Hex> {
     pos.range(range)
-        .filter(|hex| state.world.contains(*hex) && state.world.sight_clear(pos, *hex))
+        .filter(|hex| state.world.contains(*hex) && state.sees_through(pos, *hex))
         .collect()
 }
 
@@ -553,7 +563,7 @@ pub(crate) fn sees(registry: &DataRegistry, state: &BattleState, id: UnitId, tar
     }
     unit.pos.distance_to(target) <= range as i32
         && state.world.contains(target)
-        && state.world.sight_clear(unit.pos, target)
+        && state.sees_through(unit.pos, target)
 }
 
 /// What it takes for one side to find one enemy this tick.

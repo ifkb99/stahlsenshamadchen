@@ -28,6 +28,10 @@ pub enum FireIntent {
     Target { target: UnitId, weapon: usize },
     /// Shell a tile without a confirmed target, at a heavy accuracy penalty.
     Area { at: Hex, weapon: usize },
+    /// Fire a smoke round at a tile: a cloud where it lands, to blind a gun
+    /// or screen a move (`AmmoDef::smoke`). The only way a smoke round
+    /// leaves a gun — the loader never chooses one.
+    Smoke { at: Hex, weapon: usize },
 }
 
 /// Everything a unit was told to do this round.
@@ -188,6 +192,17 @@ pub enum Event {
     Traversed {
         unit: UnitId,
         toward: Hex,
+    },
+    /// A smoke round came down at `at` and laid a cloud over `hexes`, which
+    /// stands until absolute tick `until`.
+    SmokeLaid {
+        at: Hex,
+        hexes: Vec<Hex>,
+        until: u64,
+    },
+    /// The smoke on these hexes has cleared.
+    SmokeCleared {
+        hexes: Vec<Hex>,
     },
     /// The unit ran into an unspotted enemy and stopped short; the rest of
     /// its route is abandoned.
@@ -655,6 +670,8 @@ impl Event {
             Event::UnitMoved { .. }
             | Event::Pivoted { .. }
             | Event::Traversed { .. }
+            | Event::SmokeLaid { .. }
+            | Event::SmokeCleared { .. }
             | Event::UnitTrapped { .. }
             | Event::ShotFired { .. }
             | Event::ShellLanded { .. }
@@ -739,6 +756,8 @@ impl Event {
 pub enum OrderError {
     #[error("the battle is over")]
     BattleOver,
+    #[error("that gun fires no smoke")]
+    NoSmoke,
     #[error("unit does not exist or is destroyed")]
     NoSuchUnit,
     #[error("orders are closed while the round resolves")]
@@ -1343,6 +1362,19 @@ impl BattleState {
                 }
                 self.weapon_def(registry, id, weapon)?;
             }
+            FireIntent::Smoke { at, weapon } => {
+                if !self.world.contains(at) {
+                    return Err(OrderError::NotOnMap);
+                }
+                let w = self.weapon_def(registry, id, weapon)?;
+                let carries = w
+                    .ammo
+                    .iter()
+                    .any(|a| registry.ammo(a).is_some_and(|a| a.smoke.is_some()));
+                if !carries {
+                    return Err(OrderError::NoSmoke);
+                }
+            }
         }
         Ok(())
     }
@@ -1396,6 +1428,21 @@ impl BattleState {
         }
 
         let mut events = vec![Event::TickStarted { tick }];
+        // Smoke that has stood its time clears at the top of the tick, and
+        // every crew's view is looked at again: what she can see is a fact
+        // about the moment now, not about the map alone.
+        let now = self.absolute_tick(registry);
+        let (gone, standing): (Vec<super::Smoke>, Vec<super::Smoke>) =
+            std::mem::take(&mut self.smoke)
+                .into_iter()
+                .partition(|s| s.until <= now);
+        self.smoke = standing;
+        if !gone.is_empty() {
+            self.fog.forget_vision();
+            events.push(Event::SmokeCleared {
+                hexes: gone.into_iter().map(|s| s.hex).collect(),
+            });
+        }
         for unit in self.units.iter_mut().filter(|u| u.alive()) {
             for cd in &mut unit.cooldowns {
                 *cd = cd.saturating_sub(1);

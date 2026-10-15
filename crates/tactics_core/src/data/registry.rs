@@ -742,11 +742,12 @@ impl DataRegistry {
 
         for weapon in v.weapons.iter().filter_map(|w| self.weapons.get(w)) {
             // A declared-but-empty rack counts as no rounds: the entry says a
-            // space exists, not that anything is in it.
-            let fed = weapon
-                .ammo
-                .iter()
-                .any(|a| v.stowage.get(a).is_some_and(|n| *n > 0));
+            // space exists, not that anything is in it. Nor does smoke: a
+            // gun with only smoke aboard has nothing to fight with.
+            let fed = weapon.ammo.iter().any(|a| {
+                v.stowage.get(a).is_some_and(|n| *n > 0)
+                    && self.ammo.get(a).is_none_or(|a| a.smoke.is_none())
+            });
             if !weapon.ammo.is_empty() && !fed {
                 report.warn(format!(
                     "vehicle `{}` carries `{}` but stows none of the ammo it fires ({})",

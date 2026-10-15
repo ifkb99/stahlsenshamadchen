@@ -169,6 +169,12 @@ fn main() {
                 Event::Traversed { unit, .. } => {
                     println!("{} traverses onto a new target", name(&state, *unit))
                 }
+                Event::SmokeLaid { hexes, .. } => {
+                    println!("smoke goes down over {} hex(es)", hexes.len())
+                }
+                Event::SmokeCleared { hexes } => {
+                    println!("the smoke over {} hex(es) clears", hexes.len())
+                }
                 Event::UnitTrapped { unit, .. } => {
                     println!("{} AMBUSHED mid-move!", name(&state, *unit))
                 }

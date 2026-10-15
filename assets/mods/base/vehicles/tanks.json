@@ -111,6 +111,7 @@
         "stowage": {
             "ap_75": 40,
             "he_75": 30,
+            "smoke_75": 4,
             "ball_mg": 2800
         },
         "modules": [
@@ -239,7 +240,8 @@
             "howitzer_105"
         ],
         "stowage": {
-            "he_105": 40
+            "he_105": 40,
+            "smoke_105": 6
         },
         "modules": [
             "main_gun",

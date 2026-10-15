@@ -1232,6 +1232,12 @@ fn pump_events(
                     format!("{} is traversing.", name(*unit))
                 });
             }
+            BattleEvent::SmokeLaid { hexes, .. } => {
+                log.push(format!("Smoke goes down over {} hex(es).", hexes.len()));
+            }
+            BattleEvent::SmokeCleared { hexes } => {
+                log.push(format!("The smoke over {} hex(es) clears.", hexes.len()));
+            }
             BattleEvent::UnitTrapped { unit, .. } => {
                 log.push(if mine(*unit) {
                     traffic(*unit, "ambush! we're in it —")
@@ -3001,7 +3007,7 @@ fn update_highlights(
         let from = unit.planned_destination();
         let at = match unit.intent.fire {
             FireIntent::Hold => None,
-            FireIntent::Area { at, .. } => Some(at),
+            FireIntent::Area { at, .. } | FireIntent::Smoke { at, .. } => Some(at),
             FireIntent::Target { target, .. } => battle.state.unit(target).map(|t| t.pos),
         };
         let Some(at) = at else { continue };

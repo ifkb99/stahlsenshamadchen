@@ -568,7 +568,7 @@ fn drive(
                 .iter()
                 .filter(|hex| {
                     guns.iter().any(|(from, reach)| {
-                        from.distance_to(**hex) <= *reach && state.world.sight_clear(*from, **hex)
+                        from.distance_to(**hex) <= *reach && state.sees_through(*from, **hex)
                     })
                 })
                 .count();

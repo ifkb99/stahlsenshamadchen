@@ -941,6 +941,10 @@ pub fn best_round_against<'r>(
         let Some(ammo) = registry.ammo(id) else {
             continue;
         };
+        // Smoke is fired when somebody says so, never chosen for a target.
+        if ammo.smoke.is_some() {
+            continue;
+        }
         let round = mustered(registry, state, unit, Round::loaded(ammo, weapon));
         let Some(profile) = shot_profile(registry, state, weapon, &round, u.pos, target, tgt_pos)
         else {
@@ -983,6 +987,9 @@ pub fn best_round_for_ground<'r>(
         let Some(ammo) = registry.ammo(id) else {
             continue;
         };
+        if ammo.smoke.is_some() {
+            continue;
+        }
         if best.as_ref().is_none_or(|(b, _)| ammo.blast > *b) {
             best = Some((
                 ammo.blast,
@@ -1230,6 +1237,11 @@ fn shell_lands(
     else {
         return;
     };
+    // A smoke shell lays its cloud and does nothing else.
+    if let Some(cloud) = ammo.smoke.as_ref() {
+        lay_smoke(registry, state, shell.impact, cloud, events);
+        return;
+    }
     let round = Round::loaded(ammo, weapon);
 
     // Everyone standing where it came down, not whoever happens to be first
@@ -1693,7 +1705,7 @@ pub fn best_weapon_from(
         if !(weapon.range[0] as i32..=weapon.range[1] as i32).contains(&dist) {
             continue;
         }
-        if !weapon.indirect && !state.world.sight_clear(from, at) {
+        if !weapon.indirect && !state.sees_through(from, at) {
             continue;
         }
         let value = expected_shot(registry, state, attacker, from, weapon, target, at, false);
@@ -1844,7 +1856,7 @@ pub fn preview_attack(
     // attacker and own a loaded direct-fire weapon that reaches.
     let counter = {
         let can_see = state.fog.side(tgt.side).spotted.contains(&attacker)
-            && state.world.sight_clear(tgt.pos, att.pos);
+            && state.sees_through(tgt.pos, att.pos);
         if can_see {
             tgt_vehicle
                 .weapons
@@ -2675,7 +2687,7 @@ fn shot_exists(
         // Indirect fire needs somebody watching, not its own eyes.
         spotted
     } else {
-        state.world.sight_clear(from, target_pos)
+        state.sees_through(from, target_pos)
     }
 }
 
@@ -2692,6 +2704,50 @@ fn weapon_at<'r>(
         .and_then(|w| registry.weapon(w))
 }
 
+/// The first smoke round in her racks for this gun, if she has one left.
+fn smoke_round<'r>(
+    registry: &'r DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    weapon: &WeaponDef,
+) -> Option<Round<'r>> {
+    let u = state.unit(unit)?;
+    weapon
+        .ammo
+        .iter()
+        .filter(|id| u.ammo.get(*id).copied().unwrap_or(0) > 0)
+        .filter_map(|id| registry.ammo(id))
+        .find(|a| a.smoke.is_some())
+        .map(|ammo| Round::loaded(ammo, weapon))
+}
+
+/// Lay the cloud a smoke round makes where it came down: the impact hex and
+/// every hex within the round's radius that is on the map, standing for its
+/// seconds in whole ticks. A hex already smoked keeps the later clearing.
+/// Everybody's view is looked at again.
+fn lay_smoke(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    at: Hex,
+    smoke: &crate::data::SmokeDef,
+    events: &mut Vec<Event>,
+) {
+    let ticks = (smoke.seconds as f32 / registry.scale.tick_seconds().max(f32::EPSILON)).ceil();
+    let until = state.absolute_tick(registry) + ticks as u64;
+    let hexes: Vec<Hex> = at
+        .range(smoke.radius)
+        .filter(|h| state.world.contains(*h))
+        .collect();
+    for hex in &hexes {
+        match state.smoke.iter_mut().find(|s| s.hex == *hex) {
+            Some(s) => s.until = s.until.max(until),
+            None => state.smoke.push(super::Smoke { hex: *hex, until }),
+        }
+    }
+    state.fog.forget_vision();
+    events.push(Event::SmokeLaid { at, hexes, until });
+}
+
 /// Take the chambered round out of the racks, announcing the moment a gun
 /// runs completely dry. Returns `None` — and fires nothing — for a gun
 /// whose whole ammunition list is spent; the legacy path spends nothing
@@ -2703,13 +2759,15 @@ fn chamber_and_spend<'r>(
     unit: UnitId,
     weapon: &WeaponDef,
     aim: Option<UnitId>,
+    smoke: bool,
     events: &mut Vec<Event>,
 ) -> Option<Round<'r>> {
     // The loader's choice: a confirmed target gets the round that expects
     // the most against it, ground gets the most blast aboard. Same
     // selectors the AI priced the shot with, so what leaves the muzzle is
-    // what the plan was worth.
+    // what the plan was worth. Smoke is the one round she is told to load.
     let round = match aim {
+        _ if smoke => smoke_round(registry, state, unit, weapon)?,
         Some(target) => best_round_against(registry, state, unit, weapon, target)?,
         None => best_round_for_ground(registry, state, unit, weapon)?,
     };
@@ -2831,8 +2889,15 @@ fn fire_at_unit(
     if !lay_on(registry, state, attacker, tgt_pos, events) {
         return;
     }
-    let Some(round) = chamber_and_spend(registry, state, attacker, &weapon, Some(target), events)
-    else {
+    let Some(round) = chamber_and_spend(
+        registry,
+        state,
+        attacker,
+        &weapon,
+        Some(target),
+        false,
+        events,
+    ) else {
         return;
     };
     // Asked before the mutable borrow, and asked of the crew rather than the
@@ -2885,6 +2950,7 @@ fn fire_at_tile(
     attacker: UnitId,
     weapon_index: usize,
     at: Hex,
+    smoke: bool,
     events: &mut Vec<Event>,
 ) {
     let Some(weapon) = weapon_at(registry, state, attacker, weapon_index).cloned() else {
@@ -2898,7 +2964,8 @@ fn fire_at_tile(
     }
     // Spent whether or not anybody is standing there: shelling empty ground
     // costs the shell.
-    let Some(round) = chamber_and_spend(registry, state, attacker, &weapon, None, events) else {
+    let Some(round) = chamber_and_spend(registry, state, attacker, &weapon, None, smoke, events)
+    else {
         return;
     };
     let reload = crewed_reload(registry, state, attacker, &weapon);
@@ -2907,6 +2974,25 @@ fn fire_at_tile(
         .and_then(|att| att.cooldowns.get_mut(weapon_index))
     {
         *cd = reload;
+    }
+    // A gun firing smoke over open sights lays it where she aimed, at once:
+    // a direct shot is over inside the tick. A howitzer's smoke flies like
+    // any shell and lays its cloud where it comes down (`shell_lands`).
+    if let Some(cloud) = round.ammo.and_then(|a| a.smoke.as_ref())
+        && !weapon.indirect
+    {
+        events.push(Event::ShotFired {
+            attacker,
+            from: att_pos,
+            at,
+            weapon: weapon.id.clone(),
+            blind: true,
+            opportunity: false,
+            moving: state.unit(attacker).is_some_and(|a| a.moved > 0),
+        });
+        let cloud = cloud.clone();
+        lay_smoke(registry, state, at, &cloud, events);
+        return;
     }
     // Shelling ground is what an indirect gun does natively, so this is the
     // path where flight time is least surprising: the shell goes up, and who
@@ -3099,6 +3185,8 @@ pub enum FireAction {
     AtTile {
         weapon: usize,
         at: Hex,
+        /// A smoke round, by order (`FireIntent::Smoke`).
+        smoke: bool,
     },
 }
 
@@ -3158,7 +3246,25 @@ pub fn fire_decision(
                 && weapon_at(registry, state, unit, weapon)
                     .is_some_and(|w| shot_exists(state, w, att_pos, at, true));
             if can_shell {
-                return Some(FireAction::AtTile { weapon, at });
+                return Some(FireAction::AtTile {
+                    weapon,
+                    at,
+                    smoke: false,
+                });
+            }
+        }
+        FireIntent::Smoke { at, weapon } => {
+            let can_smoke = weapon_ready(registry, state, unit, weapon)
+                && weapon_at(registry, state, unit, weapon).is_some_and(|w| {
+                    shot_exists(state, w, att_pos, at, true)
+                        && smoke_round(registry, state, unit, w).is_some()
+                });
+            if can_smoke {
+                return Some(FireAction::AtTile {
+                    weapon,
+                    at,
+                    smoke: true,
+                });
             }
         }
         FireIntent::Hold => {}
@@ -3191,8 +3297,8 @@ pub fn execute_fire(
             target,
             opportunity,
         } => fire_at_unit(registry, state, unit, weapon, target, opportunity, events),
-        FireAction::AtTile { weapon, at } => {
-            fire_at_tile(registry, state, unit, weapon, at, events)
+        FireAction::AtTile { weapon, at, smoke } => {
+            fire_at_tile(registry, state, unit, weapon, at, smoke, events)
         }
     }
 }

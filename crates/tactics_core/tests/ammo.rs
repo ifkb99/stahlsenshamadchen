@@ -163,12 +163,21 @@ fn a_vehicle_cannot_carry_more_than_it_has_racks_for() {
     // Capacity is the whole vehicle, not one rack, so emptying the belts
     // makes room for shells. That is the crude part of this model and it is
     // the part a real prep phase will price properly.
-    state
-        .set_loadout(&reg, panther, "ball_mg", 0)
-        .expect("the belts come out");
-    state
-        .set_loadout(&reg, panther, "he_75", 0)
-        .expect("and so does the high explosive");
+    // Every other rack emptied, whatever the chassis carries: belts, high
+    // explosive, smoke.
+    let others: Vec<String> = reg
+        .vehicle("medium_tank")
+        .expect("vehicle")
+        .stowage
+        .keys()
+        .filter(|id| *id != "ap_75")
+        .cloned()
+        .collect();
+    for id in &others {
+        state
+            .set_loadout(&reg, panther, id, 0)
+            .expect("the other racks come out");
+    }
     state
         .set_loadout(&reg, panther, "ap_75", capacity)
         .expect("which leaves the whole vehicle free for shot");
@@ -315,6 +324,7 @@ fn penetration_falls_off_with_range_for_shot_and_holds_for_a_shaped_charge() {
         blast: 2,
         suppression: 0,
         velocity: 450,
+        smoke: None,
     };
     for hexes in 0..20 {
         assert_eq!(heat.penetration_at(hexes, [1, 12]), 7);
@@ -338,6 +348,7 @@ fn a_chemical_round_that_loses_penetration_downrange_is_a_warning() {
             blast: 2,
             suppression: 0,
             velocity: 450,
+            smoke: None,
         },
     );
     let report = reg.validate();

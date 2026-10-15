@@ -302,7 +302,7 @@ impl Evaluator {
                     let supported = dist as f32 <= support
                         && friends
                             .iter()
-                            .any(|(d, at)| *d == dist && state.world.sight_clear(*at, tile));
+                            .any(|(d, at)| *d == dist && state.sees_through(*at, tile));
                     let apart = if supported {
                         0.0
                     } else {

@@ -490,7 +490,7 @@ fn candidate(
 
     // The relational facts. Distances and counts, and cosines of angles
     // between differences — never a bearing, which a reflection turns round.
-    let sight = |from: Hex, to: Hex| state.world.sight_clear(from, to);
+    let sight = |from: Hex, to: Hex| state.sees_through(from, to);
     let nearest_enemy = scene
         .enemies
         .iter()

@@ -1278,6 +1278,19 @@ every rule mutation-checked. Measured by `examples/flank` (`--hedge`, `--set`).
   dug — whole from her front, `dig_in_flank_percent` from anywhere else, so
   a flank goes round a scrape. Shipped: infantry 2 a round, cap 20, flank
   50; vehicles 0.
+- **Smoke** (`AmmoDef::smoke`: a radius and seconds; `BattleState::smoke`,
+  saved). **`BattleState::sees_through` is the one door for sight in a
+  battle** — the ground's line and no cloud on it, or on either end beyond
+  the next hex — and every battle and AI caller asks it; only the terrain
+  reader (`ground`) asks the bare ground. Laying or clearing a cloud calls
+  `FogMap::forget_vision`, because the vision cache is keyed on where crews
+  stand. A smoke round is fired **only by order** (`FireIntent::Smoke`,
+  refused with `NoSmoke` for a gun without one); both round selectors skip
+  smoke, which is why the snapshot did not move with smoke in every racks,
+  and a gun fed only smoke still draws the empty-gun warning. Direct fire
+  lays it at once, a howitzer when the shell lands. Shipped: `smoke_75`
+  (one hex, 90 s, four in the medium), `smoke_105` (a hex and its ring,
+  120 s, six in the battery). **Nothing in the AI fires smoke yet.**
 - **Awareness has a direction.** A looker keeps
   `balance.flank_search_percent` (100) of her chance against somebody
   outside her frontal arc — measured from `laid`, because the commander's

@@ -158,6 +158,22 @@ pub struct AmmoDef {
     /// shell is genuinely in the air across ticks, is the case that will need
     /// it, and because the number is part of what a round *is*.
     pub velocity: u32,
+    /// A smoke round: what lands is a cloud, not a burst (REIMAGINED.md,
+    /// *Flanks*). Never the loader's own choice — a gun fires smoke when it
+    /// is told to (`FireIntent::Smoke`) — and absent on every other round.
+    #[serde(default)]
+    pub smoke: Option<SmokeDef>,
+}
+
+/// The cloud a smoke round lays where it lands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SmokeDef {
+    /// Hexes round the impact the cloud covers; zero is the impact alone.
+    #[serde(default)]
+    pub radius: u32,
+    /// Seconds it stands before it clears — scale-free, like a reload, and
+    /// turned into ticks through the mod's scale.
+    pub seconds: u32,
 }
 
 /// A round that says nothing about behind-armour effect is ordinary: getting

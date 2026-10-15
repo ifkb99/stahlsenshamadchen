@@ -159,5 +159,43 @@
         "velocity": 470,
         "description": "Lobbed rather than aimed, and it does not need to hit. The howitzer fires nothing else, which is the whole argument for keeping her behind the ridge and someone else in front of it.",
         "volatility": 1.5
+    },
+    {
+        "id": "smoke_75",
+        "name": "75mm Smoke",
+        "class": "explosive",
+        "penetration": [
+            0,
+            0
+        ],
+        "post_pen": 1.0,
+        "blast": 0,
+        "suppression": 0,
+        "velocity": 550,
+        "smoke": {
+            "radius": 0,
+            "seconds": 90
+        },
+        "description": "A burster and a canister of white phosphorus: a hex of cloud for a minute and a half. Fired only when somebody says so, to blind a gun or to hide a bound across open ground.",
+        "volatility": 1.0
+    },
+    {
+        "id": "smoke_105",
+        "name": "105mm Smoke",
+        "class": "explosive",
+        "penetration": [
+            0,
+            0
+        ],
+        "post_pen": 1.0,
+        "blast": 0,
+        "suppression": 0,
+        "velocity": 470,
+        "smoke": {
+            "radius": 1,
+            "seconds": 120
+        },
+        "description": "A base-ejection smoke shell: a hex and its ring of cloud for two minutes, where it comes down. Enough to screen a platoon's bound from the guns watching it.",
+        "volatility": 1.0
     }
 ]

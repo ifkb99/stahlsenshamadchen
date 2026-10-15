@@ -66,6 +66,13 @@ use std::sync::Arc;
 /// engagement into another keeps the name the world gave her, and two
 /// engagements that merge keep both sets of names. Ask for a unit by id
 /// through [`Battle::lookup`], never by indexing `units` with it.
+/// One hex of a smoke cloud, and the absolute tick it clears on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Smoke {
+    pub hex: Hex,
+    pub until: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct UnitId(pub u32);
 
@@ -822,6 +829,12 @@ pub struct Battle<C = Built> {
     /// it was: a battle whose artillery arrived the instant it was fired.
     #[serde(default)]
     pub shells: Vec<ShellInFlight>,
+    /// Smoke standing on the field: a hex and the absolute tick it clears
+    /// on, in the order it was laid. A line of sight that crosses it is
+    /// blocked (`sees_through`). `#[serde(default)]`: a battle saved before
+    /// smoke had none.
+    #[serde(default)]
+    pub smoke: Vec<Smoke>,
     /// Who answers to whom: the map's formations resolved against the units
     /// that actually spawned.
     ///
@@ -884,6 +897,7 @@ impl SavedBattle {
             mut objective_held,
             mut score,
             shells,
+            smoke,
             command,
             commanders,
             built: Unbuilt,
@@ -926,6 +940,7 @@ impl SavedBattle {
             objective_held,
             score,
             shells,
+            smoke,
             command,
             commanders,
             built: Built(()),
@@ -1086,6 +1101,7 @@ impl BattleState {
             objective_held: vec![None; objective_count],
             score: vec![0; side_count],
             shells: Vec::new(),
+            smoke: Vec::new(),
             command,
             commanders: Vec::new(),
             built: Built(()),
@@ -1203,6 +1219,7 @@ impl BattleState {
             objective_held: vec![None; objective_count],
             score: vec![0; side_count],
             shells: Vec::new(),
+            smoke: Vec::new(),
             command,
             commanders: Vec::new(),
             built: Built(()),
@@ -2190,6 +2207,40 @@ impl BattleState {
     /// Objective points a side has collected so far.
     pub fn score(&self, side: u8) -> u32 {
         self.score.get(side as usize).copied().unwrap_or(0)
+    }
+
+    /// Whether a smoke cloud stands on `hex` this tick.
+    pub fn smoked(&self, hex: Hex) -> bool {
+        self.smoke.iter().any(|s| s.hex == hex)
+    }
+
+    /// Whether a line from `from` to `to` is clear **in this battle**: the
+    /// ground's sight line, and no smoke in the way. The one door every
+    /// battle question about sight goes through — spotting, a shot existing,
+    /// the planner's reading of who can see whom — so a cloud blinds all of
+    /// them alike. The terrain reader (`ground`) asks the ground alone,
+    /// because it reads the land, not the moment.
+    ///
+    /// A cloud on any hex the line crosses blocks it, and so does one on
+    /// either end: a crew inside smoke sees out no further than the hex
+    /// beside her, and is seen no further. The steps are every hex the line
+    /// could be in (`fog::ray_hexes`), so a grazing line is read the same
+    /// from either mirror.
+    pub fn sees_through(&self, from: Hex, to: Hex) -> bool {
+        if !self.world.sight_clear(from, to) {
+            return false;
+        }
+        let steps = from.distance_to(to);
+        if self.smoke.is_empty() || steps <= 1 {
+            return true;
+        }
+        if self.smoked(from) || self.smoked(to) {
+            return false;
+        }
+        (1..steps as usize).all(|i| {
+            let (hexes, n) = fog::ray_hexes(from, to, i, steps as f32);
+            !hexes[..n].iter().any(|h| self.smoked(*h))
+        })
     }
 
     /// The side ahead on objectives, if exactly one is. `None` covers both

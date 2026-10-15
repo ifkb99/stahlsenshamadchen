@@ -28,6 +28,9 @@
 //! their side, which is the only case where where they are looking matters —
 //! a contact once found is held while she stays in view.
 //!
+//! `--smoke` (with `--round`) stands a smoke screen along the flanker's way
+//! for the first three rounds.
+//!
 //! `FLANK_TRACE=<seed>` prints, for that battle, where the flanker is each
 //! round, whether the defenders have her, and how they face and are laid.
 //!
@@ -77,6 +80,10 @@ struct Case {
     /// A march her commander radios her at the start, `Binding`, so she
     /// goes the whole way round rather than stopping for cover.
     march: Option<[i32; 2]>,
+    /// A smoke screen standing for the first three rounds along the
+    /// flanker's way, between her and the defenders: what the screen a
+    /// battery or the tank beside her would lay is worth to getting there.
+    smoke_screen: bool,
 }
 
 fn battle(
@@ -140,6 +147,18 @@ fn battle(
     ) else {
         return Tally::default();
     };
+    if case.smoke_screen {
+        let until = 3 * reg.scale.ticks_per_round as u64;
+        for col in 14..case.defend {
+            for row in 12..=13 {
+                state.smoke.push(tactics_core::battle::Smoke {
+                    hex: tactics_core::offset_to_hex(col, row),
+                    until,
+                });
+            }
+        }
+        state.fog.forget_vision();
+    }
     if let Some(to) = case.march {
         let said = state.apply(
             reg,
@@ -258,6 +277,7 @@ fn main() {
                 defend: 24,
                 screen: args.iter().any(|a| a == "--screen"),
                 march: None,
+                smoke_screen: args.iter().any(|a| a == "--smoke"),
             };
             vec![
                 ("stays", [12, 18], Some(Facing::East), far),
@@ -287,6 +307,7 @@ fn main() {
                             defend: 20,
                             screen: false,
                             march: None,
+                            smoke_screen: false,
                         },
                     )
                 })
