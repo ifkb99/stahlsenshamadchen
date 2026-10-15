@@ -1358,6 +1358,40 @@ fn an_unseen_crew_holds_her_rockets_for_the_killing_shot() {
     );
 }
 
+#[test]
+fn a_mod_with_no_ambush_patience_takes_the_coin_flip_shot() {
+    // The threshold is `balance.ambush_patience_percent`, not a constant in
+    // Rust: the same unseen platoon and the same tank destroyer at the
+    // rocket's full reach, under a mod that says an unseen crew fires the
+    // moment she has a shot worth anything. The shipped 25 holds it (the
+    // test above); zero spends it.
+    let mut reg = registry_wireless();
+    reg.balance.ambush_patience_percent = 0;
+    let rows = ["ggggg", "gfggg", "ggggg"];
+    let mut state = two_side_battle(
+        &reg,
+        &rows,
+        vec![
+            unit_at([1, 1], 0, "rifle_platoon", "Ambush"),
+            unit_at([4, 1], 1, "tank_destroyer", "Passerby"),
+        ],
+        601,
+    );
+    let platoon = UnitId(0);
+    assert!(
+        !state.fog.side(1).spotted.contains(&platoon),
+        "the stage needs her unseen"
+    );
+    commit_all(&reg, &mut state);
+    assert!(
+        state
+            .resolve_round(&reg)
+            .iter()
+            .any(|e| matches!(e, BattleEvent::ShotFired { attacker, .. } if *attacker == platoon)),
+        "with no patience the coin-flip shot is taken"
+    );
+}
+
 // --- shells in flight ------------------------------------------------------
 
 /// A battery west, a target east, and nothing but grass between them.

@@ -2,21 +2,21 @@
     {
         "id": "western_team",
         "name": "Western company team",
-        "description": "A tank platoon with a mechanised platoon cross-attached: the balanced team NATO armies fought in, three squads riding three carriers beside three tanks.",
+        "description": "A tank platoon with a mechanised platoon cross-attached: the balanced team NATO armies fought in, four squads riding four carriers (three rifle squads and the weapons squad's carrier, as a mechanised platoon had) beside three tanks.",
         "doctrine": "bounding_overwatch",
         "units": [
             { "vehicle": "medium_tank", "count": 3 },
-            { "vehicle": "apc", "count": 3, "carries": "rifle_squad" }
+            { "vehicle": "apc", "count": 4, "carries": "rifle_squad" }
         ]
     },
     {
         "id": "soviet_motor_rifle",
         "name": "Soviet motor rifle company",
-        "description": "Infantry-heavy: two motor rifle platoons, a squad to each open-topped carrier, with a tank section. The motor rifle division fielded about three tanks to every rifle platoon.",
+        "description": "Infantry-heavy: a motor rifle company of three platoons, a squad to each of nine open-topped carriers, with a tank platoon attached for the attack. Its tanks lead: a force deploys in the order it is listed.",
         "doctrine": "massed_armor",
         "units": [
-            { "vehicle": "halftrack", "count": 6, "carries": "rifle_squad" },
-            { "vehicle": "medium_tank", "count": 2 }
+            { "vehicle": "medium_tank", "count": 4 },
+            { "vehicle": "halftrack", "count": 9, "carries": "rifle_squad" }
         ]
     },
     {
@@ -32,11 +32,11 @@
     {
         "id": "western_cavalry",
         "name": "Western armored cavalry troop",
-        "description": "Eyes first: scout cars and light tanks screening, a medium tank and a mechanised section behind them.",
+        "description": "Eyes first: scout cars and a light tank section screening, a medium tank and a mechanised section behind them.",
         "doctrine": "recon_pull",
         "units": [
             { "vehicle": "recon_car", "count": 2 },
-            { "vehicle": "light_tank", "count": 2 },
+            { "vehicle": "light_tank", "count": 3 },
             { "vehicle": "medium_tank" },
             { "vehicle": "apc", "count": 2, "carries": "rifle_squad" }
         ]

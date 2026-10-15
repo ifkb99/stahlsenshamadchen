@@ -37,6 +37,10 @@ fn detection_certain() -> i32 {
     100
 }
 
+fn ambush_patience() -> i32 {
+    25
+}
+
 /// Serde defaults for the numbers that were Rust constants until 2026-08-27.
 /// Each returns exactly the constant it replaced, so a mod that declares a
 /// `balance` block and says nothing about them gets the game it always had.
@@ -413,6 +417,15 @@ pub struct Balance {
     /// an `if` in Rust.
     #[serde(default)]
     pub stray_percent: i32,
+    /// Ambush discipline: how much of a target's remaining substance a shot
+    /// must be expected to take, in percent, before a crew the enemy has not
+    /// seen gives herself away with it on her own initiative. An ordered shot
+    /// is exempt, and so is a crew who has been seen or has decided to
+    /// fight. 25, the default, is the rule as it was written in Rust; zero is
+    /// no patience at all — every unseen crew fires the moment she has a
+    /// shot worth anything.
+    #[serde(default = "ambush_patience")]
+    pub ambush_patience_percent: i32,
     /// Chance in 100 that a crew who has an enemy in her field of view
     /// actually picks her out of it, per tick, before anything is subtracted
     /// for the ground or added for the enemy's driving.
@@ -602,6 +615,7 @@ impl Default for Balance {
             // two crews. The base mod turns it on; a mod that says nothing
             // about stacking never meets the rule.
             stray_percent: 0,
+            ambush_patience_percent: ambush_patience(),
         }
     }
 }

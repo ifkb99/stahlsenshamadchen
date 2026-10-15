@@ -89,6 +89,12 @@ pub fn apply_override(reg: &mut DataRegistry, ov: &Override) -> Result<String, S
             None => Err("no `command` block is declared by these mods".to_string()),
             Some(rules) => patch!(*rules, rest),
         },
+        // The ground a generated battle stands on, so a question about the
+        // land (more wood, fewer hedges) is swept like any other number.
+        "worldgen" => match reg.worldgen.as_mut() {
+            None => Err("no `worldgen` block is declared by these mods".to_string()),
+            Some(rules) => patch!(*rules, rest),
+        },
         "vehicle" | "weapon" | "ammo" | "module" | "terrain" | "doctrine" => {
             let (id, within) = rest
                 .split_once('.')
@@ -116,7 +122,7 @@ pub fn apply_override(reg: &mut DataRegistry, ov: &Override) -> Result<String, S
         }
         other => Err(format!(
             "`{other}` is not something to set. Blocks: balance, scale, casualties, \
-             morale, reaction, command, planner. Content: vehicle.<id>, weapon.<id>, \
+             morale, reaction, command, planner, worldgen. Content: vehicle.<id>, weapon.<id>, \
              ammo.<id>, module.<id>, terrain.<id>, doctrine.<id>."
         )),
     }

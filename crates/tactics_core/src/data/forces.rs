@@ -23,6 +23,11 @@ pub struct ForceDef {
     pub description: String,
     /// The doctrine its commander fights by (a `DoctrineDef` id).
     pub doctrine: String,
+    /// What it brings, **in the order it deploys**: the first line takes the
+    /// deployment hexes nearest the front. The order is the author's to give
+    /// and it matters — the Soviet motor rifle company listed its nine
+    /// carriers before its tanks and won 42.8% against the field where the
+    /// same force with its tanks first won 52.1% (2026-10-15).
     pub units: Vec<ForceUnit>,
 }
 

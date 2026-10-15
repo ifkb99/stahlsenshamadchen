@@ -542,6 +542,71 @@ seat** as the control (`rollout --net utility`):
 - The gain arrived by iteration 10 and longer training did not add to it;
   entropy fell 3.40 → 2.75 over the run.
 
+## Pricing (2026-10-15)
+
+The designer's ruling that the motor rifle company had to be repriced, and
+an instrument to do it with: **`examples/prices`** draws two random forces a
+world (up to three of each chassis, up to six squads, aboard where there is
+a carrier and on foot where there is not), fights them utility against
+utility on generated ground with the forces exchanged between the ends, and
+fits `P(win) = σ(seat + Σ worth × count difference)`. Fitted on half the
+worlds it calls 76–77% of the other half's battles (log-loss 0.48 against a
+coin's 0.69). 8,192 worlds, in points with the medium tank held at its
+listed 16:
+
+| chassis | fitted | listed |
+| --- | --- | --- |
+| medium tank | 16.0 | 16 |
+| light tank | 13.3 | 10 |
+| tank destroyer | 15.7 | 18 |
+| recon car | 2.1 | 6 |
+| APC | 2.8 | 10 |
+| halftrack | 1.2 | 8 |
+| squad, aboard | 0.8 | 0 |
+| squad, on foot | 0.3 | 0 |
+
+From composition alone it predicted each shipped force's record against the
+field within five points (motor rifle 31% predicted, 25% observed; tank
+company 64 and 65; cavalry 42.5 and 43). The seat is worth +0.20 log-odds to
+side 0 on generated ground, cancelled by fighting each world from both ends.
+
+**Why a squad is worth under a point** — the census the instrument prints:
+a squad that rides in dismounts 98% of the time, about five hexes from the
+nearest enemy (FM 100-2-1's dismount line is 400 m, so that much is right),
+and then fires **1.3 shots a battle**. Over half her rounds on foot have an
+enemy within four hexes and 1.7 have a vehicle inside rocket range, and she
+fires 0.6 rockets. The trace (`PRICES_TRACE`) says why: in most of those
+rounds she has **no sight line** to the vehicle — she has gone into the
+wood for cover and cannot see out of it. Not the clock (a victory score of
+120 or 400 moves nothing; battles end by elimination), not ambush patience
+(swept 25/10/0: rockets fired 0.65 a squad at every value), only a little
+the ground (50% wood: a squad aboard 2.2 points; 10% wood: 0.5). It is
+employment: where the teacher puts infantry. That is the learner's to fix,
+so **the per-chassis costs are not set from this table** — it prices the
+teacher, and a network already wins 61 more battles with the motor rifle
+company than the teacher does. Re-measure with the learner in both seats.
+
+**The forces were rebalanced instead**, by period organisation, and checked
+with the teacher in both seats on the two untouched blocks (2,304 battles):
+
+| force | was | now | change |
+| --- | --- | --- | --- |
+| covering force | 57.1% | 48.9% | unchanged |
+| Soviet motor rifle | 25.3% | 52.1% | nine squads in nine carriers, four tanks, **tanks listed first** |
+| Soviet tank company | 65.2% | 55.3% | unchanged |
+| Western cavalry | 43.0% | 52.1% | a third light tank |
+| Western team | 56.4% | 46.9% | a fourth squad and carrier (a mechanised platoon's four) |
+
+Most of the motor rifle company's weakness was the **deployment order**: a
+force deploys in the order it lists its units, and it alone listed its
+carriers first. Nine carriers and four tanks went 203–271 (42.8%) carriers
+first and 247–227 (52.1%) tanks first; with three tanks first, 200–274
+(42.2%). Doctrine barely mattered (bounding overwatch 44.3% against massed
+armour's 42.8%). Rows are ±2.3 points at one standard deviation.
+
+Also: ambush patience is data now (`balance.ambush_patience_percent`, 25),
+and `worldgen` is a block `--set` can reach.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or

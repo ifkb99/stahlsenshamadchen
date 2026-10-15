@@ -2942,8 +2942,8 @@ pub fn best_opportunity_shot(
             // she has. No prediction is involved: this is patience, not
             // anticipation, and the target-track memory that would enable
             // true wait-for-the-flank reasoning is deliberately future
-            // work.
-            const AMBUSH_PATIENCE: f32 = 0.25;
+            // work. How patient is `balance.ambush_patience_percent`.
+            let patience = registry.balance.ambush_patience_percent as f32 / 100.0;
             // A crew who has decided to fight has stopped weighing shots.
             // Discipline is what patience is made of, and hers has gone —
             // this is the same rung that will not take an order, spending
@@ -2953,7 +2953,7 @@ pub fn best_opportunity_shot(
             let patient = defiance != Some(crate::data::DefianceResponse::Fight);
             let unseen = patient && !state.fog.side(enemy.side).spotted.contains(&unit);
             if unseen {
-                let decisive = state.substance(registry, enemy).0 as f32 * AMBUSH_PATIENCE;
+                let decisive = state.substance(registry, enemy).0 as f32 * patience;
                 if value < decisive {
                     continue;
                 }

@@ -47,6 +47,7 @@ cargo run --release -p tactics_core --example balance -- --brains --brain-vs lea
     --net target/goal_net.json --brain-difficulty 5 --brain-games 36 --arena ridge_arena  # ...and fight it
 (cd training && uv run loop.py --start ../target/goal_net.json --iterations 40)  # reinforcement learning: rollouts in Rust, PPO in JAX
 cargo run --release -p tactics_core --example campaign -- --map frontier  # the drawn campaign
+cargo run --release -p tactics_core --example prices -- --worlds 4096  # what each chassis is worth, from random forces fought out
 # in the game's generated campaign: Space runs the clock, [ ] its speed, Enter to dawn, Z zooms onto the ground
 
 # what does this number do that the old one did not?
@@ -515,6 +516,16 @@ else. Tests: `tests/learning.rs`.
   **read a force's record against `--net utility`** (the teacher in the
   learner's seat): the teacher wins a quarter of its battles with the motor
   rifle company, so a learner's 38% with it is a gain, not a weakness. A
+  **a force deploys in the order it lists its units**, front first, and
+  that was most of the motor rifle company's weakness (carriers first:
+  42.8% against the field; tanks first: 52.1%). **`examples/prices`** fits
+  what each chassis is worth from random forces fought out (logistic on the
+  count differences, held-out check, per-chassis census of what each did);
+  its fitted worth predicts each shipped force's record within five points.
+  As the utility AI fights them a squad is worth under a point and a carrier
+  one to three, so the per-chassis `cost`s are deliberately *not* set from
+  it: that prices the teacher's employment (squads in woods with no sight
+  line), not the squad. A
   `rifle_squad` costs 0 — not for sale to `force::muster`, which counts
   appetite per chassis and over-buys infantry when a second infantry chassis
   is on offer; it comes in forces until the builder knows a mech platoon.
@@ -888,9 +899,10 @@ interior) and the near side (`hit_chance_inner`) are both data
   targets splash converts to casualty rolls instead of erasure.
   `effect_rolls` is shared with the loaded-carrier path — change one and you
   have changed both.
-- **Ambush discipline applies to every unit.** `AMBUSH_PATIENCE` in
-  `combat.rs` holds an *unseen* crew's opportunity fire below a quarter of the
-  target's remaining substance. An ordered shot is exempt; `Fight` defiance
+- **Ambush discipline applies to every unit.** `balance.ambush_patience_percent`
+  (25, the constant it replaced) holds an *unseen* crew's opportunity fire
+  below that share of the target's remaining substance; zero is no patience
+  (`a_mod_with_no_ambush_patience_takes_the_coin_flip_shot`, mutation-checked). An ordered shot is exempt; `Fight` defiance
   turns it off.
 - **The stray rule: the gunner aims, and only a miss is a lottery.**
   `balance.stray_percent` per hundred points of a bystander's `presence`
