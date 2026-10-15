@@ -42,6 +42,7 @@ fn a_near_miss_frightens_by_the_share_of_the_rounds_suppression_the_mod_declares
         armoured: false,
         open_top: false,
         aimed: true,
+        flank: false,
     };
     rules.near_miss_percent = 0;
     assert_eq!(rules.pressure_for(ShotFelt::Missed, belt), 0.0);
@@ -53,6 +54,7 @@ fn a_near_miss_frightens_by_the_share_of_the_rounds_suppression_the_mod_declares
         armoured: true,
         open_top: false,
         aimed: true,
+        flank: false,
     };
     assert_eq!(
         rules.pressure_for(ShotFelt::Missed, solid_shot),
@@ -76,6 +78,7 @@ fn a_belt_does_not_pin_a_crew_behind_armour_past_the_share_the_mod_lets_through(
         armoured: true,
         open_top: false,
         aimed: true,
+        flank: false,
     };
     rules.through_plate_percent = 100;
     assert_eq!(rules.pressure_for(ShotFelt::Bounced, at_a_tank), 2.0);
@@ -87,6 +90,7 @@ fn a_belt_does_not_pin_a_crew_behind_armour_past_the_share_the_mod_lets_through(
         armoured: false,
         open_top: false,
         aimed: true,
+        flank: false,
         ..at_a_tank
     };
     assert_eq!(
@@ -372,6 +376,7 @@ fn knowing_she_is_the_target_is_charged_for_every_shot_aimed_at_her() {
         armoured: true,
         open_top: false,
         aimed: true,
+        flank: false,
     };
     let before = [
         rules.pressure_for(ShotFelt::Missed, solid_shot),
@@ -389,6 +394,7 @@ fn knowing_she_is_the_target_is_charged_for_every_shot_aimed_at_her() {
     }
     let beside = RoundPressure {
         aimed: false,
+        flank: false,
         ..solid_shot
     };
     assert_eq!(
@@ -467,6 +473,7 @@ fn an_open_topped_crew_feels_the_bullets_a_roofed_one_does_not() {
         armoured: true,
         open_top: false,
         aimed: true,
+        flank: false,
     };
     let open = RoundPressure {
         open_top: true,

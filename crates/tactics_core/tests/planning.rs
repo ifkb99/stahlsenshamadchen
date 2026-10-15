@@ -23,7 +23,7 @@ use tactics_core::map::{Battlefield, UnitPlacement};
 
 mod common;
 use common::{
-    curtained_pair, formation_named, maul, objective_battle, orders_planned, registry,
+    curtained_pair, formation_named, head_on, maul, objective_battle, orders_planned, registry,
     registry_wireless, seen, taxi_run_stage, two_side_battle, unit_at,
 };
 
@@ -233,7 +233,10 @@ fn ground_the_enemy_reaches_first_is_worth_less_marching_for() {
     // Asserted at 15 rather than 12 so the stage is not sitting on its own
     // threshold — the same margin Phase 2 left when it asserted 5 against a
     // threshold of 4.
-    let reg = seen(registry_wireless());
+    // `head_on`: the contested hill lies behind the tank already there,
+    // where her shots would now frighten him half again as much
+    // (`morale.flank_percent`); the subject is the race, not the flank.
+    let reg = head_on(seen(registry_wireless()));
     let rows = ["ggggggggg"; 9];
     let state = goal_battle(
         &reg,
@@ -389,7 +392,10 @@ fn a_subordinate_who_is_trusted_fights_from_the_ground_she_chose() {
     // And it is a *deviation*, not a refusal: she is still fighting the fight
     // her orders sent her to, from a position her own sweep picked, which is
     // the whole of what "how, not whether" means.
-    let reg = seen(registry_wireless());
+    // `head_on`: the ordered hex lies behind the enemy, where her shots
+    // would now frighten him half again as much (`morale.flank_percent`);
+    // the subject here is initiative, not the flank.
+    let reg = head_on(seen(registry_wireless()));
     let (state, told) = pressed_stage(&reg, 41);
     let chose = goal_at_initiative(&reg, &state, 0.9);
     assert_ne!(
@@ -444,7 +450,10 @@ fn the_shipped_doctrines_straddle_the_price_of_deviating() {
     // 10 to 23 where it was 12 to 29. 12.0 still sits inside it with room at
     // both ends and did not have to move; if a later wave moves the currency
     // again, this is the paragraph to re-measure before touching the number.
-    let reg = seen(registry_wireless());
+    // `head_on`: the ordered hex lies behind the enemy, where her shots
+    // would now frighten him half again as much (`morale.flank_percent`);
+    // the subject here is initiative, not the flank.
+    let reg = head_on(seen(registry_wireless()));
     let (state, told) = pressed_stage(&reg, 41);
     let ordered = Some(tactics_core::battle::Goal::Take(told));
     assert_eq!(
@@ -478,7 +487,10 @@ fn what_it_costs_a_subordinate_to_have_her_own_idea_is_a_mod_decision() {
     // depending on one number in `mod.json`. This is the check that the field
     // is read at all, and it is the knob a mod reaches for when its
     // subordinates are too literal or not literal enough.
-    let mut reg = seen(registry_wireless());
+    // `head_on`: the ordered hex lies behind the enemy, where her shots
+    // would now frighten him half again as much (`morale.flank_percent`);
+    // the subject here is initiative, not the flank.
+    let mut reg = head_on(seen(registry_wireless()));
     let (state, told) = pressed_stage(&reg, 41);
     let ordered = Some(tactics_core::battle::Goal::Take(told));
     assert_eq!(reg.planner.deviation_cost, 12.0);

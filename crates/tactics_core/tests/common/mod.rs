@@ -120,6 +120,19 @@ pub fn laid(mut reg: DataRegistry) -> DataRegistry {
     reg
 }
 
+/// The registry with fear priced the same from every side: no
+/// `morale.flank_percent`, the game before the shock of the flank
+/// (2026-10-15).
+///
+/// For stages whose subject is something else and whose geometry happens to
+/// put a candidate behind the enemy — where her shots now frighten him half
+/// again as much, and that ground outbids whatever the stage was comparing.
+/// The shock has a test of its own (`flanks.rs`).
+pub fn head_on(mut reg: DataRegistry) -> DataRegistry {
+    reg.morale.flank_percent = 100;
+    reg
+}
+
 pub fn calm(mut reg: DataRegistry) -> DataRegistry {
     reg.morale.targeted = 0;
     for (id, before) in [

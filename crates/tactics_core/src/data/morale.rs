@@ -309,6 +309,15 @@ pub struct MoraleRules {
     /// which is what every hull felt before plate was told apart.
     #[serde(default = "hundred")]
     pub open_top_percent: u32,
+    /// The price of a round that arrives from outside her frontal arc —
+    /// hit, bounce or miss — in percent of the same round from in front: the
+    /// shock of being taken in the flank or the rear, which turns a crew
+    /// round to fight in a new direction or breaks her (REIMAGINED.md,
+    /// *Flanks*; the designer's ruling of 2026-10-15). 100, the default, is
+    /// the game before; a shell bursting beside her came from no direction
+    /// and is never scaled.
+    #[serde(default = "hundred")]
+    pub flank_percent: u32,
 }
 
 fn hundred() -> u32 {
@@ -374,6 +383,9 @@ pub struct RoundPressure {
     /// ([`MoraleRules::targeted`]). False only for a shell bursting beside a
     /// crew it was not aimed at.
     pub aimed: bool,
+    /// It arrived from outside her frontal arc, priced at
+    /// [`MoraleRules::flank_percent`].
+    pub flank: bool,
 }
 
 impl Default for MoraleRules {
@@ -431,6 +443,7 @@ impl Default for MoraleRules {
             through_plate_percent: 100,
             targeted: 0,
             open_top_percent: 100,
+            flank_percent: 100,
         }
     }
 }
@@ -490,6 +503,16 @@ impl MoraleRules {
     /// A real number rather than ladder points, because the expectation is
     /// one; the charge rounds it at the ledger, once, in `apply_pressure`.
     pub fn pressure_for(&self, outcome: ShotFelt, round: RoundPressure) -> f32 {
+        let from = if round.flank {
+            self.flank_percent as f32 / 100.0
+        } else {
+            1.0
+        };
+        from * self.pressure_ahead(outcome, round)
+    }
+
+    /// [`Self::pressure_for`] as if the round came from in front of her.
+    fn pressure_ahead(&self, outcome: ShotFelt, round: RoundPressure) -> f32 {
         let projectile = round.suppression as f32;
         let targeted = if round.aimed {
             self.targeted as f32

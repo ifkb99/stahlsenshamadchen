@@ -2122,37 +2122,48 @@ impl BattleState {
                 v.is_some_and(|v| v.open_top),
             )
         };
-        let felt =
-            |state: &BattleState, ammo: &Option<String>, small_arms: bool, target: UnitId| {
-                let (armoured, open_top) = hull(state, target);
-                crate::data::RoundPressure {
-                    small_arms,
-                    suppression: ammo
-                        .as_ref()
-                        .and_then(|id| registry.ammo(id))
-                        .map(|a| a.suppression)
-                        .unwrap_or(0),
-                    armoured,
-                    open_top,
-                    aimed: true,
-                }
-            };
+        // Which face a round arrived at says whether it came from her flank
+        // (`morale.flank_percent`): the struck face for a hit or a bounce,
+        // and for a miss the face the shooter's bearing would have struck.
+        let felt = |state: &BattleState,
+                    ammo: &Option<String>,
+                    small_arms: bool,
+                    target: UnitId,
+                    facing: ArmorFacing| {
+            let (armoured, open_top) = hull(state, target);
+            crate::data::RoundPressure {
+                small_arms,
+                suppression: ammo
+                    .as_ref()
+                    .and_then(|id| registry.ammo(id))
+                    .map(|a| a.suppression)
+                    .unwrap_or(0),
+                armoured,
+                open_top,
+                aimed: true,
+                flank: facing != ArmorFacing::Front,
+            }
+        };
         // A near miss is priced by what went past and at whom: the round's
         // suppression, whether she is behind plate a bullet cannot pass, and
         // whether it was aimed at her or only burst beside her.
-        let went_past =
-            |state: &BattleState, ammo: &Option<String>, target: UnitId, aimed: bool| {
-                let round = ammo.as_ref().and_then(|id| registry.ammo(id));
-                let (armoured, open_top) = hull(state, target);
-                crate::data::RoundPressure {
-                    small_arms: round
-                        .is_some_and(|a| matches!(a.class, crate::data::AmmoClass::SmallArms)),
-                    suppression: round.map(|a| a.suppression).unwrap_or(0),
-                    armoured,
-                    open_top,
-                    aimed,
-                }
-            };
+        let went_past = |state: &BattleState,
+                         ammo: &Option<String>,
+                         target: UnitId,
+                         aimed: bool,
+                         flank: bool| {
+            let round = ammo.as_ref().and_then(|id| registry.ammo(id));
+            let (armoured, open_top) = hull(state, target);
+            crate::data::RoundPressure {
+                small_arms: round
+                    .is_some_and(|a| matches!(a.class, crate::data::AmmoClass::SmallArms)),
+                suppression: round.map(|a| a.suppression).unwrap_or(0),
+                armoured,
+                open_top,
+                aimed,
+                flank,
+            }
+        };
 
         // Collected first: the borrow of `events` has to end before units are
         // touched, and iterating in event order keeps this deterministic.
@@ -2168,13 +2179,14 @@ impl BattleState {
                     ammo,
                     damage,
                     budget,
+                    facing,
                     ..
                 } => Some((
                     *target,
                     ShotFelt::Penetrated {
                         spent: super::combat::spent_share(*damage, *budget),
                     },
-                    felt(self, ammo, false, *target),
+                    felt(self, ammo, false, *target, *facing),
                 )),
                 _ => None,
             })
@@ -2193,8 +2205,9 @@ impl BattleState {
                     target,
                     rattled,
                     ammo,
+                    facing,
                     ..
-                } => Some((*target, felt(self, ammo, !rattled, *target))),
+                } => Some((*target, felt(self, ammo, !rattled, *target, *facing))),
                 _ => None,
             })
             .collect();
@@ -2207,10 +2220,20 @@ impl BattleState {
             for e in events.iter() {
                 match e {
                     Event::ShotMissed {
+                        attacker,
                         target: Some(target),
                         ammo,
                         ..
-                    } => near.push((*target, went_past(self, ammo, *target, true))),
+                    } => {
+                        let flank = match (self.lookup(*target), self.lookup(*attacker)) {
+                            (Some(t), Some(a)) => {
+                                super::combat::struck_facing(t.pos, t.facing, a.pos)
+                                    != ArmorFacing::Front
+                            }
+                            _ => false,
+                        };
+                        near.push((*target, went_past(self, ammo, *target, true, flank)));
+                    }
                     Event::ShellLanded { at, ammo, .. } => {
                         let ammo = Some(ammo.clone());
                         let mut ring: Vec<UnitId> = at
@@ -2220,7 +2243,7 @@ impl BattleState {
                             .collect();
                         ring.sort_unstable();
                         for id in ring {
-                            near.push((id, went_past(self, &ammo, id, false)));
+                            near.push((id, went_past(self, &ammo, id, false, false)));
                         }
                     }
                     _ => {}

@@ -687,6 +687,7 @@
     "near_miss_percent": 50,
     "through_plate_percent": 0,
     "targeted": 1,
-    "open_top_percent": 75
+    "open_top_percent": 75,
+    "flank_percent": 150
   }
 }

@@ -1262,6 +1262,15 @@ every rule mutation-checked. Measured by `examples/flank` (`--hedge`, `--set`).
   circle, in sixths, rounded up to ticks, as cooldown, announced as
   `Event::Traversed`; `Unit::laid` is the bearing (`None` = over the hull,
   `#[serde(default)]`). A gun with no turret still pays `pivot_ticks`.
+- **Fire from the flank frightens more** (`morale.flank_percent`, 150
+  shipped, 100 the game before): a round arriving outside her frontal arc —
+  hit, bounce or miss — is priced at that percent of the same round from in
+  front, through `RoundPressure::flank` in `pressure_for`, so the charge
+  (the struck face, or the shooter's bearing for a miss) and the expectation
+  (`ShotProfile::facing`) stay one price list. A shell bursting beside her
+  came from no direction. It reaches the utility AI too: a position behind
+  an enemy now prices his fear half again, and stages whose subject is
+  something else go through `common::head_on(..)`.
 - **Awareness has a direction.** A looker keeps
   `balance.flank_search_percent` (100) of her chance against somebody
   outside her frontal arc — measured from `laid`, because the commander's

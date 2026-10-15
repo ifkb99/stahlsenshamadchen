@@ -479,6 +479,7 @@ impl<'r> Round<'r> {
             armoured: false,
             open_top: false,
             aimed: true,
+            flank: false,
         }
     }
 
@@ -685,7 +686,7 @@ fn round_pressure(
     round: &Round<'_>,
 ) -> f32 {
     let rules = &registry.morale;
-    let felt = felt_by(registry, state, target, round);
+    let felt = felt_by(registry, state, target, round, profile.facing);
     let spent = spent_share(
         (profile.damage as f32 * profile.pen_share).round() as i32,
         round.listed,
@@ -734,10 +735,11 @@ fn miss_pressure(
     state: &BattleState,
     target: UnitId,
     round: &Round<'_>,
+    facing: ArmorFacing,
 ) -> f32 {
     registry.morale.pressure_for(
         crate::data::ShotFelt::Missed,
-        felt_by(registry, state, target, round),
+        felt_by(registry, state, target, round, facing),
     )
 }
 
@@ -749,6 +751,7 @@ fn felt_by(
     state: &BattleState,
     target: UnitId,
     round: &Round<'_>,
+    facing: ArmorFacing,
 ) -> crate::data::RoundPressure {
     let hull = state
         .unit(target)
@@ -756,6 +759,7 @@ fn felt_by(
     crate::data::RoundPressure {
         armoured: hull.is_some_and(|v| v.armoured()),
         open_top: hull.is_some_and(|v| v.open_top),
+        flank: facing != ArmorFacing::Front,
         ..round.pressure()
     }
 }
@@ -1573,7 +1577,7 @@ pub fn expected_shot(
     let p = hit_chance(registry, state, attacker, from, weapon, target, at, blind) as f32 / 100.0;
     let expected = p * round_damage(registry, state, target, &profile, round.ammo);
     let pressure = p * round_pressure(registry, state, target, &profile, &round)
-        + (1.0 - p) * miss_pressure(registry, state, target, &round);
+        + (1.0 - p) * miss_pressure(registry, state, target, &round, profile.facing);
     ShotValue {
         expected,
         pressure,

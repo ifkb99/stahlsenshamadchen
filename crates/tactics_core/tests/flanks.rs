@@ -7,13 +7,14 @@
 //! - cover from the ground crossed
 //! - turret traverse
 //! - awareness has a direction
+//! - the shock of the flank
 
 use tactics_core::battle::{BattleState, Event, FireIntent, Order, SideState, UnitId, hit_chance};
 use tactics_core::data::DataRegistry;
 use tactics_core::map::Battlefield;
 
 mod common;
-use common::{commit_all, registry_wireless, seen, unit_at};
+use common::{commit_all, laid, registry_wireless, seen, unit_at};
 
 /// A battle on `rows` (`g` grass, `h` hedgerow, `f` forest) with optional
 /// elevation rows, the placements given.
@@ -380,5 +381,73 @@ fn a_chassis_trained_to_watch_all_round_says_so_over_the_mod() {
         looks_both_ways(&reg, false),
         (true, true),
         "her chassis's figure overrides the mod's"
+    );
+}
+
+// --- the shock of the flank -----------------------------------------------------
+
+/// The pressure a squad facing west has taken after a round of a scout car's
+/// belt from `shooter`, three hexes off, summed over `seeds` battles.
+fn frightened(reg: &DataRegistry, shooter: [i32; 2], seeds: u64) -> u32 {
+    (0..seeds)
+        .map(|seed| {
+            let mut squad = unit_at([4, 4], 1, "rifle_squad", "Squad");
+            squad.facing = Some(tactics_core::map::Facing::West);
+            let mut state = stage(
+                reg,
+                &["ggggggggg"; 9],
+                None,
+                vec![unit_at(shooter, 0, "recon_car", "Gun"), squad],
+                seed,
+            );
+            state
+                .apply(
+                    reg,
+                    &Order::SetFire {
+                        unit: UnitId(0),
+                        fire: FireIntent::Target {
+                            target: UnitId(1),
+                            weapon: 0,
+                        },
+                    },
+                )
+                .unwrap();
+            // The squad holds still and holds her fire, so the only thing
+            // that moves her nerve is the belt.
+            state
+                .apply(
+                    reg,
+                    &Order::SetFire {
+                        unit: UnitId(1),
+                        fire: FireIntent::Hold,
+                    },
+                )
+                .unwrap();
+            commit_all(reg, &mut state);
+            state.resolve_round(reg);
+            state.unit(UnitId(1)).map_or(0, |u| u.pressure)
+        })
+        .sum()
+}
+
+#[test]
+fn fire_from_her_flank_frightens_her_more_than_the_same_fire_from_in_front() {
+    let mut reg = all_round(seen(laid(registry_wireless())));
+    reg.morale.recovery = 0;
+    reg.morale.recovery_near_leader = 0;
+    let (front, flank) = ([1, 4], [4, 1]);
+    let before_front = frightened(&reg, front, 30);
+    let before_flank = frightened(&reg, flank, 30);
+    reg.morale.flank_percent = 300;
+    let after_front = frightened(&reg, front, 30);
+    let after_flank = frightened(&reg, flank, 30);
+    assert_eq!(
+        before_front, after_front,
+        "the price of fire from in front does not move"
+    );
+    assert!(before_flank > 0, "the stage needs the belt to frighten her");
+    assert!(
+        after_flank >= 2 * before_flank,
+        "from her flank at three times the price: {before_flank} -> {after_flank}"
     );
 }

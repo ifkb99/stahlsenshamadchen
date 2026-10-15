@@ -690,6 +690,15 @@ wander into the screen wood themselves and a third of battles stall.
 The mechanism is proven by its tests and is the rule; that it rarely
 decides a battle is a finding about held contacts.
 
+**Flank shock shipped (2026-10-15):** `morale.flank_percent` 150 — a round
+from outside her front frightens her half again as much. The probe, mediums,
+flank minus head-on (800 a row, ±20): at 100 +8.5% open and +14.5% behind a
+hedge; at 150 +12.1% and +16.1%; at 200 +13.3% and +18.8%. The teacher's
+evaluator reads it too (a shot into an enemy's rear is worth his fear half
+again), and its strikes went from 81% to 78–79% front; forces under the
+teacher: covering 47.6%, motor rifle 56.5 (a little strong, ~2.8 sd), tank
+company 49.7, cavalry 49.2, Western team 47.8.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or

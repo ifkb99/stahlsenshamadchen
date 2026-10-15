@@ -1209,6 +1209,7 @@ fn the_ladder_charges_a_shell_for_what_it_spent() {
         armoured: false,
         open_top: false,
         aimed: true,
+        flank: false,
     };
     let outcome = (rules.hit + rules.penetrated) as f32;
     assert_eq!(
