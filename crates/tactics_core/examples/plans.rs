@@ -111,6 +111,18 @@ const GRENADIERS: Force = &[
     "medium_tank",
     "medium_tank",
 ];
+/// Squad grain (REIMAGINED.md, *Infantry*): a pair of mediums and two
+/// squads in two carriers. The fix the play needs is fire that pins, and a
+/// squad's rifles pin infantry and close a tank's hatches where a tank's
+/// gun only kills; this is the matchup that asks whether that is enough.
+const SQUADS: Force = &[
+    "medium_tank",
+    "medium_tank",
+    "apc",
+    "rifle_squad^",
+    "apc",
+    "rifle_squad^",
+];
 /// Guns: a line, a platoon, and a tank destroyer with a battery behind it.
 const GUNS: Force = &[
     "medium_tank",
@@ -161,6 +173,18 @@ const BLOCKS: &[(&str, &str, Force, Force)] = &[
         MIXED,
     ),
     ("guns", "guns against combined arms", GUNS, MIXED),
+    (
+        "squads",
+        "squads and tanks against the same",
+        SQUADS,
+        SQUADS,
+    ),
+    (
+        "squads-armour",
+        "squads and tanks against six mediums",
+        SQUADS,
+        MEDIUMS_3,
+    ),
 ];
 
 fn battle(reg: &DataRegistry, row: &Row, a_force: Force, b_force: Force, seed: u64) -> Tally {
