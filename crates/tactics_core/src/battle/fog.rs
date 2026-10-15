@@ -365,7 +365,7 @@ const RAY_TIE: f32 = 1e-3;
 /// wood. The alternative reading — clear if *any* candidate is clear — is
 /// equally symmetric and says that a crew can see down the crack between two
 /// blocks of timber, which is not a thing.
-fn ray_hexes(from: Hex, to: Hex, i: usize, steps: f32) -> ([Hex; 3], usize) {
+pub(crate) fn ray_hexes(from: Hex, to: Hex, i: usize, steps: f32) -> ([Hex; 3], usize) {
     let t = i as f32 / steps;
     let fx = from.x as f32 + (to.x - from.x) as f32 * t;
     let fy = from.y as f32 + (to.y - from.y) as f32 * t;
@@ -614,13 +614,45 @@ fn search(
         .world
         .get(unit.pos)
         .and_then(|t| registry.terrain(t.terrain));
-    let covered = terrain.is_some_and(|t| t.cover >= 30);
-    let hidden = if covered {
-        concealment.saturating_mul(2).min(95)
-    } else {
-        concealment.min(95)
+    // Standing in real cover counts her own concealment twice.
+    let hidden_in = |cover: i32| {
+        if cover >= 30 {
+            concealment.saturating_mul(2).min(95)
+        } else {
+            concealment.min(95)
+        }
     };
-    let ground = terrain.map(|t| t.concealment).unwrap_or(0);
+    let b = &registry.balance;
+    let own = |v: i32| v * b.cover_own_percent / 100;
+    // With the lip rule on, what hides her depends on where the looker is
+    // (`combat::ground_between`) and is asked per spotter below; this is her
+    // own hex's share, and for the fast path, the most any direction could
+    // add — the best neighbour's lip share — so a `Found` there is still
+    // true from every side.
+    let directional = b.cover_lip_percent != 0 || b.hull_down_cover != 0;
+    let hidden = hidden_in(terrain.map_or(0, |t| own(t.cover)));
+    let ground = terrain.map_or(0, |t| own(t.concealment));
+    let (most_hidden, most_ground) = if directional {
+        let lips = unit.pos.all_neighbors().into_iter().filter_map(|h| {
+            state
+                .world
+                .get(h)
+                .and_then(|t| registry.terrain(t.terrain))
+                .map(|t| {
+                    (
+                        t.cover * b.cover_lip_percent / 100 + b.hull_down_cover,
+                        t.concealment * b.cover_lip_percent / 100,
+                    )
+                })
+        });
+        let (c, g) = lips.fold((0, 0), |(c, g), (lc, lg)| (c.max(lc), g.max(lg)));
+        (
+            hidden.max(hidden_in(c.max(terrain.map_or(0, |t| own(t.cover))))),
+            ground.max(g),
+        )
+    } else {
+        (hidden, ground)
+    };
 
     // The fast path, and the reason a mod that declares no detection rules
     // pays nothing for this pass existing. A crew hiding behind no chassis
@@ -633,13 +665,22 @@ fn search(
     // It matters because this runs for every enemy of every side on every
     // recompute, and a recompute happens after movement, after fire and after
     // every individual shot.
-    let at_the_far_edge = registry.balance.detection_chance(ground, 1, 1, unit.moved);
-    if hidden == 0 && at_the_far_edge >= 100 {
+    let at_the_far_edge = registry
+        .balance
+        .detection_chance(most_ground, 1, 1, unit.moved);
+    let all_round = b.flank_search_percent >= 100 && b.buttoned_flank_search_percent >= 100;
+    if most_hidden == 0 && at_the_far_edge >= 100 && all_round {
         return Search::Found;
     }
 
     let mut best = 0;
     for (spotter, at, range) in key {
+        let (hidden, ground) = if directional {
+            let between = crate::battle::combat::ground_between(registry, state, *at, unit.pos);
+            (hidden_in(between.cover), between.concealment)
+        } else {
+            (hidden, ground)
+        };
         let effective = range * (100 - hidden) / 100;
         let distance = at.distance_to(unit.pos);
         if distance > effective as i32 {
@@ -663,6 +704,21 @@ fn search(
         // (`balance.buttoned_search_percent`).
         if hidden > 0 && state.unit(*spotter).is_some_and(|s| s.buttoned > 0) {
             chance = chance * registry.balance.buttoned_search_percent / 100;
+        }
+        // Off her front she looks less, and closed up hardly at all
+        // (`balance.flank_search_percent`, `buttoned_flank_search_percent`;
+        // both 100, the game before, cost nothing to ask).
+        if !all_round
+            && let Some(s) = state.unit(*spotter)
+            && crate::battle::combat::struck_facing(*at, s.laid.unwrap_or(s.facing), unit.pos)
+                != crate::data::ArmorFacing::Front
+        {
+            let keep = if s.buttoned > 0 {
+                b.buttoned_flank_search_percent
+            } else {
+                b.flank_search_percent
+            };
+            chance = chance * keep / 100;
         }
         // The arithmetic before the set lookup, deliberately. `best` is a
         // maximum, so a crew who cannot improve on it need not be asked

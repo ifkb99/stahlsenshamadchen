@@ -41,6 +41,71 @@ fn elevation_at(state: &BattleState, pos: Hex) -> i32 {
     state.world.get(pos).map(|t| t.elevation).unwrap_or(0)
 }
 
+/// What of the ground stands between `from` and somebody at `at`: the cover
+/// a shot from there meets and the concealment a look from there meets.
+///
+/// The designer's ruling of 2026-10-15 that a flank defeats terrain. Her own
+/// hex counts at `balance.cover_own_percent` whichever way the line comes
+/// in; the **lip** — the hex the line crosses last before hers — counts at
+/// `cover_lip_percent`, so a hedge in front of her covers her against the
+/// gun in front and not against the one off her side. A lip higher than her,
+/// with the shooter no higher than it, is a crest she is hull-down behind
+/// (`hull_down_cover`). With the shipped defaults (100, 0, 0) this is her
+/// own hex's numbers exactly, the game before.
+///
+/// The lip is every hex the line could be in one step short of her, by
+/// [`super::fog::ray_hexes`], and the best of them counts: a line grazing
+/// the corner between a hedge and a field is a line that crosses the hedge,
+/// which is the reading a reflection cannot tell apart from its mirror.
+pub(crate) struct Between<'r> {
+    pub cover: i32,
+    pub concealment: i32,
+    /// The terrain the cover is named after: her own unless the lip gives
+    /// more. `None` off the map.
+    pub terrain: Option<&'r str>,
+    /// Cover points the crest adds, already inside `cover`.
+    pub hull_down: i32,
+}
+
+pub(crate) fn ground_between<'r>(
+    registry: &'r DataRegistry,
+    state: &BattleState,
+    from: Hex,
+    at: Hex,
+) -> Between<'r> {
+    let b = &registry.balance;
+    let own = terrain_at(registry, state, at);
+    let mut cover = own.map_or(0, |t| t.cover * b.cover_own_percent / 100);
+    let mut concealment = own.map_or(0, |t| t.concealment * b.cover_own_percent / 100);
+    let mut terrain = own.map(|t| t.name.as_str());
+    let mut hull_down = 0;
+    let steps = from.distance_to(at);
+    if steps >= 2 && (b.cover_lip_percent != 0 || b.hull_down_cover != 0) {
+        let here = elevation_at(state, at);
+        let (lips, n) = super::fog::ray_hexes(from, at, steps as usize - 1, steps as f32);
+        for lip in &lips[..n] {
+            if let Some(t) = terrain_at(registry, state, *lip) {
+                let c = t.cover * b.cover_lip_percent / 100;
+                if c > cover {
+                    cover = c;
+                    terrain = Some(t.name.as_str());
+                }
+                concealment = concealment.max(t.concealment * b.cover_lip_percent / 100);
+            }
+            let crest = elevation_at(state, *lip);
+            if crest > here && elevation_at(state, from) <= crest {
+                hull_down = b.hull_down_cover;
+            }
+        }
+    }
+    Between {
+        cover: cover + hull_down,
+        concealment,
+        terrain,
+        hull_down,
+    }
+}
+
 /// Hit chance percentage, clamped to `balance.min_hit ..= balance.max_hit`.
 ///
 /// Both ends of the shot are named the same way: by id, so the arithmetic
@@ -263,11 +328,21 @@ fn hit_chance_inner(
         note(HitFactor::Downhill, downhill);
         chance += downhill;
     }
-    if let Some(terrain) = terrain_at(registry, state, target_pos) {
-        let cover = -registry.balance.cover_against_accuracy(terrain.cover);
+    // The ground between them, not only the ground she is on: a flank
+    // defeats the hedge in front of her (`ground_between`).
+    let between = ground_between(registry, state, from, target_pos);
+    if let Some(terrain) = between.terrain {
+        let cover = -registry
+            .balance
+            .cover_against_accuracy(between.cover - between.hull_down);
+        note(HitFactor::Cover { terrain }, cover);
+        chance += cover;
+    }
+    if between.hull_down != 0 {
+        let cover = -registry.balance.cover_against_accuracy(between.hull_down);
         note(
             HitFactor::Cover {
-                terrain: &terrain.name,
+                terrain: "the crest",
             },
             cover,
         );
@@ -2667,8 +2742,32 @@ fn lay_on(
     if att.pos == at {
         return true;
     }
-    if registry.vehicle(&att.vehicle).is_some_and(|v| v.turret) {
-        return true;
+    if let Some(vehicle) = registry.vehicle(&att.vehicle).filter(|v| v.turret) {
+        // A turret lays onto the target's bearing at her drive's speed: the
+        // swing, in sixths of a circle, as a share of a full traverse,
+        // rounded up to whole ticks. Bearings are hex edges, so the swing is
+        // counted the way a reflection counts it.
+        let bearing = att.pos.main_direction_to(at);
+        let was = att.laid.unwrap_or(att.facing);
+        let turn = (bearing.index() as i32 - was.index() as i32).rem_euclid(6);
+        let sixths = turn.min(6 - turn) as u32;
+        let swing = (sixths * vehicle.traverse_seconds) as f32 / 6.0;
+        let ticks = (swing / registry.scale.tick_seconds().max(f32::EPSILON)).ceil() as u32;
+        let Some(att) = state.unit_mut(attacker) else {
+            return false;
+        };
+        att.laid = (bearing != att.facing).then_some(bearing);
+        if ticks == 0 {
+            return true;
+        }
+        for cd in &mut att.cooldowns {
+            *cd = (*cd).max(ticks);
+        }
+        events.push(Event::Traversed {
+            unit: attacker,
+            toward: at,
+        });
+        return false;
     }
     // Her own frontal arc: the same three edges `struck_facing` calls her
     // front, asked from her side of the shot.

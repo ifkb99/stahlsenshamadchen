@@ -1226,6 +1226,37 @@ its crew's nerve, and the route a crew drives is part of her order. Tests:
   loader's choice in worth. Before it the fix shot at whatever its own sweep
   liked, and pinned its target no more often than anybody else was pinned.
 
+### Flanks
+
+The designer's rulings of 2026-10-15: a flank is not only a thinner plate —
+it defeats terrain, it divides a defender's attention, and a crew closed up
+by fixing fire is blind to it. Three rules, each data whose neutral value is
+the game before (the determinism snapshot passed unregenerated with all of
+them in), **none turned on by the base mod yet**. Tests: `tests/flanks.rs`,
+every rule mutation-checked. Measured by `examples/flank` (`--hedge`, `--set`).
+
+- **Cover comes from the ground crossed** (`combat::ground_between`). Her own
+  hex counts at `balance.cover_own_percent` (100) from every direction; the
+  **lip** — the hex the line crosses last before hers, every candidate by
+  `fog::ray_hexes` so a grazing line is read the same from either mirror —
+  at `cover_lip_percent` (0); she gets the better of the two, never the sum.
+  A lip higher than her with the shooter no higher than it is a crest she is
+  hull-down behind (`hull_down_cover`, 0). Read by `hit_chance` (so by
+  `incoming`, `fire_on` and the danger overlay, unchanged) **and by the
+  fog's search** for the looker's concealment, per spotter; the search's
+  fast path asks the most any neighbour could hide her, or a `Found` there
+  would be a lie from one side.
+- **A turret traverses** (`VehicleDef::traverse_seconds`, seconds a full
+  circle, 0 = instant). Laying onto a new bearing costs that share of a
+  circle, in sixths, rounded up to ticks, as cooldown, announced as
+  `Event::Traversed`; `Unit::laid` is the bearing (`None` = over the hull,
+  `#[serde(default)]`). A gun with no turret still pays `pivot_ticks`.
+- **Awareness has a direction.** A looker keeps
+  `balance.flank_search_percent` (100) of her chance against somebody
+  outside her frontal arc — measured from `laid`, because the commander's
+  hatch turns with the turret — and `buttoned_flank_search_percent` (100)
+  instead while she is closed up.
+
 ### The road, not the crow flight
 
 `UtilityChooser` prices the road, the fire along it and who gets there first,

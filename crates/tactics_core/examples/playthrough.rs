@@ -166,6 +166,9 @@ fn main() {
                         name(&state, *unit)
                     )
                 }
+                Event::Traversed { unit, .. } => {
+                    println!("{} traverses onto a new target", name(&state, *unit))
+                }
                 Event::UnitTrapped { unit, .. } => {
                     println!("{} AMBUSHED mid-move!", name(&state, *unit))
                 }

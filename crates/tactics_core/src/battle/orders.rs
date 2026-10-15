@@ -182,6 +182,13 @@ pub enum Event {
         unit: UnitId,
         toward: Hex,
     },
+    /// A turret swung onto a new bearing toward `toward` instead of firing
+    /// this tick (`VehicleDef::traverse_seconds`): the turret's twin of
+    /// `Pivoted`, and said out loud for the same reason.
+    Traversed {
+        unit: UnitId,
+        toward: Hex,
+    },
     /// The unit ran into an unspotted enemy and stopped short; the rest of
     /// its route is abandoned.
     UnitTrapped {
@@ -647,6 +654,7 @@ impl Event {
             // not a secret from anybody who can see her.
             Event::UnitMoved { .. }
             | Event::Pivoted { .. }
+            | Event::Traversed { .. }
             | Event::UnitTrapped { .. }
             | Event::ShotFired { .. }
             | Event::ShellLanded { .. }

@@ -457,6 +457,11 @@ pub struct Unit {
     /// because a battle saved before anybody closed up had nobody closed up.
     #[serde(default)]
     pub buttoned: u32,
+    /// The bearing her turret is laid on, when it is not the way her hull
+    /// faces. `None` is laid over the hull, which is where every turret
+    /// starts and where every saved battle before traverse had it.
+    #[serde(default)]
+    pub laid: Option<EdgeDirection>,
     /// Her commander's personal order, if she is under one: the whole of
     /// what used to be `detached`, `tasking` and `latitude`.
     ///
@@ -1549,6 +1554,7 @@ impl BattleState {
             last_hit_by: None,
             pressure: 0,
             buttoned: 0,
+            laid: None,
             orders: None,
             goal: None,
             goal_witness: None,

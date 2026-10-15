@@ -189,6 +189,17 @@ pub struct VehicleDef {
     /// worth one shot and then faced her front.
     #[serde(default)]
     pub turret: bool,
+    /// Seconds her turret takes to traverse a full circle, the figure the
+    /// period's datasheets give (a hydraulic drive in fifteen, a hand crank
+    /// in a minute and more). Laying onto a target on a new bearing costs her
+    /// that share of it, rounded up to whole ticks, before the gun will fire —
+    /// so two attackers in two places cost a defender shots switching between
+    /// them (REIMAGINED.md, *Flanks*). Zero, the default, is a turret that
+    /// lays onto any bearing at once: the game before. Read only when
+    /// `turret` is true; a gun that does not traverse pays
+    /// `balance.pivot_ticks` instead.
+    #[serde(default)]
+    pub traverse_seconds: u32,
     /// Her fighting compartment has no roof: a halftrack, a self-propelled
     /// gun, a tank destroyer with an open turret. Bullets that do not
     /// penetrate still reach her crew — plunging fire, grenades, a belt

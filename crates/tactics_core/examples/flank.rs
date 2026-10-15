@@ -15,7 +15,16 @@
 //!
 //! ```sh
 //! cargo run --release -p tactics_core --example flank -- 400
+//! cargo run --release -p tactics_core --example flank -- 800 --hedge \
+//!     --set balance.cover_lip_percent=100 --set vehicle.medium_tank.traverse_seconds=20
 //! ```
+//!
+//! `--hedge` puts a hedge line one hex in front of the defenders, so the
+//! guns in front fire across it and the flanker does not; `--set` takes any
+//! content override, as `balance` does, which is how the flank rules
+//! (`cover_lip_percent`, `hull_down_cover`, `traverse_seconds`,
+//! `flank_search_percent`, `buttoned_flank_search_percent`) are measured
+//! before any of them is shipped.
 
 use tactics_core::ai::{AiConfig, AiDriver, make_battle_planner};
 use tactics_core::battle::{BattleState, Event, SideState};
@@ -46,6 +55,7 @@ struct Tally {
 
 fn battle(
     reg: &DataRegistry,
+    hedge: bool,
     vehicle: &str,
     second: [i32; 2],
     second_facing: Option<Facing>,
@@ -54,7 +64,12 @@ fn battle(
     let mut terrain = HexMap::default();
     for col in 0..36 {
         for row in 0..30 {
-            terrain.insert(tactics_core::offset_to_hex(col, row), "grass", 0);
+            let ground = if hedge && col == 19 && (15..=19).contains(&row) {
+                "hedgerow"
+            } else {
+                "grass"
+            };
+            terrain.insert(tactics_core::offset_to_hex(col, row), ground, 0);
         }
     }
     let field = Battlefield {
@@ -135,13 +150,32 @@ fn battle(
 }
 
 fn main() {
-    let games: u64 = std::env::args()
-        .nth(1)
-        .and_then(|a| a.parse().ok())
-        .unwrap_or(400);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let games: u64 = args.first().and_then(|a| a.parse().ok()).unwrap_or(400);
+    let hedge = args.iter().any(|a| a == "--hedge");
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
-    let (reg, _) = DataRegistry::load_dir(&root).expect("mods load");
-    for vehicle in ["medium_tank", "light_tank", "heavy_tank"] {
+    let (mut reg, _) = DataRegistry::load_dir(&root).expect("mods load");
+    for (_, text) in args
+        .iter()
+        .zip(args.iter().skip(1))
+        .filter(|(a, _)| *a == "--set")
+    {
+        let applied = tactics_core::harness::overrides::Override::parse(text)
+            .and_then(|ov| tactics_core::harness::overrides::apply_override(&mut reg, &ov));
+        if let Err(e) = applied {
+            eprintln!("error: --set {text}: {e}");
+            std::process::exit(1);
+        }
+    }
+    let only: Option<&str> = args
+        .iter()
+        .position(|a| a == "--only")
+        .and_then(|i| args.get(i + 1))
+        .map(String::as_str);
+    for vehicle in ["medium_tank", "light_tank", "heavy_tank"]
+        .into_iter()
+        .filter(|v| only.is_none_or(|o| o == *v))
+    {
         println!("{vehicle}, two a side, {games} battles a row");
         println!(
             "  {:10} {:>5} {:>5} {:>5} {:>7} {:>7}",
@@ -150,7 +184,7 @@ fn main() {
         for &(name, second, facing) in STARTS {
             let seeds: Vec<u64> = (0..games).collect();
             let mut t = Tally::default();
-            for x in run_all(&seeds, |s| battle(&reg, vehicle, second, facing, *s)) {
+            for x in run_all(&seeds, |s| battle(&reg, hedge, vehicle, second, facing, *s)) {
                 t.won += x.won;
                 t.lost += x.lost;
                 t.drew += x.drew;

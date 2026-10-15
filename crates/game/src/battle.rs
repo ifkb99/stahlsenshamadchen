@@ -1225,6 +1225,13 @@ fn pump_events(
                     format!("{} is swinging round.", name(*unit))
                 });
             }
+            BattleEvent::Traversed { unit, .. } => {
+                log.push(if mine(*unit) {
+                    traffic(*unit, "new target — traversing.")
+                } else {
+                    format!("{} is traversing.", name(*unit))
+                });
+            }
             BattleEvent::UnitTrapped { unit, .. } => {
                 log.push(if mine(*unit) {
                     traffic(*unit, "ambush! we're in it —")

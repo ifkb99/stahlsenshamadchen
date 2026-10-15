@@ -41,6 +41,10 @@ fn ambush_patience() -> i32 {
     25
 }
 
+fn hundred() -> i32 {
+    100
+}
+
 /// Serde defaults for the numbers that were Rust constants until 2026-08-27.
 /// Each returns exactly the constant it replaced, so a mod that declares a
 /// `balance` block and says nothing about them gets the game it always had.
@@ -426,6 +430,44 @@ pub struct Balance {
     /// shot worth anything.
     #[serde(default = "ambush_patience")]
     pub ambush_patience_percent: i32,
+    /// Cover comes from the ground a shot crosses, not only the ground she
+    /// stands on (REIMAGINED.md, *Flanks*; the designer's ruling of
+    /// 2026-10-15 that a flank defeats terrain). Three numbers, read by
+    /// `combat::ground_between` for the gunner's cover and by the fog's
+    /// search for the looker's concealment:
+    ///
+    /// - `cover_own_percent`: the share of her own hex's cover and
+    ///   concealment that counts from every direction. 100 is the game
+    ///   before.
+    /// - `cover_lip_percent`: the share of the cover and concealment of the
+    ///   hex the line crosses last before hers — the hedge in front of her,
+    ///   the wall, the edge of the wood. Zero is the game before. A flanker
+    ///   whose line does not cross it does not meet it.
+    /// - `hull_down_cover`: cover points added when that hex stands higher
+    ///   than hers and the shooter no higher than it — a crest between them,
+    ///   the hull below it and the gun over it. Zero is the game before.
+    ///
+    /// She gets the better of her own share and the lip's, not their sum, so
+    /// the cover a terrain declares stays the most it can give.
+    #[serde(default = "hundred")]
+    pub cover_own_percent: i32,
+    #[serde(default)]
+    pub cover_lip_percent: i32,
+    #[serde(default)]
+    pub hull_down_cover: i32,
+    /// Awareness has a direction (REIMAGINED.md, *Flanks*; the designer's
+    /// ruling of 2026-10-15). Percent of her detection chance a looker keeps
+    /// against somebody outside her frontal arc — measured from where her
+    /// turret is laid, because the commander's hatch turns with it — and,
+    /// in place of it, while she is closed up (`buttoned_ticks`), when a
+    /// crew looks out through periscopes that do not see her flanks. 100 is
+    /// the game before for both. It is what lets fixing fire matter against
+    /// armour: a tank closed up by the belts in front of her is the tank the
+    /// flanker finds first.
+    #[serde(default = "hundred")]
+    pub flank_search_percent: i32,
+    #[serde(default = "hundred")]
+    pub buttoned_flank_search_percent: i32,
     /// Chance in 100 that a crew who has an enemy in her field of view
     /// actually picks her out of it, per tick, before anything is subtracted
     /// for the ground or added for the enemy's driving.
@@ -616,6 +658,11 @@ impl Default for Balance {
             // about stacking never meets the rule.
             stray_percent: 0,
             ambush_patience_percent: ambush_patience(),
+            cover_own_percent: hundred(),
+            cover_lip_percent: 0,
+            hull_down_cover: 0,
+            flank_search_percent: hundred(),
+            buttoned_flank_search_percent: hundred(),
         }
     }
 }

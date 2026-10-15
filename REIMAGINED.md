@@ -607,6 +607,62 @@ armour's 42.8%). Rows are ±2.3 points at one standard deviation.
 Also: ambush patience is data now (`balance.ambush_patience_percent`, 25),
 and `worldgen` is a block `--set` can reach.
 
+## Flanks (2026-10-15)
+
+**The question.** Step 2 of the plan asked whether fix and flank pays at all.
+With squads, the hand-written play reads neutral (taught against untaught
+202–181 against the control's 190–192, at 384 battles), and `examples/flank`
+— the flank stage alone, a defender already outflanked — said why: between
+mediums a flank was worth **+2.5%**, because the 75 beats a medium's front at
+every range and that was the only thing a flank changed in the rules. The
+designer's ruling: a flank is also two targets in two places, harder to hit
+and harder to hide from, and it defeats terrain; suppression should count.
+
+**What history says** (a research pass through Sun Tzu, Polybius on Cannae,
+Clausewitz Book VI, Jomini, the WWII FM 100-5, the 1942 digest of German
+doctrine, Liddell Hart, Boyd, FM 100-2-1, *Busting the Bocage* and the Isigny
+gun trials). No doctrine values manoeuvre for itself; it pays when it changes
+the **exchange of fire** or the **meaning of his losses**, and almost always on
+condition that something holds him while it happens. The recurring reasons:
+a weaker face (Isigny: the Sherman's 75 "will penetrate the sides and rear
+of the 'Panther' … up to 1500 yards" and not the front at 200); his cover and
+fields of fire face one way ("avoids attacking on ground chosen by the
+enemy"); converging fire he cannot face at once (Cannae; Clausewitz's
+concentric form — and only if the arms arrive together); his retreat
+threatened, so he collapses rather than wears down; mass against a part;
+gaps and bypass (Riga 1917); surprise and tempo, finishing before he
+re-faces; better ground, withdrawal included; and bounding, so the moving
+element is always overwatched. Against it: time and space, exposure and
+coordination while moving, friction, the separated parts beaten in detail
+on his interior lines, the superiority a split needs, no flank to turn (the
+Western Front, the bocage — create one by penetration or suppress and
+assault), frontal firepower that already decides it, and a threat to his
+retreat that sends him away when you wanted him destroyed. The decision rule
+a commander reads, distilled: **is he fixed; does the flank change the
+exchange; is there an unwatched route; does it finish before he re-faces;
+can the fixing element hold alone meanwhile; what does it do to his
+retreat.** Each of those is a fact the learner can be given — not a label.
+
+**The rules** (CLAUDE.md, *Flanks*): cover from the ground crossed (the lip
+hex, and hull-down behind a crest), turret traverse from a chassis stat, and
+awareness that has a direction (worse off the front, much worse closed up).
+All built as data at their neutral values; nothing ships on. The probe, 800
+battles a row (a difference is about ±20 wins at one sd), at illustrative
+period values — own hex 50%, lip 100%, hull-down 20; traverse 15 s light,
+20 s medium, 60 s heavy; off-arc search 70%, closed up 25%:
+
+| flank's worth (flank − head-on) | rules as today | all three, open | all three, behind a hedge |
+| --- | --- | --- | --- |
+| medium | +2.5% | +8.5% | +15.3% |
+| light | +12.9% | +19.8% | +19.1% |
+| heavy | +22.6% | +25.1% | +37.0% |
+
+Mediums behind a hedge, one rule at a time: as today +5.3%, cover +8.4%,
+traverse +11.6%, awareness +3.2% (small here because the flanker starts in
+sight — its job is the flanker who arrives unseen, which this probe does not
+stage), all three +15.3%; and a frontal attack into the hedge is now
+punished (heavy head-on 34%). Shipping values is the designer's ruling.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or
