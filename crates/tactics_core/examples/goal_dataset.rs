@@ -38,6 +38,7 @@ goal_dataset: record the utility AI's goal decisions for imitation
   --difficulty D   the teacher's difficulty, 1..=5 (default 5)
   --out PATH       where to write JSON lines (default target/goal_dataset/train.jsonl)
   --places N       planner.goal_places for the teacher (default the mod's)
+  --approach N     planner.approach_places: places an enemy, round his arcs (default the mod's)
   --events LIST    planner.goal_events: contact,hit,friend_lost,pinned,order, or all";
 
 /// The doctrines a battle draws from. `drill` is left out for the reason the
@@ -146,6 +147,9 @@ fn main() {
 
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
     let (mut reg, _) = DataRegistry::load_dir(&root).expect("mods load");
+    if let Some(n) = flag(&args, "--approach") {
+        reg.planner.approach_places = n.parse().expect("--approach");
+    }
     if let Some(n) = flag(&args, "--places") {
         reg.planner.goal_places = n.parse().expect("--places");
     }

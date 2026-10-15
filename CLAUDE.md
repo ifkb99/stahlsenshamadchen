@@ -465,6 +465,17 @@ json path through `harness::overrides`, a bare name being a `planner` field);
 REIMAGINED.md, L0. A trained network can replace `GoalChooser` and nothing
 else. Tests: `tests/learning.rs`.
 
+- **The road's reading is a value over every cheapest road, never "the"
+  road.** `Roads` keeps every equally cheap predecessor and `Roads::least`
+  takes the least-watched of them; the heap's coordinate order used to
+  choose one, and the mirror twin read different exposure on mirrored far
+  places (2026-10-15). `Roads::arrivals` gives the facing she would arrive
+  with; a feature over several arrivals takes the best.
+- **Equipment facts are the resolver's, on both sides' stats** (`hurts`,
+  `hurt_by`, `outranges`, `outranged`, `strikes_flank`, `shown_flank`,
+  `fixed`, `buttoned_targets`; context `dug_in`, `cut_off`): expected
+  *damage* through `best_weapon_from`, so a belt that only closes a tank's
+  hatches is neither a threat to plate nor a way to hurt it.
 - **What the network sees is `ai::features::describe`, and nothing else**:
   the dataset is written by it and the chooser is fed by it, so training and
   play are one function. It holds **no coordinate and no side number** (the
@@ -531,7 +542,11 @@ else. Tests: `tests/learning.rs`.
   is on offer; it comes in forces until the builder knows a mech platoon.
 - **Places are unlabelled** (`planner.goal_places`, 0 shipped): spread over
   her reach by cost, distance and facing — keys a reflection preserves —
-  each the best place to stand in its patch. The features that make one a
+  **in bands of drive time, a share to each round of the horizon** (taken
+  cheapest-first, 91% sat under two rounds' drive), each the best place to
+  stand in its patch; plus `planner.approach_places` an enemy she knows of
+  (0 shipped): ground from which she can *damage* him, spread over his
+  front, sides and rear, a tie group at a time. The features that make one a
   flank are facts (`aspect_min`, `crossfire`, `seen_by`...), never a name:
   REIMAGINED.md's ruling that tactics emerge. Zero draws no road and is the
   list before places existed.

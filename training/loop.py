@@ -67,6 +67,7 @@ def evaluate(net, places, arena, games, events="none"):
 
 
 FORCES = []  # set from --forces in main; passed to every rollout
+APPROACH = [0]  # set from --approach in main
 
 
 def evaluate_generated(net, places, arena, games, events="none", seed=1_000_000):
@@ -74,7 +75,8 @@ def evaluate_generated(net, places, arena, games, events="none", seed=1_000_000)
     learner taking its best choice: against the utility AI, and against
     itself. Worlds from `seed / 2` up, which no training rollout reaches."""
     common = ["--net", str(net), "--deterministic", "--ground", "generated", "--arena", arena,
-              "--places", str(places), "--events", events, "--out", str(ROOT / "target" / "rl" / "eval.jsonl"),
+              "--places", str(places), "--approach", str(APPROACH[0]), "--events", events,
+              "--out", str(ROOT / "target" / "rl" / "eval.jsonl"),
               *(["--forces", FORCES[0]] if FORCES else [])]
     out = cargo("rollout", *common, "--games", str(games), "--seed", str(seed))
     # The learner's record with each force: overfitting to one method shows
@@ -100,6 +102,7 @@ def main():
     ap.add_argument("--games", type=int, default=512)
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--places", type=int, default=16)
+    ap.add_argument("--approach", type=int, default=0, help="planner.approach_places: places an enemy, round his arcs")
     ap.add_argument("--arena", default="ridge_arena")
     ap.add_argument("--ground", default="arena", choices=["arena", "generated"],
                     help="train and evaluate on the arena, or on a fresh generated world every two games")
@@ -117,6 +120,7 @@ def main():
     args.dir = args.dir.resolve()
     if args.forces:
         FORCES.append(args.forces)
+    APPROACH[0] = args.approach
     args.dir.mkdir(parents=True, exist_ok=True)
     log = args.dir / "log.csv"
 
@@ -142,7 +146,8 @@ def main():
             opponents = ["--opponents", ",".join(str(p) for p in league)] if league else []
             out = cargo("rollout", "--net", str(net), "--games", str(args.games), *opponents,
                         "--seed", str(it * args.games), "--temperature", str(args.temperature),
-                        "--places", str(args.places), "--arena", args.arena, "--events", args.events,
+                        "--places", str(args.places), "--approach", str(args.approach),
+                        "--arena", args.arena, "--events", args.events,
                         "--ground", args.ground, *(["--forces", args.forces] if args.forces else []),
                         "--out", str(rollouts))
             m = re.search(r"learner won (\d+), lost (\d+)", out)

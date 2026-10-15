@@ -269,10 +269,12 @@ fn places_widen_the_list_spaced_apart_and_zero_is_the_list_before_them() {
             _ => None,
         })
         .collect();
-    // A tie group is taken whole (see `goal::places`), so the list may run a
-    // little past the number asked for, never far.
+    // A tie group is taken whole (see `goal::places`), and each band of
+    // drive time rounds its share up, so the list may run a little past the
+    // number asked for — a pair or so a band — never far.
+    let bands = reg.planner.horizon_rounds as usize;
     assert!(
-        !added.is_empty() && added.len() <= 18,
+        !added.is_empty() && added.len() <= 12 + 2 * bands,
         "{} places",
         added.len()
     );

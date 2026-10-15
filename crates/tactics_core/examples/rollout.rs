@@ -42,6 +42,7 @@ rollout: battles for reinforcement learning, learner against the utility AI
                       the utility AI (two games each, so both seatings)
   --events LIST       planner.goal_events: contact,hit,friend_lost,pinned,order, or all
   --places N          planner.goal_places (default 16)
+  --approach N        planner.approach_places: places an enemy, round his arcs (default 0)
   --arena NAME        battlefield (default ridge_arena); with --ground generated,
                       whose forces and deployment are moved onto generated ground
   --ground generated  a fresh generated world every two games (one per seat)
@@ -88,6 +89,33 @@ struct Battle {
     /// label read after the fact and never shown to the network.
     struck_by_learner: [u32; 3],
     struck_on_learner: [u32; 3],
+    /// Fix-and-flank, read after the fact, `[learner, opponent]`: a target
+    /// struck on his front by one crew and then on his side or rear by
+    /// another of the same side within three rounds. A label for the
+    /// measurer, never shown to the network.
+    fix_and_flank: [u32; 2],
+    /// Shots aimed at somebody, `[learner, opponent]`, and of those the ones
+    /// fired from beyond the target's own longest direct reach: standoff.
+    aimed: [u32; 2],
+    standoff: [u32; 2],
+}
+
+/// A unit's longest direct weapon reach, in hexes: what she could answer
+/// with.
+fn reach(reg: &DataRegistry, state: &BattleState, unit: tactics_core::battle::UnitId) -> i32 {
+    state
+        .unit(unit)
+        .and_then(|u| reg.vehicle(&u.vehicle))
+        .map(|v| {
+            v.weapons
+                .iter()
+                .filter_map(|w| reg.weapon(w))
+                .filter(|w| !w.indirect)
+                .map(|w| w.range[1] as i32)
+                .max()
+                .unwrap_or(0)
+        })
+        .unwrap_or(0)
 }
 
 fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
@@ -207,18 +235,65 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
     ledger(reg, &state, 0, &mut entries);
     let mut rounds = 0;
     let (mut by, mut on) = ([0u32; 3], [0u32; 3]);
+    let (mut f4, mut aimed, mut standoff) = ([0u32; 2], [0u32; 2], [0u32; 2]);
+    // Per target: the last round a crew of each side struck his front, and
+    // which crew.
+    let mut fronted: std::collections::BTreeMap<(u32, u8), (u32, u32)> = Default::default();
     while !state.is_over() && rounds < MAX_ROUNDS {
         ai.plan_round(reg, &mut state);
         for event in state.resolve_round(reg) {
-            let (attacker, facing) = match event {
+            // Who was aimed at whom, for the standoff count.
+            let aimed_at = match &event {
                 Event::ShotHit {
-                    attacker, facing, ..
+                    attacker, target, ..
                 }
                 | Event::ShotBounced {
-                    attacker, facing, ..
-                } => (attacker, facing),
+                    attacker, target, ..
+                } => Some((*attacker, *target)),
+                Event::ShotMissed {
+                    attacker,
+                    target: Some(target),
+                    ..
+                } => Some((*attacker, *target)),
+                _ => None,
+            };
+            if let Some((a, t)) = aimed_at
+                && let (Some(au), Some(tu)) = (state.lookup(a), state.lookup(t))
+            {
+                let who = (au.side != learner) as usize;
+                aimed[who] += 1;
+                if au.pos.distance_to(tu.pos) > reach(reg, &state, t) {
+                    standoff[who] += 1;
+                }
+            }
+            let (attacker, facing, target) = match event {
+                Event::ShotHit {
+                    attacker,
+                    facing,
+                    target,
+                    ..
+                }
+                | Event::ShotBounced {
+                    attacker,
+                    facing,
+                    target,
+                    ..
+                } => (attacker, facing, target),
                 _ => continue,
             };
+            if let Some(side) = state.lookup(attacker).map(|u| u.side) {
+                let who = (side != learner) as usize;
+                let key = (target.0, side);
+                if facing == ArmorFacing::Front {
+                    fronted.insert(key, (rounds, attacker.0));
+                } else if fronted
+                    .get(&key)
+                    .is_some_and(|(r, fixer)| rounds - r <= 3 && *fixer != attacker.0)
+                {
+                    f4[who] += 1;
+                    fronted.remove(&key);
+                }
+            }
             let face = match facing {
                 ArmorFacing::Front => 0,
                 ArmorFacing::Side => 1,
@@ -246,6 +321,9 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
         scores,
         struck_by_learner: by,
         struck_on_learner: on,
+        fix_and_flank: f4,
+        aimed,
+        standoff,
         victory_score: state.scenario.victory_score(),
         opponent: opponent(setup, game).map_or("utility".to_string(), |(name, _)| name.clone()),
         forces: matchup.map(|pair| [pair[0].id.clone(), pair[1].id.clone()]),
@@ -274,6 +352,7 @@ fn main() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
     let (mut reg, _) = DataRegistry::load_dir(&root).expect("mods load");
     reg.planner.goal_places = parse("--places", 16.0) as u32;
+    reg.planner.approach_places = parse("--approach", 0.0) as u32;
     if let Some(list) = flag(&args, "--events") {
         reg.planner.goal_events = tactics_core::data::GoalEvents::parse(list).unwrap_or_else(|e| {
             eprintln!("error: --events: {e}");
@@ -407,4 +486,21 @@ fn main() {
     }
     println!("  struck by the learner: {}", share(by));
     println!("  struck on the learner: {}", share(on));
+    let (mut f4, mut aimed, mut off) = ([0u32; 2], [0u32; 2], [0u32; 2]);
+    for battle in fought.iter().flatten() {
+        for i in 0..2 {
+            f4[i] += battle.fix_and_flank[i];
+            aimed[i] += battle.aimed[i];
+            off[i] += battle.standoff[i];
+        }
+    }
+    let n = fought.iter().flatten().count().max(1) as f32;
+    for (i, who) in ["learner", "opponent"].iter().enumerate() {
+        println!(
+            "  {who}: fix and flank {:.2} a battle; {:.0}% of {} aimed shots from beyond the target's reach",
+            f4[i] as f32 / n,
+            100.0 * off[i] as f32 / aimed[i].max(1) as f32,
+            aimed[i]
+        );
+    }
 }

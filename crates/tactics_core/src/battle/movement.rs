@@ -764,7 +764,14 @@ pub fn along_the_bearing(step: Hex, bearing: Hex) -> i32 {
 #[derive(Debug, Clone, Default)]
 pub struct Roads {
     cost: HashMap<Hex, u32>,
-    from: HashMap<Hex, Hex>,
+    /// Every neighbour a cheapest road into the hex comes from. All of them,
+    /// not the first one found: which of two equally cheap roads a heap
+    /// keeps is decided by its coordinate order, and a reading taken along
+    /// "the" road was then a compass — a crew and her mirror twin read
+    /// different exposure on mirrored candidates (found 2026-10-15, the day
+    /// places reached past a round's drive). [`Roads::least`] reads all of
+    /// them.
+    from: HashMap<Hex, Vec<Hex>>,
     start: Hex,
 }
 
@@ -793,18 +800,46 @@ impl Roads {
     /// has to be total. See [`along_the_bearing`] for why that is a residue
     /// worth watching rather than a bug — `balance --only skill` on the
     /// mirrored arena is the instrument that would catch it growing teeth.
-    pub fn path(&self, hex: Hex) -> Option<Vec<Hex>> {
+    /// The hexes every cheapest road into `hex` arrives from: the last step,
+    /// and so the way she would be facing when she got there. Empty for her
+    /// own hex and for ground no road reached.
+    pub fn arrivals(&self, hex: Hex) -> Vec<Hex> {
+        self.from.get(&hex).cloned().unwrap_or_default()
+    }
+
+    /// Over every cheapest road to `hex`, the one with the fewest hexes
+    /// `counted` (and then the fewest hexes): `(counted, hexes)`, both ends
+    /// included. The least-watched of the equally cheap roads is the one she
+    /// would drive, and a value rather than a path is what a reflection
+    /// cannot tell apart from its mirror.
+    pub fn least(&self, hex: Hex, counted: impl Fn(Hex) -> bool) -> Option<(u32, u32)> {
         if !self.cost.contains_key(&hex) {
             return None;
         }
-        let mut out = vec![hex];
-        let mut at = hex;
-        while at != self.start {
-            at = *self.from.get(&at)?;
-            out.push(at);
+        let mut order: Vec<(u32, Hex)> = self.cost.iter().map(|(h, c)| (*c, *h)).collect();
+        order.sort_by_key(|(c, h)| (*c, h.x, h.y));
+        let mut best: HashMap<Hex, (u32, u32)> = HashMap::new();
+        for (_, h) in order {
+            let here = counted(h) as u32;
+            let value = if h == self.start {
+                Some((here, 1))
+            } else {
+                self.from
+                    .get(&h)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|p| best.get(p))
+                    .map(|(c, n)| (c + here, n + 1))
+                    .min()
+            };
+            if let Some(v) = value {
+                best.insert(h, v);
+            }
+            if h == hex {
+                break;
+            }
         }
-        out.reverse();
-        Some(out)
+        best.get(&hex).copied()
     }
 }
 
@@ -838,10 +873,19 @@ pub fn roads(registry: &DataRegistry, state: &BattleState, id: UnitId, rounds: u
             if total > horizon {
                 continue;
             }
-            if out.cost.get(&next).is_none_or(|&c| total < c) {
-                out.cost.insert(next, total);
-                out.from.insert(next, hex);
-                heap.push((Reverse(total), next.x, next.y));
+            match out.cost.get(&next) {
+                Some(&c) if total > c => {}
+                Some(&c) if total == c => {
+                    let preds = out.from.entry(next).or_default();
+                    if !preds.contains(&hex) {
+                        preds.push(hex);
+                    }
+                }
+                _ => {
+                    out.cost.insert(next, total);
+                    out.from.insert(next, vec![hex]);
+                    heap.push((Reverse(total), next.x, next.y));
+                }
             }
         }
     }

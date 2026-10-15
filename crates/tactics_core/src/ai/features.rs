@@ -73,9 +73,19 @@ struct Scene {
     reach: i32,
     enemies: Vec<Party>,
     friends: Vec<Party>,
+    /// Her roads, for the way she would be facing when she arrived.
+    roads: crate::battle::Roads,
 }
 
 struct Party {
+    id: UnitId,
+    /// The hull's facing as an edge, for which face a shot strikes.
+    edge: hexx::EdgeDirection,
+    /// Closed up, which is a thing anybody looking can see.
+    buttoned: bool,
+    /// For an enemy: whether a friend of hers can already put fire worth
+    /// anything on him from where she stands — the fix.
+    engaged: bool,
     pos: Hex,
     /// The hull's facing as a direction, for the aspect a place shows her.
     facing: Hex,
@@ -104,9 +114,14 @@ fn scene(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> Scene {
             reach: 0,
             enemies: Vec::new(),
             friends: Vec::new(),
+            roads: crate::battle::Roads::default(),
         };
     };
     let party = |u: &crate::battle::Unit| Party {
+        id: u.id,
+        edge: u.facing,
+        buttoned: u.buttoned > 0,
+        engaged: false,
         pos: u.pos,
         facing: Hex::from(u.facing),
         reach: reach_of(registry, u),
@@ -115,18 +130,28 @@ fn scene(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> Scene {
             _ => None,
         },
     };
+    let friends: Vec<Party> = state
+        .alive_units()
+        .filter(|u| u.side == me.side && u.id != unit && u.aboard.is_none())
+        .map(party)
+        .collect();
+    let enemies: Vec<Party> = state
+        .known_enemies(registry, Knower::Crew(unit))
+        .into_iter()
+        .map(party)
+        .map(|mut e| {
+            e.engaged = friends.iter().any(|f| {
+                crate::battle::best_weapon_from(registry, state, f.id, f.pos, e.id, e.pos)
+                    .is_some_and(|(_, shot)| shot.worth > 0.0)
+            });
+            e
+        })
+        .collect();
     Scene {
         reach: reach_of(registry, me),
-        enemies: state
-            .known_enemies(registry, Knower::Crew(unit))
-            .into_iter()
-            .map(party)
-            .collect(),
-        friends: state
-            .alive_units()
-            .filter(|u| u.side == me.side && u.id != unit && u.aboard.is_none())
-            .map(party)
-            .collect(),
+        enemies,
+        friends,
+        roads: crate::battle::roads(registry, state, unit, registry.planner.horizon_rounds),
     }
 }
 
@@ -195,6 +220,11 @@ const CONTEXT_FIXED: &[&str] = &[
     "own_carriers",
     "known_armour",
     "known_infantry",
+    // Her ground now (REIMAGINED.md, *Flanks*): the cover she has dug where
+    // she stands, which she leaves behind if she goes, and whether the guns
+    // that can reach her leave her no way back.
+    "dug_in",
+    "cut_off",
 ];
 
 /// The candidate features, in order.
@@ -231,6 +261,21 @@ pub const CANDIDATE: &[&str] = &[
     "crossfire",
     "friends_heading_near",
     "friend_distance",
+    // Equipment against equipment, from the resolver on both sides' stats
+    // (REIMAGINED.md, *Flanks*): what she can damage from here and what can
+    // damage her here — expected damage, not worth, so a belt that only
+    // closes a tank's hatches is not a threat to her plate nor a way for her
+    // to hurt one — who outranges whom, which faces get struck (hers by the
+    // facing she would arrive with, along her road), and whether a target is
+    // already being fired on by a friend or is closed up.
+    "hurts",
+    "hurt_by",
+    "outranges",
+    "outranged",
+    "strikes_flank",
+    "shown_flank",
+    "fixed",
+    "buttoned_targets",
     // The goal she was carrying when she stopped to think again.
     "current",
 ];
@@ -428,6 +473,10 @@ fn context(
     }
     out.extend(own);
     out.extend(known);
+    out.extend([
+        me.dug_in as f32,
+        flag(crate::battle::cut_off(registry, state, unit)),
+    ]);
     let verb = mission.map(|m| m.verb());
     out.extend(
         Mission::vocabulary()
@@ -544,6 +593,64 @@ fn candidate(
         .map(|f| f.pos.distance_to(hex) as f32)
         .fold(FAR, f32::min);
 
+    // Equipment against equipment, enemy by enemy, through the resolver.
+    let damages = |shooter: UnitId, from: Hex, target: UnitId, at: Hex| {
+        crate::battle::best_weapon_from(registry, state, shooter, from, target, at)
+            .is_some_and(|(_, shot)| shot.expected > 0.0)
+    };
+    // The way she would face on arrival: each cheapest road's last step, or
+    // her facing now where no road reaches or she is already there.
+    let arrivals: Vec<hexx::EdgeDirection> = {
+        let from: Vec<hexx::EdgeDirection> = scene
+            .roads
+            .arrivals(hex)
+            .into_iter()
+            .filter_map(|p| p.neighbor_direction(hex))
+            .collect();
+        if from.is_empty() {
+            vec![me.facing]
+        } else {
+            from
+        }
+    };
+    let (mut hurts, mut hurt_by, mut outranges, mut outranged) = (0.0, 0.0, 0.0, 0.0);
+    let (mut strikes_flank, mut fixed, mut buttoned) = (0.0, 0.0, 0.0);
+    let mut threats: Vec<Hex> = Vec::new();
+    for e in &scene.enemies {
+        let mine = damages(unit, hex, e.id, e.pos);
+        let theirs = damages(e.id, e.pos, unit, hex);
+        if mine {
+            hurts += 1.0;
+            strikes_flank += flag(
+                crate::battle::struck_facing(e.pos, e.edge, hex) != crate::data::ArmorFacing::Front,
+            );
+            fixed += flag(e.engaged);
+            buttoned += flag(e.buttoned);
+        }
+        if theirs {
+            hurt_by += 1.0;
+            threats.push(e.pos);
+        }
+        outranges += flag(mine && !theirs);
+        outranged += flag(theirs && !mine);
+    }
+    // The best of her arrivals: of equally cheap roads she takes the one that
+    // leaves her showing the fewest flanks, and a minimum reads the same
+    // from either mirror.
+    let shown_flank = arrivals
+        .iter()
+        .map(|facing| {
+            threats
+                .iter()
+                .filter(|at| {
+                    crate::battle::struck_facing(hex, *facing, **at)
+                        != crate::data::ArmorFacing::Front
+                })
+                .count()
+        })
+        .min()
+        .unwrap_or(0) as f32;
+
     let out = vec![
         flag(reading.goal == Goal::Hold),
         flag(ordered),
@@ -575,6 +682,14 @@ fn candidate(
         crossfire,
         friends_heading_near,
         friend_distance,
+        hurts,
+        hurt_by,
+        outranges,
+        outranged,
+        strikes_flank,
+        shown_flank,
+        fixed,
+        buttoned,
         flag(
             me.goal_witness
                 .as_ref()

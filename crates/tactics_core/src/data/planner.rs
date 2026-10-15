@@ -977,6 +977,12 @@ pub struct PlannerRules {
     /// Two hexes side by side are one intention, not two.
     #[serde(default = "place_spacing")]
     pub place_spacing: u32,
+    /// Places drawn for each enemy she knows of, on top of `goal_places`:
+    /// ground from which her weapons can hurt him, spread over his front,
+    /// his sides and his rear (`goal::places`). The menu offering her a
+    /// flank without naming it. Zero, the default, draws none.
+    #[serde(default)]
+    pub approach_places: u32,
     /// The events that end a crew's goal so she chooses again
     /// ([`GoalEvents`]), beside the ending `Goal::finished` already reads
     /// (arrived, or the ground filled). Each goal keeps a witness of the
@@ -1034,6 +1040,7 @@ impl Default for PlannerRules {
             search_slope: search_slope(),
             goal_places: 0,
             place_spacing: place_spacing(),
+            approach_places: 0,
             goal_events: GoalEvents::default(),
         }
     }

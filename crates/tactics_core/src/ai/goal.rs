@@ -329,8 +329,14 @@ fn places(
     // refused its mirror image for being too near was a compass — the
     // coordinate deciding which of two reflected hexes got in, and so which
     // places either twin was offered; the mirror-twin test caught it on its
-    // first run with places on. A group may take the list past `wanted`;
+    // first run with places on. A group may take a quota past its count;
     // groups are small, and a cap that split one would be the compass again.
+    //
+    // **In bands of drive time**, a share of the places to each round of
+    // the horizon (2026-10-15). Taken cheapest-first over the whole reach,
+    // sixteen places filled up inside a round's drive — 91% of them were
+    // under two rounds away against a horizon of four — so a manoeuvre longer
+    // than a round was never on the list for any feature to describe.
     let facing = Hex::from(me.facing);
     let key = |hex: Hex, cost: u32| {
         (
@@ -339,26 +345,113 @@ fn places(
             std::cmp::Reverse(crate::battle::along_the_bearing(hex - me.pos, facing)),
         )
     };
+    let pace =
+        crate::battle::move_points(registry, &state.roster, me, state.terrain_at(me.pos)).max(1);
+    let bands = planner.horizon_rounds.max(1);
+    let band = |cost: u32| (cost / pace).min(bands - 1);
+    let quota = (wanted as u32).div_ceil(bands) as usize;
     let mut ranked: Vec<(Hex, u32)> = pool.clone();
     ranked.sort_by_key(|(hex, cost)| (key(*hex, *cost), hex.x, hex.y));
     let mut centres: Vec<Hex> = Vec::new();
-    let mut i = 0;
-    while i < ranked.len() && centres.len() < wanted {
-        let group_key = key(ranked[i].0, ranked[i].1);
-        let mut j = i;
-        while j < ranked.len() && key(ranked[j].0, ranked[j].1) == group_key {
-            j += 1;
+    for b in 0..bands {
+        let in_band: Vec<(Hex, u32)> = ranked
+            .iter()
+            .copied()
+            .filter(|(_, cost)| band(*cost) == b)
+            .collect();
+        let mut taken = 0;
+        let mut i = 0;
+        while i < in_band.len() && taken < quota {
+            let group_key = key(in_band[i].0, in_band[i].1);
+            let mut j = i;
+            while j < in_band.len() && key(in_band[j].0, in_band[j].1) == group_key {
+                j += 1;
+            }
+            let before = centres.len();
+            for (hex, _) in &in_band[i..j] {
+                if centres[..before]
+                    .iter()
+                    .all(|c| c.distance_to(*hex) as u32 >= spacing)
+                {
+                    centres.push(*hex);
+                    taken += 1;
+                }
+            }
+            i = j;
         }
-        let before = centres.len();
-        for (hex, _) in &ranked[i..j] {
-            if centres[..before]
+    }
+
+    // Approach places (`planner.approach_places` an enemy she knows of):
+    // ground from which she can hurt him — the resolver's expected damage,
+    // not its worth, so a belt that only closes a tank's hatches does not
+    // count — spread round his facing, front to rear, nearest her first.
+    // A flank is where a fact about him and a fact about her meet, and this
+    // is the menu putting that ground on the list without calling it one.
+    let per_enemy = planner.approach_places as usize;
+    if per_enemy > 0 {
+        let enemies = state.known_enemies(registry, crate::battle::Knower::Crew(unit));
+        for enemy in enemies {
+            let (epos, efacing) = (enemy.pos, Hex::from(enemy.facing));
+            // Round his facing in thirds — in front, off his side, behind —
+            // so the places are spread across his arcs rather than piled in
+            // front of his gun.
+            let arc = |hex: Hex| {
+                let c = crate::battle::along_the_bearing(hex - epos, efacing);
+                let n = (crate::battle::along_the_bearing(hex - epos, hex - epos) as f32).sqrt()
+                    * (crate::battle::along_the_bearing(efacing, efacing) as f32).sqrt();
+                let cos = if n == 0.0 { 1.0 } else { c as f32 / n };
+                if cos > 0.5 {
+                    0
+                } else if cos > -0.5 {
+                    1
+                } else {
+                    2
+                }
+            };
+            let mut near: Vec<(Hex, u32)> = pool
                 .iter()
-                .all(|c| c.distance_to(*hex) as u32 >= spacing)
-            {
-                centres.push(*hex);
+                .copied()
+                .filter(|(hex, _)| {
+                    centres
+                        .iter()
+                        .all(|c| c.distance_to(*hex) as u32 >= spacing)
+                })
+                .collect();
+            let near_key = |hex: Hex, cost: u32| (arc(hex), cost, hex.distance_to(me.pos));
+            near.sort_by_key(|(hex, cost)| (near_key(*hex, *cost), hex.x, hex.y));
+            // A tie group at a time, as the spread is taken, and for the same
+            // reason: a mirrored pair ties on every key and must come in or
+            // stay out together.
+            let per_arc = per_enemy.div_ceil(3);
+            let mut in_arc = [0usize; 3];
+            let mut i = 0;
+            while i < near.len() && in_arc.iter().sum::<usize>() < per_enemy {
+                let group_key = near_key(near[i].0, near[i].1);
+                let mut j = i;
+                while j < near.len() && near_key(near[j].0, near[j].1) == group_key {
+                    j += 1;
+                }
+                let a = group_key.0;
+                if in_arc[a] < per_arc {
+                    let before = centres.len();
+                    for (hex, _) in &near[i..j] {
+                        let apart = centres[..before]
+                            .iter()
+                            .all(|c| c.distance_to(*hex) as u32 >= spacing);
+                        let hurts = apart
+                            && crate::battle::best_weapon_from(
+                                registry, state, unit, *hex, enemy.id, epos,
+                            )
+                            .is_some_and(|(_, shot)| shot.expected > 0.0);
+                        if hurts {
+                            centres.push(*hex);
+                            in_arc[a] += 1;
+                        }
+                    }
+                }
+                i = j;
             }
         }
-        i = j;
     }
 
     // The representatives: the best place to stand in each patch, and every
@@ -562,18 +655,14 @@ fn drive(
         None => crow.max(registry.planner.horizon_rounds as f32),
     };
 
-    let exposed = match (guns.is_empty(), roads.path(to)) {
-        (false, Some(path)) => {
-            let seen = path
-                .iter()
-                .filter(|hex| {
-                    guns.iter().any(|(from, reach)| {
-                        from.distance_to(**hex) <= *reach && state.sees_through(*from, **hex)
-                    })
-                })
-                .count();
-            seen as f32 / path.len().max(1) as f32
-        }
+    // The least-watched of the cheapest roads (`Roads::least`): which of
+    // two equally cheap roads the search found first is a coordinate.
+    let watched = |hex: Hex| {
+        guns.iter()
+            .any(|(from, reach)| from.distance_to(hex) <= *reach && state.sees_through(*from, hex))
+    };
+    let exposed = match (guns.is_empty(), roads.least(to, watched)) {
+        (false, Some((seen, hexes))) => seen as f32 / hexes.max(1) as f32,
         _ => 0.0,
     };
 
