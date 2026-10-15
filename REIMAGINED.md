@@ -675,6 +675,21 @@ heavy +28.5 / +35.3. The forces stay level under the teacher (covering
 46.9), and the teacher still strikes 81% front: it does not go round, which
 is the learner's to find.
 
+**Directional awareness shipped (2026-10-15):** 70% off the front, 25%
+closed up (the designer's numbers), with infantry and recon higher on their
+own chassis — rifle squads and platoons 90 (they have no hull and look every
+way, and never close up), the scout section 100, the scout car 90 head out
+and 50 closed up. The quick test (`flank --round --screen`, the flanker
+behind a wood screen and radioed round to the defenders' side, 800 a row):
+**no measurable effect** — goes-round wins 208 shipped, 207 neutral, 214 at
+a harsh 30/10 (±14). A contact once found is held while she is in view, and
+a march across a defender's front in view is pinned or killed before it
+arrives (seed 1's flanker never got past her first hex), so the rule only
+speaks for a flanker who was never seen; and on this stage the defenders
+wander into the screen wood themselves and a third of battles stall.
+The mechanism is proven by its tests and is the rule; that it rarely
+decides a battle is a finding about held contacts.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or

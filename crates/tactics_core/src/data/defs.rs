@@ -200,6 +200,16 @@ pub struct VehicleDef {
     /// `balance.pivot_ticks` instead.
     #[serde(default)]
     pub traverse_seconds: u32,
+    /// How much of her detection chance this chassis's crew keeps against
+    /// somebody outside her frontal arc, head out and closed up, overriding
+    /// `balance.flank_search_percent` and `buttoned_flank_search_percent`
+    /// for her alone. A rifle squad has no hull and looks every way; a
+    /// reconnaissance crew is trained to watch all round. Absent is the
+    /// mod's number.
+    #[serde(default)]
+    pub flank_search_percent: Option<i32>,
+    #[serde(default)]
+    pub buttoned_flank_search_percent: Option<i32>,
     /// Her fighting compartment has no roof: a halftrack, a self-propelled
     /// gun, a tank destroyer with an open turret. Bullets that do not
     /// penetrate still reach her crew — plunging fire, grenades, a belt

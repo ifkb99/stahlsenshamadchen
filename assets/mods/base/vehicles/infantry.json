@@ -2,6 +2,7 @@
     {
         "id": "rifle_platoon",
         "turret": true,
+        "flank_search_percent": 90,
         "footprint": 1,
         "name": "Rifle Platoon",
         "class": "infantry",
@@ -43,6 +44,7 @@
     {
         "id": "scout_section",
         "turret": true,
+        "flank_search_percent": 100,
         "footprint": 1,
         "name": "Scout Section",
         "class": "infantry",
@@ -82,6 +84,7 @@
     {
         "id": "rifle_squad",
         "turret": true,
+        "flank_search_percent": 90,
         "footprint": 1,
         "name": "Rifle Squad",
         "class": "infantry",

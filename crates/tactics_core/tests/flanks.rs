@@ -266,7 +266,9 @@ fn first_shot_behind(reg: &DataRegistry) -> (Option<u32>, bool) {
 #[test]
 fn a_turret_swinging_onto_a_target_behind_her_fires_late() {
     // Half a circle at a minute a full turn is thirty seconds: six ticks.
-    let mut reg = seen(registry_wireless());
+    // Awareness taken out: the subject is the turret, and she has to have
+    // found the tank behind her to be ordered onto it.
+    let mut reg = all_round(seen(registry_wireless()));
     reg.vehicles
         .get_mut("medium_tank")
         .unwrap()
@@ -290,6 +292,19 @@ fn a_turret_swinging_onto_a_target_behind_her_fires_late() {
 }
 
 // --- awareness has a direction ------------------------------------------------
+
+/// The registry with awareness all round, the rule's absence: the base mod
+/// ships 70 off the front and 25 closed up, with its own figures for
+/// infantry and recon.
+fn all_round(mut reg: DataRegistry) -> DataRegistry {
+    reg.balance.flank_search_percent = 100;
+    reg.balance.buttoned_flank_search_percent = 100;
+    for vehicle in reg.vehicles.values_mut() {
+        vehicle.flank_search_percent = None;
+        vehicle.buttoned_flank_search_percent = None;
+    }
+    reg
+}
 
 /// A medium facing east with a medium three hexes in front of her and
 /// another three hexes behind: which of them her side has found.
@@ -320,7 +335,7 @@ fn looks_both_ways(reg: &DataRegistry, buttoned: bool) -> (bool, bool) {
 
 #[test]
 fn a_crew_who_does_not_look_off_her_front_does_not_find_what_is_behind_her() {
-    let mut reg = registry_wireless();
+    let mut reg = all_round(registry_wireless());
     assert_eq!(
         looks_both_ways(&reg, false),
         (true, true),
@@ -336,7 +351,7 @@ fn a_crew_who_does_not_look_off_her_front_does_not_find_what_is_behind_her() {
 
 #[test]
 fn closed_up_she_is_blind_to_her_flanks_and_not_to_her_front() {
-    let mut reg = registry_wireless();
+    let mut reg = all_round(registry_wireless());
     reg.balance.buttoned_flank_search_percent = 0;
     assert_eq!(
         looks_both_ways(&reg, false),
@@ -347,5 +362,23 @@ fn closed_up_she_is_blind_to_her_flanks_and_not_to_her_front() {
         looks_both_ways(&reg, true),
         (true, false),
         "through periscopes she finds the tank in front and not the one behind"
+    );
+}
+
+#[test]
+fn a_chassis_trained_to_watch_all_round_says_so_over_the_mod() {
+    // The mod keeps nothing off the front; the medium's own figure says her
+    // crew looks every way, and hers is the one read.
+    let mut reg = all_round(registry_wireless());
+    reg.balance.flank_search_percent = 0;
+    assert_eq!(looks_both_ways(&reg, false), (true, false));
+    reg.vehicles
+        .get_mut("medium_tank")
+        .unwrap()
+        .flank_search_percent = Some(100);
+    assert_eq!(
+        looks_both_ways(&reg, false),
+        (true, true),
+        "her chassis's figure overrides the mod's"
     );
 }

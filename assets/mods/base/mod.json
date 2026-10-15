@@ -43,6 +43,8 @@
     "cover_own_percent": 100,
     "cover_lip_percent": 100,
     "hull_down_cover": 20,
+    "flank_search_percent": 70,
+    "buttoned_flank_search_percent": 25,
     "pen_scatter": 15,
     "brewup_percent": 60,
     "brew_safety_percent": 12,

@@ -3,6 +3,8 @@
         "id": "recon_car",
         "turret": true,
         "traverse_seconds": 25,
+        "flank_search_percent": 90,
+        "buttoned_flank_search_percent": 50,
         "footprint": 2,
         "name": "Luchs Scout Car",
         "class": "recon",

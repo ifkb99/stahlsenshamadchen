@@ -19,6 +19,18 @@
 //!     --set balance.cover_lip_percent=100 --set vehicle.medium_tank.traverse_seconds=20
 //! ```
 //!
+//! `--round` asks the other half — *getting* there: the defenders at the
+//! 75's full reach, and the second attacker either staying beside the first
+//! or radioed round to their side at the start.
+//!
+//! `--screen` (with `--round`) lays a wood line north of the axis for the
+//! flanker to drive behind: out of the defenders' sight and back into it on
+//! their side, which is the only case where where they are looking matters —
+//! a contact once found is held while she stays in view.
+//!
+//! `FLANK_TRACE=<seed>` prints, for that battle, where the flanker is each
+//! round, whether the defenders have her, and how they face and are laid.
+//!
 //! `--hedge` puts a hedge line one hex in front of the defenders, so the
 //! guns in front fire across it and the flanker does not; `--set` takes any
 //! content override, as `balance` does, which is how the flank rules
@@ -53,19 +65,36 @@ struct Tally {
     rounds: u32,
 }
 
+/// Where the defenders stand, and whether the second attacker is sent
+/// somewhere by her commander rather than left to her own judgment.
+#[derive(Clone, Copy)]
+struct Case {
+    /// The defenders' column; the hedge, if any, is the column before it.
+    defend: i32,
+    /// A wood line north of the axis, ending a column short of the
+    /// defenders, for a flanker to drive behind and drop out of their sight.
+    screen: bool,
+    /// A march her commander radios her at the start, `Binding`, so she
+    /// goes the whole way round rather than stopping for cover.
+    march: Option<[i32; 2]>,
+}
+
 fn battle(
     reg: &DataRegistry,
     hedge: bool,
     vehicle: &str,
     second: [i32; 2],
     second_facing: Option<Facing>,
+    case: Case,
     seed: u64,
 ) -> Tally {
     let mut terrain = HexMap::default();
     for col in 0..36 {
         for row in 0..30 {
-            let ground = if hedge && col == 19 && (15..=19).contains(&row) {
+            let ground = if hedge && col == case.defend - 1 && (15..=19).contains(&row) {
                 "hedgerow"
+            } else if case.screen && (10..=11).contains(&row) && (13..case.defend).contains(&col) {
+                "forest"
             } else {
                 "grass"
             };
@@ -90,8 +119,8 @@ fn battle(
     let placements = vec![
         place([12, 16], 0, Some(Facing::East)),
         place(second, 0, second_facing),
-        place([20, 16], 1, Some(Facing::West)),
-        place([20, 18], 1, Some(Facing::West)),
+        place([case.defend, 16], 1, Some(Facing::West)),
+        place([case.defend, 18], 1, Some(Facing::West)),
     ];
     let (roster, crews) = Roster::stamp_for(reg, &placements);
     let sides = ["Attackers", "Defenders"]
@@ -111,6 +140,20 @@ fn battle(
     ) else {
         return Tally::default();
     };
+    if let Some(to) = case.march {
+        let said = state.apply(
+            reg,
+            &tactics_core::battle::Order::Radio {
+                unit: tactics_core::battle::UnitId(1),
+                to: Some(tactics_core::offset_to_hex(to[0], to[1])),
+                fire: None,
+                latitude: tactics_core::battle::Latitude::Binding,
+            },
+        );
+        if std::env::var("FLANK_TRACE").is_ok_and(|v| v == seed.to_string()) {
+            eprintln!("radio: {said:?}");
+        }
+    }
     let mut ai = AiDriver::new();
     for side in 0..2u8 {
         let config = AiConfig {
@@ -140,6 +183,31 @@ fn battle(
             }
         }
         t.rounds += 1;
+        if std::env::var("FLANK_TRACE").is_ok_and(|v| v == seed.to_string()) {
+            let a2 = tactics_core::battle::UnitId(1);
+            let pos = state.unit(a2).map(|u| tactics_core::hex_to_offset(u.pos));
+            let defenders: Vec<String> = state
+                .units
+                .iter()
+                .filter(|u| u.side == 1 && u.alive())
+                .map(|u| {
+                    format!(
+                        "{:?} at {:?} facing {:?} laid {:?} buttoned {}",
+                        u.id,
+                        tactics_core::hex_to_offset(u.pos),
+                        u.facing,
+                        u.laid,
+                        u.buttoned
+                    )
+                })
+                .collect();
+            eprintln!(
+                "round {}: flanker at {pos:?}, seen by defenders {}; {}",
+                t.rounds,
+                state.fog.side(1).spotted.contains(&a2),
+                defenders.join("; ")
+            );
+        }
     }
     match state.over.and_then(|r| r.winner) {
         Some(0) => t.won = 1,
@@ -181,10 +249,55 @@ fn main() {
             "  {:10} {:>5} {:>5} {:>5} {:>7} {:>7}",
             "second", "won", "lost", "drew", "rounds", "flank%"
         );
-        for &(name, second, facing) in STARTS {
+        let round = args.iter().any(|a| a == "--round");
+        let cases: Vec<(&str, [i32; 2], Option<Facing>, Case)> = if round {
+            // Getting there: the defenders at the 75's full reach, the second
+            // attacker beside the first, staying or sent round to a point
+            // nine hexes off their side.
+            let far = Case {
+                defend: 24,
+                screen: args.iter().any(|a| a == "--screen"),
+                march: None,
+            };
+            vec![
+                ("stays", [12, 18], Some(Facing::East), far),
+                (
+                    "goes round",
+                    // Behind the screen, out of their sight, when there is
+                    // one: a march across their front in view is pinned or
+                    // killed before it arrives, and never tests where they
+                    // are looking.
+                    if far.screen { [14, 8] } else { [12, 18] },
+                    Some(Facing::East),
+                    Case {
+                        march: Some([24, 7]),
+                        ..far
+                    },
+                ),
+            ]
+        } else {
+            STARTS
+                .iter()
+                .map(|&(n, at, f)| {
+                    (
+                        n,
+                        at,
+                        f,
+                        Case {
+                            defend: 20,
+                            screen: false,
+                            march: None,
+                        },
+                    )
+                })
+                .collect()
+        };
+        for &(name, second, facing, case) in &cases {
             let seeds: Vec<u64> = (0..games).collect();
             let mut t = Tally::default();
-            for x in run_all(&seeds, |s| battle(&reg, hedge, vehicle, second, facing, *s)) {
+            for x in run_all(&seeds, |s| {
+                battle(&reg, hedge, vehicle, second, facing, case, *s)
+            }) {
                 t.won += x.won;
                 t.lost += x.lost;
                 t.drew += x.drew;

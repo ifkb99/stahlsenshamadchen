@@ -1236,7 +1236,12 @@ them in). **The base mod ships the cover rule** (own hex 100, lip 100,
 hull-down 20 — the designer's ruling that the cover mechanics are the mod's)
 **and traverse as chassis data** (`traverse_seconds`: scout car 25, light
 15, medium 20, heavy 60, IFV 15; carriers' pintle guns and infantry 0);
-directional awareness stays at 100 until ruled. Stages whose subject is
+directional awareness ships at 70 off the front and 25 closed up, with
+chassis overrides (`VehicleDef::flank_search_percent`,
+`buttoned_flank_search_percent`: rifle squads and platoons 90, the scout
+section 100, the scout car 90 / 50). It only speaks for an *acquisition*: a
+held contact is not re-rolled, so it rarely decides a battle (REIMAGINED.md,
+*Flanks*). Stages whose subject is
 something else take traverse out through `common::laid(..)`, the way
 `seen(..)` and `calm(..)` take out the dice and the fear. Tests: `tests/flanks.rs`,
 every rule mutation-checked. Measured by `examples/flank` (`--hedge`, `--set`).

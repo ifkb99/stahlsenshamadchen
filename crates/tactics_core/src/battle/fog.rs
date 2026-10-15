@@ -668,7 +668,12 @@ fn search(
     let at_the_far_edge = registry
         .balance
         .detection_chance(most_ground, 1, 1, unit.moved);
-    let all_round = b.flank_search_percent >= 100 && b.buttoned_flank_search_percent >= 100;
+    let all_round = b.flank_search_percent >= 100
+        && b.buttoned_flank_search_percent >= 100
+        && registry.vehicles.values().all(|v| {
+            v.flank_search_percent.is_none_or(|p| p >= 100)
+                && v.buttoned_flank_search_percent.is_none_or(|p| p >= 100)
+        });
     if most_hidden == 0 && at_the_far_edge >= 100 && all_round {
         return Search::Found;
     }
@@ -713,10 +718,17 @@ fn search(
             && crate::battle::combat::struck_facing(*at, s.laid.unwrap_or(s.facing), unit.pos)
                 != crate::data::ArmorFacing::Front
         {
+            // Her chassis may say better than the mod: a squad looks every
+            // way, a scout crew is trained to.
+            let chassis = registry.vehicle(&s.vehicle);
             let keep = if s.buttoned > 0 {
-                b.buttoned_flank_search_percent
+                chassis
+                    .and_then(|v| v.buttoned_flank_search_percent)
+                    .unwrap_or(b.buttoned_flank_search_percent)
             } else {
-                b.flank_search_percent
+                chassis
+                    .and_then(|v| v.flank_search_percent)
+                    .unwrap_or(b.flank_search_percent)
             };
             chance = chance * keep / 100;
         }
