@@ -753,6 +753,48 @@ and 48% of aimed shots from beyond the target's reach. A 128-128 network
 from scratch is training on it: 100 iterations of 2,048 battles, generated
 ground, every force, every event, 16 places and 3 approach places.
 
+*What that run said (2026-10-15).* Started from a short imitation (88%
+held-out), re-initialised by `fresh.py`: the loop's own evaluation went
+10.6% → 53.8% by iteration 10 and stayed between 53.5% and 59.7% (iteration
+80) for the other ninety; self-play drew 1 of 576 in all. On the two
+untouched blocks (seeds 3,000,000 and 5,000,000, 1,152 battles each,
+deterministic, the same flags for the control):
+
+| learner as | utility (control) | net80 | gain | net100 | gain |
+| --- | --- | --- | --- | --- | --- |
+| all forces | 1190/2304 (51.6%) | **1319/2304 (57.2%)** | +129 | 1298/2304 (56.3%) | +108 |
+| covering force | 237–252 (48.5%) | 277–212 (56.6%) | +40 | 257–232 (52.6%) | +20 |
+| Soviet motor rifle | 264–210 (55.7%) | 295–179 (62.2%) | +31 | 291–183 (61.4%) | +27 |
+| Soviet tank company | 249–214 (53.8%) | 253–210 (54.6%) | +4 | 266–197 (57.5%) | +17 |
+| Western cavalry | 204–220 (48.1%) | 225–199 (53.1%) | +21 | 226–198 (53.3%) | +22 |
+| Western team | 236–218 (52.0%) | 269–185 (58.1%) | +33 | 258–196 (56.8%) | +22 |
+
+| instrument (both blocks) | control | net80 | net100 |
+| --- | --- | --- | --- |
+| fix and flank a battle | 0.96 / 0.91 | 0.90 / 0.92 | 0.93 / 0.98 |
+| aimed shots from beyond the target's reach | 50% / 49% | 47% / 47% | 47% / 48% |
+| its strikes, front / side / rear | 78 / 18 / 5 | 77 / 18 / 5, 76 / 18 / 6 | 76 / 18 / 6, 75 / 19 / 6 |
+
+- **It beats the teacher on ground it has never seen, with every force**:
+  +5.6 points for the best checkpoint and +4.7 for the last, against a
+  binomial sd of about 1.5 for the difference (less, paired: the same
+  worlds and matchups). Per force the gain is +1 to +8 points, each about
+  one or two sd at ~470 battles, and no force carries the average.
+- **It is the same gain as before the F4 menu** (+6.1 points, the run
+  above, on the rules and forces of that day), so the approach places and
+  the equipment-against-equipment facts bought nothing a table can see.
+- **And it does not win by manoeuvre.** Fix-and-flank, standoff and the
+  share of hits on side and rear plate are the teacher's within a point or
+  two; if anything it fires from beyond the target's reach slightly less.
+  Whatever it does better is not what these instruments label. The next
+  question is what it *does* do differently — which places it picks
+  (approach places' share of its choices against the teacher's) and where
+  its wins come from (the score or the board) — before more features.
+- **What it has only ever met**: one opponent (the utility AI; `--league`
+  was 0), one deployment axis and one rule for the objectives, and the
+  base mod's default world settings. The ground varies; the shape of the
+  problem does not. Those are the next three things to vary.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or
