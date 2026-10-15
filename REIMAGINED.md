@@ -505,6 +505,43 @@ platoons — moving them to squads needs seats the academy roll does not have
 halftrack were four), which is a roster decision; and repricing through the
 `mustered` instrument once the builder can buy a mechanised platoon whole.
 
+*What the first run with them said (2026-10-14).* A 128-128 network from
+scratch, every event on, the mission-first reward, 100 iterations of 2,048
+battles on generated ground with every matchup drawn from the five forces
+(`loop.py --forces all`, ~64 s an iteration). The loop's own evaluation
+went 19.3% → 53.1% by iteration 10 and stayed between 52.8% and 56.6% for
+the other ninety; self-play drew 0 of 576 from iteration 20 on. Measured on
+two blocks of worlds nothing had touched (seeds 3,000,000 and 5,000,000,
+1,152 battles each, deterministic), against **the teacher in the learner's
+seat** as the control (`rollout --net utility`):
+
+| learner as | utility (control) | net100 | gain |
+| --- | --- | --- | --- |
+| all forces | 1139/2304 (49.4%) | **1278/2304 (55.5%)** | +139 |
+| covering force | 279–210 (57.1%) | 294–195 (60.1%) | +15 |
+| Soviet motor rifle | 120–354 (25.3%) | 181–293 (38.2%) | **+61** |
+| Soviet tank company | 302–161 (65.2%) | 314–149 (67.8%) | +12 |
+| Western cavalry | 182–241 (43.0%) | 204–220 (48.1%) | +22 |
+| Western team | 256–198 (56.4%) | 285–169 (62.8%) | +29 |
+
+- **The first learned chooser to beat the teacher on ground it has never
+  seen**: 56.3% and 54.7% on the two blocks (the control 49.9% and 49.0%);
+  checkpoints 50 and 90 read 55.7% and 54.6% on the first block, so this is
+  not the pick of a lucky checkpoint. Binomial sd at 1,152 is 17 wins.
+- **It did not learn one method**: it gains with every force, and most
+  with the force the teacher handles worst.
+- **The motor rifle company is the weak force, not the network's weak
+  force**: the teacher wins a quarter of its battles with it. Six squads in
+  open-topped carriers and two tanks, under massed armour, is a force the
+  utility AI does not know how to fight — or one that is simply worth less
+  than four tanks; this instrument cannot yet say which, and a price for it
+  is what the `mustered` repricing is for.
+- **No flanking emerged**: strikes by the learner are 78% front, 17% side,
+  5% rear, against the teacher's 80/15/4. Whatever it does better, it is not
+  yet going round.
+- The gain arrived by iteration 10 and longer training did not add to it;
+  entropy fell 3.40 → 2.75 over the run.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or
@@ -595,8 +632,9 @@ whether they did.
       worth 2). Two games a world, one per seat. `rollout --ground generated`
       and `--deterministic`; `loop.py --ground generated` evaluates on worlds
       training never reaches. Generated battles run 7.6 rounds (3–16), none
-      drawn, 70 of 256 won by the score. Platoon-scale forces are still to
-      come (see *Infantry*, below).
+      drawn, 70 of 256 won by the score. Company-team forces with squads
+      came next (see *Infantry*, above), and with them a 128-128 network
+      beats the teacher on unseen worlds, 55.5% against a 49.4% control.
 
   *What it said (2026-10-14, every event on, mission-first reward):*
   - **The ridge policy does not transfer**: the 58% mission-first network

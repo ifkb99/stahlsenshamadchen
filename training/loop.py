@@ -66,13 +66,22 @@ def evaluate(net, places, arena, games, events="none"):
     return won, total, draws, selfs
 
 
+FORCES = []  # set from --forces in main; passed to every rollout
+
+
 def evaluate_generated(net, places, arena, games, events="none", seed=1_000_000):
     """The same two questions on generated ground, by rollouts with the
     learner taking its best choice: against the utility AI, and against
     itself. Worlds from `seed / 2` up, which no training rollout reaches."""
     common = ["--net", str(net), "--deterministic", "--ground", "generated", "--arena", arena,
-              "--places", str(places), "--events", events, "--out", str(ROOT / "target" / "rl" / "eval.jsonl")]
+              "--places", str(places), "--events", events, "--out", str(ROOT / "target" / "rl" / "eval.jsonl"),
+              *(["--forces", FORCES[0]] if FORCES else [])]
     out = cargo("rollout", *common, "--games", str(games), "--seed", str(seed))
+    # The learner's record with each force: overfitting to one method shows
+    # as one force carrying the average.
+    for line in out.splitlines():
+        if "learner as" in line:
+            print("    " + line.strip(), flush=True)
     m = re.search(r"against utility: won (\d+), lost (\d+), drew (\d+)", out)
     won, total = (int(m.group(1)), sum(int(g) for g in m.groups())) if m else (0, 0)
     # Against itself: every other pair of games is against the utility AI,
@@ -94,6 +103,7 @@ def main():
     ap.add_argument("--arena", default="ridge_arena")
     ap.add_argument("--ground", default="arena", choices=["arena", "generated"],
                     help="train and evaluate on the arena, or on a fresh generated world every two games")
+    ap.add_argument("--forces", help="draw matchups from these forces (a list, or all)")
     ap.add_argument("--events", default="none", help="planner.goal_events for every battle: a list, all, or none")
     ap.add_argument("--eval-every", type=int, default=5)
     ap.add_argument("--league", type=int, default=0, help="past checkpoints kept as opponents (0: utility only)")
@@ -105,6 +115,8 @@ def main():
     # Absolute, because cargo runs from the repository root and ppo.py from
     # here: a relative path meant two different places.
     args.dir = args.dir.resolve()
+    if args.forces:
+        FORCES.append(args.forces)
     args.dir.mkdir(parents=True, exist_ok=True)
     log = args.dir / "log.csv"
 
@@ -131,7 +143,7 @@ def main():
             out = cargo("rollout", "--net", str(net), "--games", str(args.games), *opponents,
                         "--seed", str(it * args.games), "--temperature", str(args.temperature),
                         "--places", str(args.places), "--arena", args.arena, "--events", args.events,
-                        "--ground", args.ground,
+                        "--ground", args.ground, *(["--forces", args.forces] if args.forces else []),
                         "--out", str(rollouts))
             m = re.search(r"learner won (\d+), lost (\d+)", out)
             rw, rl = (int(m.group(1)), int(m.group(2))) if m else ("", "")

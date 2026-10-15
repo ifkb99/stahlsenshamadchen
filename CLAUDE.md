@@ -511,7 +511,10 @@ else. Tests: `tests/learning.rs`.
 - **Forces are data and doctrine comes with them** (`forces/`,
   `ForceDef`; the designer's ruling that a doctrine comes from what a side
   has). `harness::forces::stage` stages two on any battlefield; rollouts
-  with `--forces` draw a matchup per world and report per force. A
+  with `--forces` draw a matchup per world and report per force, and
+  **read a force's record against `--net utility`** (the teacher in the
+  learner's seat): the teacher wins a quarter of its battles with the motor
+  rifle company, so a learner's 38% with it is a gain, not a weakness. A
   `rifle_squad` costs 0 — not for sale to `force::muster`, which counts
   appetite per chassis and over-buys infantry when a second infantry chassis
   is on offer; it comes in forces until the builder knows a mech platoon.

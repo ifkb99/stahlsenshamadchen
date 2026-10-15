@@ -32,7 +32,9 @@ use tactics_core::harness::{forces, generated};
 const USAGE: &str = "\
 rollout: battles for reinforcement learning, learner against the utility AI
 
-  --net PATH          the learner's goal network (required)
+  --net PATH          the learner's goal network (required); `utility` makes
+                      the learner the utility AI itself, the control a
+                      network's per-force record is read against
   --games N           battles (default 256)
   --seed S            first battle (default 0)
   --temperature T     the learner's sampling temperature (default 1.0)
@@ -279,18 +281,27 @@ fn main() {
         });
     }
     let path = flag(&args, "--net").expect("--net");
-    let net = load_goal_net(std::path::Path::new(path)).unwrap_or_else(|err| {
-        eprintln!("error: --net {path}: {err}");
-        std::process::exit(1);
-    });
-    let setup = Setup {
-        reg: &reg,
-        arena,
-        brain: if args.iter().any(|a| a == "--deterministic") {
+    // `utility` is the control: the teacher in the learner's seat, so a
+    // force's record can be told apart from what the force is worth. A force
+    // the teacher also loses with is the force; one only the network loses
+    // with is the network.
+    let brain = if path == "utility" {
+        GoalBrain::Utility
+    } else {
+        let net = load_goal_net(std::path::Path::new(path)).unwrap_or_else(|err| {
+            eprintln!("error: --net {path}: {err}");
+            std::process::exit(1);
+        });
+        if args.iter().any(|a| a == "--deterministic") {
             GoalBrain::Learned(net)
         } else {
             GoalBrain::Explore { net, temperature }
-        },
+        }
+    };
+    let setup = Setup {
+        reg: &reg,
+        arena,
+        brain,
         difficulty,
         generated: flag(&args, "--ground") == Some("generated"),
         forces: match flag(&args, "--forces") {
