@@ -20,7 +20,7 @@ use tactics_core::map::{Battlefield, Facing, MapFile, UnitPlacement};
 use tactics_core::roster::Roster;
 
 mod common;
-use common::registry;
+use common::{laid, registry};
 
 /// A strip of open grass with one vehicle at each end, `dist` hexes apart.
 ///
@@ -393,7 +393,9 @@ fn driving_is_counted_once_however_she_came_to_drive() {
     // ordered march, the battle drill's dash for cover and a frightened
     // crew's flight all cost the same accuracy. A second increment anywhere
     // else would mean two answers to whether she is under way.
-    let reg = registry();
+    // The count of hexes is the subject, not the turret: `laid` keeps the
+    // tick she fires on where the stage was calibrated.
+    let reg = laid(registry());
     let mut state = field(&reg, "medium_tank", "medium_tank", 12, 1);
     let start = state.units[0].pos;
     let dest = start + tactics_core::Hex::new(2, 0);

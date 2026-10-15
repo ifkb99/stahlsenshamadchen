@@ -83,6 +83,7 @@
     {
         "id": "ifv",
         "turret": true,
+        "traverse_seconds": 15,
         "footprint": 2,
         "name": "Schütze Fighting Vehicle",
         "class": "transport",

@@ -30,7 +30,7 @@ use tactics_core::overworld::{
 
 mod common;
 use common::{
-    always, breaking, calm, crewed_stage, curtained_pair, duel, formation_named, maul,
+    always, breaking, calm, crewed_stage, curtained_pair, duel, formation_named, laid, maul,
     objective_battle, play_round, registry, registry_wireless, seen, sharp_planner, soften,
     standoff, strike_down, two_side_battle, unit_at,
 };
@@ -2413,7 +2413,10 @@ fn a_unit_that_spent_the_round_driving_still_shoots_back() {
     // shoots at them, even mid-move. Softened so the scene stays about
     // movement: an unsoftened 75 can destroy the main gun with the opening
     // hit, and a disarmed crew proves nothing either way.
-    let mut reg = registry();
+    // Moving is the subject, not traverse: a crew who drove off her line has
+    // to swing her turret back first, and the stage was calibrated so she
+    // lives to shoot on the tick she can.
+    let mut reg = laid(registry());
     soften(&mut reg);
     let mut state = duel(&reg, 21);
     let (west, east) = (UnitId(0), UnitId(1));
@@ -3133,7 +3136,9 @@ fn a_frightened_crew_reverses_out_of_contact() {
     //
     // Away from what is shooting at her, note, and not toward a lane. She is
     // not navigating.
-    let mut reg = registry_wireless();
+    // The rout is the subject; `laid` keeps the gun that frightens her
+    // from spending the stage swinging onto her.
+    let mut reg = laid(registry_wireless());
     always(&mut reg, "flight");
     let mut state = flight_stage(&reg, FLIGHT_SEED);
     state.units[0].pressure = breaking(&reg);
@@ -3164,7 +3169,9 @@ fn a_crew_cannot_refuse_the_decision_she_made_herself() {
     // her own route away, lays it again, and she stands in place shaking for
     // the rest of the battle — a livelock that looks exactly like the freeze
     // this was built to remove.
-    let mut reg = calm(registry_wireless());
+    // Her own decision is the subject; `laid` keeps the gun on her from
+    // needing to swing round first and ending the stage early.
+    let mut reg = laid(calm(registry_wireless()));
     always(&mut reg, "flight");
     let mut state = flight_stage(&reg, FLIGHT_SEED);
     state.units[0].pressure = breaking(&reg);

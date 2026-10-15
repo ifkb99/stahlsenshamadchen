@@ -105,6 +105,21 @@ pub fn seen(mut reg: DataRegistry) -> DataRegistry {
 /// premise, not the finding. The same kind of helper as [`seen`]: the rule
 /// has tests of its own (`fire_and_movement.rs`), and a stage about
 /// something else must not also be a test of how much fear a round costs.
+/// The registry with every turret laying onto any bearing at once: no
+/// `traverse_seconds`, the game before turrets took time to swing
+/// (2026-10-15).
+///
+/// For stages whose subject is something else — how far she drove, a crew's
+/// own decision, a shot and who it hurt — calibrated on the tick a gun
+/// speaks. Traverse has tests of its own (`flanks.rs`); a stage about
+/// something else must not also be a test of how long her turret took.
+pub fn laid(mut reg: DataRegistry) -> DataRegistry {
+    for vehicle in reg.vehicles.values_mut() {
+        vehicle.traverse_seconds = 0;
+    }
+    reg
+}
+
 pub fn calm(mut reg: DataRegistry) -> DataRegistry {
     reg.morale.targeted = 0;
     for (id, before) in [

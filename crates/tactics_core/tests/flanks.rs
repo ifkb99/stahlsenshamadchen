@@ -93,7 +93,11 @@ fn hedge_stage(reg: &DataRegistry) -> BattleState {
 
 #[test]
 fn a_hedge_covers_her_against_the_gun_in_front_and_not_against_the_flank() {
+    // The rule's absence first: no lip, cover is her own hex's, grass from
+    // both sides. (The base mod ships the lip at 100.)
     let mut reg = registry_wireless();
+    reg.balance.cover_lip_percent = 0;
+    reg.balance.hull_down_cover = 0;
     let state = hedge_stage(&reg);
     let (front, flank, her) = (0, 1, 2);
     let d = |a: u32| {
@@ -111,7 +115,7 @@ fn a_hedge_covers_her_against_the_gun_in_front_and_not_against_the_flank() {
     assert_eq!(
         chance(&reg, &state, front, her),
         chance(&reg, &state, flank, her),
-        "with the shipped defaults cover is her own hex's, grass from both sides"
+        "with no lip, cover is her own hex's, grass from both sides"
     );
 
     reg.balance.cover_lip_percent = 100;
@@ -263,6 +267,10 @@ fn first_shot_behind(reg: &DataRegistry) -> (Option<u32>, bool) {
 fn a_turret_swinging_onto_a_target_behind_her_fires_late() {
     // Half a circle at a minute a full turn is thirty seconds: six ticks.
     let mut reg = seen(registry_wireless());
+    reg.vehicles
+        .get_mut("medium_tank")
+        .unwrap()
+        .traverse_seconds = 0;
     let (instant, said) = first_shot_behind(&reg);
     assert!(
         !said,

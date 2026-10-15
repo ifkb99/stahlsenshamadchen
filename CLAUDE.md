@@ -1232,7 +1232,13 @@ The designer's rulings of 2026-10-15: a flank is not only a thinner plate —
 it defeats terrain, it divides a defender's attention, and a crew closed up
 by fixing fire is blind to it. Three rules, each data whose neutral value is
 the game before (the determinism snapshot passed unregenerated with all of
-them in), **none turned on by the base mod yet**. Tests: `tests/flanks.rs`,
+them in). **The base mod ships the cover rule** (own hex 100, lip 100,
+hull-down 20 — the designer's ruling that the cover mechanics are the mod's)
+**and traverse as chassis data** (`traverse_seconds`: scout car 25, light
+15, medium 20, heavy 60, IFV 15; carriers' pintle guns and infantry 0);
+directional awareness stays at 100 until ruled. Stages whose subject is
+something else take traverse out through `common::laid(..)`, the way
+`seen(..)` and `calm(..)` take out the dice and the fear. Tests: `tests/flanks.rs`,
 every rule mutation-checked. Measured by `examples/flank` (`--hedge`, `--set`).
 
 - **Cover comes from the ground crossed** (`combat::ground_between`). Her own

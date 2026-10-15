@@ -23,7 +23,7 @@ use tactics_core::data::{ArmorFacing, DataRegistry, RoundPressure, ShotFelt};
 
 mod common;
 use common::{
-    commit_all, duel, play_round, registry, registry_wireless, seen, settle, soften,
+    commit_all, duel, laid, play_round, registry, registry_wireless, seen, settle, soften,
     two_side_battle, unit_at,
 };
 
@@ -625,7 +625,9 @@ fn a_penetration_names_the_girl_it_hurt() {
     // carries the cadet it found, she is really aboard the vehicle it names,
     // and the seat she sits in is marked — the state and the story must be
     // the same fact.
-    let mut reg = registry_wireless();
+    // Who the shot hurt is the subject; `laid` keeps the first shot on the
+    // tick the stage was calibrated for.
+    let mut reg = laid(registry_wireless());
     soften(&mut reg); // interiors are cadets only: every pen finds one
     let mut state = duel(&reg, 401);
     let (west, east) = (UnitId(0), UnitId(1));

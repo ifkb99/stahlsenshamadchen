@@ -661,7 +661,19 @@ Mediums behind a hedge, one rule at a time: as today +5.3%, cover +8.4%,
 traverse +11.6%, awareness +3.2% (small here because the flanker starts in
 sight — its job is the flanker who arrives unseen, which this probe does not
 stage), all three +15.3%; and a frontal attack into the hedge is now
-punished (heavy head-on 34%). Shipping values is the designer's ruling.
+punished (heavy head-on 34%).
+
+**Ruled and shipped (2026-10-15):** cover in the base mod, traverse on the
+vehicle data. Own hex at **100**, not the 50 the probe tried: halving it
+weakened every wood and town from every side, which is not what a flank
+defeats — a crew *in* a wood has trees all round her; what a flank defeats
+is the hedge she sits *behind*. (The probe's defenders stood on grass behind
+the hedge, so its numbers did not depend on it.) Shipped, flank minus
+head-on: medium +10.0% open and +17.4% behind a hedge, light +19.4 / +31.9,
+heavy +28.5 / +35.3. The forces stay level under the teacher (covering
+49.3%, motor rifle 54.9, tank company 50.3, cavalry 48.9, Western team
+46.9), and the teacher still strikes 81% front: it does not go round, which
+is the learner's to find.
 
 ## Open questions
 

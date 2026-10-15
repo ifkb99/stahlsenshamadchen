@@ -393,8 +393,11 @@ fn a_battle_on_a_window_of_the_world_is_the_battle_on_the_whole_of_it() {
     // A seed on which the crews carry the window across chunk borders. The
     // claim is about residency, not about a particular world; seed 9 did it
     // until the rivers moved (W6.5), after which nobody on it paged a chunk,
-    // and seed 8 pages the most of the first fifteen under generator 3.
-    let made = Arc::new(GeneratedWorld::with_rules(rules, R, 8).unwrap());
+    // and seed 8 paged the most of the first fifteen under generator 3 —
+    // until cover came from the ground crossed (2026-10-15) and its crews
+    // stopped driving far enough. Seed 15 pages four, the most of the first
+    // thirty with the flank rules shipped.
+    let made = Arc::new(GeneratedWorld::with_rules(rules, R, 15).unwrap());
     let mut whole = HexMap::default();
     for chunk in made.chunks() {
         for (hex, terrain, level) in made.chunk_tiles(chunk) {
