@@ -348,6 +348,25 @@ fn hit_chance_inner(
         );
         chance += cover;
     }
+    // What she has dug, where she is: whole against the front she dug it
+    // to face, `dig_in_flank_percent` of it from anywhere else.
+    if tgt.dug_in > 0 && target_pos == tgt.pos {
+        let share = if struck_facing(tgt.pos, tgt.facing, from) == ArmorFacing::Front {
+            100
+        } else {
+            registry.balance.dig_in_flank_percent
+        };
+        let cover = -registry
+            .balance
+            .cover_against_accuracy(tgt.dug_in * share / 100);
+        note(
+            HitFactor::Cover {
+                terrain: "her scrape",
+            },
+            cover,
+        );
+        chance += cover;
+    }
     if let Some(vehicle) = registry.vehicle(&tgt.vehicle)
         && vehicle.profile != 0
     {

@@ -2,6 +2,7 @@
     {
         "id": "rifle_platoon",
         "turret": true,
+        "dig_in_per_round": 2,
         "flank_search_percent": 90,
         "footprint": 1,
         "name": "Rifle Platoon",
@@ -44,6 +45,7 @@
     {
         "id": "scout_section",
         "turret": true,
+        "dig_in_per_round": 2,
         "flank_search_percent": 100,
         "footprint": 1,
         "name": "Scout Section",
@@ -84,6 +86,7 @@
     {
         "id": "rifle_squad",
         "turret": true,
+        "dig_in_per_round": 2,
         "flank_search_percent": 90,
         "footprint": 1,
         "name": "Rifle Squad",

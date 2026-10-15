@@ -699,6 +699,15 @@ again), and its strikes went from 81% to 78–79% front; forces under the
 teacher: covering 47.6%, motor rifle 56.5 (a little strong, ~2.8 sd), tank
 company 49.7, cavalry 49.2, Western team 47.8.
 
+**Prepared positions shipped (2026-10-15):** a crew who ends a round where
+she began it digs in (`dig_in_per_round` on the chassis: infantry 2 cover
+points a round, vehicles none), to `balance.dig_in_max` 20 — about ten
+minutes for a shell scrape — and loses it when she moves; it counts whole
+from her front and 50% (`dig_in_flank_percent`) from anywhere else. Quick
+test, `prices` at 2,048 worlds with every flank rule on: a squad aboard
+went from 0.8 to 1.6 points and one on foot from 0.3 to 0.8 — doubled and
+still small, because where the teacher puts infantry is the bigger problem.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or

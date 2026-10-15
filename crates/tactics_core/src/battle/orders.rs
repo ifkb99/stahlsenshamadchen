@@ -2026,6 +2026,8 @@ impl BattleState {
                 // second increment anywhere else would mean two answers to
                 // whether she is under way.
                 unit.moved += 1;
+                // Out of her hole: what she dug stays behind.
+                unit.dug_in = 0;
                 let facing = unit.pos.neighbor_direction(next);
                 unit.pos = next;
                 if let Some(dir) = facing {
@@ -2498,7 +2500,18 @@ impl BattleState {
                 unit.pressure = unit.pressure.saturating_sub(shed);
             }
         }
+        // A round ended where it began is a round spent digging: her
+        // chassis's rate, to the mod's cap. Aboard, she has nothing to dig.
+        let cap = registry.balance.dig_in_max;
         for unit in self.units.iter_mut() {
+            if unit.aboard.is_some() {
+                unit.dug_in = 0;
+            } else if cap > 0 && unit.moved == 0 && unit.alive() {
+                let rate = registry
+                    .vehicle(&unit.vehicle)
+                    .map_or(0, |v| v.dig_in_per_round);
+                unit.dug_in = (unit.dug_in + rate).min(cap);
+            }
             unit.intent = UnitIntent::default();
             unit.planned = false;
             unit.move_credit = 0;

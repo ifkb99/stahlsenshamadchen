@@ -468,6 +468,15 @@ pub struct Balance {
     pub flank_search_percent: i32,
     #[serde(default = "hundred")]
     pub buttoned_flank_search_percent: i32,
+    /// The most cover a crew can dig herself (`VehicleDef::dig_in_per_round`
+    /// a round, while she stays put), and the share of it that counts against
+    /// fire from outside her frontal arc: a scrape is dug against the enemy
+    /// in front, so a flank goes round it. Zero and 100, the defaults, are
+    /// the game before.
+    #[serde(default)]
+    pub dig_in_max: i32,
+    #[serde(default = "hundred")]
+    pub dig_in_flank_percent: i32,
     /// Chance in 100 that a crew who has an enemy in her field of view
     /// actually picks her out of it, per tick, before anything is subtracted
     /// for the ground or added for the enemy's driving.
@@ -663,6 +672,8 @@ impl Default for Balance {
             hull_down_cover: 0,
             flank_search_percent: hundred(),
             buttoned_flank_search_percent: hundred(),
+            dig_in_max: 0,
+            dig_in_flank_percent: hundred(),
         }
     }
 }

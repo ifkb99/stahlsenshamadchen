@@ -45,6 +45,8 @@
     "hull_down_cover": 20,
     "flank_search_percent": 70,
     "buttoned_flank_search_percent": 25,
+    "dig_in_max": 20,
+    "dig_in_flank_percent": 50,
     "pen_scatter": 15,
     "brewup_percent": 60,
     "brew_safety_percent": 12,

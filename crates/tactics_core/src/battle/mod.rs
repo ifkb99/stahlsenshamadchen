@@ -462,6 +462,10 @@ pub struct Unit {
     /// starts and where every saved battle before traverse had it.
     #[serde(default)]
     pub laid: Option<EdgeDirection>,
+    /// Cover she has dug where she stands (`VehicleDef::dig_in_per_round`),
+    /// kept while she stays and lost the moment she moves or mounts.
+    #[serde(default)]
+    pub dug_in: i32,
     /// Her commander's personal order, if she is under one: the whole of
     /// what used to be `detached`, `tasking` and `latitude`.
     ///
@@ -1555,6 +1559,7 @@ impl BattleState {
             pressure: 0,
             buttoned: 0,
             laid: None,
+            dug_in: 0,
             orders: None,
             goal: None,
             goal_witness: None,

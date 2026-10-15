@@ -8,6 +8,7 @@
 //! - turret traverse
 //! - awareness has a direction
 //! - the shock of the flank
+//! - prepared positions
 
 use tactics_core::battle::{BattleState, Event, FireIntent, Order, SideState, UnitId, hit_chance};
 use tactics_core::data::DataRegistry;
@@ -449,5 +450,82 @@ fn fire_from_her_flank_frightens_her_more_than_the_same_fire_from_in_front() {
     assert!(
         after_flank >= 2 * before_flank,
         "from her flank at three times the price: {before_flank} -> {after_flank}"
+    );
+}
+
+// --- prepared positions -------------------------------------------------------
+
+/// A squad facing west on open grass, alone: nobody to shoot or be shot by.
+fn digging_stage(reg: &DataRegistry) -> BattleState {
+    let mut squad = unit_at([4, 4], 0, "rifle_squad", "Squad");
+    squad.facing = Some(tactics_core::map::Facing::West);
+    stage(
+        reg,
+        &["ggggggggg"; 9],
+        None,
+        vec![squad, unit_at([8, 8], 1, "rifle_squad", "Far off")],
+        41,
+    )
+}
+
+#[test]
+fn a_crew_who_stays_put_digs_in_and_leaves_it_behind_when_she_moves() {
+    let mut reg = registry_wireless();
+    reg.balance.dig_in_max = 10;
+    reg.vehicles
+        .get_mut("rifle_squad")
+        .unwrap()
+        .dig_in_per_round = 4;
+    let mut state = digging_stage(&reg);
+    let dug = |state: &BattleState| state.unit(UnitId(0)).unwrap().dug_in;
+    assert_eq!(dug(&state), 0, "she arrives with nothing dug");
+    for expected in [4, 8, 10, 10] {
+        commit_all(&reg, &mut state);
+        state.resolve_round(&reg);
+        assert_eq!(dug(&state), expected, "four a round to the cap of ten");
+    }
+    let next = tactics_core::offset_to_hex(5, 4);
+    state
+        .apply(
+            &reg,
+            &Order::SetMove {
+                unit: UnitId(0),
+                to: next,
+            },
+        )
+        .unwrap();
+    commit_all(&reg, &mut state);
+    state.resolve_round(&reg);
+    assert_eq!(dug(&state), 0, "and the hole stays where she dug it");
+}
+
+#[test]
+fn a_scrape_faces_the_enemy_it_was_dug_against() {
+    let mut reg = registry_wireless();
+    reg.balance.dig_in_max = 20;
+    reg.balance.dig_in_flank_percent = 50;
+    let state = digging_stage(&reg);
+    // A medium three hexes in front of her and another three off her side.
+    let gun = reg.weapon("gun_75").unwrap();
+    let mut placed = state.clone();
+    placed.unit_mut(UnitId(0)).unwrap().dug_in = 20;
+    let her = placed.unit(UnitId(0)).unwrap().pos;
+    let front = tactics_core::offset_to_hex(1, 4);
+    let side = tactics_core::offset_to_hex(4, 1);
+    assert_eq!(front.distance_to(her), side.distance_to(her));
+    let shot = |state: &BattleState, from| {
+        hit_chance(&reg, state, UnitId(1), from, gun, UnitId(0), her, false)
+    };
+    let full = reg.balance.cover_against_accuracy(20);
+    let half = reg.balance.cover_against_accuracy(10);
+    assert_eq!(
+        shot(&state, front) - shot(&placed, front),
+        full,
+        "whole from in front"
+    );
+    assert_eq!(
+        shot(&state, side) - shot(&placed, side),
+        half,
+        "half from her side"
     );
 }

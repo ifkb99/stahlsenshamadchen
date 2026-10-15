@@ -210,6 +210,13 @@ pub struct VehicleDef {
     pub flank_search_percent: Option<i32>,
     #[serde(default)]
     pub buttoned_flank_search_percent: Option<i32>,
+    /// Cover points her crew digs in for each round she ends where she
+    /// began it, up to `balance.dig_in_max`, lost the moment she moves: a
+    /// prepared position (REIMAGINED.md, *Flanks*). Riflemen scrape a hole
+    /// in minutes; a tank does not dig in in the middle of a fight. Zero, the
+    /// default, is a chassis that never does — the game before.
+    #[serde(default)]
+    pub dig_in_per_round: i32,
     /// Her fighting compartment has no roof: a halftrack, a self-propelled
     /// gun, a tank destroyer with an open turret. Bullets that do not
     /// penetrate still reach her crew — plunging fire, grenades, a belt

@@ -1271,6 +1271,13 @@ every rule mutation-checked. Measured by `examples/flank` (`--hedge`, `--set`).
   came from no direction. It reaches the utility AI too: a position behind
   an enemy now prices his fear half again, and stages whose subject is
   something else go through `common::head_on(..)`.
+- **A crew who stays put digs in** (`VehicleDef::dig_in_per_round`, up to
+  `balance.dig_in_max`; `Unit::dug_in`, saved). Gained in `begin_round` for
+  a round ended where it began, zeroed at the one place a unit changes hex
+  and while aboard, read only by `hit_chance` when the target is where she
+  dug — whole from her front, `dig_in_flank_percent` from anywhere else, so
+  a flank goes round a scrape. Shipped: infantry 2 a round, cap 20, flank
+  50; vehicles 0.
 - **Awareness has a direction.** A looker keeps
   `balance.flank_search_percent` (100) of her chance against somebody
   outside her frontal arc — measured from `laid`, because the commander's
