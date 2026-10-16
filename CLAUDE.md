@@ -510,6 +510,22 @@ else. Tests: `tests/learning.rs`.
   `balance --brains` **on seeds no rollout or evaluation used**: the loop's
   own eval seeds are reused every few iterations, and the best checkpoint on
   them read 55% where fresh seeds read parity.
+  `rollout --arrays` writes the decisions' numbers as flat binary files
+  beside the jsonl (`.context.f32`, `.candidates.f32`, `.counts.u32`,
+  `.arrays.json`) and `ppo.py` maps them; an update from them is
+  byte-identical to one from the JSON and four times faster to load.
+  `loop.py` passes it and deletes the sidecars with the rollout.
+- **One road search a decision** (`goal::Survey`, a lazily filled
+  `OnceCell<Roads>`): the places list, the teacher's scoring and the
+  network's description all read it, through the `*_surveyed` variants of
+  `candidates`, `read_candidates`, `describe` and `choose`. The old
+  signatures are wrappers that search for themselves; a caller that holds
+  a survey across a state change has kept a stale road.
+- **Open-ground worlds are shared** (`harness::open::Worlds`): a world is
+  made once and hosts `fields_per_world` (16) fields, each with its own
+  start lines, bearing and middle (within two battle maps of the centre),
+  and `GeneratedWorld` keeps each chunk's tiles once worked out. A tile is
+  a pure function of the world, so keeping it changes nothing.
 - **A goal remembers the world it was chosen in** (`GoalWitness`, on the
   `Unit` beside `goal`, saved), and `planner.goal_events` (all off shipped:
   the game before, snapshot unmoved) ends it on contact, a hit, a friend
@@ -2044,6 +2060,14 @@ says whether the machine is comparable.
   `module` lookups from `substance` and its neighbours. Full interning is not
   justified by the numbers; making `substance` stop hashing is (STRUCTURE.md
   item 8).
+- **Hot maps hash with FxHash** (`crate::FastMap` / `FastSet`): the move
+  and sight grids, the road search, the watch and heat maps, and the
+  registry's string maps. SipHash was a seventh of a rollout. Iteration
+  order still reaches nothing, whichever hasher; the fog's vision sets are
+  still standard `HashSet`s because they are public and the game reads
+  them. Measured in CPU time for 256 rollout battles (2026-10-16, with
+  shared worlds, the tile cache and one road search a decision): generated
+  ground 164 → 58 s, open ground 238 → 71 s, byte-identical rollouts.
 - **MCTS is parked** at parity with the utility planner over 256 battles and
   ~30,000× the cost. No planner change owes it a budget (PARKED.md).
 

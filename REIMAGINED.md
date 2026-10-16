@@ -849,6 +849,42 @@ so none is ever beside one (nearest a quarter of the gap; without the band
 round 6 (4–9), 0.68 fix-and-flank a battle, 77/17/5, 12.4 s for the 256 —
 an approach phase of about five rounds, at the same cost a battle.
 
+*Trained on open ground (2026-10-16).* The 128-128 network from the F4
+start, 100 × 2,048 on open ground with every force, sixteen places and
+three approach places, every goal event, a league of four added every ten
+(loop eval 10.9% at the start — the arena-trained start knows nothing of
+an approach — 54.5% by iteration 10 and 56–58% after). Measured on the
+untouched blocks (worlds from 3,000,000 and 5,000,000, 1,152 battles each,
+deterministic) with the harness it trained on — one world a field, before
+`Worlds` shared them — against the teacher in the learner's seat. A row of
+2,304 is ±1.0 point, a difference of two rows ±1.5:
+
+| learner (open ground) | won / 2,304 | side + rear struck | fix and flank | by score / by board |
+| --- | --- | --- | --- | --- |
+| teacher (control) | 1155 (50.1%) | 22–23% | 0.70 / 0.78 | 26.5% / 23.7% |
+| open net, iteration 40 (loop's best) | 1295 (56.2%) | 24–25% | 0.75 / 0.80 | 34.2% / 22.0% |
+| open net, iteration 100 | 1314 (57.0%) | 23–24% | 0.68 / 0.67 | 36.2% / 20.8% |
+| wide net, iteration 100 | 1274 (55.3%) | 25–27% | 0.66 / 0.74 | |
+| F4 net80 (arena-trained) | 1241 (53.9%) | 26% | 0.57 / 0.58 | 36.8% / 17.1% |
+
+Every force gains (iteration 100 against the control: covering force 56.2
+against 50.9, motor rifle 57.0 against 48.7, tank company 55.3 against
+51.8, cavalry 55.2 against 51.4, western team 61.5 against 47.8), so no
+one method carries it. Open ground is the first layout on which the
+ground trained on shows: +6.9 points against the arena net's +3.8, about
+two of a difference's spreads. **What it learned is the approach**, and
+nothing more. Before contact the arena net dawdles — 22.8 drive decisions
+a battle unseen against the teacher's 11.0, 7.3 hexes each, an objective
+39% of the time — where the open net drives for an objective as the
+teacher does (98% against 100%, 17.8 hexes against 19.7) through less
+cover (12.6 against 15.9). In contact it is the policy every run has
+found: twice the incoming fire accepted (14.0 against 6.8 a decision),
+flank-striking ground chosen less (0.26 against 0.44), fix-and-flank
+unmoved or lower, side and rear plate a point more, the margin +5.8
+against +0.1, and the gain from the score. Given five rounds of approach
+and kilometres of room it still does not go round, and nothing in the
+reward pays it to.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or
