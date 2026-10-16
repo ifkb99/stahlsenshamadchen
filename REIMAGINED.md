@@ -795,6 +795,60 @@ deterministic, the same flags for the control):
   base mod's default world settings. The ground varies; the shape of the
   problem does not. Those are the next three things to vary.
 
+*What it chooses (2026-10-15, the same 2,304 battles a chooser).* It takes
+the teacher's top-scored candidate 10% of the time: a different policy,
+not a refinement. It wins **by the score** — 36.7% of battles against the
+teacher's 27.0%, by the board 20.5% against 24.7%, final margin +6.5
+against +0.6 — while the substance left on both sides moves by about a
+point. Before contact it drives shorter (4.9 hexes a decision against 7.8)
+and keeps closer to its friends (4.9 against 6.8); in contact it accepts
+more fire (incoming 14.4 against 9.8), stands further off (3.8 against
+2.6) and chooses ground that strikes a flank *less* often (0.33 against
+0.62). The reward is mission-first, and holding ground under fire is what
+it bought.
+
+*Is the map big enough? (2026-10-15)* The arena deployment puts the
+forces 18 hexes apart, inside the 88's reach and a round's drive from the
+75's: contact in round one or two, the battle over in about nine, no
+approach for a manoeuvre to be worth taking. `generated::Layout`
+(`rollout --spread N --turned`) moves the start lines apart and turns the
+axis per world. The teacher, 1,152 battles a row: arena 8.9 rounds and
+0.96 fix-and-flank a battle; turned 9.0 and 0.99; spread 200 10.8 and
+0.94; both 10.9 and 0.94 — side and rear 22–23% throughout. A hand-written
+chooser does not flank more given room, as it would not; the battle gets
+two rounds longer and more of it is settled by the score (53% → 65%).
+
+A 128-128 network trained there (100 × 2,048, spread 200, turned, a league
+of four past checkpoints added every ten iterations; loop eval 52.6–57.6%
+from iteration 10) and measured on the untouched blocks at that layout:
+
+| learner (wide, turned start) | won / 2,304 | side + rear struck | fix and flank | by score |
+| --- | --- | --- | --- | --- |
+| teacher (control) | 1141 (49.5%) | 22–23% | 0.94 / 0.97 | 64.7% |
+| wide net, iteration 60 | 1297 (56.3%) | 25–26% | 1.01 / 0.92 | 68.7% |
+| wide net, iteration 100 | 1285 (55.8%) | 25–27% | 0.99 / 0.95 | 69.6% |
+| F4 net80 (arena-trained, no league) | 1322 (57.4%) | 25–26% | 0.83 / 0.81 | 75.9% |
+
+and the wide net back at the arena layout, 1276 (55.4%) against the
+control's 51.6% (F4 net80 57.2%). So **both transfer both ways, and
+neither the league nor the room added anything a table can see**: the same
++6 to +8 points, the same win by the score, side and rear plate struck a
+few points more often and fix-and-flank unmoved. Its opponent flanks *it*
+more (1.09–1.14 a battle against the control's 0.98): the learner's
+stand-and-hold invites it.
+
+**Open ground** (`harness::open`, `rollout --ground open`, `loop.py
+--ground open`): a world seven battle maps across, fought on a window onto
+it (`World::window_onto`, `forces::stage_on_world`), the forces 30–60 hexes
+apart (3–6 km, past every gun's reach) at a bearing and a middle drawn per
+world, keeping the arena's frontage. The objectives are `generated`'s rule
+scaled to the distance (`scenario_between`): the crest within a sixth of
+the gap of the middle, the flanks in the band between the two start lines,
+so none is ever beside one (nearest a quarter of the gap; without the band
+4%). The teacher there, 256 battles: 12 rounds (9–17), first contact in
+round 6 (4–9), 0.68 fix-and-flank a battle, 77/17/5, 12.4 s for the 256 —
+an approach phase of about five rounds, at the same cost a battle.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or

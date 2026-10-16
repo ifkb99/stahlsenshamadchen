@@ -120,19 +120,50 @@ pub fn field_laid_out(
         tiles.push((hex + shift, id.to_string(), level));
     }
     let centre = arena.centre_hex();
-    let tracked = |id: &str| {
-        reg.terrain(id)
-            .and_then(|t| t.cost_for(MovementClass::Tracked))
-            .is_some()
-    };
-    let level_at = |hex: Hex| {
-        tiles
-            .iter()
-            .find(|(h, ..)| *h == hex)
-            .map(|(_, id, level)| (id.as_str(), *level))
-    };
+    // Looked up, never iterated, so the map's order reaches nothing.
+    let index: std::collections::HashMap<Hex, (&str, i32)> = tiles
+        .iter()
+        .map(|(h, id, level)| (*h, (id.as_str(), *level)))
+        .collect();
+    let level_at = |hex: Hex| index.get(&hex).copied();
+    let wants = arena.deployment().into_iter().map(|(west, east)| {
+        let lay = |want: Hex| layout.lay(centre, want, seed);
+        (lay(west), lay(east))
+    });
+    let deployment = deploy(reg, &level_at, centre, wants)?;
+    let candidates: Vec<Hex> = tiles.iter().map(|(h, ..)| *h).collect();
+    let scenario = scenario_between(
+        reg,
+        &level_at,
+        &candidates,
+        centre,
+        &deployment,
+        CREST_WITHIN,
+        &|h| (h.distance_to(centre) as u32) <= arena.radius,
+    )?;
+    Some(GeneratedField {
+        field: Battlefield { terrain, scenario },
+        deployment,
+    })
+}
 
-    // Deploy each pair on the nearest ground a tank can stand on.
+/// Whether a tank can stand on `id`.
+fn tracked(reg: &DataRegistry, id: &str) -> bool {
+    reg.terrain(id)
+        .and_then(|t| t.cost_for(MovementClass::Tracked))
+        .is_some()
+}
+
+/// Each pair of `wants` (side 0's hex, side 1's) moved onto the nearest
+/// ground a tank can stand on and nobody has taken, nearest `centre` first
+/// and the coordinate last. `None` when a pair finds nothing within five
+/// hexes. Shared with [`super::open`], so both read deployment the same way.
+pub(crate) fn deploy<'a>(
+    reg: &DataRegistry,
+    ground: &dyn Fn(Hex) -> Option<(&'a str, i32)>,
+    centre: Hex,
+    wants: impl IntoIterator<Item = (Hex, Hex)>,
+) -> Option<Vec<(Hex, Hex)>> {
     let mut taken: Vec<Hex> = Vec::new();
     let mut place = |want: Hex| -> Option<Hex> {
         for radius in 0..6u32 {
@@ -144,7 +175,7 @@ pub fn field_laid_out(
             ring.sort_by_key(|h| (h.distance_to(centre), h.x, h.y));
             if let Some(hex) = ring
                 .into_iter()
-                .find(|h| !taken.contains(h) && level_at(*h).is_some_and(|(id, _)| tracked(id)))
+                .find(|h| !taken.contains(h) && ground(*h).is_some_and(|(id, _)| tracked(reg, id)))
             {
                 taken.push(hex);
                 return Some(hex);
@@ -153,14 +184,28 @@ pub fn field_laid_out(
         None
     };
     let mut deployment = Vec::new();
-    for (west, east) in arena.deployment() {
-        let lay = |want: Hex| layout.lay(centre, want, seed);
-        deployment.push((place(lay(west))?, place(lay(east))?));
+    for (west, east) in wants {
+        deployment.push((place(west)?, place(east)?));
     }
+    Some(deployment)
+}
 
-    // The ground worth having: the highest within reach of the centre, then
-    // the highest on each flank (either side of the line the two forces face
-    // each other along).
+/// The ground worth having between two deployed forces, read off the ground
+/// rather than declared: the highest within `crest_within` of `centre`,
+/// worth 3, then the highest on each side of the line the two forces face
+/// each other along, worth 2 each, at least four hexes from the crest and
+/// wherever `flank_within` allows. Only `candidates` are looked at. Ties go
+/// to the nearer the centre, then to the coordinate, which on ground that
+/// is not mirrored decides nothing a reflection could see.
+pub(crate) fn scenario_between<'a>(
+    reg: &DataRegistry,
+    ground: &dyn Fn(Hex) -> Option<(&'a str, i32)>,
+    candidates: &[Hex],
+    centre: Hex,
+    deployment: &[(Hex, Hex)],
+    crest_within: u32,
+    flank_within: &dyn Fn(Hex) -> bool,
+) -> Option<Scenario> {
     let mean = |side: fn(&(Hex, Hex)) -> Hex| -> Hex {
         let n = deployment.len().max(1) as i32;
         let sum = deployment.iter().map(side).fold(Hex::ZERO, |a, b| a + b);
@@ -173,9 +218,10 @@ pub fn field_laid_out(
         axis.x * d.y - axis.y * d.x
     };
     let highest = |pick: &dyn Fn(Hex) -> bool| -> Option<Hex> {
-        tiles
+        candidates
             .iter()
-            .filter(|(h, id, _)| pick(*h) && tracked(id))
+            .filter_map(|h| ground(*h).map(|(id, level)| (*h, id, level)))
+            .filter(|(h, id, _)| pick(*h) && tracked(reg, id))
             .max_by_key(|(h, _, level)| {
                 (
                     *level,
@@ -183,15 +229,11 @@ pub fn field_laid_out(
                     std::cmp::Reverse((h.x, h.y)),
                 )
             })
-            .map(|(h, ..)| *h)
+            .map(|(h, ..)| h)
     };
-    let crest = highest(&|h| h.distance_to(centre) as u32 <= CREST_WITHIN)?;
+    let crest = highest(&|h| h.distance_to(centre) as u32 <= crest_within)?;
     let flank = |sign: i32| {
-        highest(&|h| {
-            across(h).signum() == sign
-                && h.distance_to(crest) >= 4
-                && (h.distance_to(centre) as u32) <= arena.radius
-        })
+        highest(&|h| across(h).signum() == sign && h.distance_to(crest) >= 4 && flank_within(h))
     };
     let objective = |id: &str, name: &str, at: Hex, value: u32| Objective {
         id: id.into(),
@@ -200,7 +242,7 @@ pub fn field_laid_out(
             .chain(
                 at.all_neighbors()
                     .into_iter()
-                    .filter(|h| level_at(*h).is_some_and(|(id, _)| tracked(id))),
+                    .filter(|h| ground(*h).is_some_and(|(id, _)| tracked(reg, id))),
             )
             .collect(),
         value,
@@ -216,8 +258,5 @@ pub fn field_laid_out(
     if let Some(at) = flank(-1) {
         scenario.push_objective(objective("right", "the right spur", at, 2));
     }
-    Some(GeneratedField {
-        field: Battlefield { terrain, scenario },
-        deployment,
-    })
+    Some(scenario)
 }

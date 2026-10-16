@@ -9,10 +9,12 @@
 //! for measuring and training, not for the academy roll.
 
 use crate::Hex;
-use crate::battle::{BattleState, SideState};
+use crate::battle::{BattleState, Muster, SideState, UnitId};
 use crate::data::{DataRegistry, ForceDef};
-use crate::map::{Battlefield, UnitPlacement};
+use crate::map::{Battlefield, Scenario, UnitPlacement};
 use crate::roster::Roster;
+use crate::world::World;
+use crate::worldgen::GeneratedWorld;
 
 /// Stage `forces[0]` against `forces[1]` on `field`, deploying on
 /// `deployment` (pairs of side 0's hex and side 1's). `None` when a vehicle
@@ -24,6 +26,70 @@ pub fn stage(
     forces: [&ForceDef; 2],
     seed: u64,
 ) -> Option<BattleState> {
+    let ground = |h: Hex| field.terrain.get(h).map(|t| t.terrain.to_string());
+    let placements = placements(reg, &ground, deployment, forces)?;
+    let (roster, crews) = Roster::stamp_for(reg, &placements);
+    BattleState::from_placements(
+        reg,
+        field,
+        sides(forces),
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        seed,
+    )
+    .ok()
+}
+
+/// [`stage`] on a window onto a whole generated world (`harness::open`):
+/// the battle loads the ground round wherever its crews are and forgets
+/// the rest, so the two forces can start further apart than one battle map.
+pub fn stage_on_world(
+    reg: &DataRegistry,
+    world: std::sync::Arc<GeneratedWorld>,
+    scenario: Scenario,
+    deployment: &[(Hex, Hex)],
+    forces: [&ForceDef; 2],
+    seed: u64,
+) -> Option<BattleState> {
+    let ground = |h: Hex| world.tile(h).map(|(id, _)| id.to_string());
+    let placements = placements(reg, &ground, deployment, forces)?;
+    let (roster, crews) = Roster::stamp_for(reg, &placements);
+    let ids: Vec<UnitId> = (0..placements.len() as u32).map(UnitId).collect();
+    BattleState::from_muster_on(
+        reg,
+        World::window_onto(world),
+        scenario,
+        sides(forces),
+        Muster {
+            placements: &placements,
+            crews: &crews,
+            ids: &ids,
+        },
+        std::sync::Arc::new(roster),
+        seed,
+    )
+    .ok()
+}
+
+fn sides(forces: [&ForceDef; 2]) -> Vec<SideState> {
+    forces
+        .iter()
+        .map(|f| SideState {
+            name: f.name.clone(),
+            ai: None,
+        })
+        .collect()
+}
+
+/// Where every vehicle of both forces stands, `ground` saying what terrain
+/// is where. `None` when a vehicle finds nowhere to stand.
+fn placements(
+    reg: &DataRegistry,
+    ground: &dyn Fn(Hex) -> Option<String>,
+    deployment: &[(Hex, Hex)],
+    forces: [&ForceDef; 2],
+) -> Option<Vec<UnitPlacement>> {
     let mut taken: Vec<Hex> = Vec::new();
     let mut placements: Vec<UnitPlacement> = Vec::new();
     for (side, force) in forces.iter().enumerate() {
@@ -44,10 +110,8 @@ pub fn stage(
             let vehicle = reg.vehicle(&line.vehicle)?;
             let class = vehicle.movement.class;
             let stands = |h: Hex| {
-                field
-                    .terrain
-                    .get(h)
-                    .and_then(|t| reg.terrain(t.terrain))
+                ground(h)
+                    .and_then(|t| reg.terrain(&t))
                     .and_then(|t| t.cost_for(class))
                     .is_some()
             };
@@ -103,22 +167,5 @@ pub fn stage(
             }
         }
     }
-    let sides = forces
-        .iter()
-        .map(|f| SideState {
-            name: f.name.clone(),
-            ai: None,
-        })
-        .collect();
-    let (roster, crews) = Roster::stamp_for(reg, &placements);
-    BattleState::from_placements(
-        reg,
-        field,
-        sides,
-        &placements,
-        &crews,
-        std::sync::Arc::new(roster),
-        seed,
-    )
-    .ok()
+    Some(placements)
 }

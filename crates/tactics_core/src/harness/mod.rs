@@ -25,6 +25,7 @@ pub mod arena;
 pub mod campaign;
 pub mod forces;
 pub mod generated;
+pub mod open;
 pub mod overrides;
 pub mod parallel;
 pub mod tally;

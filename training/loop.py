@@ -69,13 +69,14 @@ def evaluate(net, places, arena, games, events="none"):
 FORCES = []  # set from --forces in main; passed to every rollout
 APPROACH = [0]  # set from --approach in main
 LAYOUT = []  # set from --spread and --turned in main: how generated ground is laid out
+GROUND = ["generated"]  # set from --ground in main: generated or open, for the evaluation
 
 
 def evaluate_generated(net, places, arena, games, events="none", seed=1_000_000):
     """The same two questions on generated ground, by rollouts with the
     learner taking its best choice: against the utility AI, and against
     itself. Worlds from `seed / 2` up, which no training rollout reaches."""
-    common = ["--net", str(net), "--deterministic", "--ground", "generated", "--arena", arena,
+    common = ["--net", str(net), "--deterministic", "--ground", GROUND[0], "--arena", arena,
               "--places", str(places), "--approach", str(APPROACH[0]), "--events", events,
               "--out", str(ROOT / "target" / "rl" / "eval.jsonl"),
               *(["--forces", FORCES[0]] if FORCES else []), *LAYOUT]
@@ -105,7 +106,7 @@ def main():
     ap.add_argument("--places", type=int, default=16)
     ap.add_argument("--approach", type=int, default=0, help="planner.approach_places: places an enemy, round his arcs")
     ap.add_argument("--arena", default="ridge_arena")
-    ap.add_argument("--ground", default="arena", choices=["arena", "generated"],
+    ap.add_argument("--ground", default="arena", choices=["arena", "generated", "open"],
                     help="train and evaluate on the arena, or on a fresh generated world every two games")
     ap.add_argument("--forces", help="draw matchups from these forces (a list, or all)")
     ap.add_argument("--spread", type=int, default=100,
@@ -136,8 +137,9 @@ def main():
     # every `--league-every` iterations), so it cannot learn just the one
     # opponent — and meets players as patient as itself.
     league: list[pathlib.Path] = []
-    judge = evaluate_generated if args.ground == "generated" else evaluate
-    games = 8 * args.eval_games if args.ground == "generated" else args.eval_games
+    GROUND[0] = args.ground
+    judge = evaluate if args.ground == "arena" else evaluate_generated
+    games = args.eval_games if args.ground == "arena" else 8 * args.eval_games
     won, total, draws, selfs = judge(net, args.places, args.arena, games, args.events)
     print(f"start: learned {won}/{total} ({100 * won / total:.1f}%) against utility; "
           f"against itself {draws}/{selfs} drawn")

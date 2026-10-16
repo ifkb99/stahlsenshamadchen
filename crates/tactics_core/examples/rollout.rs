@@ -26,6 +26,7 @@ use tactics_core::battle::{BattleState, Event, Order};
 use tactics_core::data::ArmorFacing;
 use tactics_core::data::DataRegistry;
 use tactics_core::harness::arena::{Arena, DEFAULT_ARENA, arena_named};
+use tactics_core::harness::open::{self, OpenLayout};
 use tactics_core::harness::parallel::run_all;
 use tactics_core::harness::{forces, generated};
 
@@ -46,6 +47,9 @@ rollout: battles for reinforcement learning, learner against the utility AI
   --arena NAME        battlefield (default ridge_arena); with --ground generated,
                       whose forces and deployment are moved onto generated ground
   --ground generated  a fresh generated world every two games (one per seat)
+  --ground open       a fresh world every two games, several battle maps across,
+                      fought on a window onto it with the forces 3-6 km apart
+                      at a drawn bearing (needs --forces)
   --spread PERCENT    with --ground generated, the deployment's distance from
                       the centre in percent of the arena's (default 100)
   --turned            with --ground generated, turn each world's axis of
@@ -158,6 +162,9 @@ struct Setup<'a> {
     generated: bool,
     /// How the deployment is laid on generated ground (`--spread`, `--turned`).
     layout: generated::Layout,
+    /// Battles on a window onto a whole world, the forces kilometres apart
+    /// (`--ground open`, `harness::open`).
+    open: bool,
     /// The forces battles are drawn from (`--forces`): each world gets a
     /// matchup, both seatings, each side fighting by its force's doctrine.
     /// Empty is the arena's own symmetric force.
@@ -198,15 +205,30 @@ fn matchup<'a>(setup: &Setup<'a>, game: u64) -> Option<[&'a tactics_core::data::
 fn fight(setup: &Setup, game: u64) -> Option<Battle> {
     let reg = setup.reg;
     let matchup = matchup(setup, game);
-    let (field, deployment) = if setup.generated {
-        let made = generated::field_laid_out(reg, setup.arena, game / 2, setup.layout)?;
-        (made.field, made.deployment)
+    let mut state = if setup.open {
+        // Open ground needs forces: the arena's own four tanks a side are a
+        // battle-map fixture.
+        let pair = matchup?;
+        let made = open::field(reg, setup.arena, game / 2, OpenLayout::default())?;
+        forces::stage_on_world(
+            reg,
+            made.world,
+            made.scenario,
+            &made.deployment,
+            pair,
+            9000 + game,
+        )?
     } else {
-        (setup.arena.map()?, setup.arena.deployment())
-    };
-    let mut state = match matchup {
-        Some(pair) => forces::stage(reg, field, &deployment, pair, 9000 + game)?,
-        None => Arena::stage_on(reg, field, deployment, 9000 + game),
+        let (field, deployment) = if setup.generated {
+            let made = generated::field_laid_out(reg, setup.arena, game / 2, setup.layout)?;
+            (made.field, made.deployment)
+        } else {
+            (setup.arena.map()?, setup.arena.deployment())
+        };
+        match matchup {
+            Some(pair) => forces::stage(reg, field, &deployment, pair, 9000 + game)?,
+            None => Arena::stage_on(reg, field, deployment, 9000 + game),
+        }
     };
     let learner = (game % 2) as u8;
     let tap: GoalTap = Arc::new(Mutex::new(Vec::new()));
@@ -389,6 +411,7 @@ fn main() {
         brain,
         difficulty,
         generated: flag(&args, "--ground") == Some("generated"),
+        open: flag(&args, "--ground") == Some("open"),
         layout: generated::Layout {
             spread_percent: flag(&args, "--spread").map_or(100, |s| {
                 s.parse()

@@ -740,6 +740,126 @@ fn a_spread_layout_starts_the_forces_further_apart_and_a_turned_one_along_other_
     );
 }
 
+#[test]
+fn open_ground_starts_the_forces_kilometres_apart_out_of_sight_with_the_ground_worth_having_between_them()
+ {
+    // The point of `harness::open` (REIMAGINED.md, *Flanks*): an approach
+    // with a phase of its own, on ground no single battle map confines,
+    // with nothing worth having beside either start line.
+    use tactics_core::battle::Knower;
+    use tactics_core::harness::arena::arena_named;
+    use tactics_core::harness::forces;
+    use tactics_core::harness::open::{OpenLayout, field};
+    let reg = common::registry();
+    let arena = arena_named("ridge_arena").expect("the ridge arena");
+    let layout = OpenLayout::default();
+    let mut all: Vec<_> = reg.forces.values().collect();
+    all.sort_by(|a, b| a.id.cmp(&b.id));
+    let centroid = |hexes: &mut dyn Iterator<Item = tactics_core::Hex>| {
+        let (mut sum, mut n) = (tactics_core::Hex::ZERO, 0);
+        for h in hexes {
+            sum += h;
+            n += 1;
+        }
+        tactics_core::Hex::new(sum.x / n, sum.y / n)
+    };
+    let mut paged = false;
+    // The ground is cheap to read, so the layout is checked on many worlds
+    // (an objective beside a start line turned up on few of them before the
+    // flanks were held to the band between the forces); the battle itself
+    // is fought on the first four.
+    for seed in 0..32u64 {
+        let made = field(&reg, arena, seed, layout).expect("an open field");
+        let again = field(&reg, arena, seed, layout).expect("and again");
+        assert_eq!(made.deployment, again.deployment, "seed {seed}");
+        assert_eq!(made.scenario, again.scenario, "seed {seed}");
+        assert!((layout.apart_min..=layout.apart_max).contains(&made.apart));
+        let ours = centroid(&mut made.deployment.iter().map(|p| p.0));
+        let theirs = centroid(&mut made.deployment.iter().map(|p| p.1));
+        assert!(
+            ours.distance_to(theirs) as u32 >= layout.apart_min - 4,
+            "seed {seed}: start lines {} apart, drawn {}",
+            ours.distance_to(theirs),
+            made.apart
+        );
+        let objectives = made.scenario.objectives();
+        assert!(!objectives.is_empty(), "seed {seed}: nothing worth having");
+        for o in objectives {
+            for start in made.deployment.iter().flat_map(|p| [p.0, p.1]) {
+                assert!(
+                    o.anchor().distance_to(start) as u32 >= made.apart / 5,
+                    "seed {seed}: {} stands {} from a start hex, the forces {} apart",
+                    o.id,
+                    o.anchor().distance_to(start),
+                    made.apart
+                );
+            }
+        }
+        if seed >= 4 {
+            continue;
+        }
+
+        let pair = [
+            all[seed as usize % all.len()],
+            all[(seed as usize + 1) % all.len()],
+        ];
+        let total = made.world.chunks().count();
+        let mut state = forces::stage_on_world(
+            &reg,
+            made.world,
+            made.scenario,
+            &made.deployment,
+            pair,
+            seed,
+        )
+        .expect("the forces stand on open ground");
+        for side in 0..2u8 {
+            assert!(
+                state
+                    .known_enemies(&reg, Knower::Commander(side))
+                    .is_empty(),
+                "seed {seed}: side {side} starts in sight of the enemy"
+            );
+        }
+        let mut ai = AiDriver::new();
+        for side in 0..2u8 {
+            ai.insert(
+                side,
+                make_battle_planner(
+                    &AiConfig {
+                        planner: "utility".into(),
+                        difficulty: 3,
+                        doctrine: Some(pair[side as usize].doctrine.clone()),
+                    },
+                    seed + side as u64,
+                    &reg,
+                ),
+            );
+        }
+        let held = |s: &BattleState| -> Vec<tactics_core::Hex> {
+            s.world
+                .resident_chunks()
+                .map_or(Vec::new(), |c| c.collect())
+        };
+        for _ in 0..6 {
+            if state.is_over() {
+                break;
+            }
+            let before = held(&state);
+            ai.plan_round_with(&reg, &mut state, |_| {});
+            state.resolve_round(&reg);
+            let after = held(&state);
+            assert!(
+                !after.is_empty() && after.len() < total,
+                "seed {seed}: the window held {} of {total} chunks",
+                after.len()
+            );
+            paged |= before != after;
+        }
+    }
+    assert!(paged, "nobody on four worlds moved the window");
+}
+
 // --- forces -----------------------------------------------------------------
 
 #[test]
