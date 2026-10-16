@@ -50,6 +50,9 @@ rollout: battles for reinforcement learning, learner against the utility AI
   --ground open       worlds several battle maps across, fought on a window onto
                       them with the forces 3-6 km apart at a bearing drawn every
                       two games, sixteen such fields a world (needs --forces)
+  --arrays            write the decisions' numbers as flat f32 files beside the
+                      battles (OUT.context.f32, OUT.candidates.f32, OUT.counts.u32,
+                      OUT.arrays.json) and leave them out of the JSON
   --spread PERCENT    with --ground generated, the deployment's distance from
                       the centre in percent of the arena's (default 100)
   --turned            with --ground generated, turn each world's axis of
@@ -465,15 +468,63 @@ fn main() {
     };
 
     let jobs: Vec<u64> = (first..first + games).collect();
-    let fought = run_all(&jobs, |&game| fight(&setup, game));
+    let mut fought = run_all(&jobs, |&game| fight(&setup, game));
 
     if let Some(dir) = out.parent() {
         std::fs::create_dir_all(dir).expect("create output directory");
     }
     let mut file = std::io::BufWriter::new(std::fs::File::create(&out).expect("open output"));
+    // With `--arrays` the decisions' numbers go to flat little-endian files
+    // beside the battles, in the order the battles and their decisions are
+    // written, and the JSON keeps everything else: parsing 800 MB of
+    // numbers out of text was most of what a training update spent before
+    // it learned anything.
+    let mut arrays = args.iter().any(|a| a == "--arrays").then(|| {
+        let beside = |ext: &str| {
+            let mut name = out.as_os_str().to_owned();
+            name.push(ext);
+            std::path::PathBuf::from(name)
+        };
+        std::fs::write(
+            beside(".arrays.json"),
+            serde_json::json!({
+                "context": tactics_core::ai::features::context_names().len(),
+                "candidate": tactics_core::ai::features::CANDIDATE.len(),
+            })
+            .to_string(),
+        )
+        .expect("write the arrays' shape");
+        let open = |ext: &str| {
+            std::io::BufWriter::new(std::fs::File::create(beside(ext)).expect("open an array"))
+        };
+        (
+            open(".context.f32"),
+            open(".candidates.f32"),
+            open(".counts.u32"),
+        )
+    });
     let (mut won, mut lost, mut drawn, mut decisions) = (0, 0, 0, 0usize);
     let (mut by, mut on) = ([0u32; 3], [0u32; 3]);
-    for battle in fought.iter().flatten() {
+    for battle in fought.iter_mut().flatten() {
+        if let Some((context, candidates, counts)) = &mut arrays {
+            for d in &mut battle.decisions {
+                for v in &d.context {
+                    context.write_all(&v.to_le_bytes()).expect("write an array");
+                }
+                for row in &d.candidates {
+                    for v in row {
+                        candidates
+                            .write_all(&v.to_le_bytes())
+                            .expect("write an array");
+                    }
+                }
+                counts
+                    .write_all(&(d.candidates.len() as u32).to_le_bytes())
+                    .expect("write an array");
+                d.context = Vec::new();
+                d.candidates = Vec::new();
+            }
+        }
         match battle.winner {
             Some(w) if w == battle.learner => won += 1,
             Some(_) => lost += 1,
@@ -488,6 +539,11 @@ fn main() {
         file.write_all(b"\n").expect("write battle");
     }
     file.flush().expect("flush output");
+    if let Some((mut context, mut candidates, mut counts)) = arrays {
+        for f in [&mut context, &mut candidates, &mut counts] {
+            f.flush().expect("flush an array");
+        }
+    }
     println!(
         "{games} battles on {}: learner won {won}, lost {lost}, drew {drawn}; {decisions} decisions",
         arena.id

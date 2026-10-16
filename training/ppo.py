@@ -108,8 +108,12 @@ def transitions(battles, w, gamma):
     """Every learner decision, with its reward over the rounds it governed,
     the discount to the next decision, and whether one follows."""
     rows = []
+    seen = 0  # every decision written before this battle's, for `--arrays`
     for b in battles:
         team, own = round_rewards(b, w)
+        for k, d in enumerate(b["decisions"]):
+            d["_at"] = seen + k
+        seen += len(b["decisions"])
         mine = [d for d in b["decisions"] if d["side"] == b["learner"] and d.get("logp") is not None]
         by_unit = defaultdict(list)
         for d in mine:
@@ -125,7 +129,7 @@ def transitions(battles, w, gamma):
                 )
                 rows.append({
                     "battle": b["game"], "unit": unit, "index": i,
-                    "context": d["context"], "candidates": d["candidates"],
+                    "context": d["context"], "candidates": d["candidates"], "at": d["_at"],
                     "chosen": d["chosen"], "logp": d["logp"],
                     "reward": reward, "discount": gamma ** (end - start),
                     "last": i + 1 == len(ds),
@@ -196,6 +200,41 @@ def pad(rows, mean, std, bucket=1):
     return xs, mask
 
 
+def read_arrays(rollouts):
+    """The decisions' numbers a rollout wrote with `--arrays`, mapped rather
+    than parsed: each decision's context row, every candidate row in
+    decision order, and how many candidates each had. `None` without them."""
+    shape_file = pathlib.Path(str(rollouts) + ".arrays.json")
+    if not shape_file.exists():
+        return None
+    shape = json.loads(shape_file.read_text())
+    beside = lambda ext: pathlib.Path(str(rollouts) + ext)
+    counts = np.fromfile(beside(".counts.u32"), np.uint32).astype(np.int64)
+    context = np.memmap(beside(".context.f32"), np.float32, "r").reshape(-1, shape["context"])
+    candidates = np.memmap(beside(".candidates.f32"), np.float32, "r").reshape(-1, shape["candidate"])
+    starts = np.concatenate([[0], np.cumsum(counts)[:-1]])
+    return context, candidates, counts, starts
+
+
+def pad_arrays(rows, arrays, mean, std, bucket=1):
+    """[`pad`] from the arrays a rollout wrote: the same array, gathered by
+    index instead of built from parsed lists."""
+    context, candidates, counts, starts = arrays
+    at = np.fromiter((r["at"] for r in rows), np.int64, len(rows))
+    n = counts[at]
+    k = -(-int(n.max()) // bucket) * bucket
+    wc = context.shape[1]
+    mask = np.arange(k)[None, :] < n[:, None]
+    x = np.zeros((len(rows), k, wc + candidates.shape[1]), np.float32)
+    x[:, :, :wc] = np.asarray(context[at])[:, None, :]
+    # Every chosen decision's candidate rows, in row-major order of the mask.
+    first = np.repeat(starts[at], n)
+    within = np.arange(int(n.sum())) - np.repeat(np.cumsum(n) - n, n)
+    x[mask, wc:] = np.asarray(candidates[first + within])
+    xs = np.where(mask[..., None], (x - mean) / std, 0.0).astype(np.float32)
+    return xs, mask
+
+
 def advantages(rows, v, lam):
     """GAE over each crew's decisions in each battle, semi-Markov: the
     discount between two decisions is the rounds between them."""
@@ -244,7 +283,11 @@ def main():
     rows = transitions(battles, w, args.gamma)
     net, policy = load_policy(args.net)
     mean, std = np.asarray(net["mean"], np.float32), np.asarray(net["std"], np.float32)
-    xs, mask = pad(rows, mean, std, MENU_BUCKET)
+    arrays = read_arrays(args.rollouts)
+    if arrays is None:
+        xs, mask = pad(rows, mean, std, MENU_BUCKET)
+    else:
+        xs, mask = pad_arrays(rows, arrays, mean, std, MENU_BUCKET)
     chosen = np.array([r["chosen"] for r in rows], np.int32)
     old_logp = np.array([r["logp"] for r in rows], np.float32)
     T = args.temperature

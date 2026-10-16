@@ -157,7 +157,7 @@ def main():
                         "--places", str(args.places), "--approach", str(args.approach),
                         "--arena", args.arena, "--events", args.events,
                         "--ground", args.ground, *(["--forces", args.forces] if args.forces else []), *LAYOUT,
-                        "--out", str(rollouts))
+                        "--out", str(rollouts), "--arrays")
             m = re.search(r"learner won (\d+), lost (\d+)", out)
             rw, rl = (int(m.group(1)), int(m.group(2))) if m else ("", "")
             new = args.dir / f"net{it}.json"
@@ -168,6 +168,8 @@ def main():
             ppo = subprocess.run(cmd, cwd=ROOT / "training", check=True, capture_output=True, text=True).stdout
             net, critic = new, new.with_suffix(".critic.json")
             rollouts.unlink()  # a rollout is spent once it has been learned from
+            for ext in (".arrays.json", ".context.f32", ".candidates.f32", ".counts.u32"):
+                pathlib.Path(str(rollouts) + ext).unlink(missing_ok=True)
             ew = et = sd = st = ""
             if it % args.eval_every == 0 or it == args.iterations:
                 ew, et, sd, st = judge(net, args.places, args.arena, games, args.events)
