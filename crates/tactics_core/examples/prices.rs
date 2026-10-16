@@ -133,6 +133,7 @@ fn draw(world: u64, side: u64, max: u32) -> ([f64; COLUMNS], ForceDef) {
                     vehicle: vehicle.to_string(),
                     count: loaded,
                     carries: Some("rifle_squad".into()),
+                    platoons: 1,
                 });
             }
             if n > loaded {
@@ -140,6 +141,7 @@ fn draw(world: u64, side: u64, max: u32) -> ([f64; COLUMNS], ForceDef) {
                     vehicle: vehicle.to_string(),
                     count: n - loaded,
                     carries: None,
+                    platoons: 1,
                 });
             }
         }
@@ -148,6 +150,7 @@ fn draw(world: u64, side: u64, max: u32) -> ([f64; COLUMNS], ForceDef) {
                 vehicle: "rifle_squad".into(),
                 count: squads - aboard,
                 carries: None,
+                platoons: 1,
             });
         }
         row[TYPES.len()] = aboard as f64;

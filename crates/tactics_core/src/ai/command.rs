@@ -36,6 +36,7 @@
 //! until 2026-08-27; the reasoning behind the number lives on the field now.
 
 use super::{AiConfig, AiPlanner, Evaluator, next_unplanned_unit};
+use crate::Hex;
 use crate::battle::{BattleState, FireIntent, Formation, FormationId, Mission, Order};
 use crate::data::{DataRegistry, DoctrineDef};
 use crate::map::{Objective, ObjectiveKind};
@@ -155,6 +156,8 @@ pub struct SideCommand {
     /// Who chooses her executors' goals ([`Self::with_brain`]); handed out
     /// the way the tap is.
     brain: super::learned::GoalBrain,
+    /// Whether she gives her missions by a coin ([`Self::with_random_missions`]).
+    random_missions: bool,
 }
 
 impl SideCommand {
@@ -179,7 +182,58 @@ impl SideCommand {
             pending: VecDeque::new(),
             last_drill: false,
             playing_out: false,
+            random_missions: false,
         }
+    }
+
+    /// The same commander, giving each formation a mission by a coin at
+    /// every review: an advance, an assault or a hold on any objective the
+    /// battle has, or a hold where it stands, evenly. The instrument for how
+    /// much the mission decision is worth at all — `random_goals` is its
+    /// twin a level down — and it reads no doctrine, makes no plan and
+    /// orders no withdrawal, so whatever it wins is the crews' doing.
+    pub fn with_random_missions(mut self) -> Self {
+        self.random_missions = true;
+        self
+    }
+
+    /// [`Self::mission_review`] by a coin (see [`Self::with_random_missions`]).
+    /// Each draw is a pure function of the planner's seed, the round and the
+    /// formation, so a forked battle draws the same missions.
+    fn random_review(&self, state: &BattleState, side: u8) -> Vec<Order> {
+        let anchors: Vec<Hex> = state
+            .objectives()
+            .filter(|(o, _)| o.kind == ObjectiveKind::Hold)
+            .map(|(o, _)| o.anchor())
+            .collect();
+        let mut options = vec![Mission::Hold { at: None }];
+        for &to in &anchors {
+            options.push(Mission::Advance { to });
+            options.push(Mission::Assault { to });
+            options.push(Mission::Hold { at: Some(to) });
+        }
+        let mix = |mut z: u64| {
+            z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        };
+        let mut orders = Vec::new();
+        for (index, formation) in state.command.formations().iter().enumerate() {
+            if formation.side != side {
+                continue;
+            }
+            let draw = mix(self.seed ^ mix(u64::from(state.round) << 32 | index as u64));
+            let desired = options[(draw % options.len() as u64) as usize].clone();
+            if formation.latest_mission() != Some(&desired) {
+                orders.push(Order::SetMission {
+                    formation: FormationId(index as u32),
+                    mission: desired,
+                    latitude: crate::battle::Latitude::Delegated,
+                });
+            }
+        }
+        orders
     }
 
     /// The commander a playout runs her side under: the same doctrine and
@@ -480,6 +534,9 @@ impl SideCommand {
     /// no-objective battle exactly the fight it was before commanders
     /// existed.
     fn mission_review(&self, registry: &DataRegistry, state: &BattleState, side: u8) -> Vec<Order> {
+        if self.random_missions {
+            return self.random_review(state, side);
+        }
         let mut ground: Vec<(&Objective, Option<u8>)> = state
             .objectives()
             .filter(|(o, _)| o.kind == ObjectiveKind::Hold)

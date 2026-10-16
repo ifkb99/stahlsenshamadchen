@@ -1,0 +1,53 @@
+[
+    {
+        "id": "tank_platoon",
+        "name": "Tank platoon",
+        "description": "Three medium tanks: the platoon most armies of the war fought in.",
+        "vehicle": "medium_tank",
+        "count": 3
+    },
+    {
+        "id": "light_tank_platoon",
+        "name": "Light tank platoon",
+        "description": "Three light tanks: fast, thin, and quick to see.",
+        "vehicle": "light_tank",
+        "count": 3
+    },
+    {
+        "id": "heavy_tank_section",
+        "name": "Heavy tank section",
+        "description": "Two heavy tanks, fielded in pairs because there were never many.",
+        "vehicle": "heavy_tank",
+        "count": 2
+    },
+    {
+        "id": "tank_destroyer_section",
+        "name": "Tank destroyer section",
+        "description": "Two tank destroyers: a long gun and a hull that must turn to lay it.",
+        "vehicle": "tank_destroyer",
+        "count": 2
+    },
+    {
+        "id": "recon_section",
+        "name": "Reconnaissance section",
+        "description": "Two scout cars, to find the enemy and not to fight him.",
+        "vehicle": "recon_car",
+        "count": 2
+    },
+    {
+        "id": "mechanised_platoon",
+        "name": "Mechanised platoon",
+        "description": "Four carriers, a rifle squad in each.",
+        "vehicle": "apc",
+        "count": 4,
+        "carries": "rifle_squad"
+    },
+    {
+        "id": "halftrack_platoon",
+        "name": "Halftrack platoon",
+        "description": "Three halftracks, a rifle squad in each.",
+        "vehicle": "halftrack",
+        "count": 3,
+        "carries": "rifle_squad"
+    }
+]

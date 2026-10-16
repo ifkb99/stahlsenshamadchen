@@ -34,7 +34,9 @@
 //! it is not hidden behind a shopping algorithm that was already exploiting
 //! them.
 
-use crate::data::{DataRegistry, DoctrineDef, MovementClass, VehicleDef};
+use crate::data::{
+    DataRegistry, DoctrineDef, ForceDef, ForceUnit, MovementClass, PlatoonDef, VehicleDef,
+};
 
 /// What a chassis is *for*, read off the chassis.
 ///
@@ -203,4 +205,164 @@ pub fn cost_of(registry: &DataRegistry, force: &[String]) -> i32 {
         .filter_map(|id| registry.vehicle(id))
         .map(|v| v.cost)
         .sum()
+}
+
+/// What one platoon on sale costs: its vehicles' `cost`, and its
+/// passengers'.
+pub fn platoon_cost(registry: &DataRegistry, platoon: &PlatoonDef) -> i32 {
+    let each = |id: &str| registry.vehicle(id).map_or(0, |v| v.cost);
+    let rider = platoon.unit.carries.as_deref().map_or(0, each);
+    platoon.unit.count as i32 * (each(&platoon.unit.vehicle) + rider)
+}
+
+/// What a bought force may spend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Purchase {
+    /// Points, spent at the chassis' asking price.
+    pub points: i32,
+    /// The most vehicles it may field (passengers not counted): a budget
+    /// spent on the cheapest platoons would otherwise field a crowd the
+    /// deployment has no room for.
+    pub max_vehicles: u32,
+}
+
+/// A force bought for `purchase` from the mod's platoon catalogue
+/// (`platoons/`), the draws seeded by `seed`: a platoon at a time, each
+/// drawn evenly from those still affordable, until none is. `None` when
+/// nothing on sale is affordable at all.
+///
+/// The draw is even rather than by a doctrine's appetite on purpose. What a
+/// doctrine would buy is [`muster`]'s question, and it gives one army per
+/// doctrine and budget: a handful of matchups, which is what the learner is
+/// to be kept from memorising. Here the army comes first and the doctrine
+/// follows from it ([`doctrine_for`], the designer's ruling that a doctrine
+/// comes from what a side has).
+///
+/// The platoons deploy eyes first, then armour, then the carriers and
+/// whoever walks, then the guns: the order a force advances in, and tanks
+/// before carriers was most of what the motor rifle company was missing
+/// (2026-10-15). Within a role, in the order they were bought.
+pub fn buy(registry: &DataRegistry, purchase: Purchase, seed: u64) -> Option<ForceDef> {
+    let catalogue = registry.platoon_catalogue();
+    let mut state = seed ^ 0xB0_06_47;
+    let mut bought: Vec<&PlatoonDef> = Vec::new();
+    let (mut spent, mut vehicles) = (0, 0);
+    loop {
+        let affordable: Vec<&PlatoonDef> = catalogue
+            .iter()
+            .copied()
+            .filter(|p| {
+                spent + platoon_cost(registry, p) <= purchase.points
+                    && vehicles + p.unit.count <= purchase.max_vehicles
+            })
+            .collect();
+        if affordable.is_empty() {
+            break;
+        }
+        state = mix(state);
+        let pick = affordable[(state % affordable.len() as u64) as usize];
+        spent += platoon_cost(registry, pick);
+        vehicles += pick.unit.count;
+        bought.push(pick);
+    }
+    if bought.is_empty() {
+        return None;
+    }
+    let rank = |p: &PlatoonDef| match registry
+        .vehicle(&p.unit.vehicle)
+        .map(|v| role_of(registry, v))
+    {
+        Some(Role::Eyes) => 0,
+        Some(Role::Armour) => 1,
+        Some(Role::Lift | Role::Infantry) | None => 2,
+        Some(Role::Guns) => 3,
+    };
+    bought.sort_by_key(|p| rank(p));
+    let units: Vec<ForceUnit> = bought.iter().map(|p| p.unit.clone()).collect();
+    let doctrine = doctrine_for(registry, &units)?;
+    Some(ForceDef {
+        id: format!("bought_{doctrine}"),
+        name: "Bought force".into(),
+        description: format!("{spent} points of platoons drawn from the catalogue"),
+        doctrine,
+        units,
+    })
+}
+
+/// The doctrine a force fights by, read from what it has: of the doctrines
+/// the mod's own forces fight by (the ones written to be played), the one
+/// whose appetite for each role ([`muster`]'s weights) is the nearest match
+/// for the share of its vehicles in that role, a tie going to the id.
+///
+/// Compared over the roles the platoon catalogue sells, so a doctrine is
+/// not marked down for wanting guns nobody could buy; walking troops and
+/// their carriers are one role here, since a carrier is bought for its
+/// passengers. A passenger is not counted again beside her carrier.
+///
+/// Not [`muster`]'s own shopping list: that shops the whole roster, chassis
+/// the catalogue does not sell included, and read that way 69% of bought
+/// forces fought by `recon_pull` and none by `bounding_overwatch`.
+pub fn doctrine_for(registry: &DataRegistry, units: &[ForceUnit]) -> Option<String> {
+    // Walking troops and lift share a bucket, as they share an appetite.
+    let bucket = |role: Role| match role {
+        Role::Guns => 0,
+        Role::Infantry | Role::Lift => 1,
+        Role::Eyes => 2,
+        Role::Armour => 3,
+    };
+    let role = |id: &str| registry.vehicle(id).map(|v| bucket(role_of(registry, v)));
+    let mut sold = [false; 4];
+    for platoon in registry.platoon_catalogue() {
+        if let Some(b) = role(&platoon.unit.vehicle) {
+            sold[b] = true;
+        }
+    }
+    let mut have = [0f32; 4];
+    for unit in units {
+        if let Some(b) = role(&unit.vehicle) {
+            have[b] += unit.count as f32;
+        }
+    }
+    let share = |v: [f32; 4]| {
+        let total: f32 = (0..4)
+            .filter(|&b| sold[b])
+            .map(|b| v[b])
+            .sum::<f32>()
+            .max(f32::EPSILON);
+        v.map(|x| x / total)
+    };
+    let have = share(have);
+    let mut played: Vec<&str> = registry
+        .forces
+        .values()
+        .map(|f| f.doctrine.as_str())
+        .collect();
+    played.sort();
+    played.dedup();
+    played
+        .into_iter()
+        .filter_map(|id| Some((id, registry.doctrine(id)?)))
+        .map(|(id, doctrine)| {
+            let wants = share([
+                appetite(doctrine, Role::Guns),
+                appetite(doctrine, Role::Infantry),
+                appetite(doctrine, Role::Eyes),
+                appetite(doctrine, Role::Armour),
+            ]);
+            let distance: f32 = (0..4)
+                .filter(|&b| sold[b])
+                .map(|b| (have[b] - wants[b]).abs())
+                .sum();
+            (distance, id)
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(b.1)))
+        .map(|(_, id)| id.to_string())
+}
+
+/// SplitMix64, written out: a bought force must not move with the platform.
+fn mix(mut z: u64) -> u64 {
+    z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }

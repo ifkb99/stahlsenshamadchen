@@ -136,6 +136,8 @@ pub struct DataRegistry {
     pub templates: crate::FastMap<String, super::TemplateDef>,
     /// Forces by id ([`super::ForceDef`]): what a side brings, by doctrine.
     pub forces: crate::FastMap<String, super::ForceDef>,
+    /// The platoons a side may buy (`platoons/`; `force::buy`).
+    pub platoons: crate::FastMap<String, super::PlatoonDef>,
     pub maps: crate::FastMap<String, MapFile>,
 }
 
@@ -328,6 +330,18 @@ impl DataRegistry {
         self.forces.get(id)
     }
 
+    pub fn platoon(&self, id: &str) -> Option<&super::PlatoonDef> {
+        self.platoons.get(id)
+    }
+
+    /// The platoon catalogue in id order, the order every draw from it is
+    /// made in, so a bought force never depends on a hash order.
+    pub fn platoon_catalogue(&self) -> Vec<&super::PlatoonDef> {
+        let mut all: Vec<_> = self.platoons.values().collect();
+        all.sort_by(|a, b| a.id.cmp(&b.id));
+        all
+    }
+
     pub fn map(&self, id: &str) -> Option<&MapFile> {
         self.maps.get(id)
     }
@@ -362,6 +376,9 @@ impl DataRegistry {
         })?;
         load_defs(&dir.join("forces"), report, |d: super::ForceDef| {
             self.forces.insert(d.id.clone(), d);
+        })?;
+        load_defs(&dir.join("platoons"), report, |d: super::PlatoonDef| {
+            self.platoons.insert(d.id.clone(), d);
         })?;
         load_defs(&dir.join("maps"), report, |d: MapFile| {
             self.maps.insert(d.id.clone(), d);
@@ -411,29 +428,24 @@ impl DataRegistry {
                 ));
             }
             for unit in &force.units {
-                let Some(vehicle) = self.vehicle(&unit.vehicle) else {
-                    report.error(format!(
-                        "force `{}` fields `{}`, which no mod declares",
-                        force.id, unit.vehicle
-                    ));
-                    continue;
-                };
-                if let Some(rider) = &unit.carries {
-                    match self.vehicle(rider) {
-                        None => report.error(format!(
-                            "force `{}`: `{}` carries `{rider}`, which no mod declares",
-                            force.id, unit.vehicle
-                        )),
-                        Some(p) if p.footprint() > vehicle.capacity => report.error(format!(
-                            "force `{}`: `{}` has room for {} and `{rider}` takes {}",
-                            force.id,
-                            unit.vehicle,
-                            vehicle.capacity,
-                            p.footprint()
-                        )),
-                        Some(_) => {}
-                    }
-                }
+                self.validate_force_line(&format!("force `{}`", force.id), unit, report);
+            }
+        }
+        // A platoon on sale is held to the same, and must cost something:
+        // a free platoon is one a budget buys without end.
+        for platoon in self.platoon_catalogue() {
+            let who = format!("platoon `{}`", platoon.id);
+            self.validate_force_line(&who, &platoon.unit, report);
+            if platoon.unit.platoons != 1 {
+                report.error(format!(
+                    "{who} says it is {} platoons",
+                    platoon.unit.platoons
+                ));
+            }
+            if self.vehicle(&platoon.unit.vehicle).is_some()
+                && crate::force::platoon_cost(self, platoon) <= 0
+            {
+                report.error(format!("{who} costs nothing"));
             }
         }
         // A template nobody declared is a play nobody can run: refused, like
@@ -1382,6 +1394,46 @@ fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T, DataError> {
         path: path.to_path_buf(),
         source,
     })
+}
+
+impl DataRegistry {
+    /// One line of a force or a platoon: things that exist, passengers in
+    /// carriers with room, and no more platoons than vehicles.
+    fn validate_force_line(
+        &self,
+        who: &str,
+        unit: &super::ForceUnit,
+        report: &mut ValidationReport,
+    ) {
+        if unit.platoons == 0 || unit.platoons > unit.count {
+            report.error(format!(
+                "{who}: {} `{}` cannot be {} platoons",
+                unit.count, unit.vehicle, unit.platoons
+            ));
+        }
+        let Some(vehicle) = self.vehicle(&unit.vehicle) else {
+            report.error(format!(
+                "{who} fields `{}`, which no mod declares",
+                unit.vehicle
+            ));
+            return;
+        };
+        if let Some(rider) = &unit.carries {
+            match self.vehicle(rider) {
+                None => report.error(format!(
+                    "{who}: `{}` carries `{rider}`, which no mod declares",
+                    unit.vehicle
+                )),
+                Some(p) if p.footprint() > vehicle.capacity => report.error(format!(
+                    "{who}: `{}` has room for {} and `{rider}` takes {}",
+                    unit.vehicle,
+                    vehicle.capacity,
+                    p.footprint()
+                )),
+                Some(_) => {}
+            }
+        }
+    }
 }
 
 fn load_defs<T: DeserializeOwned>(

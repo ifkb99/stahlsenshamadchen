@@ -905,3 +905,228 @@ fn every_shipped_force_stages_against_every_other_with_its_infantry_aboard() {
         }
     }
 }
+
+#[test]
+fn a_force_is_staged_as_platoons_each_led_by_its_first_vehicle_with_its_passengers_in_it() {
+    use tactics_core::harness::arena::arena_named;
+    use tactics_core::harness::{forces, generated};
+    let reg = common::registry();
+    let arena = arena_named("ridge_arena").expect("the ridge arena");
+    // The motor rifle company says its nine halftracks are three platoons.
+    let motor = reg
+        .force("soviet_motor_rifle")
+        .expect("the motor rifle company");
+    let team = reg.force("western_team").expect("the western team");
+    let made = generated::field(&reg, arena, 3).expect("a generated field");
+    let state = forces::stage(&reg, made.field, &made.deployment, [motor, team], 1)
+        .expect("the matchup stages");
+    for (side, force) in [(0u8, motor), (1u8, team)] {
+        let platoons: Vec<_> = state
+            .command
+            .formations()
+            .iter()
+            .filter(|f| f.side == side)
+            .collect();
+        let sizes: Vec<u32> = force.units.iter().flat_map(|u| u.platoon_sizes()).collect();
+        assert_eq!(
+            platoons.len(),
+            sizes.len(),
+            "{}: a formation a platoon",
+            force.id
+        );
+        for unit in state.units.iter().filter(|u| u.side == side) {
+            let mine: Vec<_> = platoons.iter().filter(|f| f.contains(unit.id)).collect();
+            assert_eq!(
+                mine.len(),
+                1,
+                "{}: {} is in one platoon",
+                force.id,
+                unit.id.0
+            );
+            if let Some(carrier) = unit.aboard {
+                assert!(
+                    mine[0].contains(carrier),
+                    "a squad is in her carrier's platoon"
+                );
+            }
+        }
+        for (platoon, size) in platoons.iter().zip(&sizes) {
+            let vehicles = platoon
+                .members
+                .iter()
+                .filter(|m| state.unit(**m).is_some_and(|u| u.aboard.is_none()))
+                .count();
+            assert_eq!(
+                vehicles as u32, *size,
+                "{}: the platoon's vehicles",
+                force.id
+            );
+            assert_eq!(
+                platoon.leader,
+                platoon.members.first().copied(),
+                "led by its first"
+            );
+        }
+    }
+    assert_eq!(
+        motor
+            .units
+            .iter()
+            .flat_map(|u| u.platoon_sizes())
+            .collect::<Vec<_>>(),
+        vec![4, 3, 3, 3],
+        "four tanks, then nine halftracks in threes"
+    );
+}
+
+#[test]
+fn a_bought_force_spends_its_budget_on_the_catalogue_and_fights_by_the_doctrine_its_platoons_make()
+{
+    use tactics_core::data::ForceUnit;
+    use tactics_core::force::{Purchase, buy, doctrine_for, platoon_cost};
+    let reg = common::registry();
+    let purchase = Purchase {
+        points: 85,
+        max_vehicles: 16,
+    };
+    let catalogue = reg.platoon_catalogue();
+    assert!(catalogue.len() >= 5, "the base mod sells platoons");
+    let cheapest = catalogue
+        .iter()
+        .map(|p| platoon_cost(&reg, p))
+        .min()
+        .unwrap();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut doctrines = std::collections::BTreeSet::new();
+    for seed in 0..200u64 {
+        let force = buy(&reg, purchase, seed).expect("85 points buys something");
+        assert_eq!(
+            Some(&force),
+            buy(&reg, purchase, seed).as_ref(),
+            "a seed is a force"
+        );
+        let spent: i32 = force
+            .units
+            .iter()
+            .map(|u| {
+                let p = catalogue
+                    .iter()
+                    .find(|p| p.unit == *u)
+                    .expect("a catalogue platoon");
+                platoon_cost(&reg, p)
+            })
+            .sum();
+        let vehicles: u32 = force.units.iter().map(|u| u.count).sum();
+        assert!(spent <= purchase.points && vehicles <= purchase.max_vehicles);
+        // Spent until nothing more fits: the cheapest platoon would break
+        // the budget or the vehicle cap.
+        assert!(
+            spent + cheapest > purchase.points || vehicles + 2 > purchase.max_vehicles,
+            "seed {seed}: {spent} spent with a {cheapest}-point platoon still affordable"
+        );
+        assert!(reg.forces.values().any(|f| f.doctrine == force.doctrine));
+        seen.insert(format!("{:?}", force.units));
+        doctrines.insert(force.doctrine);
+    }
+    // Seven platoons, three or four of them bought at 85 points and sorted
+    // into deployment order: 32 different forces, and about a thousand
+    // matchups before the ground is drawn.
+    assert!(
+        seen.len() >= 25,
+        "200 seeds bought only {} forces",
+        seen.len()
+    );
+    assert!(doctrines.len() >= 4, "bought forces fight by {doctrines:?}");
+    // The doctrine follows the hardware.
+    let line = |vehicle: &str, count, carries: Option<&str>| ForceUnit {
+        vehicle: vehicle.into(),
+        count,
+        carries: carries.map(Into::into),
+        platoons: 1,
+    };
+    let doctrine = |units: &[ForceUnit]| doctrine_for(&reg, units).expect("a doctrine");
+    assert_eq!(
+        doctrine(&[line("medium_tank", 3, None), line("heavy_tank", 2, None)]),
+        "massed_armor"
+    );
+    assert_eq!(
+        doctrine(&[line("recon_car", 2, None), line("light_tank", 3, None)]),
+        "recon_pull"
+    );
+    assert_eq!(
+        doctrine(&[
+            line("apc", 4, Some("rifle_squad")),
+            line("halftrack", 3, Some("rifle_squad"))
+        ]),
+        "delaying_action"
+    );
+}
+
+#[test]
+fn a_commander_by_coin_gives_every_platoon_a_mission_and_the_same_seed_the_same_ones() {
+    use tactics_core::force::{Purchase, buy};
+    use tactics_core::harness::arena::arena_named;
+    use tactics_core::harness::{forces, generated};
+    let reg = common::registry();
+    let arena = arena_named("ridge_arena").expect("the ridge arena");
+    let purchase = Purchase {
+        points: 90,
+        max_vehicles: 16,
+    };
+    let missions = |seed: u64| {
+        let a = buy(&reg, purchase, seed).expect("a force");
+        let b = buy(&reg, purchase, seed + 1).expect("a force");
+        let made = generated::field(&reg, arena, seed).expect("a generated field");
+        let mut state =
+            forces::stage(&reg, made.field, &made.deployment, [&a, &b], 1).expect("staged");
+        let config = AiConfig {
+            planner: "command".into(),
+            difficulty: 5,
+            doctrine: Some(a.doctrine.clone()),
+        };
+        let mut ai = AiDriver::new();
+        ai.insert(
+            0,
+            Box::new(SideCommand::from_config(&config, seed, &reg).with_random_missions()),
+        );
+        ai.insert(
+            1,
+            make_battle_planner(
+                &AiConfig {
+                    planner: "utility".into(),
+                    ..config.clone()
+                },
+                seed,
+                &reg,
+            ),
+        );
+        ai.plan_round(&reg, &mut state);
+        state
+            .command
+            .formations()
+            .iter()
+            .filter(|f| f.side == 0)
+            .map(|f| f.latest_mission().cloned())
+            .collect::<Vec<_>>()
+    };
+    let mut kinds = std::collections::BTreeSet::new();
+    for seed in 0..8 {
+        let given = missions(seed);
+        assert!(!given.is_empty());
+        assert!(
+            given.iter().all(Option::is_some),
+            "seed {seed}: every platoon has orders"
+        );
+        assert_eq!(given, missions(seed), "seed {seed}: the coin is the seed's");
+        kinds.extend(
+            given
+                .iter()
+                .flatten()
+                .map(|m| format!("{m:?}").split(' ').next().unwrap().to_string()),
+        );
+    }
+    assert!(
+        kinds.len() >= 3,
+        "a coin gives every kind of mission, gave {kinds:?}"
+    );
+}

@@ -28,7 +28,7 @@ pub use cores::{
     TraitEffect,
 };
 pub use defs::*;
-pub use forces::{ForceDef, ForceUnit};
+pub use forces::{ForceDef, ForceUnit, PlatoonDef};
 pub use manifest::ModManifest;
 pub use march::March;
 pub use modules::{ModuleDef, ModuleEffect, STANDARD_MODULES};

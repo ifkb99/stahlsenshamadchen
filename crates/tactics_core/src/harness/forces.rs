@@ -7,11 +7,16 @@
 //! furthest from the enemy's, then the coordinate. Passengers start aboard
 //! the vehicle that carries them. The crews are anonymous: these battles are
 //! for measuring and training, not for the academy roll.
+//!
+//! Each platoon of a force (a line, or a share of one: `ForceUnit::platoons`)
+//! is a formation, led by its first vehicle, its passengers in it with their
+//! carriers; the formations are declared side 0's first, in deployment
+//! order, which is their seniority.
 
 use crate::Hex;
 use crate::battle::{BattleState, Muster, SideState, UnitId};
 use crate::data::{DataRegistry, ForceDef};
-use crate::map::{Battlefield, Scenario, UnitPlacement};
+use crate::map::{Battlefield, FormationDef, Scenario, UnitPlacement};
 use crate::roster::Roster;
 use crate::world::World;
 use crate::worldgen::GeneratedWorld;
@@ -21,13 +26,16 @@ use crate::worldgen::GeneratedWorld;
 /// finds nowhere to stand.
 pub fn stage(
     reg: &DataRegistry,
-    field: Battlefield,
+    mut field: Battlefield,
     deployment: &[(Hex, Hex)],
     forces: [&ForceDef; 2],
     seed: u64,
 ) -> Option<BattleState> {
     let ground = |h: Hex| field.terrain.get(h).map(|t| t.terrain.to_string());
-    let placements = placements(reg, &ground, deployment, forces)?;
+    let (placements, formations) = placements(reg, &ground, deployment, forces)?;
+    for formation in formations {
+        field.scenario.push_formation(formation);
+    }
     let (roster, crews) = Roster::stamp_for(reg, &placements);
     BattleState::from_placements(
         reg,
@@ -47,13 +55,16 @@ pub fn stage(
 pub fn stage_on_world(
     reg: &DataRegistry,
     world: std::sync::Arc<GeneratedWorld>,
-    scenario: Scenario,
+    mut scenario: Scenario,
     deployment: &[(Hex, Hex)],
     forces: [&ForceDef; 2],
     seed: u64,
 ) -> Option<BattleState> {
     let ground = |h: Hex| world.tile(h).map(|(id, _)| id.to_string());
-    let placements = placements(reg, &ground, deployment, forces)?;
+    let (placements, formations) = placements(reg, &ground, deployment, forces)?;
+    for formation in formations {
+        scenario.push_formation(formation);
+    }
     let (roster, crews) = Roster::stamp_for(reg, &placements);
     let ids: Vec<UnitId> = (0..placements.len() as u32).map(UnitId).collect();
     BattleState::from_muster_on(
@@ -83,15 +94,17 @@ fn sides(forces: [&ForceDef; 2]) -> Vec<SideState> {
 }
 
 /// Where every vehicle of both forces stands, `ground` saying what terrain
-/// is where. `None` when a vehicle finds nowhere to stand.
+/// is where, and the platoons they stand in. `None` when a vehicle finds
+/// nowhere to stand.
 fn placements(
     reg: &DataRegistry,
     ground: &dyn Fn(Hex) -> Option<String>,
     deployment: &[(Hex, Hex)],
     forces: [&ForceDef; 2],
-) -> Option<Vec<UnitPlacement>> {
+) -> Option<(Vec<UnitPlacement>, Vec<FormationDef>)> {
     let mut taken: Vec<Hex> = Vec::new();
     let mut placements: Vec<UnitPlacement> = Vec::new();
+    let mut formations: Vec<FormationDef> = Vec::new();
     for (side, force) in forces.iter().enumerate() {
         let side = side as u8;
         let ours: Vec<Hex> = deployment
@@ -115,7 +128,21 @@ fn placements(
                     .and_then(|t| t.cost_for(class))
                     .is_some()
             };
-            for _ in 0..line.count {
+            // The line's platoons, declared as it deploys, and which of
+            // them each of its vehicles is in.
+            let mut member_of: Vec<String> = Vec::new();
+            for size in line.platoon_sizes() {
+                let number = formations.iter().filter(|f| f.side == side).count() + 1;
+                let id = format!("side{side}_platoon{number}");
+                member_of.extend(std::iter::repeat_n(id.clone(), size as usize));
+                formations.push(FormationDef {
+                    id,
+                    name: format!("{} platoon {number}", force.name),
+                    side,
+                    doctrine: None,
+                });
+            }
+            for formation in &member_of {
                 // The next deployment hex if it will do, else the nearest
                 // free ground that will.
                 let wanted = slots.next();
@@ -148,7 +175,7 @@ fn placements(
                     crew: Vec::new(),
                     name: Some(name.clone()),
                     facing: None,
-                    formation: None,
+                    formation: Some(formation.clone()),
                     leads: false,
                 });
                 if let Some(rider) = &line.carries {
@@ -160,12 +187,12 @@ fn placements(
                         crew: Vec::new(),
                         name: Some(format!("{name}'s squad")),
                         facing: None,
-                        formation: None,
+                        formation: Some(formation.clone()),
                         leads: false,
                     });
                 }
             }
         }
     }
-    Some(placements)
+    Some((placements, formations))
 }

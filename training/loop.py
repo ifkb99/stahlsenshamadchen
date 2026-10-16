@@ -70,6 +70,7 @@ FORCES = []  # set from --forces in main; passed to every rollout
 APPROACH = [0]  # set from --approach in main
 LAYOUT = []  # set from --spread and --turned in main: how generated ground is laid out
 GROUND = ["generated"]  # set from --ground in main: generated or open, for the evaluation
+COMMAND = []  # set from --commander, --opponent-commander and --budget in main
 
 
 def evaluate_generated(net, places, arena, games, events="none", seed=1_000_000):
@@ -79,7 +80,7 @@ def evaluate_generated(net, places, arena, games, events="none", seed=1_000_000)
     common = ["--net", str(net), "--deterministic", "--ground", GROUND[0], "--arena", arena,
               "--places", str(places), "--approach", str(APPROACH[0]), "--events", events,
               "--out", str(ROOT / "target" / "rl" / "eval.jsonl"),
-              *(["--forces", FORCES[0]] if FORCES else []), *LAYOUT]
+              *(["--forces", FORCES[0]] if FORCES else []), *LAYOUT, *COMMAND]
     out = cargo("rollout", *common, "--games", str(games), "--seed", str(seed))
     # The learner's record with each force: overfitting to one method shows
     # as one force carrying the average.
@@ -108,7 +109,12 @@ def main():
     ap.add_argument("--arena", default="ridge_arena")
     ap.add_argument("--ground", default="arena", choices=["arena", "generated", "open"],
                     help="train and evaluate on the arena, or on a fresh generated world every two games")
-    ap.add_argument("--forces", help="draw matchups from these forces (a list, or all)")
+    ap.add_argument("--forces", help="draw matchups from these forces (a list, all, or bought)")
+    ap.add_argument("--budget", help="with --forces bought, the points range LO,HI both sides buy to")
+    ap.add_argument("--commander", default="none", choices=["none", "utility", "random"],
+                    help="who gives the learner's platoons their missions")
+    ap.add_argument("--opponent-commander", default="none", choices=["none", "utility", "random"],
+                    help="who gives the opponent's platoons theirs")
     ap.add_argument("--spread", type=int, default=100,
                     help="generated ground: the deployment's distance from the centre, percent of the arena's")
     ap.add_argument("--turned", action="store_true",
@@ -128,6 +134,8 @@ def main():
         FORCES.append(args.forces)
     APPROACH[0] = args.approach
     LAYOUT.extend(["--spread", str(args.spread), *(["--turned"] if args.turned else [])])
+    COMMAND.extend(["--commander", args.commander, "--opponent-commander", args.opponent_commander,
+                    *(["--budget", args.budget] if args.budget else [])])
     args.dir.mkdir(parents=True, exist_ok=True)
     log = args.dir / "log.csv"
 
@@ -157,6 +165,7 @@ def main():
                         "--places", str(args.places), "--approach", str(args.approach),
                         "--arena", args.arena, "--events", args.events,
                         "--ground", args.ground, *(["--forces", args.forces] if args.forces else []), *LAYOUT,
+                        *COMMAND,
                         "--out", str(rollouts), "--arrays")
             m = re.search(r"learner won (\d+), lost (\d+)", out)
             rw, rl = (int(m.group(1)), int(m.group(2))) if m else ("", "")

@@ -21,10 +21,11 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 use tactics_core::ai::features::{GoalRecord, GoalTap};
 use tactics_core::ai::learned::{GoalBrain, load_goal_net};
-use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, UtilityPlanner, make_battle_planner};
+use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, SideCommand, UtilityPlanner};
 use tactics_core::battle::{BattleState, Event, Order};
 use tactics_core::data::ArmorFacing;
 use tactics_core::data::DataRegistry;
+use tactics_core::force::{Purchase, buy};
 use tactics_core::harness::arena::{Arena, DEFAULT_ARENA, arena_named};
 use tactics_core::harness::open::{self, OpenLayout, Worlds};
 use tactics_core::harness::parallel::run_all;
@@ -59,6 +60,13 @@ rollout: battles for reinforcement learning, learner against the utility AI
                       advance by a sixth of a circle a step, drawn per world
   --forces LIST|all   draw each world's matchup from these forces (forces/ in
                       the mod), each side fighting by its force's doctrine
+  --forces bought     each world, both sides buy a force from the platoon
+                      catalogue (platoons/ in the mod) to the same budget
+  --budget LO,HI      with --forces bought, the budget drawn per world (default 70,100)
+  --commander KIND    who gives the learner's platoons their missions: none
+                      (default; every crew chooses for herself), utility (the
+                      hand-written commander) or random (a coin, per review)
+  --opponent-commander KIND   the same for the opponent
   --deterministic     the learner takes its best choice instead of sampling
                       (evaluation; no log-probabilities are recorded)
   --difficulty D      the opponent's difficulty (default 5)
@@ -109,6 +117,9 @@ struct Battle {
     /// fired from beyond the target's own longest direct reach: standoff.
     aimed: [u32; 2],
     standoff: [u32; 2],
+    /// Missions given, `[learner's side, opponent's]`: zero for a side
+    /// nobody commands.
+    missions: [u32; 2],
 }
 
 /// A unit's longest direct weapon reach, in hexes: what she could answer
@@ -174,6 +185,36 @@ struct Setup<'a> {
     /// matchup, both seatings, each side fighting by its force's doctrine.
     /// Empty is the arena's own symmetric force.
     forces: Vec<&'a tactics_core::data::ForceDef>,
+    /// `--forces bought`: the budget range both sides buy to, per world.
+    bought: Option<(i32, i32)>,
+    /// Who commands the learner's side and the opponent's (`--commander`,
+    /// `--opponent-commander`).
+    commanders: [Commander; 2],
+}
+
+/// Who gives a side's platoons their missions.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Commander {
+    /// Nobody: every crew chooses for herself among the battle's objectives.
+    None,
+    /// The hand-written commander (`SideCommand`).
+    Utility,
+    /// A coin at every review (`SideCommand::with_random_missions`).
+    Random,
+}
+
+impl Commander {
+    fn parse(flag: Option<&str>) -> Self {
+        match flag {
+            None | Some("none") => Self::None,
+            Some("utility") => Self::Utility,
+            Some("random") => Self::Random,
+            Some(other) => {
+                eprintln!("error: a commander is none, utility or random, not `{other}`");
+                std::process::exit(1);
+            }
+        }
+    }
 }
 
 /// Who the learner fights in `game`: the utility AI, or one of the league's
@@ -187,13 +228,10 @@ fn opponent<'a>(
 }
 
 /// The two forces that meet on world `game / 2`, side 0's first: drawn from
-/// the list by the world's seed, the same for both games on it, so the
-/// learner fights each matchup from both ends.
-fn matchup<'a>(setup: &Setup<'a>, game: u64) -> Option<[&'a tactics_core::data::ForceDef; 2]> {
-    let n = setup.forces.len() as u64;
-    if n == 0 {
-        return None;
-    }
+/// the list by the world's seed, or bought to one budget drawn from it, the
+/// same for both games on it, so the learner fights each matchup from both
+/// ends.
+fn matchup(setup: &Setup, game: u64) -> Option<[tactics_core::data::ForceDef; 2]> {
     // SplitMix64, written out: the draw must not move with the platform.
     let mix = |mut z: u64| {
         z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -202,9 +240,23 @@ fn matchup<'a>(setup: &Setup<'a>, game: u64) -> Option<[&'a tactics_core::data::
         z ^ (z >> 31)
     };
     let world = game / 2;
+    if let Some((lo, hi)) = setup.bought {
+        let points = lo + (mix(world ^ 0xB06E7) % (hi - lo + 1).max(1) as u64) as i32;
+        let purchase = Purchase {
+            points,
+            max_vehicles: 16,
+        };
+        let a = buy(setup.reg, purchase, mix(world))?;
+        let b = buy(setup.reg, purchase, mix(world ^ 0xA5A5_A5A5))?;
+        return Some([a, b]);
+    }
+    let n = setup.forces.len() as u64;
+    if n == 0 {
+        return None;
+    }
     let a = (mix(world) % n) as usize;
     let b = (mix(world ^ 0xA5A5_A5A5) % n) as usize;
-    Some([setup.forces[a], setup.forces[b]])
+    Some([setup.forces[a].clone(), setup.forces[b].clone()])
 }
 
 fn fight(setup: &Setup, game: u64) -> Option<Battle> {
@@ -213,7 +265,7 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
     let mut state = if setup.open {
         // Open ground needs forces: the arena's own four tanks a side are a
         // battle-map fixture.
-        let pair = matchup?;
+        let pair = matchup.as_ref()?;
         let made = open::field(
             reg,
             setup.arena,
@@ -226,7 +278,7 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
             made.world,
             made.scenario,
             &made.deployment,
-            pair,
+            [&pair[0], &pair[1]],
             9000 + game,
         )?
     } else {
@@ -236,8 +288,10 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
         } else {
             (setup.arena.map()?, setup.arena.deployment())
         };
-        match matchup {
-            Some(pair) => forces::stage(reg, field, &deployment, pair, 9000 + game)?,
+        match &matchup {
+            Some(pair) => {
+                forces::stage(reg, field, &deployment, [&pair[0], &pair[1]], 9000 + game)?
+            }
             None => Arena::stage_on(reg, field, deployment, 9000 + game),
         }
     };
@@ -250,22 +304,39 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
         let config = AiConfig {
             planner: "utility".into(),
             difficulty: setup.difficulty,
-            doctrine: matchup.map(|pair| pair[side as usize].doctrine.clone()),
+            doctrine: matchup
+                .as_ref()
+                .map(|pair| pair[side as usize].doctrine.clone()),
         };
         let seed = game.wrapping_mul(2).wrapping_add(side as u64);
-        let planner: Box<dyn AiPlanner<BattleState, Order>> = if side == learner {
-            Box::new(
-                UtilityPlanner::from_config(&config, seed, reg)
-                    .with_brain(setup.brain.clone())
-                    .tapped(tap.clone()),
-            )
+        let commander = setup.commanders[usize::from(side != learner)];
+        let brain = if side == learner {
+            Some(setup.brain.clone())
         } else {
-            match opponent(setup, game) {
-                Some((_, net)) => {
-                    Box::new(UtilityPlanner::from_config(&config, seed, reg).with_net(net.clone()))
-                }
-                None => make_battle_planner(&config, seed, reg),
+            opponent(setup, game).map(|(_, net)| GoalBrain::Learned(net.clone()))
+        };
+        let tapped = (side == learner).then(|| tap.clone());
+        let planner: Box<dyn AiPlanner<BattleState, Order>> = if commander == Commander::None {
+            let mut planner = UtilityPlanner::from_config(&config, seed, reg);
+            if let Some(brain) = brain {
+                planner = planner.with_brain(brain);
             }
+            if let Some(tap) = tapped {
+                planner = planner.tapped(tap);
+            }
+            Box::new(planner)
+        } else {
+            let mut planner = SideCommand::from_config(&config, seed, reg);
+            if commander == Commander::Random {
+                planner = planner.with_random_missions();
+            }
+            if let Some(brain) = brain {
+                planner = planner.with_brain(brain);
+            }
+            if let Some(tap) = tapped {
+                planner = planner.tapped(tap);
+            }
+            Box::new(planner)
         };
         ai.insert(side, planner);
     }
@@ -275,11 +346,16 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
     let mut rounds = 0;
     let (mut by, mut on) = ([0u32; 3], [0u32; 3]);
     let (mut f4, mut aimed, mut standoff) = ([0u32; 2], [0u32; 2], [0u32; 2]);
+    let mut missions = [0u32; 2];
     // Per target: the last round a crew of each side struck his front, and
     // which crew.
     let mut fronted: std::collections::BTreeMap<(u32, u8), (u32, u32)> = Default::default();
     while !state.is_over() && rounds < MAX_ROUNDS {
-        ai.plan_round(reg, &mut state);
+        ai.plan_round_with(reg, &mut state, |decision| {
+            if matches!(decision.order, Order::SetMission { .. }) && decision.rejected.is_none() {
+                missions[usize::from(decision.side != learner)] += 1;
+            }
+        });
         for event in state.resolve_round(reg) {
             // Who was aimed at whom, for the standoff count.
             let aimed_at = match &event {
@@ -363,6 +439,7 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
         fix_and_flank: f4,
         aimed,
         standoff,
+        missions,
         victory_score: state.scenario.victory_score(),
         opponent: opponent(setup, game).map_or("utility".to_string(), |(name, _)| name.clone()),
         forces: matchup.map(|pair| [pair[0].id.clone(), pair[1].id.clone()]),
@@ -432,7 +509,7 @@ fn main() {
             turned: args.iter().any(|a| a == "--turned"),
         },
         forces: match flag(&args, "--forces") {
-            None => Vec::new(),
+            None | Some("bought") => Vec::new(),
             Some("all") => {
                 let mut all: Vec<_> = reg.forces.values().collect();
                 all.sort_by(|a, b| a.id.cmp(&b.id));
@@ -448,6 +525,18 @@ fn main() {
                 })
                 .collect(),
         },
+        bought: (flag(&args, "--forces") == Some("bought")).then(|| {
+            let range = flag(&args, "--budget").unwrap_or("70,100");
+            let (lo, hi) = range
+                .split_once(',')
+                .and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))
+                .unwrap_or_else(|| panic!("--budget takes LO,HI, got {range}"));
+            (lo, hi)
+        }),
+        commanders: [
+            Commander::parse(flag(&args, "--commander")),
+            Commander::parse(flag(&args, "--opponent-commander")),
+        ],
         opponents: flag(&args, "--opponents")
             .map(|list| {
                 list.split(',')
@@ -587,21 +676,23 @@ fn main() {
     }
     println!("  struck by the learner: {}", share(by));
     println!("  struck on the learner: {}", share(on));
-    let (mut f4, mut aimed, mut off) = ([0u32; 2], [0u32; 2], [0u32; 2]);
+    let (mut f4, mut aimed, mut off, mut missions) = ([0u32; 2], [0u32; 2], [0u32; 2], [0u32; 2]);
     for battle in fought.iter().flatten() {
         for i in 0..2 {
             f4[i] += battle.fix_and_flank[i];
             aimed[i] += battle.aimed[i];
             off[i] += battle.standoff[i];
+            missions[i] += battle.missions[i];
         }
     }
     let n = fought.iter().flatten().count().max(1) as f32;
     for (i, who) in ["learner", "opponent"].iter().enumerate() {
         println!(
-            "  {who}: fix and flank {:.2} a battle; {:.0}% of {} aimed shots from beyond the target's reach",
+            "  {who}: fix and flank {:.2} a battle; {:.0}% of {} aimed shots from beyond the target's reach; {:.1} missions a battle",
             f4[i] as f32 / n,
             100.0 * off[i] as f32 / aimed[i].max(1) as f32,
-            aimed[i]
+            aimed[i],
+            missions[i] as f32 / n
         );
     }
 }

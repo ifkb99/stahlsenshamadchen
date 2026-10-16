@@ -794,6 +794,12 @@ impl Scenario {
         self.objectives.push(objective);
     }
 
+    /// Add `formation` after the ones this scenario declares; it is the
+    /// most junior, since declaration order is seniority.
+    pub fn push_formation(&mut self, formation: FormationDef) {
+        self.formations.push(formation);
+    }
+
     /// Take away the objective called `id`, returning where it stood.
     pub fn remove_objective(&mut self, id: &str) -> Option<usize> {
         let index = self.objectives.iter().position(|o| o.id == id)?;

@@ -11,6 +11,18 @@
 //!
 //! A unit that `carries` starts with that passenger aboard; infantry ride to
 //! the fight the way they did, a squad to a carrier.
+//!
+//! **A force is made of platoons, and a platoon is a formation**: each line
+//! is one platoon unless it says it is several (`platoons`), and the first
+//! vehicle of each leads it. That is the chain of command a commander has
+//! to give orders down (REIMAGINED.md L3), and without it every crew in a
+//! training battle chose for herself among the whole battle's objectives.
+//!
+//! **Platoons can also be bought** ([`PlatoonDef`], `platoons/` in a mod):
+//! a catalogue of what a side may field, each priced by its chassis'
+//! `cost`, from which `force::buy` draws a force to a budget. Hand-written
+//! forces are a handful of matchups a network could learn; bought ones are
+//! as many as there are seeds, and equal budgets are as fair as the prices.
 
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +53,35 @@ pub struct ForceUnit {
     /// A vehicle id each of these starts with aboard.
     #[serde(default)]
     pub carries: Option<String>,
+    /// How many platoons the line is: its vehicles split as evenly as they
+    /// go, the larger platoons first. One, the default, is the whole line
+    /// as one platoon.
+    #[serde(default = "one")]
+    pub platoons: u32,
+}
+
+impl ForceUnit {
+    /// How many vehicles each of this line's platoons has, in deployment
+    /// order: nine in three is three each, four in three is two, one, one.
+    pub fn platoon_sizes(&self) -> Vec<u32> {
+        let n = self.platoons.clamp(1, self.count.max(1));
+        (0..n)
+            .map(|i| self.count / n + u32::from(i < self.count % n))
+            .collect()
+    }
+}
+
+/// One platoon a force may buy: a line of a force, with a name. Its price
+/// is its vehicles' and passengers' `cost`, read off the chassis, so the
+/// catalogue has no prices of its own to drift from the roster's.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlatoonDef {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(flatten)]
+    pub unit: ForceUnit,
 }
 
 fn one() -> u32 {

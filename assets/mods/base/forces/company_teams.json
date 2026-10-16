@@ -16,7 +16,7 @@
         "doctrine": "massed_armor",
         "units": [
             { "vehicle": "medium_tank", "count": 4 },
-            { "vehicle": "halftrack", "count": 9, "carries": "rifle_squad" }
+            { "vehicle": "halftrack", "count": 9, "carries": "rifle_squad", "platoons": 3 }
         ]
     },
     {
