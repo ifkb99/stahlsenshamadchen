@@ -26,7 +26,7 @@ use tactics_core::battle::{BattleState, Event, Order};
 use tactics_core::data::ArmorFacing;
 use tactics_core::data::DataRegistry;
 use tactics_core::harness::arena::{Arena, DEFAULT_ARENA, arena_named};
-use tactics_core::harness::open::{self, OpenLayout};
+use tactics_core::harness::open::{self, OpenLayout, Worlds};
 use tactics_core::harness::parallel::run_all;
 use tactics_core::harness::{forces, generated};
 
@@ -47,9 +47,9 @@ rollout: battles for reinforcement learning, learner against the utility AI
   --arena NAME        battlefield (default ridge_arena); with --ground generated,
                       whose forces and deployment are moved onto generated ground
   --ground generated  a fresh generated world every two games (one per seat)
-  --ground open       a fresh world every two games, several battle maps across,
-                      fought on a window onto it with the forces 3-6 km apart
-                      at a drawn bearing (needs --forces)
+  --ground open       worlds several battle maps across, fought on a window onto
+                      them with the forces 3-6 km apart at a bearing drawn every
+                      two games, sixteen such fields a world (needs --forces)
   --spread PERCENT    with --ground generated, the deployment's distance from
                       the centre in percent of the arena's (default 100)
   --turned            with --ground generated, turn each world's axis of
@@ -165,6 +165,8 @@ struct Setup<'a> {
     /// Battles on a window onto a whole world, the forces kilometres apart
     /// (`--ground open`, `harness::open`).
     open: bool,
+    /// The worlds those battles are fought on, each made once.
+    worlds: Worlds,
     /// The forces battles are drawn from (`--forces`): each world gets a
     /// matchup, both seatings, each side fighting by its force's doctrine.
     /// Empty is the arena's own symmetric force.
@@ -209,7 +211,13 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
         // Open ground needs forces: the arena's own four tanks a side are a
         // battle-map fixture.
         let pair = matchup?;
-        let made = open::field(reg, setup.arena, game / 2, OpenLayout::default())?;
+        let made = open::field(
+            reg,
+            setup.arena,
+            &setup.worlds,
+            game / 2,
+            OpenLayout::default(),
+        )?;
         forces::stage_on_world(
             reg,
             made.world,
@@ -412,6 +420,7 @@ fn main() {
         difficulty,
         generated: flag(&args, "--ground") == Some("generated"),
         open: flag(&args, "--ground") == Some("open"),
+        worlds: Worlds::default(),
         layout: generated::Layout {
             spread_percent: flag(&args, "--spread").map_or(100, |s| {
                 s.parse()

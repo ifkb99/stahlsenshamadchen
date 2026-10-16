@@ -181,7 +181,7 @@ pub struct MoveGrid {
     /// refill cannot be forgotten — an empty grid says every step is
     /// impossible, which is a silent wrong answer rather than a loud one.
     #[serde(skip)]
-    tiles: HashMap<Hex, TileMove>,
+    tiles: crate::FastMap<Hex, TileMove>,
 }
 
 impl MoveGrid {
@@ -506,7 +506,7 @@ pub fn destination_blocked(
 pub struct Pinning {
     unit: UnitId,
     ceiling: f32,
-    heat: std::cell::RefCell<HashMap<Hex, f32>>,
+    heat: std::cell::RefCell<crate::FastMap<Hex, f32>>,
 }
 
 impl Pinning {
@@ -518,7 +518,7 @@ impl Pinning {
         Some(Self {
             unit: unit.id,
             ceiling: super::incoming(registry, state, unit.id, unit.pos).worth,
-            heat: std::cell::RefCell::new(HashMap::new()),
+            heat: std::cell::RefCell::new(crate::FastMap::default()),
         })
     }
 
@@ -675,8 +675,8 @@ pub fn step_toward(
 /// one call answers every hex she might halt on this round. Crow steps
 /// rather than terrain cost, because the key it replaces was a crow
 /// distance and terrain already speaks through `reachable`'s own cost.
-fn to_go(state: &BattleState, watch: &Watch, destination: Hex) -> HashMap<Hex, u32> {
-    let mut left: HashMap<Hex, u32> = HashMap::new();
+fn to_go(state: &BattleState, watch: &Watch, destination: Hex) -> crate::FastMap<Hex, u32> {
+    let mut left: crate::FastMap<Hex, u32> = crate::FastMap::default();
     let mut heap = BinaryHeap::new();
     left.insert(destination, 0);
     heap.push(Reverse((0u32, destination.x, destination.y)));
@@ -763,7 +763,7 @@ pub fn along_the_bearing(step: Hex, bearing: Hex) -> i32 {
 ///   find.
 #[derive(Debug, Clone, Default)]
 pub struct Roads {
-    cost: HashMap<Hex, u32>,
+    cost: crate::FastMap<Hex, u32>,
     /// Every neighbour a cheapest road into the hex comes from. All of them,
     /// not the first one found: which of two equally cheap roads a heap
     /// keeps is decided by its coordinate order, and a reading taken along
@@ -771,8 +771,12 @@ pub struct Roads {
     /// different exposure on mirrored candidates (found 2026-10-15, the day
     /// places reached past a round's drive). [`Roads::least`] reads all of
     /// them.
-    from: HashMap<Hex, Vec<Hex>>,
+    from: crate::FastMap<Hex, Vec<Hex>>,
     start: Hex,
+    /// Every hex reached, cheapest first and then the coordinate, so the
+    /// order is total: sorted once when the search ends rather than by
+    /// every reader (a tenth of a rollout went on re-sorting it).
+    order: Vec<Hex>,
 }
 
 impl Roads {
@@ -780,9 +784,7 @@ impl Roads {
     /// the coordinate, so the order is total and the coordinate only ever
     /// settles a tie between equally dear hexes.
     pub fn reached(&self) -> Vec<(Hex, u32)> {
-        let mut out: Vec<(Hex, u32)> = self.cost.iter().map(|(h, c)| (*h, *c)).collect();
-        out.sort_by_key(|(h, c)| (*c, h.x, h.y));
-        out
+        self.order.iter().map(|h| (*h, self.cost[h])).collect()
     }
 
     /// Terrain cost of the cheapest road to `hex`, if one was found inside
@@ -816,10 +818,26 @@ impl Roads {
         if !self.cost.contains_key(&hex) {
             return None;
         }
-        let mut order: Vec<(u32, Hex)> = self.cost.iter().map(|(h, c)| (*c, *h)).collect();
-        order.sort_by_key(|(c, h)| (*c, h.x, h.y));
-        let mut best: HashMap<Hex, (u32, u32)> = HashMap::new();
-        for (_, h) in order {
+        self.walk_least(counted, Some(hex)).get(&hex).copied()
+    }
+
+    /// [`Roads::least`] to every hex reached at once, asking `counted` of
+    /// each hex once. The same values: the walk goes cheapest first, and
+    /// every road into a hex comes from a cheaper one, so a hex's value
+    /// never depends on any hex after it. Asking per goal walked the same
+    /// prefix and re-asked the same sight lines for each of forty-odd
+    /// candidates.
+    pub fn least_all(&self, counted: impl Fn(Hex) -> bool) -> crate::FastMap<Hex, (u32, u32)> {
+        self.walk_least(counted, None)
+    }
+
+    fn walk_least(
+        &self,
+        counted: impl Fn(Hex) -> bool,
+        until: Option<Hex>,
+    ) -> crate::FastMap<Hex, (u32, u32)> {
+        let mut best: crate::FastMap<Hex, (u32, u32)> = crate::FastMap::default();
+        for &h in &self.order {
             let here = counted(h) as u32;
             let value = if h == self.start {
                 Some((here, 1))
@@ -835,11 +853,11 @@ impl Roads {
             if let Some(v) = value {
                 best.insert(h, v);
             }
-            if h == hex {
+            if Some(h) == until {
                 break;
             }
         }
-        best.get(&hex).copied()
+        best
     }
 }
 
@@ -889,6 +907,9 @@ pub fn roads(registry: &DataRegistry, state: &BattleState, id: UnitId, rounds: u
             }
         }
     }
+    let mut order: Vec<(u32, Hex)> = out.cost.iter().map(|(h, c)| (*c, *h)).collect();
+    order.sort_unstable_by_key(|(c, h)| (*c, h.x, h.y));
+    out.order = order.into_iter().map(|(_, h)| h).collect();
     out
 }
 
@@ -902,7 +923,7 @@ pub fn roads(registry: &DataRegistry, state: &BattleState, id: UnitId, rounds: u
 pub struct Watch {
     price: u32,
     observers: Vec<(Hex, u32)>,
-    seen: std::cell::RefCell<HashMap<Hex, bool>>,
+    seen: std::cell::RefCell<crate::FastMap<Hex, bool>>,
 }
 
 impl Watch {
@@ -933,7 +954,7 @@ impl Watch {
         Some(Self {
             price,
             observers,
-            seen: std::cell::RefCell::new(HashMap::new()),
+            seen: std::cell::RefCell::new(crate::FastMap::default()),
         })
     }
 
@@ -1027,8 +1048,8 @@ pub fn path_to(
     // costs a handful of labels per hex.
     type Label = (Hex, u32);
     let start: Label = (unit.pos, 0);
-    let mut best: HashMap<Label, (u32, u32)> = HashMap::new();
-    let mut came: HashMap<Label, Label> = HashMap::new();
+    let mut best: crate::FastMap<Label, (u32, u32)> = crate::FastMap::default();
+    let mut came: crate::FastMap<Label, Label> = crate::FastMap::default();
     let mut heap = BinaryHeap::new();
     best.insert(start, (0, 0));
     heap.push(Reverse((0u32, 0u32, 0u32, unit.pos.x, unit.pos.y)));

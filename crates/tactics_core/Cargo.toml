@@ -10,6 +10,9 @@ rand = "0.10.2"
 # that resumed with a fresh rng would replay differently from the run that
 # produced it, which is the one property this engine is built around.
 rand_chacha = { version = "0.10.0", features = ["serde"] }
+# FxHash for the hex-keyed maps on the hot paths (`FastMap`); already in
+# the lock through Bevy.
+rustc-hash = "2.1"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

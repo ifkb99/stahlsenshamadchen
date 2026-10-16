@@ -749,10 +749,17 @@ fn open_ground_starts_the_forces_kilometres_apart_out_of_sight_with_the_ground_w
     use tactics_core::battle::Knower;
     use tactics_core::harness::arena::arena_named;
     use tactics_core::harness::forces;
-    use tactics_core::harness::open::{OpenLayout, field};
+    use tactics_core::harness::open::{OpenLayout, Worlds, field};
     let reg = common::registry();
     let arena = arena_named("ridge_arena").expect("the ridge arena");
-    let layout = OpenLayout::default();
+    // A world to every four fields, so the test sees fields that share one
+    // and fields that do not, and a field read from a fresh cache is the
+    // same field.
+    let layout = OpenLayout {
+        fields_per_world: 4,
+        ..OpenLayout::default()
+    };
+    let worlds = Worlds::default();
     let mut all: Vec<_> = reg.forces.values().collect();
     all.sort_by(|a, b| a.id.cmp(&b.id));
     let centroid = |hexes: &mut dyn Iterator<Item = tactics_core::Hex>| {
@@ -769,8 +776,8 @@ fn open_ground_starts_the_forces_kilometres_apart_out_of_sight_with_the_ground_w
     // flanks were held to the band between the forces); the battle itself
     // is fought on the first four.
     for seed in 0..32u64 {
-        let made = field(&reg, arena, seed, layout).expect("an open field");
-        let again = field(&reg, arena, seed, layout).expect("and again");
+        let made = field(&reg, arena, &worlds, seed, layout).expect("an open field");
+        let again = field(&reg, arena, &Worlds::default(), seed, layout).expect("and again");
         assert_eq!(made.deployment, again.deployment, "seed {seed}");
         assert_eq!(made.scenario, again.scenario, "seed {seed}");
         assert!((layout.apart_min..=layout.apart_max).contains(&made.apart));

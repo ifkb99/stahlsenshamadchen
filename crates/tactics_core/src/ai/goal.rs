@@ -80,6 +80,22 @@
 //! candidates she is weighing, her own included.
 
 use crate::battle::{BattleState, Goal, Mission, Roads, Unit, UnitId, roads};
+
+/// Her roads for one decision: searched the first time anything asks and
+/// shared by everything that reads them after — the places on her list, the
+/// teacher's reading of each and the network's description of each are one
+/// Dijkstra from one hex, and were three (a sixth of a rollout).
+pub type Survey = std::cell::OnceCell<Roads>;
+
+/// `survey`'s roads, searched now if nobody has yet.
+pub fn surveyed<'a>(
+    survey: &'a Survey,
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+) -> &'a Roads {
+    survey.get_or_init(|| roads(registry, state, unit, registry.planner.horizon_rounds))
+}
 use crate::data::DataRegistry;
 use crate::map::ObjectiveKind;
 use hexx::Hex;
@@ -107,6 +123,27 @@ pub fn candidates(
     mission: Option<&Mission>,
     best_reachable: Option<Hex>,
     initiative: f32,
+) -> Vec<Goal> {
+    candidates_surveyed(
+        registry,
+        state,
+        unit,
+        mission,
+        best_reachable,
+        initiative,
+        &Survey::new(),
+    )
+}
+
+/// [`candidates`], reading her roads from `survey`.
+pub fn candidates_surveyed(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    mission: Option<&Mission>,
+    best_reachable: Option<Hex>,
+    initiative: f32,
+    survey: &Survey,
 ) -> Vec<Goal> {
     let Some(me) = state.unit(unit) else {
         return vec![Goal::Hold];
@@ -173,7 +210,7 @@ pub fn candidates(
         // doctrine with initiative sees any, and only ground that carries the
         // order out (see `places`).
         if initiative > 0.0 {
-            for place in places(registry, state, unit, Some(hex)) {
+            for place in places(registry, state, unit, Some(hex), survey) {
                 push(place);
             }
         }
@@ -238,7 +275,7 @@ pub fn candidates(
         push(hex);
     }
 
-    for place in places(registry, state, unit, None) {
+    for place in places(registry, state, unit, None, survey) {
         push(place);
     }
 
@@ -303,6 +340,7 @@ fn places(
     state: &BattleState,
     unit: UnitId,
     toward: Option<Hex>,
+    survey: &Survey,
 ) -> Vec<Hex> {
     let planner = &registry.planner;
     let wanted = planner.goal_places as usize;
@@ -313,7 +351,7 @@ fn places(
         return Vec::new();
     }
     let spacing = planner.place_spacing.max(1);
-    let pool: Vec<(Hex, u32)> = roads(registry, state, unit, planner.horizon_rounds)
+    let pool: Vec<(Hex, u32)> = surveyed(survey, registry, state, unit)
         .reached()
         .into_iter()
         .filter(|(hex, _)| *hex != me.pos)
@@ -625,7 +663,7 @@ fn drive(
     state: &BattleState,
     unit: UnitId,
     roads: &Roads,
-    guns: &[(Hex, i32)],
+    least: Option<&crate::FastMap<Hex, (u32, u32)>>,
     to: Hex,
     speed: f32,
 ) -> Drive {
@@ -655,15 +693,12 @@ fn drive(
         None => crow.max(registry.planner.horizon_rounds as f32),
     };
 
-    // The least-watched of the cheapest roads (`Roads::least`): which of
-    // two equally cheap roads the search found first is a coordinate.
-    let watched = |hex: Hex| {
-        guns.iter()
-            .any(|(from, reach)| from.distance_to(hex) <= *reach && state.sees_through(*from, hex))
-    };
-    let exposed = match (guns.is_empty(), roads.least(to, watched)) {
-        (false, Some((seen, hexes))) => seen as f32 / hexes.max(1) as f32,
-        _ => 0.0,
+    // The least-watched of the cheapest roads (`Roads::least`, read for
+    // every candidate at once by the caller): which of two equally cheap
+    // roads the search found first is a coordinate.
+    let exposed = match least.and_then(|l| l.get(&to)) {
+        Some(&(seen, hexes)) => seen as f32 / hexes.max(1) as f32,
+        None => 0.0,
     };
 
     // Crow flight for the enemy on purpose: what her terrain costs are is not
@@ -806,6 +841,18 @@ pub fn read_candidates(
     unit: UnitId,
     candidates: &[Goal],
 ) -> Vec<Reading> {
+    read_candidates_surveyed(registry, state, evaluator, unit, candidates, &Survey::new())
+}
+
+/// [`read_candidates`], reading her roads from `survey`.
+pub fn read_candidates_surveyed(
+    registry: &DataRegistry,
+    state: &BattleState,
+    evaluator: &super::Evaluator,
+    unit: UnitId,
+    candidates: &[Goal],
+    survey: &Survey,
+) -> Vec<Reading> {
     let Some(me) = state.unit(unit) else {
         return Vec::new();
     };
@@ -823,7 +870,7 @@ pub fn read_candidates(
     // deviates: initiative is about setting orders aside, and a crew who has
     // none is not defying anybody by choosing ground.
     let ordered = ordered_goal(state, unit);
-    let roads = roads(registry, state, unit, registry.planner.horizon_rounds);
+    let roads = surveyed(survey, registry, state, unit);
     // Who could shoot at the march, and from how far. Fog-honest: a crew
     // cannot route around a gun nobody has seen, and letting her would
     // leak the enemy's whole order of battle into her pathfinding.
@@ -832,6 +879,13 @@ pub fn read_candidates(
         .into_iter()
         .map(|enemy| (enemy.pos, longest_shot(registry, enemy)))
         .collect();
+    // How watched the least-watched road to each place is, read once for
+    // the whole list (`Roads::least_all`); nobody to watch is no reading.
+    let watched = |hex: Hex| {
+        guns.iter()
+            .any(|(from, reach)| from.distance_to(hex) <= *reach && state.sees_through(*from, hex))
+    };
+    let least = (!guns.is_empty()).then(|| roads.least_all(watched));
     candidates
         .iter()
         .map(|goal| {
@@ -862,7 +916,7 @@ pub fn read_candidates(
             // was the better idea.
             let deviates = ordered.is_some_and(|order| *goal != order) && *goal != Goal::Hold;
             let worth = evaluator.score_tile(registry, state, unit, hex).score;
-            let drive = drive(registry, state, unit, &roads, &guns, hex, speed);
+            let drive = drive(registry, state, unit, roads, least.as_ref(), hex, speed);
             Reading {
                 goal: *goal,
                 hex,
@@ -885,12 +939,27 @@ impl GoalChooser for UtilityChooser<'_> {
         unit: UnitId,
         candidates: &[Goal],
     ) -> Goal {
+        self.choose_surveyed(registry, state, unit, candidates, &Survey::new())
+    }
+}
+
+impl UtilityChooser<'_> {
+    /// [`GoalChooser::choose`], reading her roads from `survey`.
+    pub fn choose_surveyed(
+        &mut self,
+        registry: &DataRegistry,
+        state: &BattleState,
+        unit: UnitId,
+        candidates: &[Goal],
+        survey: &Survey,
+    ) -> Goal {
         if state.unit(unit).is_none() {
             return Goal::Hold;
         }
         let planner = &registry.planner;
         let initiative = self.evaluator.doctrine.initiative;
-        let readings = read_candidates(registry, state, self.evaluator, unit, candidates);
+        let readings =
+            read_candidates_surveyed(registry, state, self.evaluator, unit, candidates, survey);
         let mut best: Option<(f32, Goal)> = None;
         for reading in &readings {
             let doctrine = &self.evaluator.doctrine;

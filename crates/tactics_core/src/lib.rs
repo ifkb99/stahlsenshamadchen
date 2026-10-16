@@ -41,6 +41,16 @@ pub mod worldgen;
 pub use hexx;
 pub use hexx::{EdgeDirection, Hex};
 
+/// A hash map for the engine's hot paths, keyed by hexes and other small
+/// integers: FxHash instead of the standard library's SipHash, which is built
+/// to resist an adversary choosing the keys and costs a seventh of a battle
+/// for it (a rollout profile, 2026-10-16). Nothing may depend on a map's
+/// iteration order whichever hasher it has (CLAUDE.md, *Invariants*), so the
+/// choice reaches no result.
+pub type FastMap<K, V> = std::collections::HashMap<K, V, rustc_hash::FxBuildHasher>;
+/// The set to go with [`FastMap`].
+pub type FastSet<K> = std::collections::HashSet<K, rustc_hash::FxBuildHasher>;
+
 /// Engine-wide hex orientation. Pointy-top reads best for the isometric
 /// presentation and all offset-coordinate parsing assumes it.
 pub const ORIENTATION: hexx::HexOrientation = hexx::HexOrientation::Pointy;

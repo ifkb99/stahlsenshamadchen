@@ -299,6 +299,28 @@ pub struct GeneratedWorld {
     pub skeleton: Skeleton,
     calibration: Calibration,
     index: HashMap<(i32, i32), ChunkFeatures>,
+    /// Each chunk's tiles, worked out the first time anybody asks and kept:
+    /// a battle's window loads chunks as its crews move, and a world shared
+    /// by many battles (`harness::open`) was computing the same noise for
+    /// the same chunk every time (a twelfth of a rollout, 2026-10-16). A
+    /// tile is a pure function of the world, so keeping it changes nothing.
+    tiles: TileCache,
+}
+
+/// [`GeneratedWorld::chunk_tiles`]'s memory: a slot per chunk of the world,
+/// each tile as its hex, its terrain as an index into
+/// [`GeneratedWorld::palette`], and its level.
+#[derive(Clone, Default)]
+struct TileCache(crate::FastMap<(i32, i32), std::sync::OnceLock<ChunkTiles>>);
+
+/// A chunk's tiles: hex, index into the palette, level.
+type ChunkTiles = Vec<(Hex, u8, i32)>;
+
+impl std::fmt::Debug for TileCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let made = self.0.values().filter(|s| s.get().is_some()).count();
+        write!(f, "TileCache({made} of {} chunks made)", self.0.len())
+    }
 }
 
 /// What a generated world is saved as: what it takes to make it again. The
@@ -384,6 +406,7 @@ impl GeneratedWorld {
             skeleton: Skeleton::default(),
             calibration: Calibration::default(),
             index: HashMap::new(),
+            tiles: TileCache::default(),
         };
         world.calibrate();
         world.skeleton.rivers = world.lay_rivers();
@@ -392,6 +415,12 @@ impl GeneratedWorld {
         world.skeleton.villages = world.site_villages();
         world.skeleton.roads = world.lay_roads();
         world.index_rest();
+        world.tiles = TileCache(
+            world
+                .chunks()
+                .map(|c| ((c.x, c.y), std::sync::OnceLock::new()))
+                .collect(),
+        );
         Ok(world)
     }
 
@@ -607,9 +636,36 @@ impl GeneratedWorld {
     /// Every tile of `chunk`, centre outward, ready for
     /// [`crate::world::World::load_chunk`]. Empty for a chunk past the edge.
     pub fn chunk_tiles(&self, chunk: Hex) -> Vec<(Hex, &str, i32)> {
-        chunk_hexes(chunk, self.chunk_radius)
-            .filter_map(|hex| self.tile(hex).map(|(t, e)| (hex, t, e)))
-            .collect()
+        let names = self.palette();
+        let Some(slot) = self.tiles.0.get(&(chunk.x, chunk.y)) else {
+            // Past the edge of the world: no tiles, as `tile` would say.
+            return Vec::new();
+        };
+        slot.get_or_init(|| {
+            chunk_hexes(chunk, self.chunk_radius)
+                .filter_map(|hex| {
+                    self.tile(hex).map(|(t, e)| {
+                        let at = names
+                            .iter()
+                            .position(|n| *n == t)
+                            .expect("every tile is written in the world's own palette");
+                        (hex, at as u8, e)
+                    })
+                })
+                .collect()
+        })
+        .iter()
+        .map(|&(hex, at, e)| (hex, names[at as usize], e))
+        .collect()
+    }
+
+    /// Every terrain id a tile of this world can be: the ground palette,
+    /// which is all `tile` ever answers with.
+    fn palette(&self) -> [&str; 8] {
+        let p = &self.rules.terrain;
+        [
+            &p.open, &p.wood, &p.hedge, &p.wet, &p.water, &p.stream, &p.road, &p.town,
+        ]
     }
 
     /// Whether `chunk` holds `feature` of the skeleton.

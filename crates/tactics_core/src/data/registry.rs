@@ -115,28 +115,28 @@ pub struct DataRegistry {
     pub cores: Vec<CoreDef>,
     /// Core ids resolved to positions, so a check is an array index.
     pub core_index: CoreIndex,
-    pub skills: HashMap<String, SkillDef>,
-    pub roles: HashMap<String, RoleDef>,
-    pub traits: HashMap<String, TraitDef>,
-    pub characters: HashMap<String, CharacterDef>,
-    pub vehicles: HashMap<String, VehicleDef>,
-    pub weapons: HashMap<String, WeaponDef>,
+    pub skills: crate::FastMap<String, SkillDef>,
+    pub roles: crate::FastMap<String, RoleDef>,
+    pub traits: crate::FastMap<String, TraitDef>,
+    pub characters: crate::FastMap<String, CharacterDef>,
+    pub vehicles: crate::FastMap<String, VehicleDef>,
+    pub weapons: crate::FastMap<String, WeaponDef>,
     /// Every kind of round any weapon can chamber. No plural because there
     /// isn't one; the accessor beside it is [`Self::ammo`], the same
     /// map-plus-lookup pair as [`Self::radios`]/[`Self::radio`].
-    pub ammo: HashMap<String, AmmoDef>,
+    pub ammo: crate::FastMap<String, AmmoDef>,
     /// Every piece of breakable hardware a vehicle can carry. Accessor
     /// [`Self::module`]; what a given vehicle actually has aboard is
     /// [`Self::modules_for`], which is where the empty-list default lives.
-    pub modules: HashMap<String, ModuleDef>,
-    pub radios: HashMap<String, RadioDef>,
-    pub terrain: HashMap<String, TerrainDef>,
-    pub doctrines: HashMap<String, DoctrineDef>,
+    pub modules: crate::FastMap<String, ModuleDef>,
+    pub radios: crate::FastMap<String, RadioDef>,
+    pub terrain: crate::FastMap<String, TerrainDef>,
+    pub doctrines: crate::FastMap<String, DoctrineDef>,
     /// Tactical templates by id ([`super::TemplateDef`]).
-    pub templates: HashMap<String, super::TemplateDef>,
+    pub templates: crate::FastMap<String, super::TemplateDef>,
     /// Forces by id ([`super::ForceDef`]): what a side brings, by doctrine.
-    pub forces: HashMap<String, super::ForceDef>,
-    pub maps: HashMap<String, MapFile>,
+    pub forces: crate::FastMap<String, super::ForceDef>,
+    pub maps: crate::FastMap<String, MapFile>,
 }
 
 /// A definition file may hold one definition or an array of them.

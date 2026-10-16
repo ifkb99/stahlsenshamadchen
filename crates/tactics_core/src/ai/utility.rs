@@ -6,7 +6,7 @@
 //! planner buffers the pair and hands them over one call at a time, keeping
 //! [`AiPlanner::next_order`] the only entry point the callers need.
 
-use super::goal::{self, GoalChooser};
+use super::goal;
 use super::{
     AiConfig, AiPlanner, Evaluator, difficulty_noise, next_unplanned_unit, resolve_doctrine,
 };
@@ -494,7 +494,10 @@ impl UtilityPlanner {
         let goal = match live {
             Some(goal) => goal,
             None => {
-                let options = goal::candidates(
+                // One road search for the whole decision, however many of
+                // the readers below want it.
+                let survey = goal::Survey::new();
+                let options = goal::candidates_surveyed(
                     registry,
                     state,
                     unit,
@@ -504,6 +507,7 @@ impl UtilityPlanner {
                         .and_then(|f| f.mission_for(unit)),
                     Some(best_dest),
                     self.evaluator.doctrine.initiative,
+                    &survey,
                 );
                 let options = goal::with_interrupted(registry, state, unit, options);
                 // An exploring network describes the decision once and hands
@@ -514,17 +518,18 @@ impl UtilityPlanner {
                         net,
                         evaluator: &self.evaluator,
                     }
-                    .choose(registry, state, unit, &options),
+                    .choose_surveyed(registry, state, unit, &options, &survey),
                     super::learned::GoalBrain::Explore { net, temperature }
                         if !options.is_empty() =>
                     {
-                        let (mut record, scores) = super::learned::score_candidates(
+                        let (mut record, scores) = super::learned::score_candidates_surveyed(
                             net,
                             registry,
                             state,
                             &self.evaluator,
                             unit,
                             &options,
+                            &survey,
                         );
                         let logp = super::learned::log_softmax(&scores, *temperature);
                         let draw: f32 = self.rng.random_range(0.0..1.0);
@@ -551,16 +556,17 @@ impl UtilityPlanner {
                         foresight: self.foresight,
                         rng: &mut self.rng,
                     }
-                    .choose(registry, state, unit, &options),
+                    .choose_surveyed(registry, state, unit, &options, &survey),
                 };
                 if let Some(tap) = &self.tap {
                     let record = sampled.unwrap_or_else(|| {
-                        let mut record = super::features::describe(
+                        let mut record = super::features::describe_surveyed(
                             registry,
                             state,
                             &self.evaluator,
                             unit,
                             &options,
+                            &survey,
                         );
                         record.chosen = options.iter().position(|g| *g == chosen);
                         record

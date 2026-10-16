@@ -14,7 +14,7 @@ use crate::map::HexMap;
 use hexx::Hex;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 // LoS runs in metres. Only the vertical unit matters: the sight line is
@@ -278,7 +278,7 @@ pub struct SightGrid {
     /// deserializing; an empty grid answers every sight question wrongly
     /// rather than loudly.
     #[serde(skip)]
-    tiles: HashMap<Hex, Heights>,
+    tiles: crate::FastMap<Hex, Heights>,
 }
 
 impl SightGrid {

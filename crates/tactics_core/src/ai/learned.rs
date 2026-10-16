@@ -12,8 +12,8 @@
 //! later, a different trait vector), not noise on this one.
 
 use super::Evaluator;
-use super::features::{CANDIDATE, context_names, describe};
-use super::goal::GoalChooser;
+use super::features::{CANDIDATE, context_names, describe_surveyed};
+use super::goal::{GoalChooser, Survey};
 use crate::battle::{BattleState, Goal, UnitId};
 use crate::data::{DataRegistry, GoalNet, NetError};
 use std::path::Path;
@@ -56,7 +56,28 @@ pub fn score_candidates(
     unit: UnitId,
     candidates: &[Goal],
 ) -> (crate::ai::features::GoalRecord, Vec<f32>) {
-    let record = describe(registry, state, evaluator, unit, candidates);
+    score_candidates_surveyed(
+        net,
+        registry,
+        state,
+        evaluator,
+        unit,
+        candidates,
+        &Survey::new(),
+    )
+}
+
+/// [`score_candidates`], reading her roads from `survey`.
+pub fn score_candidates_surveyed(
+    net: &GoalNet,
+    registry: &DataRegistry,
+    state: &BattleState,
+    evaluator: &Evaluator,
+    unit: UnitId,
+    candidates: &[Goal],
+    survey: &Survey,
+) -> (crate::ai::features::GoalRecord, Vec<f32>) {
+    let record = describe_surveyed(registry, state, evaluator, unit, candidates, survey);
     let scores = record
         .candidates
         .iter()
@@ -90,7 +111,21 @@ impl GoalChooser for LearnedChooser<'_> {
         unit: UnitId,
         candidates: &[Goal],
     ) -> Goal {
-        let record = describe(registry, state, self.evaluator, unit, candidates);
+        self.choose_surveyed(registry, state, unit, candidates, &Survey::new())
+    }
+}
+
+impl LearnedChooser<'_> {
+    /// [`GoalChooser::choose`], reading her roads from `survey`.
+    pub fn choose_surveyed(
+        &mut self,
+        registry: &DataRegistry,
+        state: &BattleState,
+        unit: UnitId,
+        candidates: &[Goal],
+        survey: &Survey,
+    ) -> Goal {
+        let record = describe_surveyed(registry, state, self.evaluator, unit, candidates, survey);
         let mut best: Option<(f32, Goal)> = None;
         for (row, goal) in record.candidates.iter().zip(candidates) {
             let score = self.net.score(&record.context, row);

@@ -43,7 +43,7 @@
 //! which is capped at [`NOBODY_COMING`] rounds and flagged beside it.
 
 use super::Evaluator;
-use super::goal::{Reading, read_candidates};
+use super::goal::{Reading, Survey, read_candidates_surveyed, surveyed};
 use crate::battle::{BattleState, Goal, Knower, Mission, UnitId, along_the_bearing, incoming};
 use crate::data::DataRegistry;
 use crate::map::ObjectiveKind;
@@ -69,12 +69,12 @@ const FAR: f32 = 40.0;
 /// Enemies are the ones *she* knows of (`Knower::Crew`), with the way each
 /// hull faces and how far each one's guns reach; friends are every crew of
 /// her side on the field but her, with where she means to go.
-struct Scene {
+struct Scene<'a> {
     reach: i32,
     enemies: Vec<Party>,
     friends: Vec<Party>,
     /// Her roads, for the way she would be facing when she arrived.
-    roads: crate::battle::Roads,
+    roads: &'a crate::battle::Roads,
 }
 
 struct Party {
@@ -108,13 +108,18 @@ fn reach_of(registry: &DataRegistry, unit: &crate::battle::Unit) -> i32 {
         .unwrap_or(0)
 }
 
-fn scene(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> Scene {
+fn scene<'a>(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    survey: &'a Survey,
+) -> Scene<'a> {
     let Some(me) = state.unit(unit) else {
         return Scene {
             reach: 0,
             enemies: Vec::new(),
             friends: Vec::new(),
-            roads: crate::battle::Roads::default(),
+            roads: surveyed(survey, registry, state, unit),
         };
     };
     let party = |u: &crate::battle::Unit| Party {
@@ -151,7 +156,7 @@ fn scene(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> Scene {
         reach: reach_of(registry, me),
         enemies,
         friends,
-        roads: crate::battle::roads(registry, state, unit, registry.planner.horizon_rounds),
+        roads: surveyed(survey, registry, state, unit),
     }
 }
 
@@ -342,13 +347,25 @@ pub fn describe(
     unit: UnitId,
     candidates: &[Goal],
 ) -> GoalRecord {
-    let readings = read_candidates(registry, state, evaluator, unit, candidates);
+    describe_surveyed(registry, state, evaluator, unit, candidates, &Survey::new())
+}
+
+/// [`describe`], reading her roads from `survey`.
+pub fn describe_surveyed(
+    registry: &DataRegistry,
+    state: &BattleState,
+    evaluator: &Evaluator,
+    unit: UnitId,
+    candidates: &[Goal],
+    survey: &Survey,
+) -> GoalRecord {
+    let readings = read_candidates_surveyed(registry, state, evaluator, unit, candidates, survey);
     GoalRecord {
         round: state.round,
         unit: unit.index() as u32,
         context: context(registry, state, evaluator, unit),
         candidates: {
-            let scene = scene(registry, state, unit);
+            let scene = scene(registry, state, unit, survey);
             readings
                 .iter()
                 .map(|reading| candidate(registry, state, unit, &scene, reading))
