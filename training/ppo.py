@@ -51,6 +51,16 @@ import optax
 
 from imitate import exact_scores, scores
 
+# Compiled programs are kept on disk between updates: each iteration is a
+# fresh process, and compiling the step and the critic was a quarter of an
+# update. The menus are padded to a multiple of `MENU_BUCKET` so the step's
+# shapes repeat from one iteration to the next and the cache is hit; a
+# masked slot scores -1e9 and adds an exact zero to every sum.
+jax.config.update("jax_compilation_cache_dir",
+                  str(pathlib.Path(__file__).resolve().parent.parent / "target" / "jax_cache"))
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.2)
+MENU_BUCKET = 16
+
 jax.config.update("jax_default_matmul_precision", "highest")
 
 
@@ -166,15 +176,22 @@ def value(params, v):
 # --- the update -------------------------------------------------------------
 
 
-def pad(rows, mean, std):
-    k = max(len(r["candidates"]) for r in rows)
-    width = len(rows[0]["context"]) + len(rows[0]["candidates"][0])
-    x = np.zeros((len(rows), k, width), np.float32)
-    mask = np.zeros((len(rows), k), bool)
-    for i, r in enumerate(rows):
-        for j, c in enumerate(r["candidates"]):
-            x[i, j] = np.concatenate([r["context"], c])
-            mask[i, j] = True
+def pad(rows, mean, std, bucket=1):
+    """Every decision's menu as one array, padded to the longest (rounded up
+    to `bucket`), each row her context beside one candidate, normalised.
+    Built by whole arrays, not a row at a time: the loop it replaced was
+    half the update's time at forty-odd candidates a decision."""
+    n = len(rows)
+    counts = np.fromiter((len(r["candidates"]) for r in rows), np.int64, n)
+    k = -(-int(counts.max()) // bucket) * bucket
+    wc = len(rows[0]["context"])
+    width = wc + len(rows[0]["candidates"][0])
+    mask = np.arange(k)[None, :] < counts[:, None]
+    x = np.zeros((n, k, width), np.float32)
+    x[:, :, :wc] = np.asarray([r["context"] for r in rows], np.float32)[:, None, :]
+    # The mask is walked in row-major order, which is the order the menus
+    # are concatenated in: decision by decision, candidate by candidate.
+    x[mask, wc:] = np.asarray([c for r in rows for c in r["candidates"]], np.float32)
     xs = np.where(mask[..., None], (x - mean) / std, 0.0).astype(np.float32)
     return xs, mask
 
@@ -227,7 +244,7 @@ def main():
     rows = transitions(battles, w, args.gamma)
     net, policy = load_policy(args.net)
     mean, std = np.asarray(net["mean"], np.float32), np.asarray(net["std"], np.float32)
-    xs, mask = pad(rows, mean, std)
+    xs, mask = pad(rows, mean, std, MENU_BUCKET)
     chosen = np.array([r["chosen"] for r in rows], np.int32)
     old_logp = np.array([r["logp"] for r in rows], np.float32)
     T = args.temperature
