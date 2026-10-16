@@ -634,7 +634,13 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
         opponent_commander,
         reason,
         sector,
-        victory_score: state.scenario.victory_score(),
+        // An assault declares no score to win by; the trainer prices a point
+        // of margin as a share of one, so it is forty rounds of holding
+        // every zone: the shaping stays smaller than the verdict it leads to.
+        victory_score: state
+            .scenario
+            .victory_score()
+            .or_else(|| placed.map(|(_, _, zones)| zones * 40)),
         opponent: opponent(setup, game).map_or("utility".to_string(), |(name, _)| name.clone()),
         forces: matchup.map(|pair| [pair[0].id.clone(), pair[1].id.clone()]),
     })
@@ -930,6 +936,14 @@ fn main() {
             None => row[2] += 1,
         };
         tally(by_role.entry(format!("learner {role}")).or_default());
+        tally(
+            by_role
+                .entry(format!(
+                    "learner {role} against a commander {}",
+                    battle.opponent_commander
+                ))
+                .or_default(),
+        );
         tally(
             by_role
                 .entry(format!("learner {role}, {}", record.size))

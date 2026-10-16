@@ -122,8 +122,12 @@ def evaluate_commander(net, places, arena, games, events="none", seed=1_000_000)
               *(["--budget", BUDGET[0]] if BUDGET else [])]
     out = cargo("rollout", *common, "--games", str(games), "--seed", str(seed))
     record = {}
-    for m in re.finditer(r"against a commander (\w+): won (\d+), lost (\d+), drew (\d+)", out):
+    for m in re.finditer(r"  against a commander (\w+): won (\d+), lost (\d+), drew (\d+)", out):
         record[m.group(1)] = (int(m.group(2)), sum(int(g) for g in m.groups()[1:]))
+    # An assault is two problems: her record attacking and defending, against
+    # each commander, keyed like "attacking random".
+    for m in re.finditer(r"learner (attacking|defending) against a commander (\w+): won (\d+), lost (\d+), drew (\d+)", out):
+        record[f"{m.group(1)} {m.group(2)}"] = (int(m.group(3)), sum(int(g) for g in m.groups()[2:]))
     return record
 
 
@@ -139,7 +143,8 @@ def main():
     ap.add_argument("--places", type=int, default=16)
     ap.add_argument("--approach", type=int, default=0, help="planner.approach_places: places an enemy, round his arcs")
     ap.add_argument("--arena", default="ridge_arena")
-    ap.add_argument("--ground", default="arena", choices=["arena", "generated", "open"],
+    ap.add_argument("--sizes", default="small,medium,large", help="with --ground sector, the sizes drawn per field")
+    ap.add_argument("--ground", default="arena", choices=["arena", "generated", "open", "sector"],
                     help="train and evaluate on the arena, or on a fresh generated world every two games")
     ap.add_argument("--forces", help="draw matchups from these forces (a list, all, or bought)")
     ap.add_argument("--budget", help="with --forces bought, the points range LO,HI both sides buy to")
@@ -170,9 +175,11 @@ def main():
     if args.forces:
         FORCES.append(args.forces)
     APPROACH[0] = args.approach
-    LAYOUT.extend(["--spread", str(args.spread), *(["--turned"] if args.turned else [])])
+    LAYOUT.extend(["--spread", str(args.spread), *(["--turned"] if args.turned else []),
+                   *(["--sizes", args.sizes] if args.ground == "sector" else [])])
     COMMAND.extend(["--commander", args.commander, "--opponent-commander", args.opponent_commander,
                     *(["--budget", args.budget] if args.budget else [])])
+    GROUND[0] = args.ground
     args.dir.mkdir(parents=True, exist_ok=True)
     log = args.dir / "log.csv"
     if args.train == "commander":
@@ -184,7 +191,6 @@ def main():
     # every `--league-every` iterations), so it cannot learn just the one
     # opponent — and meets players as patient as itself.
     league: list[pathlib.Path] = []
-    GROUND[0] = args.ground
     judge = evaluate if args.ground == "arena" else evaluate_generated
     games = args.eval_games if args.ground == "arena" else 8 * args.eval_games
     won, total, draws, selfs = judge(net, args.places, args.arena, games, args.events)
