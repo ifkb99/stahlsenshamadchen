@@ -927,6 +927,61 @@ learner's doctrine, with the teacher in both seats, 42% (delaying action,
 the infantry-heavy buys) to 56%, against 42–58% for the five company
 teams.
 
+## The commander (L3, 2026-10-16)
+
+The designer's aim: planning should beat random orders by something like
+90/10. Built (`3521201`): a commander deciding each platoon in turn from a
+menu described by facts (`ai::commander`) — say nothing, hand the platoon
+back its own judgment (`Order::ReleaseMission`, new: there was no way to
+take orders back), hold where it stands, advance / assault / hold /
+reconnoitre on each objective by its hex nearest her, or a base of fire
+for another platoon — scored by a network in the crews' format and trained
+by `loop.py --train commander` over frozen crews. Each platoon is described
+against what the ones before it were just given (who else is bound there,
+from which bearing), so fix-and-flank could be chosen without being named.
+
+**Over the teacher's crews nothing has beaten saying nothing.** Open
+ground, bought forces, seed 7,000,000, ~384 battles against each of no
+commander / a coin / the hand-written commander:
+
+| the learner's commander | vs none | vs coin | vs hand-written |
+| --- | --- | --- | --- |
+| says nothing (her crews free) | 52% | 63% | 58% |
+| everyone advances on the nearest ground | 32% | 47% | 36% |
+| everyone assaults it | 30% | 47% | 35% |
+| everyone holds it | 36% | 53% | 41% |
+| everyone takes the best ground | 35% | 52% | 43% |
+| each to ground nobody else is bound for | 39% | 53% | 40% |
+| holds the start line 3 rounds, then free | 17% | 27% | 22% |
+| holds it 6 rounds, then free | 7% | 12% | 8% |
+
+- **Every order costs every doctrine 15–20 points, and the loss is the
+  score race**: free crews take an objective and move on (control
+  persists, held ground is half price to them), and win 392 battles on
+  score; ordered ones 140–222. An order pins a platoon to one objective.
+- **Ruled out**: the candidate list (an order naming its whole objective,
+  or keeping her own places: the hand-written commander 42.3% → 42.9% over
+  2,304, inside ±1); the order's weight (`order_worth` 0.75 and 1.5:
+  advance 29% and 28%); an order that *adds* the named ground to her own
+  weighing instead of replacing it (the coin hurts less — 40% against
+  none, from 33% — but every fixed policy still loses to saying nothing:
+  hold 48%, best ground 40%, advance 37%).
+- **Tempo is the battle**: holding back three rounds costs 35 points. The
+  commander's decision is load-bearing on the downside; on the upside the
+  crews already rush the ground about as well as anything tried.
+- **RL agrees.** From a warm start toward saying nothing (`--prefer
+  free=3`, so it begins at the 63% policy), 40 iterations of 2,048
+  battles: the sampling policy's rollouts rise 50.6% → ~54% (it learns to
+  order less), and its best choice is still "free" at every evaluation
+  (48% / 62–63% / 54–56%). A run from a uniform start without the release
+  was below saying nothing at iteration 20 (43% / 52% / 47%).
+
+So a commander over these crews tops out near 63% against a coin. What
+would let planning pay is a question about the battle and the crews, not
+the commander: a meeting engagement over three objectives is a race that
+independent crews run well, and the teacher's crews execute any order
+worse than their own judgment.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or
