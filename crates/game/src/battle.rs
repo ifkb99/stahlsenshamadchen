@@ -1238,6 +1238,13 @@ fn pump_events(
             BattleEvent::SmokeCleared { hexes } => {
                 log.push(format!("The smoke over {} hex(es) clears.", hexes.len()));
             }
+            BattleEvent::MineStruck { unit, .. } => {
+                log.push(if mine(*unit) {
+                    traffic(*unit, "mines! we've hit a mine —")
+                } else {
+                    format!("{} has driven onto a mine.", name(*unit))
+                });
+            }
             BattleEvent::UnitTrapped { unit, .. } => {
                 log.push(if mine(*unit) {
                     traffic(*unit, "ambush! we're in it —")
@@ -1727,12 +1734,19 @@ fn pump_events(
                         "Command broken. {} takes the field.",
                         battle.state.sides[*w as usize].name
                     ),
+                    (Some(w), EndReason::Broken) => format!(
+                        "The other side has had enough. {} holds the field.",
+                        battle.state.sides[*w as usize].name
+                    ),
                     (Some(w), _) => format!("Victory: {}", battle.state.sides[*w as usize].name),
                     (None, EndReason::Stalemate) => {
                         "Contact lost. Both sides break off, with nothing to show for it.".into()
                     }
                     (None, EndReason::Eliminated) => "Mutual destruction.".into(),
                     (None, EndReason::Objectives) => "The ground changed hands.".into(),
+                    (None, EndReason::Broken) => {
+                        "Both sides have had enough, and neither holds what it came for.".into()
+                    }
                     (None, EndReason::Decapitated) => {
                         "Command broken, with nobody left to profit by it.".into()
                     }

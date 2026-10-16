@@ -7,6 +7,7 @@
         "buttoned_flank_search_percent": 50,
         "footprint": 2,
         "name": "Luchs Scout Car",
+        "prepared_cover": 30,
         "class": "recon",
         "max_hp": 8,
         "movement": {
@@ -47,6 +48,7 @@
         "traverse_seconds": 15,
         "footprint": 2,
         "name": "Wiesel Light Tank",
+        "prepared_cover": 40,
         "class": "light_tank",
         "max_hp": 10,
         "movement": {
@@ -90,6 +92,7 @@
         "traverse_seconds": 20,
         "footprint": 3,
         "name": "Panther Medium Tank",
+        "prepared_cover": 40,
         "class": "medium_tank",
         "max_hp": 10,
         "movement": {
@@ -136,6 +139,7 @@
         "traverse_seconds": 60,
         "footprint": 4,
         "name": "Löwe Heavy Tank",
+        "prepared_cover": 40,
         "class": "heavy_tank",
         "max_hp": 12,
         "movement": {
@@ -181,6 +185,7 @@
         "open_top": true,
         "footprint": 3,
         "name": "Marder Tank Destroyer",
+        "prepared_cover": 40,
         "class": "tank_destroyer",
         "max_hp": 9,
         "movement": {
@@ -222,6 +227,7 @@
         "open_top": true,
         "footprint": 3,
         "name": "Hummel Self-Propelled Gun",
+        "prepared_cover": 30,
         "class": "artillery",
         "max_hp": 8,
         "movement": {

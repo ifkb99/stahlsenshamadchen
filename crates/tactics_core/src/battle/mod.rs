@@ -21,6 +21,7 @@ mod combat;
 mod command;
 mod danger;
 mod fog;
+mod mines;
 mod movement;
 mod orders;
 
@@ -685,6 +686,15 @@ impl Unit {
     }
 }
 
+/// Whether a side has broken ([`BattleState::broken`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Broken {
+    Nobody,
+    Side(u8),
+    /// Two or more past their points by the same margin on the same tick.
+    Several,
+}
+
 /// Why a battle stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EndReason {
@@ -710,6 +720,11 @@ pub enum EndReason {
     /// dead, or the formation carrying the scenario is gone. Only a map that
     /// wrote the condition down can end this way.
     Decapitated,
+    /// A side lost the share of its strength its scenario says it can
+    /// ([`crate::map::BreakPoint`]) and gave up the fight: the ordinary end
+    /// of a real engagement, since units stop long before they are gone.
+    /// Only a scenario that declares a break point can end this way.
+    Broken,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -818,6 +833,19 @@ pub struct Battle<C = Built> {
     /// Objective points each side has collected, indexed by side.
     #[serde(default)]
     pub score: Vec<u32>,
+    /// In an assault, the closest any attacking crew has come to ground
+    /// she does not hold, in hexes, since ground last changed hands: an
+    /// attack still closing in is not a stalled one, so a new closest
+    /// keeps the stalemate clock from running out on an approach march.
+    /// `None` until measured, and after any objective changes hands.
+    /// `#[serde(default)]`: a battle saved before assaults had none.
+    #[serde(default)]
+    pub approach: Option<u32>,
+    /// Where the mines are known to lie and how many have gone off
+    /// (`battle::mines`). `#[serde(default)]`: a battle saved before mines
+    /// had none.
+    #[serde(default)]
+    pub mines: mines::MineState,
     /// Rounds that have been fired and have not arrived yet, in the order
     /// they were fired.
     ///
@@ -896,6 +924,8 @@ impl SavedBattle {
             last_contact_round,
             mut objective_held,
             mut score,
+            approach,
+            mines,
             shells,
             smoke,
             command,
@@ -939,6 +969,8 @@ impl SavedBattle {
             last_contact_round,
             objective_held,
             score,
+            approach,
+            mines,
             shells,
             smoke,
             command,
@@ -1076,7 +1108,8 @@ impl BattleState {
             })
             .collect();
         let side_count = sides.len();
-        let objective_count = scenario.objectives().len();
+        let objective_held: Vec<Option<u8>> =
+            scenario.objectives().iter().map(|o| o.held).collect();
         // Resolved before the map is moved into its `Arc`, and from the same
         // two things the units are spawned from, so membership cannot drift
         // from the roster it describes.
@@ -1098,8 +1131,10 @@ impl BattleState {
             rng: ChaCha8Rng::seed_from_u64(seed),
             over: None,
             last_contact_round: 1,
-            objective_held: vec![None; objective_count],
+            objective_held,
             score: vec![0; side_count],
+            approach: None,
+            mines: mines::MineState::default(),
             shells: Vec::new(),
             smoke: Vec::new(),
             command,
@@ -1117,6 +1152,7 @@ impl BattleState {
         state.face_units_at_enemies(&file.units);
         state.board_mounted_starts(registry, &file.units);
         state.fog = FogMap::new(state.sides.len());
+        state.dig_prepared_positions(registry);
         fog::recompute(registry, &mut state);
         state.open_the_net(registry);
         Ok(state)
@@ -1195,7 +1231,8 @@ impl BattleState {
             return Err(BattleSetupError::Invalid(errors));
         }
         let side_count = sides.len();
-        let objective_count = scenario.objectives().len();
+        let objective_held: Vec<Option<u8>> =
+            scenario.objectives().iter().map(|o| o.held).collect();
         // The formations travel with the scenario for exactly this reason: a
         // field battle the overworld assembles picks them up without this
         // signature growing, the same trip objectives already make. A
@@ -1216,8 +1253,10 @@ impl BattleState {
             rng: ChaCha8Rng::seed_from_u64(seed),
             over: None,
             last_contact_round: 1,
-            objective_held: vec![None; objective_count],
+            objective_held,
             score: vec![0; side_count],
+            approach: None,
+            mines: mines::MineState::default(),
             shells: Vec::new(),
             smoke: Vec::new(),
             command,
@@ -1238,6 +1277,7 @@ impl BattleState {
         state.face_units_at_enemies(placements);
         state.board_mounted_starts(registry, placements);
         state.fog = FogMap::new(state.sides.len());
+        state.dig_prepared_positions(registry);
         fog::recompute(registry, &mut state);
         state.open_the_net(registry);
         Ok(state)
@@ -1290,11 +1330,11 @@ impl BattleState {
         Ok(formation)
     }
 
-    /// Add ground worth fighting for, in the middle of the battle: nobody
-    /// holds it yet (WORLD.md W3.8).
+    /// Add ground worth fighting for, in the middle of the battle, held by
+    /// whoever it says holds it (WORLD.md W3.8).
     pub fn add_objective(&mut self, objective: crate::map::Objective) {
+        self.objective_held.push(objective.held);
         Arc::make_mut(&mut self.scenario).push_objective(objective);
-        self.objective_held.push(None);
     }
 
     /// Take away the objective called `id`, and who held it with it.
@@ -1336,6 +1376,22 @@ impl BattleState {
     /// events are dropped: a sighting in hand when the battle opens is the
     /// state of things, not something that just happened. With no `command`
     /// block both calls return at once, which is the game as it was.
+    /// Every crew of a side the scenario says starts prepared begins the
+    /// battle dug in as deep as her chassis's prepared position goes
+    /// (`VehicleDef::prepared_cover`; ASSAULT.md): the hours before the
+    /// attack, spent with shovels and a dozer. A passenger has nothing dug.
+    /// A scenario that prepares nobody leaves every crew as she was.
+    fn dig_prepared_positions(&mut self, registry: &DataRegistry) {
+        let scenario = Arc::clone(&self.scenario);
+        for unit in self.units.iter_mut() {
+            if unit.aboard.is_none() && scenario.prepared(unit.side) {
+                unit.dug_in = registry
+                    .vehicle(&unit.vehicle)
+                    .map_or(0, |v| v.prepared_cover);
+            }
+        }
+    }
+
     fn open_the_net(&mut self, registry: &DataRegistry) {
         self.recompute_voices(registry);
         self.recompute_picture(registry, &mut Vec::new());
@@ -2254,6 +2310,87 @@ impl BattleState {
         let mut leaders = self.score.iter().enumerate().filter(|(_, s)| **s == best);
         let (side, _) = leaders.next()?;
         leaders.next().is_none().then_some(side as u8)
+    }
+
+    /// How much of its strength `side` has lost, in thousandths: substance
+    /// still aboard a crew still fighting, over the full complement of
+    /// every crew the side brought. A wreck keeps her complement in the
+    /// denominator and nothing in the numerator; so does a crew who drove
+    /// off by an exit, because she has taken herself out of this fight.
+    /// Zero for a side with nobody.
+    pub fn strength_lost(&self, registry: &DataRegistry, side: u8) -> u32 {
+        let (mut have, mut full) = (0u64, 0u64);
+        for unit in self.units.iter().filter(|u| u.side == side) {
+            let (h, t) = self.substance(registry, unit);
+            if unit.alive() {
+                have += u64::from(h);
+            }
+            full += u64::from(t);
+        }
+        if full == 0 {
+            return 0;
+        }
+        (1000 - (have * 1000 / full).min(1000)) as u32
+    }
+
+    /// The side that has broken, if one has: lost more of its strength
+    /// than its scenario says it can. When two have on the same tick, the
+    /// one further past her point broke first; level is neither, and the
+    /// battle is judged as if both had (`None` with `both` set).
+    pub(crate) fn broken(&self, registry: &DataRegistry) -> Broken {
+        let mut past: Vec<(u8, i64)> = Vec::new();
+        for side in 0..self.sides.len() as u8 {
+            let Some(percent) = self.scenario.break_point(side) else {
+                continue;
+            };
+            let lost = i64::from(self.strength_lost(registry, side));
+            let over = lost - i64::from(percent) * 10;
+            if over >= 0 {
+                past.push((side, over));
+            }
+        }
+        past.sort_by_key(|(side, over)| (std::cmp::Reverse(*over), *side));
+        match past.as_slice() {
+            [] => Broken::Nobody,
+            [(side, _)] => Broken::Side(*side),
+            [(a, x), (_, y), ..] if x > y => Broken::Side(*a),
+            _ => Broken::Several,
+        }
+    }
+
+    /// Who an assault goes to when the fighting stops with neither side
+    /// broken outright: the attacker if she holds what she needs, the
+    /// defender if not. `None` for a battle that is not an assault.
+    pub fn assault_verdict(&self) -> Option<u8> {
+        let assault = self.scenario.assault()?;
+        let held = self
+            .scenario
+            .objectives()
+            .iter()
+            .zip(&self.objective_held)
+            .filter(|(o, h)| {
+                o.kind == crate::map::ObjectiveKind::Hold && **h == Some(assault.attacker)
+            })
+            .count() as u32;
+        if held >= assault.needs {
+            Some(assault.attacker)
+        } else {
+            self.defender()
+        }
+    }
+
+    /// The side defending in an assault: the one that is not attacking,
+    /// in a two-sided battle. `None` when this is not an assault or there
+    /// are other sides to choose from.
+    pub fn defender(&self) -> Option<u8> {
+        let attacker = self.scenario.assault()?.attacker;
+        let others: Vec<u8> = (0..self.sides.len() as u8)
+            .filter(|s| *s != attacker)
+            .collect();
+        match others.as_slice() {
+            [only] => Some(*only),
+            _ => None,
+        }
     }
 
     /// Sides that still have living units.

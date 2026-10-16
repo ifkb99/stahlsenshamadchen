@@ -30,6 +30,7 @@ use tactics_core::force::{Purchase, buy};
 use tactics_core::harness::arena::{Arena, DEFAULT_ARENA, arena_named};
 use tactics_core::harness::open::{self, OpenLayout, Worlds};
 use tactics_core::harness::parallel::run_all;
+use tactics_core::harness::sector::{self, SectorRules, SectorSize};
 use tactics_core::harness::{forces, generated};
 
 const USAGE: &str = "\
@@ -52,6 +53,11 @@ rollout: battles for reinforcement learning, learner against the utility AI
   --ground open       worlds several battle maps across, fought on a window onto
                       them with the forces 3-6 km apart at a bearing drawn every
                       two games, sixteen such fields a world (needs --forces)
+  --ground sector     an attack on a defended sector (harness::sector): side 0
+                      attacks zones side 1 holds, dug in, mined and wired on
+                      three fields in four; both buy to the sector's budget
+  --sizes LIST        with --ground sector, the sizes drawn per field: small,
+                      medium, large (default all three)
   --arrays            write the decisions' numbers as flat f32 files beside the
                       battles (OUT.context.f32, OUT.candidates.f32, OUT.counts.u32,
                       OUT.arrays.json) and leave them out of the JSON
@@ -84,6 +90,12 @@ rollout: battles for reinforcement learning, learner against the utility AI
 
 /// A battle no side has finished by now is a stalemate; the harness's cap.
 const MAX_ROUNDS: u32 = 60;
+
+/// The cap for an assault, whose approach alone can take a rifle platoon
+/// thirty rounds: a cap is the harness's, not a rule of the battle, and an
+/// assault is judged when it stops (ASSAULT.md), so every battle cut off
+/// here is counted and reported.
+const ASSAULT_ROUNDS: u32 = 120;
 
 #[derive(serde::Serialize)]
 struct Entry {
@@ -135,6 +147,20 @@ struct Battle {
     commands: Vec<GoalRecord>,
     /// Who commanded the opponent.
     opponent_commander: &'static str,
+    /// Why it ended (`EndReason`), or `cut off` at the harness's cap.
+    reason: String,
+    /// With `--ground sector`: its size, whether the defender prepared,
+    /// and how many zones the attacker held at the end, of how many.
+    sector: Option<SectorRecord>,
+}
+
+#[derive(serde::Serialize, Clone, Copy)]
+struct SectorRecord {
+    size: &'static str,
+    prepared: bool,
+    held: u32,
+    zones: u32,
+    needs: u32,
 }
 
 /// A unit's longest direct weapon reach, in hexes: what she could answer
@@ -276,6 +302,14 @@ struct Setup<'a> {
     commanders: [Commander; 2],
     /// The learner's commander, when it is a network or the uniform coin.
     command_brain: CommandBrain,
+    /// `--ground sector`: the sizes drawn from, per field.
+    sector: Option<Vec<SectorSize>>,
+}
+
+/// The size of sector field `field`, drawn from `sizes`.
+fn sector_size(sizes: &[SectorSize], field: u64) -> SectorSize {
+    let pick = (field.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 33) as usize % sizes.len().max(1);
+    sizes[pick]
 }
 
 /// Who gives a side's platoons their missions.
@@ -334,6 +368,16 @@ fn matchup(setup: &Setup, game: u64) -> Option<[tactics_core::data::ForceDef; 2]
         z ^ (z >> 31)
     };
     let world = game / 2;
+    if let Some(sizes) = &setup.sector {
+        let size = sector_size(sizes, world);
+        let purchase = Purchase {
+            points: sector::budget(size, world),
+            max_vehicles: size.shape().max_vehicles,
+        };
+        let a = buy(setup.reg, purchase, mix(world))?;
+        let b = buy(setup.reg, purchase, mix(world ^ 0xA5A5_A5A5))?;
+        return Some([a, b]);
+    }
     if let Some((lo, hi)) = setup.bought {
         let points = lo + (mix(world ^ 0xB06E7) % (hi - lo + 1).max(1) as u64) as i32;
         let purchase = Purchase {
@@ -356,7 +400,22 @@ fn matchup(setup: &Setup, game: u64) -> Option<[tactics_core::data::ForceDef; 2]
 fn fight(setup: &Setup, game: u64) -> Option<Battle> {
     let reg = setup.reg;
     let matchup = matchup(setup, game);
-    let mut state = if setup.open {
+    let mut placed = None;
+    let mut state = if let Some(sizes) = &setup.sector {
+        let pair = matchup.as_ref()?;
+        let size = sector_size(sizes, game / 2);
+        let made = sector::sector(
+            reg,
+            &setup.worlds,
+            game / 2,
+            size,
+            SectorRules::default(),
+            [&pair[0], &pair[1]],
+        )
+        .ok()?;
+        placed = Some((size, made.prepared, made.zones.len() as u32));
+        sector::stage(reg, &made, [&pair[0], &pair[1]], 9000 + game)?
+    } else if setup.open {
         // Open ground needs forces: the arena's own four tanks a side are a
         // battle-map fixture.
         let pair = matchup.as_ref()?;
@@ -462,7 +521,12 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
     // Per target: the last round a crew of each side struck his front, and
     // which crew.
     let mut fronted: std::collections::BTreeMap<(u32, u8), (u32, u32)> = Default::default();
-    while !state.is_over() && rounds < MAX_ROUNDS {
+    let cap = if placed.is_some() {
+        ASSAULT_ROUNDS
+    } else {
+        MAX_ROUNDS
+    };
+    while !state.is_over() && rounds < cap {
         ai.plan_round_with(reg, &mut state, |decision| {
             if matches!(decision.order, Order::SetMission { .. }) && decision.rejected.is_none() {
                 missions[usize::from(decision.side != learner)] += 1;
@@ -537,6 +601,19 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
         scores.push([rounds, state.score(0), state.score(1)]);
     }
     drop(ai);
+    let reason = state.over.map_or("cut off".to_string(), |r| {
+        format!("{:?}", r.reason).to_lowercase()
+    });
+    let sector = placed.map(|(size, prepared, zones)| SectorRecord {
+        size: size.name(),
+        prepared,
+        held: state
+            .objectives()
+            .filter(|(o, h)| o.kind == tactics_core::map::ObjectiveKind::Hold && *h == Some(0))
+            .count() as u32,
+        zones,
+        needs: state.scenario.assault().map_or(0, |a| a.needs),
+    });
     let decisions = tap.lock().map(|r| r.clone()).unwrap_or_default();
     let commands = command_tap.lock().map(|r| r.clone()).unwrap_or_default();
     Some(Battle {
@@ -555,6 +632,8 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
         missions,
         commands,
         opponent_commander,
+        reason,
+        sector,
         victory_score: state.scenario.victory_score(),
         opponent: opponent(setup, game).map_or("utility".to_string(), |(name, _)| name.clone()),
         forces: matchup.map(|pair| [pair[0].id.clone(), pair[1].id.clone()]),
@@ -629,6 +708,18 @@ fn main() {
         difficulty,
         generated: flag(&args, "--ground") == Some("generated"),
         open: flag(&args, "--ground") == Some("open"),
+        sector: (flag(&args, "--ground") == Some("sector")).then(|| {
+            flag(&args, "--sizes").map_or(SectorSize::ALL.to_vec(), |list| {
+                list.split(',')
+                    .map(|n| {
+                        SectorSize::named(n).unwrap_or_else(|| {
+                            eprintln!("error: --sizes: no size `{n}`");
+                            std::process::exit(1);
+                        })
+                    })
+                    .collect()
+            })
+        }),
         worlds: Worlds::default(),
         layout: generated::Layout {
             spread_percent: flag(&args, "--spread").map_or(100, |s| {
@@ -819,6 +910,43 @@ fn main() {
     for (name, [w, l, d]) in &with {
         println!("  learner as {name}: won {w}, lost {l}, drew {d}");
     }
+    // An assault read by role, size, preparation and how it ended: the
+    // learner attacks from side 0 and defends from side 1.
+    let mut by_role: std::collections::BTreeMap<String, [u32; 3]> = Default::default();
+    let mut ended: std::collections::BTreeMap<String, u32> = Default::default();
+    for battle in fought.iter().flatten() {
+        *ended.entry(battle.reason.clone()).or_default() += 1;
+        let Some(record) = battle.sector else {
+            continue;
+        };
+        let role = if battle.learner == 0 {
+            "attacking"
+        } else {
+            "defending"
+        };
+        let tally = |row: &mut [u32; 3]| match battle.winner {
+            Some(w) if w == battle.learner => row[0] += 1,
+            Some(_) => row[1] += 1,
+            None => row[2] += 1,
+        };
+        tally(by_role.entry(format!("learner {role}")).or_default());
+        tally(
+            by_role
+                .entry(format!("learner {role}, {}", record.size))
+                .or_default(),
+        );
+        let prep = if record.prepared { "prepared" } else { "hasty" };
+        tally(
+            by_role
+                .entry(format!("learner {role}, {prep}"))
+                .or_default(),
+        );
+    }
+    for (name, [w, l, d]) in &by_role {
+        println!("  {name}: won {w}, lost {l}, drew {d}");
+    }
+    let ends: Vec<String> = ended.iter().map(|(r, n)| format!("{r} {n}")).collect();
+    println!("  ended by: {}", ends.join(", "));
     println!("  struck by the learner: {}", share(by));
     println!("  struck on the learner: {}", share(on));
     let (mut f4, mut aimed, mut off, mut missions) = ([0u32; 2], [0u32; 2], [0u32; 2], [0u32; 2]);

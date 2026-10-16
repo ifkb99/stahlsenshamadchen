@@ -621,19 +621,21 @@ pub fn step_toward(
     // not care, and otherwise the covered way round (`to_go`). The two agree
     // exactly at a price of zero on a whole battle map, which is why the
     // cheaper one stands in for the other.
-    let left = match Watch::of(registry, state, unit) {
-        Some(watch) => {
-            let way = to_go(state, &watch, destination);
-            Some((watch, way))
-        }
-        None => None,
+    // A field of mines her side has found is priced the same way, and
+    // the two add.
+    let watch = Watch::of(registry, state, unit);
+    let mines = MinePrice::of(registry, state, unit);
+    let extra = |hex: Hex| {
+        watch.as_ref().map_or(0, |w| w.price(state, hex))
+            + mines.as_ref().map_or(0, |m| m.price(registry, state, hex))
     };
+    let left = (watch.is_some() || mines.is_some()).then(|| to_go(state, &extra, destination));
     let remaining = |hex: Hex| match &left {
-        Some((watch, way)) => way
+        Some(way) => way
             .get(&hex)
             .copied()
             .unwrap_or(u32::MAX / 2)
-            .saturating_add(watch.price(state, hex)),
+            .saturating_add(extra(hex)),
         None => destination.distance_to(hex) as u32,
     };
     let friends = friends_of(state, unit);
@@ -675,7 +677,11 @@ pub fn step_toward(
 /// one call answers every hex she might halt on this round. Crow steps
 /// rather than terrain cost, because the key it replaces was a crow
 /// distance and terrain already speaks through `reachable`'s own cost.
-fn to_go(state: &BattleState, watch: &Watch, destination: Hex) -> crate::FastMap<Hex, u32> {
+fn to_go(
+    state: &BattleState,
+    extra: &dyn Fn(Hex) -> u32,
+    destination: Hex,
+) -> crate::FastMap<Hex, u32> {
     let mut left: crate::FastMap<Hex, u32> = crate::FastMap::default();
     let mut heap = BinaryHeap::new();
     left.insert(destination, 0);
@@ -687,7 +693,7 @@ fn to_go(state: &BattleState, watch: &Watch, destination: Hex) -> crate::FastMap
         }
         // Stepping from `next` onto `hex` enters `hex`, so that is the hex
         // whose watcher is charged.
-        let enter = 1 + watch.price(state, hex);
+        let enter = 1 + extra(hex);
         for next in hex.all_neighbors() {
             if !state.world.contains(next) {
                 continue;
@@ -870,6 +876,7 @@ pub fn roads(registry: &DataRegistry, state: &BattleState, id: UnitId, rounds: u
     let horizon =
         move_points(registry, &state.roster, unit, state.terrain_at(unit.pos)).max(1) * rounds;
 
+    let mines = MinePrice::of(registry, state, unit);
     let mut out = Roads {
         start: unit.pos,
         ..Roads::default()
@@ -887,7 +894,9 @@ pub fn roads(registry: &DataRegistry, state: &BattleState, id: UnitId, rounds: u
             let Some(step) = state.world.moves().cost(class, max_climb, hex, next) else {
                 continue;
             };
-            let total = cost + step;
+            // A field her side has found is the long way round, as it is
+            // for the road she will actually drive (`path_to`).
+            let total = cost + step + mines.as_ref().map_or(0, |m| m.price(registry, state, next));
             if total > horizon {
                 continue;
             }
@@ -971,6 +980,38 @@ impl Watch {
     }
 }
 
+/// What a mine her side knows of makes a hex cost her on the way:
+/// `balance.mine_route_cost` movement points (`battle::mines`). Read off
+/// her *side's* knowledge, never the field's truth, so a road bends round a
+/// field somebody has found and runs straight through one nobody has, and
+/// no route gives away what the fog has not.
+///
+/// `None` when the price is zero or the battle has no mines at all, which
+/// is the rule's absence: every road is then what it was.
+pub struct MinePrice {
+    price: u32,
+    side: u8,
+}
+
+impl MinePrice {
+    pub fn of(registry: &DataRegistry, state: &BattleState, unit: &Unit) -> Option<Self> {
+        let price = registry.balance.mine_route_cost;
+        (price > 0 && !state.scenario.minefields().is_empty()).then_some(Self {
+            price,
+            side: unit.side,
+        })
+    }
+
+    /// What entering `hex` costs on top of the ground.
+    pub fn price(&self, registry: &DataRegistry, state: &BattleState, hex: Hex) -> u32 {
+        if state.known_mines(registry, self.side, hex) {
+            self.price
+        } else {
+            0
+        }
+    }
+}
+
 /// The verb of the order `unit` is driving under, as `route_exposure` keys
 /// it: `march` for a personal march, her formation's mission as she heard
 /// it, or nothing.
@@ -1035,6 +1076,7 @@ pub fn path_to(
     let budget = move_points(registry, &state.roster, unit, state.terrain_at(unit.pos));
     let pinning = Pinning::of(registry, state, unit);
     let watch = Watch::of(registry, state, unit);
+    let mines = MinePrice::of(registry, state, unit);
     let friends = friends_of(state, unit);
 
     // The search runs over (hex, movement spent), not hex alone. The price a
@@ -1082,7 +1124,10 @@ pub fn path_to(
                 continue;
             }
             let key = (
-                price + step + watch.as_ref().map_or(0, |w| w.price(state, next)),
+                price
+                    + step
+                    + watch.as_ref().map_or(0, |w| w.price(state, next))
+                    + mines.as_ref().map_or(0, |m| m.price(registry, state, next)),
                 spread + apart(&friends, next),
             );
             let there = (next, total);

@@ -9,6 +9,7 @@ mod defs;
 mod forces;
 mod manifest;
 mod march;
+mod mines;
 mod modules;
 mod morale;
 mod net;
@@ -31,6 +32,7 @@ pub use defs::*;
 pub use forces::{ForceDef, ForceUnit, PlatoonDef};
 pub use manifest::ModManifest;
 pub use march::March;
+pub use mines::MineDef;
 pub use modules::{ModuleDef, ModuleEffect, STANDARD_MODULES};
 pub use morale::{
     DefianceDef, DefianceResponse, MoraleRules, MoraleRung, RoundPressure, ShotFelt, holds_together,

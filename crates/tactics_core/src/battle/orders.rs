@@ -209,6 +209,14 @@ pub enum Event {
     SmokeCleared {
         hexes: Vec<Hex>,
     },
+    /// A mine went off under her as she drove onto `at`; she has stopped
+    /// there, and her side now knows where that field lies. Heard by both
+    /// sides: a mine going off is not quiet.
+    MineStruck {
+        unit: UnitId,
+        at: Hex,
+        mine: String,
+    },
     /// The unit ran into an unspotted enemy and stopped short; the rest of
     /// its route is abandoned.
     UnitTrapped {
@@ -687,6 +695,7 @@ impl Event {
             | Event::SmokeLaid { .. }
             | Event::SmokeCleared { .. }
             | Event::UnitTrapped { .. }
+            | Event::MineStruck { .. }
             | Event::ShotFired { .. }
             | Event::ShellLanded { .. }
             | Event::ShotHit { .. }
@@ -1621,7 +1630,7 @@ impl BattleState {
                     | Event::UnitExited { .. }
             )
         });
-        if progress {
+        if progress || self.assault_progressed(&events) {
             self.last_contact_round = self.round;
         }
         self.check_victory(registry, &mut events);
@@ -2073,6 +2082,7 @@ impl BattleState {
             let mut walked = vec![start];
             let mut trapped_at = None;
             let mut pinned_at = None;
+            let mut blast: Vec<Event> = Vec::new();
             let mut blocked = false;
             while let Some(unit) = self.unit(id) {
                 let Some(&next) = unit.intent.path.first() else {
@@ -2135,6 +2145,15 @@ impl BattleState {
                 }
                 unit.intent.path.remove(0);
                 walked.push(next);
+                // A mine under the hex she has just entered stops her there.
+                // Its events wait for the move that took her onto it, so the
+                // log reads in the order things happened.
+                if self.tread(registry, id, next, &mut blast) {
+                    if let Some(unit) = self.unit_mut(id) {
+                        unit.intent.path.clear();
+                    }
+                    break;
+                }
             }
 
             if walked.len() > 1 {
@@ -2144,6 +2163,7 @@ impl BattleState {
                     path: walked,
                 });
             }
+            events.append(&mut blast);
             if let Some(at) = pinned_at {
                 // She has gone to ground: the rest of the route is off, and
                 // her side hears why she stopped.
@@ -2625,7 +2645,9 @@ impl BattleState {
         for unit in self.units.iter_mut() {
             if unit.aboard.is_some() {
                 unit.dug_in = 0;
-            } else if cap > 0 && unit.moved == 0 && unit.alive() {
+            } else if cap > 0 && unit.moved == 0 && unit.alive() && unit.dug_in < cap {
+                // Below the cap only: a prepared position is deeper than
+                // anything dug under fire, and digging does not fill it in.
                 let rate = registry
                     .vehicle(&unit.vehicle)
                     .map_or(0, |v| v.dig_in_per_round);
@@ -2835,6 +2857,51 @@ impl BattleState {
         }
     }
 
+    /// Whether an assault moved forward this tick, beyond the shooting the
+    /// stalemate clock already counts: ground changed hands, or an attacking
+    /// crew came closer than any had to ground she does not hold. An attack
+    /// is stalled when neither its guns nor its feet are getting anywhere —
+    /// a march up to the line is not a stall, and the clock must not run
+    /// out on it. Always false for a battle that is not an assault, which
+    /// is every battle the stalemate rule was written for.
+    fn assault_progressed(&mut self, events: &[Event]) -> bool {
+        let Some(assault) = self.scenario.assault() else {
+            return false;
+        };
+        if events
+            .iter()
+            .any(|e| matches!(e, Event::ObjectiveTaken { .. }))
+        {
+            self.approach = None;
+            return true;
+        }
+        let scenario = std::sync::Arc::clone(&self.scenario);
+        let wanted: Vec<Hex> = scenario
+            .objectives()
+            .iter()
+            .zip(&self.objective_held)
+            .filter(|(o, h)| o.kind == ObjectiveKind::Hold && **h != Some(assault.attacker))
+            .flat_map(|(o, _)| o.hexes.iter().copied())
+            .collect();
+        let closest = self
+            .units
+            .iter()
+            .filter(|u| u.side == assault.attacker && u.alive())
+            .flat_map(|u| wanted.iter().map(move |h| u.pos.unsigned_distance_to(*h)))
+            .min();
+        match (closest, self.approach) {
+            (Some(now), Some(best)) if now < best => {
+                self.approach = Some(now);
+                true
+            }
+            (Some(now), None) => {
+                self.approach = Some(now);
+                false
+            }
+            _ => false,
+        }
+    }
+
     fn check_victory(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
         if self.over.is_some() {
             return;
@@ -2888,19 +2955,57 @@ impl BattleState {
             self.finish(Some(side), EndReason::Objectives, events);
             return;
         }
+        // A side past its break point has given up the fight. Read after the
+        // score — a side that reached its target on the tick it broke has
+        // done what it came for — and before the board, because breaking is
+        // what ends an engagement long before anybody is gone. Who it goes
+        // to: in an assault a defender who breaks has given her ground up,
+        // and an attacker who breaks leaves the ground to say what she won
+        // (she keeps what she holds); otherwise the side that broke lost.
+        // A scenario that declares no break point never gets here.
+        match self.broken(registry) {
+            super::Broken::Nobody => {}
+            super::Broken::Side(side) => {
+                let winner = match self.scenario.assault() {
+                    Some(assault) if assault.attacker == side => self.assault_verdict(),
+                    Some(assault) => Some(assault.attacker),
+                    None => {
+                        let others: Vec<u8> =
+                            (0..self.sides.len() as u8).filter(|s| *s != side).collect();
+                        match others.as_slice() {
+                            [only] => Some(*only),
+                            _ => self.leader().filter(|s| *s != side),
+                        }
+                    }
+                };
+                self.finish(winner, EndReason::Broken, events);
+                return;
+            }
+            super::Broken::Several => {
+                let winner = self.assault_verdict().or_else(|| self.leader());
+                self.finish(winner, EndReason::Broken, events);
+                return;
+            }
+        }
         let living = self.living_sides();
         if living.len() <= 1 {
             // A side still on the board when the other has nothing left has
             // won, whatever the score says. `leader` only breaks the tie when
             // *nobody* is left: mutual destruction over ground somebody held
             // is not the same battle as mutual destruction in an empty field.
-            let winner = living.first().copied().or_else(|| self.leader());
+            let winner = living
+                .first()
+                .copied()
+                .or_else(|| self.assault_verdict().or_else(|| self.leader()));
             self.finish(winner, EndReason::Eliminated, events);
             return;
         }
         if self.round.saturating_sub(self.last_contact_round) >= registry.balance.stalemate_rounds {
-            // Breaking contact ends the shooting; the points say who won it.
-            let winner = self.leader();
+            // Breaking contact ends the shooting; the points say who won it
+            // — or, in an assault, the ground does: an attack that has
+            // stalled is an attack called off, and the attacker keeps what
+            // she took.
+            let winner = self.assault_verdict().or_else(|| self.leader());
             self.finish(winner, EndReason::Stalemate, events);
         }
     }

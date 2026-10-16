@@ -2189,6 +2189,7 @@ impl OverworldState {
             value: 3,
             kind: crate::map::ObjectiveKind::Hold,
             side: None,
+            held: None,
         }
     }
 
@@ -2235,6 +2236,7 @@ impl OverworldState {
                     },
                     kind: crate::map::ObjectiveKind::Hold,
                     side: None,
+                    held: None,
                 });
             } else if !near && present {
                 battle.remove_objective(&id);

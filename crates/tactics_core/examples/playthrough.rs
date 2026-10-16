@@ -178,6 +178,9 @@ fn main() {
                 Event::UnitTrapped { unit, .. } => {
                     println!("{} AMBUSHED mid-move!", name(&state, *unit))
                 }
+                Event::MineStruck { unit, at, .. } => {
+                    println!("{} hits a MINE at {at:?}", name(&state, *unit))
+                }
                 Event::TookCover { unit, at } => {
                     println!("{} breaks for cover at {at:?}", name(&state, *unit))
                 }

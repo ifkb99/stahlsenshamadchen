@@ -1,0 +1,25 @@
+[
+    {
+        "id": "anti_tank_mine",
+        "name": "Anti-tank mine",
+        "description": "A pressure-fused plate charge buried in a vehicle's path. It needs the weight of a hull to set it off, so a man walks over it; what it usually does is break a track and leave the tank sitting in the field it was laid to hold her in, crew shaken but whole.",
+        "triggers": {
+            "tracked": 100,
+            "wheeled": 100
+        },
+        "per_hex": 3,
+        "damage": 4,
+        "cripples": true
+    },
+    {
+        "id": "anti_personnel_mine",
+        "name": "Anti-personnel mine",
+        "description": "A small charge set off by a foot. A track crushes it harmlessly; a rifle platoon walking into a belt of them loses men with every step.",
+        "triggers": {
+            "foot": 100
+        },
+        "per_hex": 4,
+        "damage": 8,
+        "cripples": false
+    }
+]

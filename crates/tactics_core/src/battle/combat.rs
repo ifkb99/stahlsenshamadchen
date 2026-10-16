@@ -2246,6 +2246,65 @@ fn effect_rolls(
     }
 }
 
+/// A mine going off under `target` (`battle::mines`): her running gear
+/// first if the mine takes it — every working mobility module, in key
+/// order, to nothing — and then `damage` spent inside her through the same
+/// effect rolls a penetration's budget goes through, so a mine wounds, kills
+/// and breaks things by exactly the arithmetic a shell does. There is no
+/// plate to beat: a mine is under the hull, where nobody puts any.
+pub(crate) fn mine_blast(
+    registry: &DataRegistry,
+    state: &mut BattleState,
+    target: UnitId,
+    damage: i32,
+    cripples: bool,
+    events: &mut Vec<Event>,
+) {
+    if cripples {
+        let running_gear: Vec<String> = state
+            .unit(target)
+            .map(|u| {
+                u.modules
+                    .iter()
+                    .filter(|(id, hits)| {
+                        **hits > 0
+                            && registry
+                                .module(id)
+                                .is_some_and(|m| m.effect == crate::data::ModuleEffect::Mobility)
+                    })
+                    .map(|(id, _)| id.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for module in running_gear {
+            if let Some(hits) = state
+                .unit_mut(target)
+                .and_then(|u| u.modules.get_mut(&module))
+            {
+                *hits = 0;
+            }
+            events.push(Event::ModuleHit {
+                unit: target,
+                module,
+                destroyed: true,
+            });
+        }
+    }
+    if damage > 0 {
+        let per_effect = registry.balance.points_per_effect.max(1);
+        let rolls = (damage + per_effect - 1) / per_effect;
+        effect_rolls(
+            registry,
+            state,
+            target,
+            rolls,
+            damage >= per_effect * 3,
+            1.0,
+            events,
+        );
+    }
+}
+
 enum InteriorChoice {
     Seat(usize),
     Module(String),

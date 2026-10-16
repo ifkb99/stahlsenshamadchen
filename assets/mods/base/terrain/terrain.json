@@ -199,5 +199,30 @@
       "tracked": 1,
       "air": 1
     }
+  },
+  {
+    "id": "wire",
+    "name": "Wire",
+    "glyph": "x",
+    "color": "#8a8a6a",
+    "capacity": 3,
+    "move_cost": {
+      "foot": 3,
+      "wheeled": 2,
+      "tracked": 1,
+      "air": 1
+    }
+  },
+  {
+    "id": "tank_ditch",
+    "name": "Anti-tank ditch",
+    "glyph": "d",
+    "color": "#6b5a3a",
+    "capacity": 3,
+    "move_cost": {
+      "foot": 2,
+      "air": 1
+    },
+    "cover": 20
   }
 ]

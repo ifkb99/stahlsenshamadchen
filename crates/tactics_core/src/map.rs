@@ -214,6 +214,14 @@ pub struct ObjectiveSpec {
     /// one.
     #[serde(default)]
     pub side: Option<u8>,
+    /// The side holding it when the battle opens, if anybody does. Absent
+    /// is nobody, which is every map written before a defender could start
+    /// on her own ground: control has to be taken, so ground nobody holds
+    /// pays nobody until somebody stands on it. A defended position is
+    /// ground its defender already holds — an attacker has to take it from
+    /// her, and a defender who loses it can take it back.
+    #[serde(default)]
+    pub held: Option<u8>,
 }
 
 fn default_objective_value() -> u32 {
@@ -245,6 +253,9 @@ pub struct Objective {
     pub value: u32,
     pub kind: ObjectiveKind,
     pub side: Option<u8>,
+    /// Who holds it when the battle opens ([`ObjectiveSpec::held`]).
+    #[serde(default)]
+    pub held: Option<u8>,
 }
 
 impl Objective {
@@ -353,6 +364,72 @@ pub enum LossTrigger {
     /// withdrawal from being a decapitation — a formation that drove off the
     /// map entire did what it was told, and the map has to be able to say so.
     Wiped,
+}
+
+/// A battle one side attacks and the other defends: what the attacker has
+/// to be holding when the fighting stops for the ground to be hers
+/// (ASSAULT.md).
+///
+/// There is no clock in it. A commander does not call off an assault that
+/// is winning because the afternoon has worn on; the fighting stops when a
+/// side can or will go on no longer — it breaks ([`BreakPoint`]), it is
+/// gone, or the attack has stalled and nothing is being achieved — and
+/// then the ground is read. A defender who has broken has given her
+/// ground up, whatever she was standing on; otherwise the attacker wins
+/// if she holds `needs` of the ground worth holding, and the defender
+/// wins if she does not. Points still accrue, as they always have, but
+/// they decide nothing here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Assault {
+    /// The side attacking. In a two-sided battle the other one defends.
+    pub attacker: u8,
+    /// How many of the scenario's `hold` objectives she must hold when the
+    /// fighting stops.
+    pub needs: u32,
+}
+
+/// The share of its strength a side can lose and still fight (ASSAULT.md):
+/// past it, its will is gone, and the battle ends with it beaten.
+///
+/// Strength is substance — cadets and working modules aboard, over the
+/// full complement of everybody the side brought, the dead counted in the
+/// complement — which is what a formation's `beaten` already reads. A
+/// side whose crews drove off by an exit has taken them out of the fight,
+/// so they count against it the same way. A scenario that declares no
+/// break point for a side is fought until that side is gone, which is
+/// every battle before this rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BreakPoint {
+    pub side: u8,
+    /// Percent of its strength lost at which it breaks: 1 to 100.
+    pub lost_percent: u32,
+}
+
+/// Mines laid before the battle, as a map file declares them: whose they
+/// are, what kind ([`crate::data::MineDef`]), where, and how thickly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MinefieldSpec {
+    /// The side that laid them. Her own crews know the lanes and never
+    /// set one off.
+    pub side: u8,
+    /// Which mine, by id.
+    pub mine: String,
+    /// The hexes sown, in `[column, row]` offset coordinates.
+    pub at: Vec<[i32; 2]>,
+    /// Percent chance that a crew entering one of these hexes finds a mine
+    /// with her tracks, wheels or feet, before the mine's own trigger
+    /// chance for what she is. A hundred-metre hex sown at a mine every few
+    /// metres of front is near certain; a hasty belt is not.
+    pub density: u32,
+}
+
+/// Mines laid before the battle, with their hexes resolved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Minefield {
+    pub side: u8,
+    pub mine: String,
+    pub hexes: Vec<Hex>,
+    pub density: u32,
 }
 
 /// Which way across a generated world, for a campaign file to say where a
@@ -571,6 +648,19 @@ pub struct MapFile {
     /// as every map was before commanders could be lost.
     #[serde(default)]
     pub loss_conditions: Vec<LossCondition>,
+    /// Whether this battle is an assault, and what the attacker needs.
+    #[serde(default)]
+    pub assault: Option<Assault>,
+    /// How much each side can lose before it breaks.
+    #[serde(default)]
+    pub breaking: Vec<BreakPoint>,
+    /// Sides that start in positions prepared before the battle
+    /// ([`crate::data::VehicleDef::prepared_cover`]).
+    #[serde(default)]
+    pub prepared: Vec<u8>,
+    /// Mines laid before the battle (ASSAULT.md).
+    #[serde(default)]
+    pub minefields: Vec<MinefieldSpec>,
     /// What ends the campaign fought on this map, for an overworld map. The
     /// campaign's counterpart of `loss_conditions`, and absent for the same
     /// reason those may be: a map that says nothing is fought to elimination,
@@ -742,6 +832,18 @@ pub struct Scenario {
     /// about the scenario, fixed before the first shot.
     #[serde(default)]
     loss_conditions: Vec<LossCondition>,
+    /// Whether one side is attacking the other's ground ([`Assault`]).
+    #[serde(default)]
+    assault: Option<Assault>,
+    /// The share of its strength each side can lose ([`BreakPoint`]).
+    #[serde(default)]
+    breaking: Vec<BreakPoint>,
+    /// Sides whose crews start in prepared positions.
+    #[serde(default)]
+    prepared: Vec<u8>,
+    /// Mines laid before the battle, resolved to hexes.
+    #[serde(default)]
+    minefields: Vec<Minefield>,
 }
 
 /// Ground and a scenario on it, as a battle is set up from them.
@@ -829,6 +931,7 @@ impl Scenario {
                 value: spec.value,
                 kind: spec.kind,
                 side: spec.side,
+                held: spec.held,
             })
             .collect();
         Self {
@@ -836,6 +939,23 @@ impl Scenario {
             victory_score: file.victory_score,
             formations: file.formations.clone(),
             loss_conditions: file.loss_conditions.clone(),
+            assault: file.assault,
+            breaking: file.breaking.clone(),
+            prepared: file.prepared.clone(),
+            minefields: file
+                .minefields
+                .iter()
+                .map(|spec| Minefield {
+                    side: spec.side,
+                    mine: spec.mine.clone(),
+                    hexes: spec
+                        .at
+                        .iter()
+                        .map(|at| crate::offset_to_hex(at[0], at[1]))
+                        .collect(),
+                    density: spec.density,
+                })
+                .collect(),
         }
     }
 
@@ -862,6 +982,63 @@ impl Scenario {
     /// nothing, which is how a scenario opts out by omission.
     pub fn loss_conditions(&self) -> &[LossCondition] {
         &self.loss_conditions
+    }
+
+    /// Whether one side is attacking the other's ground, and what she needs.
+    pub fn assault(&self) -> Option<Assault> {
+        self.assault
+    }
+
+    /// This scenario as an assault by `attacker` needing `needs` objectives.
+    pub fn with_assault(mut self, attacker: u8, needs: u32) -> Self {
+        self.assault = Some(Assault { attacker, needs });
+        self
+    }
+
+    /// Where each side breaks, in declaration order.
+    pub fn breaking(&self) -> &[BreakPoint] {
+        &self.breaking
+    }
+
+    /// The share of its strength `side` can lose before it breaks, if the
+    /// scenario says.
+    pub fn break_point(&self, side: u8) -> Option<u32> {
+        self.breaking
+            .iter()
+            .find(|b| b.side == side)
+            .map(|b| b.lost_percent)
+    }
+
+    /// Whether `side` starts in positions prepared before the battle.
+    pub fn prepared(&self, side: u8) -> bool {
+        self.prepared.contains(&side)
+    }
+
+    /// This scenario with `side`'s crews starting in prepared positions.
+    pub fn with_prepared(mut self, side: u8) -> Self {
+        if !self.prepared.contains(&side) {
+            self.prepared.push(side);
+        }
+        self
+    }
+
+    /// Mines laid before the battle, in declaration order.
+    pub fn minefields(&self) -> &[Minefield] {
+        &self.minefields
+    }
+
+    /// This scenario with `field` laid as well.
+    pub fn with_minefield(mut self, field: Minefield) -> Self {
+        self.minefields.push(field);
+        self
+    }
+
+    /// This scenario with `side` breaking at `lost_percent` of its strength
+    /// lost, replacing whatever it said for that side.
+    pub fn with_break_point(mut self, side: u8, lost_percent: u32) -> Self {
+        self.breaking.retain(|b| b.side != side);
+        self.breaking.push(BreakPoint { side, lost_percent });
+        self
     }
 }
 
@@ -1147,6 +1324,51 @@ impl MapFile {
                     self.id, condition.side, condition.formation, formation.side
                 )),
                 Some(_) => {}
+            }
+        }
+
+        // An assault is decided by the ground, so the ground has to exist:
+        // an attacker who needs more objectives than there are to hold has
+        // lost before she starts, and one who needs none has won.
+        if let Some(assault) = self.assault {
+            let holds = self
+                .objectives
+                .iter()
+                .filter(|o| o.kind == ObjectiveKind::Hold)
+                .count() as u32;
+            if assault.needs == 0 || assault.needs > holds {
+                report.errors.push(format!(
+                    "map `{}`: the attacker needs {} objective(s) and the map has {} to hold",
+                    self.id, assault.needs, holds
+                ));
+            }
+            if usize::from(assault.attacker) >= self.sides.len().max(2) {
+                report.errors.push(format!(
+                    "map `{}`: the attacker is side {}, which the map does not have",
+                    self.id, assault.attacker
+                ));
+            }
+        }
+        for (i, field) in self.minefields.iter().enumerate() {
+            if registry.mine(&field.mine).is_none() {
+                report.errors.push(format!(
+                    "map `{}`: minefield {i} sows `{}`, which no mod declares",
+                    self.id, field.mine
+                ));
+            }
+            if field.density == 0 || field.density > 100 {
+                report.errors.push(format!(
+                    "map `{}`: minefield {i} has density {}, which is not 1 to 100",
+                    self.id, field.density
+                ));
+            }
+        }
+        for point in &self.breaking {
+            if !(1..=100).contains(&point.lost_percent) {
+                report.errors.push(format!(
+                    "map `{}`: side {} breaks at {}% lost, which is not 1 to 100",
+                    self.id, point.side, point.lost_percent
+                ));
             }
         }
     }

@@ -32,7 +32,7 @@ pub fn stage(
     seed: u64,
 ) -> Option<BattleState> {
     let ground = |h: Hex| field.terrain.get(h).map(|t| t.terrain.to_string());
-    let (placements, formations) = placements(reg, &ground, deployment, forces)?;
+    let (placements, formations) = placements(reg, &ground, &unzip(deployment), forces)?;
     for formation in formations {
         field.scenario.push_formation(formation);
     }
@@ -55,21 +55,63 @@ pub fn stage(
 pub fn stage_on_world(
     reg: &DataRegistry,
     world: std::sync::Arc<GeneratedWorld>,
-    mut scenario: Scenario,
+    scenario: Scenario,
     deployment: &[(Hex, Hex)],
     forces: [&ForceDef; 2],
     seed: u64,
 ) -> Option<BattleState> {
-    let ground = |h: Hex| world.tile(h).map(|(id, _)| id.to_string());
-    let (placements, formations) = placements(reg, &ground, deployment, forces)?;
+    stage_sides_on_world(reg, world, scenario, &unzip(deployment), forces, &[], seed)
+}
+
+/// Each side's hexes of a list of pairs, side 0's first.
+fn unzip(deployment: &[(Hex, Hex)]) -> [Vec<Hex>; 2] {
+    let (a, b) = deployment.iter().copied().unzip();
+    [a, b]
+}
+
+/// [`stage_on_world`] with each side's deployment its own list, as it is
+/// when the two sides are not facing each other across a line but one is
+/// standing on ground the other is coming to take (`harness::sector`).
+/// Each list is that side's wanted hexes, in the order its force deploys;
+/// `obstacles` are tiles written over the world's for this battle alone
+/// (`World::edit`), the world itself being shared.
+pub fn stage_sides_on_world(
+    reg: &DataRegistry,
+    world: std::sync::Arc<GeneratedWorld>,
+    mut scenario: Scenario,
+    deployment: &[Vec<Hex>; 2],
+    forces: [&ForceDef; 2],
+    obstacles: &[(Hex, String)],
+    seed: u64,
+) -> Option<BattleState> {
+    // The ground as the battle will have it: the world's, with whatever a
+    // defender dug or strung written over it, so nobody deploys into a
+    // ditch.
+    let ground = |h: Hex| {
+        obstacles
+            .iter()
+            .find(|(o, _)| *o == h)
+            .map(|(_, t)| t.clone())
+            .or_else(|| world.tile(h).map(|(id, _)| id.to_string()))
+    };
+    // A side starting in prepared positions had the hours to get off its
+    // carriers: its riflemen start on the ground, where a trench is, rather
+    // than aboard a hull that one shell empties.
+    let dismounted = [scenario.prepared(0), scenario.prepared(1)];
+    let (placements, formations) = placements_with(reg, &ground, deployment, forces, dismounted)?;
     for formation in formations {
         scenario.push_formation(formation);
     }
     let (roster, crews) = Roster::stamp_for(reg, &placements);
     let ids: Vec<UnitId> = (0..placements.len() as u32).map(UnitId).collect();
+    let mut window = World::window_onto(world.clone());
+    for (hex, terrain) in obstacles {
+        let level = world.tile(*hex).map_or(0, |(_, l)| l);
+        window.edit(reg, *hex, terrain, level);
+    }
     BattleState::from_muster_on(
         reg,
-        World::window_onto(world),
+        window,
         scenario,
         sides(forces),
         Muster {
@@ -99,22 +141,28 @@ fn sides(forces: [&ForceDef; 2]) -> Vec<SideState> {
 fn placements(
     reg: &DataRegistry,
     ground: &dyn Fn(Hex) -> Option<String>,
-    deployment: &[(Hex, Hex)],
+    deployment: &[Vec<Hex>; 2],
     forces: [&ForceDef; 2],
+) -> Option<(Vec<UnitPlacement>, Vec<FormationDef>)> {
+    placements_with(reg, ground, deployment, forces, [false, false])
+}
+
+/// [`placements`], with a side whose `dismounted` is set starting its
+/// passengers on the ground on their carrier's hex instead of aboard.
+fn placements_with(
+    reg: &DataRegistry,
+    ground: &dyn Fn(Hex) -> Option<String>,
+    deployment: &[Vec<Hex>; 2],
+    forces: [&ForceDef; 2],
+    dismounted: [bool; 2],
 ) -> Option<(Vec<UnitPlacement>, Vec<FormationDef>)> {
     let mut taken: Vec<Hex> = Vec::new();
     let mut placements: Vec<UnitPlacement> = Vec::new();
     let mut formations: Vec<FormationDef> = Vec::new();
     for (side, force) in forces.iter().enumerate() {
         let side = side as u8;
-        let ours: Vec<Hex> = deployment
-            .iter()
-            .map(|(a, b)| if side == 0 { *a } else { *b })
-            .collect();
-        let theirs: Vec<Hex> = deployment
-            .iter()
-            .map(|(a, b)| if side == 0 { *b } else { *a })
-            .collect();
+        let ours: Vec<Hex> = deployment[usize::from(side)].clone();
+        let theirs: Vec<Hex> = deployment[usize::from(side == 0)].clone();
         let near = |h: Hex| ours.iter().map(|o| o.distance_to(h)).min().unwrap_or(0);
         let far = |h: Hex| theirs.iter().map(|o| o.distance_to(h)).min().unwrap_or(0);
         let mut slots = ours.clone().into_iter();
@@ -180,7 +228,8 @@ fn placements(
                 });
                 if let Some(rider) = &line.carries {
                     placements.push(UnitPlacement {
-                        aboard_at: Some(crate::hex_to_offset(hex)),
+                        aboard_at: (!dismounted[usize::from(side)])
+                            .then(|| crate::hex_to_offset(hex)),
                         at: crate::hex_to_offset(hex),
                         side,
                         vehicle: rider.clone(),

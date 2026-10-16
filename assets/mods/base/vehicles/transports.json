@@ -5,6 +5,7 @@
         "turret": true,
         "footprint": 2,
         "name": "Kette Halftrack",
+        "prepared_cover": 30,
         "class": "transport",
         "movement": {
             "class": "tracked",
@@ -45,6 +46,7 @@
         "turret": true,
         "footprint": 2,
         "name": "Kasten Personnel Carrier",
+        "prepared_cover": 30,
         "class": "transport",
         "movement": {
             "class": "tracked",
@@ -86,6 +88,7 @@
         "traverse_seconds": 15,
         "footprint": 2,
         "name": "Schütze Fighting Vehicle",
+        "prepared_cover": 30,
         "class": "transport",
         "movement": {
             "class": "tracked",

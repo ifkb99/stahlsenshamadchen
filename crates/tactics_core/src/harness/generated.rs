@@ -248,6 +248,7 @@ pub(crate) fn scenario_between<'a>(
         value,
         kind: ObjectiveKind::Hold,
         side: None,
+        held: None,
     };
     let mut scenario = Scenario::default()
         .with_victory_score(VICTORY_SCORE)

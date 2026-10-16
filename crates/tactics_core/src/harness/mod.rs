@@ -28,4 +28,5 @@ pub mod generated;
 pub mod open;
 pub mod overrides;
 pub mod parallel;
+pub mod sector;
 pub mod tally;

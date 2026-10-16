@@ -217,6 +217,16 @@ pub struct VehicleDef {
     /// default, is a chassis that never does — the game before.
     #[serde(default)]
     pub dig_in_per_round: i32,
+    /// The cover a position prepared before the battle gives her: a
+    /// trench for riflemen, a revetment or a dozed hull-down scrape for a
+    /// vehicle (ASSAULT.md). A side the scenario names as `prepared` starts
+    /// dug in this deep, and like anything dug it stays behind when she
+    /// moves — which is what a counterattack costs a defender. It is not
+    /// capped by `balance.dig_in_max`, which is what a crew can scrape in
+    /// the middle of a fight; hours with a shovel or a dozer buy more.
+    /// Zero, the default, is a chassis with no prepared position.
+    #[serde(default)]
+    pub prepared_cover: i32,
     /// Her fighting compartment has no roof: a halftrack, a self-propelled
     /// gun, a tank destroyer with an open turret. Bullets that do not
     /// penetrate still reach her crew — plunging fire, grenades, a belt

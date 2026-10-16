@@ -138,6 +138,8 @@ pub struct DataRegistry {
     pub forces: crate::FastMap<String, super::ForceDef>,
     /// The platoons a side may buy (`platoons/`; `force::buy`).
     pub platoons: crate::FastMap<String, super::PlatoonDef>,
+    /// Mines a scenario may sow (`mines/`; ASSAULT.md).
+    pub mines: crate::FastMap<String, super::MineDef>,
     pub maps: crate::FastMap<String, MapFile>,
 }
 
@@ -334,6 +336,10 @@ impl DataRegistry {
         self.platoons.get(id)
     }
 
+    pub fn mine(&self, id: &str) -> Option<&super::MineDef> {
+        self.mines.get(id)
+    }
+
     /// The platoon catalogue in id order, the order every draw from it is
     /// made in, so a bought force never depends on a hash order.
     pub fn platoon_catalogue(&self) -> Vec<&super::PlatoonDef> {
@@ -376,6 +382,9 @@ impl DataRegistry {
         })?;
         load_defs(&dir.join("forces"), report, |d: super::ForceDef| {
             self.forces.insert(d.id.clone(), d);
+        })?;
+        load_defs(&dir.join("mines"), report, |d: super::MineDef| {
+            self.mines.insert(d.id.clone(), d);
         })?;
         load_defs(&dir.join("platoons"), report, |d: super::PlatoonDef| {
             self.platoons.insert(d.id.clone(), d);

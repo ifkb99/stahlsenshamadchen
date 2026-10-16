@@ -6,6 +6,7 @@
         "flank_search_percent": 90,
         "footprint": 1,
         "name": "Rifle Platoon",
+        "prepared_cover": 60,
         "class": "infantry",
         "movement": {
             "class": "foot",
@@ -19,7 +20,7 @@
         },
         "vision_range": 8,
         "concealment": 40,
-    "profile": -20,
+        "profile": -20,
         "radio": "man_pack",
         "weapons": [
             "rifles",
@@ -49,6 +50,7 @@
         "flank_search_percent": 100,
         "footprint": 1,
         "name": "Scout Section",
+        "prepared_cover": 60,
         "class": "infantry",
         "movement": {
             "class": "foot",
@@ -62,7 +64,7 @@
         },
         "vision_range": 12,
         "concealment": 55,
-    "profile": -30,
+        "profile": -30,
         "radio": "man_pack",
         "weapons": [
             "rifles"
@@ -90,6 +92,7 @@
         "flank_search_percent": 90,
         "footprint": 1,
         "name": "Rifle Squad",
+        "prepared_cover": 60,
         "class": "infantry",
         "movement": {
             "class": "foot",

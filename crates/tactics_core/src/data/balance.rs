@@ -477,6 +477,13 @@ pub struct Balance {
     pub dig_in_max: i32,
     #[serde(default = "hundred")]
     pub dig_in_flank_percent: i32,
+    /// Movement points a hex costs a crew on top of its ground when her
+    /// side knows enemy mines lie in it (`battle::mines`): the way round a
+    /// field somebody has found. In `balance`, beside `route_exposure`,
+    /// because a player's crew picks her road by it too. Zero, the default,
+    /// is a crew that drives on through.
+    #[serde(default)]
+    pub mine_route_cost: u32,
     /// Chance in 100 that a crew who has an enemy in her field of view
     /// actually picks her out of it, per tick, before anything is subtracted
     /// for the ground or added for the enemy's driving.
@@ -674,6 +681,7 @@ impl Default for Balance {
             buttoned_flank_search_percent: hundred(),
             dig_in_max: 0,
             dig_in_flank_percent: hundred(),
+            mine_route_cost: 0,
         }
     }
 }
