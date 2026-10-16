@@ -1621,6 +1621,14 @@ fn pump_events(
                     mission_sentence(&battle.state, Some(mission))
                 ));
             }
+            BattleEvent::MissionReleased { formation } => {
+                let who = formation_name(&battle.state, formation);
+                log.push(format!("{who} told to use its own judgment."));
+            }
+            BattleEvent::ReleaseReceived { formation } => {
+                let who = formation_name(&battle.state, formation);
+                log.push(format!("{who} hears it is to use its own judgment."));
+            }
             // A unit that has stopped answering the radio is announced for the
             // same reason a wavering crew is: she is about to do something
             // other than what she was told, and silent deviation is

@@ -19,9 +19,10 @@
 
 use std::io::Write;
 use std::sync::{Arc, Mutex};
+use tactics_core::ai::commander::load_command_net;
 use tactics_core::ai::features::{GoalRecord, GoalTap};
 use tactics_core::ai::learned::{GoalBrain, load_goal_net};
-use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, SideCommand, UtilityPlanner};
+use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, CommandBrain, SideCommand, UtilityPlanner};
 use tactics_core::battle::{BattleState, Event, Order};
 use tactics_core::data::ArmorFacing;
 use tactics_core::data::DataRegistry;
@@ -65,8 +66,17 @@ rollout: battles for reinforcement learning, learner against the utility AI
   --budget LO,HI      with --forces bought, the budget drawn per world (default 70,100)
   --commander KIND    who gives the learner's platoons their missions: none
                       (default; every crew chooses for herself), utility (the
-                      hand-written commander) or random (a coin, per review)
-  --opponent-commander KIND   the same for the opponent
+                      hand-written commander), random (a coin, per review),
+                      learned (the network --commander-net names, sampling at
+                      --commander-temperature unless --commander-deterministic) or
+                      uniform (a coin over the learned commander's menu,
+                      recorded as a learned one is)
+  --commander-net PATH  the learned commander's network
+  --commander-deterministic   the learned commander takes her best choice
+  --commander-temperature T   its sampling temperature (default 1.0)
+  --opponent-commander KIND   the same for the opponent, or mix: none, utility
+                      and random in turn by world
+  --set PATH=VALUE    any mod field by its json path, as `balance --set` takes it
   --deterministic     the learner takes its best choice instead of sampling
                       (evaluation; no log-probabilities are recorded)
   --difficulty D      the opponent's difficulty (default 5)
@@ -120,6 +130,11 @@ struct Battle {
     /// Missions given, `[learner's side, opponent's]`: zero for a side
     /// nobody commands.
     missions: [u32; 2],
+    /// The learner's commander's decisions, when a learned or uniform
+    /// commander gave them (`--commander learned|uniform`).
+    commands: Vec<GoalRecord>,
+    /// Who commanded the opponent.
+    opponent_commander: &'static str,
 }
 
 /// A unit's longest direct weapon reach, in hexes: what she could answer
@@ -138,6 +153,75 @@ fn reach(reg: &DataRegistry, state: &BattleState, unit: tactics_core::battle::Un
                 .unwrap_or(0)
         })
         .unwrap_or(0)
+}
+
+/// One stream of decisions as flat little-endian files beside the battles
+/// (`--arrays`), in the order the battles and their decisions are written,
+/// the JSON keeping everything else: parsing 800 MB of numbers out of text
+/// was most of what a training update spent before it learned anything.
+struct Arrays {
+    context: std::io::BufWriter<std::fs::File>,
+    candidates: std::io::BufWriter<std::fs::File>,
+    counts: std::io::BufWriter<std::fs::File>,
+}
+
+impl Arrays {
+    fn open(out: &std::path::Path, stream: &str, context: Vec<String>, candidate: &[&str]) -> Self {
+        let beside = |ext: &str| {
+            let mut name = out.as_os_str().to_owned();
+            name.push(stream);
+            name.push(ext);
+            std::path::PathBuf::from(name)
+        };
+        std::fs::write(
+            beside(".arrays.json"),
+            serde_json::json!({
+                "context": context.len(),
+                "candidate": candidate.len(),
+                "context_names": context,
+                "candidate_names": candidate,
+            })
+            .to_string(),
+        )
+        .expect("write the arrays' shape");
+        let open = |ext: &str| {
+            std::io::BufWriter::new(std::fs::File::create(beside(ext)).expect("open an array"))
+        };
+        Self {
+            context: open(".context.f32"),
+            candidates: open(".candidates.f32"),
+            counts: open(".counts.u32"),
+        }
+    }
+
+    /// Write each record's numbers and take them out of the record.
+    fn write(&mut self, records: &mut [GoalRecord]) {
+        for d in records {
+            for v in &d.context {
+                self.context
+                    .write_all(&v.to_le_bytes())
+                    .expect("write an array");
+            }
+            for row in &d.candidates {
+                for v in row {
+                    self.candidates
+                        .write_all(&v.to_le_bytes())
+                        .expect("write an array");
+                }
+            }
+            self.counts
+                .write_all(&(d.candidates.len() as u32).to_le_bytes())
+                .expect("write an array");
+            d.context = Vec::new();
+            d.candidates = Vec::new();
+        }
+    }
+
+    fn flush(&mut self) {
+        for f in [&mut self.context, &mut self.candidates, &mut self.counts] {
+            f.flush().expect("flush an array");
+        }
+    }
 }
 
 fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
@@ -190,6 +274,8 @@ struct Setup<'a> {
     /// Who commands the learner's side and the opponent's (`--commander`,
     /// `--opponent-commander`).
     commanders: [Commander; 2],
+    /// The learner's commander, when it is a network or the uniform coin.
+    command_brain: CommandBrain,
 }
 
 /// Who gives a side's platoons their missions.
@@ -201,6 +287,10 @@ enum Commander {
     Utility,
     /// A coin at every review (`SideCommand::with_random_missions`).
     Random,
+    /// A network, or the coin over its menu (`Setup::command_brain`).
+    Learned,
+    /// For the opponent: none, utility and random in turn by world.
+    Mix,
 }
 
 impl Commander {
@@ -209,8 +299,12 @@ impl Commander {
             None | Some("none") => Self::None,
             Some("utility") => Self::Utility,
             Some("random") => Self::Random,
+            Some("learned") | Some("uniform") => Self::Learned,
+            Some("mix") => Self::Mix,
             Some(other) => {
-                eprintln!("error: a commander is none, utility or random, not `{other}`");
+                eprintln!(
+                    "error: a commander is none, utility, random, learned, uniform or mix, not `{other}`"
+                );
                 std::process::exit(1);
             }
         }
@@ -297,6 +391,14 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
     };
     let learner = (game % 2) as u8;
     let tap: GoalTap = Arc::new(Mutex::new(Vec::new()));
+    let command_tap: GoalTap = Arc::new(Mutex::new(Vec::new()));
+    let opponent_commander = match setup.commanders[1] {
+        Commander::None => "none",
+        Commander::Utility => "utility",
+        Commander::Random => "random",
+        Commander::Learned => "learned",
+        Commander::Mix => ["none", "utility", "random"][(game / 2 % 3) as usize],
+    };
     let mut ai = AiDriver::new();
     for side in 0..2u8 {
         // Each side fights by its own force's doctrine: the doctrine comes
@@ -309,7 +411,12 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
                 .map(|pair| pair[side as usize].doctrine.clone()),
         };
         let seed = game.wrapping_mul(2).wrapping_add(side as u64);
-        let commander = setup.commanders[usize::from(side != learner)];
+        let commander = match setup.commanders[usize::from(side != learner)] {
+            Commander::Mix => {
+                [Commander::None, Commander::Utility, Commander::Random][(game / 2 % 3) as usize]
+            }
+            other => other,
+        };
         let brain = if side == learner {
             Some(setup.brain.clone())
         } else {
@@ -329,6 +436,11 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
             let mut planner = SideCommand::from_config(&config, seed, reg);
             if commander == Commander::Random {
                 planner = planner.with_random_missions();
+            }
+            if commander == Commander::Learned {
+                planner = planner
+                    .with_command_brain(setup.command_brain.clone())
+                    .command_tapped(command_tap.clone());
             }
             if let Some(brain) = brain {
                 planner = planner.with_brain(brain);
@@ -426,6 +538,7 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
     }
     drop(ai);
     let decisions = tap.lock().map(|r| r.clone()).unwrap_or_default();
+    let commands = command_tap.lock().map(|r| r.clone()).unwrap_or_default();
     Some(Battle {
         game,
         learner,
@@ -440,6 +553,8 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
         aimed,
         standoff,
         missions,
+        commands,
+        opponent_commander,
         victory_score: state.scenario.victory_score(),
         opponent: opponent(setup, game).map_or("utility".to_string(), |(name, _)| name.clone()),
         forces: matchup.map(|pair| [pair[0].id.clone(), pair[1].id.clone()]),
@@ -474,6 +589,20 @@ fn main() {
             eprintln!("error: --events: {e}");
             std::process::exit(1);
         });
+    }
+    // Any field of any block by its json path, as `balance --set` takes it,
+    // applied after the flags above so it has the last word.
+    for (_, text) in args
+        .iter()
+        .zip(args.iter().skip(1))
+        .filter(|(a, _)| *a == "--set")
+    {
+        let applied = tactics_core::harness::overrides::Override::parse(text)
+            .and_then(|ov| tactics_core::harness::overrides::apply_override(&mut reg, &ov));
+        if let Err(e) = applied {
+            eprintln!("error: --set {text}: {e}");
+            std::process::exit(1);
+        }
     }
     let path = flag(&args, "--net").expect("--net");
     // `utility` is the control: the teacher in the learner's seat, so a
@@ -537,6 +666,28 @@ fn main() {
             Commander::parse(flag(&args, "--commander")),
             Commander::parse(flag(&args, "--opponent-commander")),
         ],
+        command_brain: match flag(&args, "--commander") {
+            Some("uniform") => CommandBrain::Uniform,
+            Some("learned") => {
+                let path = flag(&args, "--commander-net").unwrap_or_else(|| {
+                    eprintln!("error: --commander learned needs --commander-net");
+                    std::process::exit(1);
+                });
+                let net = load_command_net(std::path::Path::new(path)).unwrap_or_else(|err| {
+                    eprintln!("error: --commander-net {path}: {err}");
+                    std::process::exit(1);
+                });
+                if args.iter().any(|a| a == "--commander-deterministic") {
+                    CommandBrain::Learned(net)
+                } else {
+                    CommandBrain::Explore {
+                        net,
+                        temperature: parse("--commander-temperature", 1.0) as f32,
+                    }
+                }
+            }
+            _ => CommandBrain::Utility,
+        },
         opponents: flag(&args, "--opponents")
             .map(|list| {
                 list.split(',')
@@ -568,51 +719,30 @@ fn main() {
     // written, and the JSON keeps everything else: parsing 800 MB of
     // numbers out of text was most of what a training update spent before
     // it learned anything.
+    // The crews' decisions under the plain suffixes, the commander's under
+    // `.cmd` ones: two streams with two widths.
     let mut arrays = args.iter().any(|a| a == "--arrays").then(|| {
-        let beside = |ext: &str| {
-            let mut name = out.as_os_str().to_owned();
-            name.push(ext);
-            std::path::PathBuf::from(name)
-        };
-        std::fs::write(
-            beside(".arrays.json"),
-            serde_json::json!({
-                "context": tactics_core::ai::features::context_names().len(),
-                "candidate": tactics_core::ai::features::CANDIDATE.len(),
-            })
-            .to_string(),
-        )
-        .expect("write the arrays' shape");
-        let open = |ext: &str| {
-            std::io::BufWriter::new(std::fs::File::create(beside(ext)).expect("open an array"))
-        };
         (
-            open(".context.f32"),
-            open(".candidates.f32"),
-            open(".counts.u32"),
+            Arrays::open(
+                &out,
+                "",
+                tactics_core::ai::features::context_names(),
+                tactics_core::ai::features::CANDIDATE,
+            ),
+            Arrays::open(
+                &out,
+                ".cmd",
+                tactics_core::ai::commander::context_names(),
+                tactics_core::ai::commander::CANDIDATE,
+            ),
         )
     });
     let (mut won, mut lost, mut drawn, mut decisions) = (0, 0, 0, 0usize);
     let (mut by, mut on) = ([0u32; 3], [0u32; 3]);
     for battle in fought.iter_mut().flatten() {
-        if let Some((context, candidates, counts)) = &mut arrays {
-            for d in &mut battle.decisions {
-                for v in &d.context {
-                    context.write_all(&v.to_le_bytes()).expect("write an array");
-                }
-                for row in &d.candidates {
-                    for v in row {
-                        candidates
-                            .write_all(&v.to_le_bytes())
-                            .expect("write an array");
-                    }
-                }
-                counts
-                    .write_all(&(d.candidates.len() as u32).to_le_bytes())
-                    .expect("write an array");
-                d.context = Vec::new();
-                d.candidates = Vec::new();
-            }
+        if let Some((crews, command)) = &mut arrays {
+            crews.write(&mut battle.decisions);
+            command.write(&mut battle.commands);
         }
         match battle.winner {
             Some(w) if w == battle.learner => won += 1,
@@ -628,10 +758,9 @@ fn main() {
         file.write_all(b"\n").expect("write battle");
     }
     file.flush().expect("flush output");
-    if let Some((mut context, mut candidates, mut counts)) = arrays {
-        for f in [&mut context, &mut candidates, &mut counts] {
-            f.flush().expect("flush an array");
-        }
+    if let Some((mut crews, mut command)) = arrays {
+        crews.flush();
+        command.flush();
     }
     println!(
         "{games} battles on {}: learner won {won}, lost {lost}, drew {drawn}; {decisions} decisions",
@@ -658,6 +787,22 @@ fn main() {
     }
     for (name, [w, l, d]) in &against {
         println!("  against {name}: won {w}, lost {l}, drew {d}");
+    }
+    let mut commanded: std::collections::BTreeMap<&str, [u32; 3]> = Default::default();
+    for battle in fought.iter().flatten() {
+        let row = commanded.entry(battle.opponent_commander).or_default();
+        match battle.winner {
+            Some(w) if w == battle.learner => row[0] += 1,
+            Some(_) => row[1] += 1,
+            None => row[2] += 1,
+        }
+    }
+    for (name, [w, l, d]) in &commanded {
+        println!("  against a commander {name}: won {w}, lost {l}, drew {d}");
+    }
+    let commands: usize = fought.iter().flatten().map(|b| b.commands.len()).sum();
+    if commands > 0 {
+        println!("  the learner's commander decided {commands} times");
     }
     let mut with: std::collections::BTreeMap<&str, [u32; 3]> = Default::default();
     for battle in fought.iter().flatten() {

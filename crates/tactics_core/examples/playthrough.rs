@@ -372,6 +372,12 @@ fn main() {
                 Event::MissionReceived { formation, mission } => {
                     println!("   >> {formation} receives its orders: {mission:?}")
                 }
+                Event::MissionReleased { formation } => {
+                    println!("   >> {formation} is told to use its own judgment")
+                }
+                Event::ReleaseReceived { formation } => {
+                    println!("   >> {formation} hears it is to use its own judgment")
+                }
                 Event::MissionCompleted { formation, mission } => {
                     println!("   >> {formation} completes {mission:?} and takes up the next order")
                 }

@@ -103,6 +103,80 @@ fn orders_take_time_to_arrive_when_the_radio_says_so() {
 }
 
 #[test]
+fn a_platoon_handed_back_its_judgment_hears_it_late_and_then_has_no_mission() {
+    // "Use your judgment" is an order like any other: sent when it is
+    // given, landing when the wire says, and until it lands the platoon is
+    // still under what it was last told. Then nothing is left — no mission,
+    // no plan, nothing in the air — and her crews choose among the
+    // battle's objectives as a platoon nobody ordered does.
+    let mut reg = registry();
+    reg.command = Some(command_rules(999, true, 2));
+    let mut state = BattleState::from_map(&reg, "river_crossing", 5).expect("battle");
+    let armor = formation_named(&state, "kuhlmann_armor");
+    let bridge = state.scenario.objectives()[0].anchor();
+    state
+        .command
+        .set_mission(armor, Mission::Advance { to: bridge }, Latitude::Delegated);
+    state.command.queue_mission(
+        armor,
+        Mission::Hold { at: Some(bridge) },
+        Latitude::Delegated,
+    );
+
+    let events = state
+        .apply(&reg, &Order::ReleaseMission { formation: armor })
+        .expect("a formation of her side");
+    assert_eq!(
+        events,
+        vec![BattleEvent::MissionReleased {
+            formation: "kuhlmann_armor".into()
+        }],
+        "the release is said the moment it is given"
+    );
+    let platoon = &state.formations()[armor.index()];
+    assert_eq!(
+        platoon.mission,
+        Some(Mission::Advance { to: bridge }),
+        "but the platoon has not heard it"
+    );
+    assert_eq!(
+        platoon.latest_mission(),
+        None,
+        "and her commander knows she has said it"
+    );
+
+    commit_all(&reg, &mut state);
+    let first = state.step_tick(&reg);
+    assert!(
+        !first
+            .iter()
+            .any(|e| matches!(e, BattleEvent::ReleaseReceived { .. }))
+    );
+    assert!(state.formations()[armor.index()].mission.is_some());
+    let second = state.step_tick(&reg);
+    assert!(
+        second.iter().any(|e| matches!(
+            e,
+            BattleEvent::ReleaseReceived { formation } if formation == "kuhlmann_armor"
+        )),
+        "it lands on the second tick: {second:?}"
+    );
+    let platoon = &state.formations()[armor.index()];
+    assert_eq!(platoon.mission, None);
+    assert!(platoon.plan.is_empty(), "the plan goes with the mission");
+    assert!(platoon.incoming.is_none());
+    for &member in &platoon.members {
+        assert_eq!(
+            state
+                .formation_of(member)
+                .and_then(|f| f.mission_for(member)),
+            None,
+            "no crew of hers is under orders"
+        );
+    }
+}
+
+#[test]
 fn a_command_block_with_zero_coefficients_is_the_game_without_one() {
     // The additivity pin, and the one this chunk most needs: the first
     // reaction-latency attempt died because it broke tests at *any* setting of

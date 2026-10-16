@@ -129,6 +129,11 @@ pub enum Order {
         #[serde(default)]
         latitude: Latitude,
     },
+    /// Take a formation's mission away: "use your judgment". Its crews
+    /// choose for themselves among the battle's objectives again, as a
+    /// formation nobody has ordered does. Travels the wire as a mission
+    /// does, and lands as one would.
+    ReleaseMission { formation: FormationId },
     /// "…and then this": add a mission to the end of a formation's plan
     /// instead of replacing it. Refused behind a terminal mission — nothing
     /// follows a stand-fast or a retreat — and travels the wire exactly as a
@@ -518,6 +523,15 @@ pub enum Event {
         formation: String,
         mission: Mission,
     },
+    /// A formation was handed back its own judgment ([`Order::ReleaseMission`]):
+    /// the moment it was said, as [`Self::MissionAssigned`] is.
+    MissionReleased {
+        formation: String,
+    },
+    /// The release reached it, as [`Self::MissionReceived`] does.
+    ReleaseReceived {
+        formation: String,
+    },
     /// A formation finished the leg it was on and takes up the next one in
     /// its plan. Announced because a formation changing direction with no
     /// visible order behind it reads as disobedience — the promotion IS the
@@ -694,6 +708,8 @@ impl Event {
             // finished, and who is commanding it now.
             Event::MissionAssigned { formation, .. }
             | Event::MissionReceived { formation, .. }
+            | Event::MissionReleased { formation }
+            | Event::ReleaseReceived { formation }
             | Event::MissionCompleted { formation, .. }
             | Event::CommandPassed { formation, .. } => own_formation(formation),
 
@@ -946,6 +962,7 @@ impl BattleState {
                 mission,
                 latitude,
             } => self.push_mission(registry, *formation, mission.clone(), *latitude),
+            Order::ReleaseMission { formation } => self.release_mission(registry, *formation),
             Order::SetPlan {
                 side,
                 commander,
@@ -1179,6 +1196,42 @@ impl BattleState {
             formation: id,
             mission,
         }])
+    }
+
+    /// Hand a formation back its own judgment — [`Self::set_mission`] with no
+    /// mission, sharing its guard, its wire and its collecting of everyone.
+    fn release_mission(
+        &mut self,
+        registry: &DataRegistry,
+        formation: FormationId,
+    ) -> Result<Vec<Event>, OrderError> {
+        let f = self
+            .command
+            .get(formation)
+            .ok_or(OrderError::NoSuchFormation)?;
+        let (side, id) = (f.side, f.id.clone());
+        if self.has_committed(side) {
+            return Err(OrderError::AlreadyCommitted);
+        }
+        let delay = self.mission_delay(registry, formation);
+        if delay == 0 {
+            self.command.release(formation);
+        } else {
+            self.command
+                .set_incoming(formation, crate::battle::MissionChange::Release, delay);
+        }
+        let members = self
+            .command
+            .get(formation)
+            .map(|f| f.members.clone())
+            .unwrap_or_default();
+        for member in members {
+            if let Some(unit) = self.unit_mut(member) {
+                unit.orders = None;
+                unit.goal = None;
+            }
+        }
+        Ok(vec![Event::MissionReleased { formation: id }])
     }
 
     /// Add a mission to the end of a formation's plan — the queueing half of

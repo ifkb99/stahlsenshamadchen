@@ -163,7 +163,7 @@ fn scene<'a>(
 /// The cosine of the angle between two hex differences, through the cube
 /// dot product — a quantity a reflection preserves, because it negates
 /// neither or both. Zero for a zero vector.
-fn cosine(a: Hex, b: Hex) -> f32 {
+pub(crate) fn cosine(a: Hex, b: Hex) -> f32 {
     let (ab, aa, bb) = (
         along_the_bearing(a, b) as f32,
         along_the_bearing(a, a) as f32,

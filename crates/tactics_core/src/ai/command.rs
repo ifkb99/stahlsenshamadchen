@@ -156,8 +156,44 @@ pub struct SideCommand {
     /// Who chooses her executors' goals ([`Self::with_brain`]); handed out
     /// the way the tap is.
     brain: super::learned::GoalBrain,
-    /// Whether she gives her missions by a coin ([`Self::with_random_missions`]).
-    random_missions: bool,
+    /// Who decides her missions ([`CommandBrain`]): her own review, a coin,
+    /// or a network.
+    command_brain: CommandBrain,
+    /// Where a learned or uniform commander records her mission decisions,
+    /// if anywhere ([`Self::command_tapped`]).
+    command_tap: Option<super::features::GoalTap>,
+}
+
+/// Who gives a side's platoons their missions (REIMAGINED.md, L3).
+///
+/// `Utility` is the hand-written review this game has always had; `Random`
+/// its coin twin over the same vocabulary ([`SideCommand::with_random_missions`]).
+/// The other three decide each platoon in turn from the menu
+/// [`super::commander::options`] lays out, described by
+/// [`super::commander::describe`]: `Learned` takes the network's best,
+/// `Explore` samples its softmax and records the log-probability, as a
+/// policy in training does, and `Uniform` takes an option uniformly — the
+/// coin over that menu, recorded the same way, so the first network has
+/// numbers to be standardised on.
+#[derive(Debug, Clone, Default)]
+pub enum CommandBrain {
+    #[default]
+    Utility,
+    Random,
+    Learned(std::sync::Arc<crate::data::GoalNet>),
+    Explore {
+        net: std::sync::Arc<crate::data::GoalNet>,
+        temperature: f32,
+    },
+    Uniform,
+}
+
+/// SplitMix64, written out: a draw that must not move with the platform.
+fn mix(mut z: u64) -> u64 {
+    z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 impl SideCommand {
@@ -182,7 +218,8 @@ impl SideCommand {
             pending: VecDeque::new(),
             last_drill: false,
             playing_out: false,
-            random_missions: false,
+            command_brain: CommandBrain::Utility,
+            command_tap: None,
         }
     }
 
@@ -192,9 +229,120 @@ impl SideCommand {
     /// much the mission decision is worth at all — `random_goals` is its
     /// twin a level down — and it reads no doctrine, makes no plan and
     /// orders no withdrawal, so whatever it wins is the crews' doing.
-    pub fn with_random_missions(mut self) -> Self {
-        self.random_missions = true;
+    pub fn with_random_missions(self) -> Self {
+        self.with_command_brain(CommandBrain::Random)
+    }
+
+    /// The same commander, with `brain` deciding her missions.
+    pub fn with_command_brain(mut self, brain: CommandBrain) -> Self {
+        self.command_brain = brain;
         self
+    }
+
+    /// The same commander, with every mission decision a learned or uniform
+    /// brain takes recorded into `tap`. The hand-written review and the coin
+    /// record nothing.
+    pub fn command_tapped(mut self, tap: super::features::GoalTap) -> Self {
+        self.command_tap = Some(tap);
+        self
+    }
+
+    /// The review by a network or a coin over the learned menu (see
+    /// [`CommandBrain`]): every platoon of hers still on the field, in the
+    /// order of battle, each described against what the ones before it
+    /// were just given. Draws are a pure function of the planner's seed,
+    /// the round and the platoon, as the coin's are.
+    fn learned_review(&self, registry: &DataRegistry, state: &BattleState, side: u8) -> Vec<Order> {
+        use super::commander;
+        let mut plan = commander::plan_now(state);
+        let mut orders = Vec::new();
+        let mut decided = 0;
+        for (index, formation) in state.command.formations().iter().enumerate() {
+            if formation.side != side {
+                continue;
+            }
+            let options = commander::options(state, side, index);
+            if options.is_empty() {
+                continue;
+            }
+            let asking = commander::Asking {
+                side,
+                index,
+                plan: &plan,
+                decided_before: decided,
+                doctrine: self.doctrine_for(index),
+            };
+            let mut record = commander::describe(registry, state, &asking, &options);
+            let draw = mix(self.seed ^ mix(u64::from(state.round) << 32 | index as u64) ^ 0xC0DE);
+            let unit = (draw >> 11) as f64 / (1u64 << 53) as f64;
+            let scores = |net: &crate::data::GoalNet| -> Vec<f32> {
+                record
+                    .candidates
+                    .iter()
+                    .map(|row| net.score(&record.context, row))
+                    .collect()
+            };
+            let (chosen, logp) = match &self.command_brain {
+                CommandBrain::Learned(net) => {
+                    let mut best = 0;
+                    let scores = scores(net);
+                    // Strictly greater: a tie goes to the earlier option,
+                    // which is saying nothing.
+                    for (i, s) in scores.iter().enumerate() {
+                        if *s > scores[best] {
+                            best = i;
+                        }
+                    }
+                    (best, None)
+                }
+                CommandBrain::Explore { net, temperature } => {
+                    let logp = super::learned::log_softmax(&scores(net), *temperature);
+                    let mut acc = 0.0f64;
+                    let mut pick = logp.len() - 1;
+                    for (i, lp) in logp.iter().enumerate() {
+                        acc += f64::from(lp.exp());
+                        if unit < acc {
+                            pick = i;
+                            break;
+                        }
+                    }
+                    (pick, Some(logp[pick]))
+                }
+                _ => {
+                    let n = options.len();
+                    (
+                        ((unit * n as f64) as usize).min(n - 1),
+                        Some(-(n as f32).ln()),
+                    )
+                }
+            };
+            record.chosen = Some(chosen);
+            record.logp = logp;
+            if let Some(tap) = &self.command_tap
+                && let Ok(mut out) = tap.lock()
+            {
+                out.push(record);
+            }
+            match options[chosen].clone() {
+                commander::Choice::Keep => {}
+                commander::Choice::Release => {
+                    plan[index] = None;
+                    orders.push(Order::ReleaseMission {
+                        formation: FormationId(index as u32),
+                    });
+                }
+                commander::Choice::Give(mission) => {
+                    plan[index] = Some(mission.clone());
+                    orders.push(Order::SetMission {
+                        formation: FormationId(index as u32),
+                        mission,
+                        latitude: crate::battle::Latitude::Delegated,
+                    });
+                }
+            }
+            decided += 1;
+        }
+        orders
     }
 
     /// [`Self::mission_review`] by a coin (see [`Self::with_random_missions`]).
@@ -534,8 +682,10 @@ impl SideCommand {
     /// no-objective battle exactly the fight it was before commanders
     /// existed.
     fn mission_review(&self, registry: &DataRegistry, state: &BattleState, side: u8) -> Vec<Order> {
-        if self.random_missions {
-            return self.random_review(state, side);
+        match self.command_brain {
+            CommandBrain::Utility => {}
+            CommandBrain::Random => return self.random_review(state, side),
+            _ => return self.learned_review(registry, state, side),
         }
         let mut ground: Vec<(&Objective, Option<u8>)> = state
             .objectives()
@@ -1114,7 +1264,11 @@ impl SideCommand {
     /// about whether the crew firing it can see, and counting it would make
     /// every artillery battery the least scout-like thing on the field for
     /// the wrong reason.
-    fn eyes_share(registry: &DataRegistry, state: &BattleState, formation: &Formation) -> f32 {
+    pub(crate) fn eyes_share(
+        registry: &DataRegistry,
+        state: &BattleState,
+        formation: &Formation,
+    ) -> f32 {
         let ratio = registry.planner.eyes_ratio_percent;
         if ratio <= 0 {
             return 0.0;

@@ -22,6 +22,7 @@
 //! doctrine should still recognisably fight like massed armour, just badly.
 
 mod command;
+pub mod commander;
 mod driver;
 mod eval;
 pub mod features;
@@ -31,7 +32,7 @@ mod mcts;
 pub mod plan;
 mod utility;
 
-pub use command::SideCommand;
+pub use command::{CommandBrain, SideCommand};
 pub use driver::{AiDriver, Decision};
 pub use eval::{Evaluator, TileScore};
 pub use mcts::{MctsPlanner, determinize};

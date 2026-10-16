@@ -114,10 +114,14 @@ pub(super) fn format_formation(
         let verb = match change {
             tactics_core::battle::MissionChange::Replace { .. } => "In the air",
             tactics_core::battle::MissionChange::Append { .. } => "In the air (and then)",
+            tactics_core::battle::MissionChange::Release => "In the air",
         };
         lines.push(format!(
             "{verb}: {} ({})",
-            mission_sentence(state, Some(change.mission())),
+            match change.mission() {
+                Some(mission) => mission_sentence(state, Some(mission)),
+                None => "use your own judgment".into(),
+            },
             registry.scale.format_duration(*ticks)
         ));
         // An order in transit is the one the player just gave, and under a
@@ -125,7 +129,9 @@ pub(super) fn format_formation(
         // lands. Leaving the promise off this line would mean the panel
         // explained her decision to her only after it was too late to
         // change it.
-        lines.push(format!("  ({})", change.mission().promise()));
+        if let Some(mission) = change.mission() {
+            lines.push(format!("  ({})", mission.promise()));
+        }
         lines.push(format!("  ({})", change.latitude().mission_promise()));
     }
     for leg in &formation.plan {

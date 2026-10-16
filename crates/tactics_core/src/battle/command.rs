@@ -828,18 +828,27 @@ pub enum MissionChange {
         #[serde(default)]
         latitude: Latitude,
     },
+    /// No mission at all: the formation is handed back its own judgment, and
+    /// the plan goes with the mission it was behind. "Use your judgment" is
+    /// an order a commander gives, and it travels the wire like any other —
+    /// a platoon that has not heard it yet is still under the last thing it
+    /// was told.
+    Release,
 }
 
 impl MissionChange {
-    pub fn mission(&self) -> &Mission {
+    /// The mission this change leaves standing, `None` for a release.
+    pub fn mission(&self) -> Option<&Mission> {
         match self {
-            Self::Replace { mission, .. } | Self::Append { mission, .. } => mission,
+            Self::Replace { mission, .. } | Self::Append { mission, .. } => Some(mission),
+            Self::Release => None,
         }
     }
 
     pub fn latitude(&self) -> Latitude {
         match self {
             Self::Replace { latitude, .. } | Self::Append { latitude, .. } => *latitude,
+            Self::Release => Latitude::Delegated,
         }
     }
 }
@@ -916,7 +925,7 @@ impl Formation {
             // A replacement in the air supersedes the whole plan; an
             // amendment in the air lands at the end of it. Either way the
             // travelling order is the tail.
-            Some((change, _)) => Some(change.mission()),
+            Some((change, _)) => change.mission(),
             None => self.plan.back().or(self.mission.as_ref()),
         }
     }
@@ -1295,6 +1304,21 @@ impl CommandState {
     /// [`Self::queue_mission`] like any other, which is what makes the
     /// no-rules game the *same code path* rather than the same code path
     /// plus a branch.
+    /// Hand a formation back its own judgment, now: no mission, no plan,
+    /// and nothing still travelling. Returns whether the formation exists.
+    pub fn release(&mut self, formation: FormationId) -> bool {
+        match self.formations.get_mut(formation.index()) {
+            Some(f) => {
+                f.mission = None;
+                f.latitude = Latitude::Delegated;
+                f.incoming = None;
+                f.plan.clear();
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn set_incoming(
         &mut self,
         formation: FormationId,
@@ -1397,7 +1421,15 @@ impl BattleState {
                 None => false,
             };
             if arrived && let Some((change, _)) = formation.incoming.take() {
-                let mission = change.mission().clone();
+                let Some(mission) = change.mission().cloned() else {
+                    formation.mission = None;
+                    formation.latitude = Latitude::Delegated;
+                    formation.plan.clear();
+                    events.push(Event::ReleaseReceived {
+                        formation: formation.id.clone(),
+                    });
+                    continue;
+                };
                 match change {
                     MissionChange::Replace { mission, latitude } => {
                         formation.mission = Some(mission);
@@ -1412,6 +1444,7 @@ impl BattleState {
                         }
                         formation.latitude = latitude;
                     }
+                    MissionChange::Release => unreachable!("a release carries no mission"),
                 }
                 events.push(Event::MissionReceived {
                     formation: formation.id.clone(),

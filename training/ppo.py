@@ -104,17 +104,24 @@ def round_rewards(battle, w):
     return team, own
 
 
-def transitions(battles, w, gamma):
+def transitions(battles, w, gamma, stream="decisions"):
     """Every learner decision, with its reward over the rounds it governed,
-    the discount to the next decision, and whether one follows."""
+    the discount to the next decision, and whether one follows.
+
+    `stream` is `decisions` (the crews' goals) or `commands` (the
+    commander's missions, one chain per platoon). A commander has no skin of
+    her own in a platoon's fate beyond the side's, so her stream is paid the
+    team's reward alone; its `unit` is a platoon's index, not a crew."""
     rows = []
     seen = 0  # every decision written before this battle's, for `--arrays`
     for b in battles:
         team, own = round_rewards(b, w)
-        for k, d in enumerate(b["decisions"]):
+        if stream != "decisions":
+            own = defaultdict(dict)
+        for k, d in enumerate(b[stream]):
             d["_at"] = seen + k
-        seen += len(b["decisions"])
-        mine = [d for d in b["decisions"] if d["side"] == b["learner"] and d.get("logp") is not None]
+        seen += len(b[stream])
+        mine = [d for d in b[stream] if d["side"] == b["learner"] and d.get("logp") is not None]
         by_unit = defaultdict(list)
         for d in mine:
             by_unit[d["unit"]].append(d)
@@ -200,15 +207,17 @@ def pad(rows, mean, std, bucket=1):
     return xs, mask
 
 
-def read_arrays(rollouts):
+def read_arrays(rollouts, suffix=""):
     """The decisions' numbers a rollout wrote with `--arrays`, mapped rather
     than parsed: each decision's context row, every candidate row in
-    decision order, and how many candidates each had. `None` without them."""
-    shape_file = pathlib.Path(str(rollouts) + ".arrays.json")
+    decision order, and how many candidates each had. `None` without them.
+    `suffix` picks the stream: empty for the crews, `.cmd` for the
+    commander."""
+    shape_file = pathlib.Path(str(rollouts) + suffix + ".arrays.json")
     if not shape_file.exists():
         return None
     shape = json.loads(shape_file.read_text())
-    beside = lambda ext: pathlib.Path(str(rollouts) + ext)
+    beside = lambda ext: pathlib.Path(str(rollouts) + suffix + ext)
     counts = np.fromfile(beside(".counts.u32"), np.uint32).astype(np.int64)
     context = np.memmap(beside(".context.f32"), np.float32, "r").reshape(-1, shape["context"])
     candidates = np.memmap(beside(".candidates.f32"), np.float32, "r").reshape(-1, shape["candidate"])
@@ -269,6 +278,8 @@ def main():
     ap.add_argument("--clip", type=float, default=0.2)
     ap.add_argument("--entropy", type=float, default=0.01)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--stream", default="decisions", choices=["decisions", "commands"],
+                    help="whose decisions to learn from: the crews' goals or the commander's missions")
     # The tiers, an order of magnitude apart. `war`, `strategic` and
     # `tactical` read nothing on an arena battle and are kept so the scale is
     # set once.
@@ -280,10 +291,10 @@ def main():
     w = {k: getattr(args, f"w_{k}") for k, _ in tiers}
 
     battles = [json.loads(l) for l in args.rollouts.open()]
-    rows = transitions(battles, w, args.gamma)
+    rows = transitions(battles, w, args.gamma, args.stream)
     net, policy = load_policy(args.net)
     mean, std = np.asarray(net["mean"], np.float32), np.asarray(net["std"], np.float32)
-    arrays = read_arrays(args.rollouts)
+    arrays = read_arrays(args.rollouts, "" if args.stream == "decisions" else ".cmd")
     if arrays is None:
         xs, mask = pad(rows, mean, std, MENU_BUCKET)
     else:

@@ -1130,3 +1130,276 @@ fn a_commander_by_coin_gives_every_platoon_a_mission_and_the_same_seed_the_same_
         "a coin gives every kind of mission, gave {kinds:?}"
     );
 }
+
+// --- the commander (L3) -----------------------------------------------------
+
+/// A one-layer commander network: a single score, `weight` times the named
+/// candidate feature of [`tactics_core::ai::commander::CANDIDATE`].
+fn one_feature_commander(feature: &str, weight: f32) -> GoalNet {
+    use tactics_core::ai::commander;
+    let context = commander::context_names();
+    let width = context.len() + commander::CANDIDATE.len();
+    let at = context.len()
+        + commander::CANDIDATE
+            .iter()
+            .position(|f| *f == feature)
+            .expect("a commander feature");
+    let mut w = vec![vec![0.0]; width];
+    w[at][0] = weight;
+    GoalNet {
+        context,
+        candidate: commander::CANDIDATE.iter().map(|s| s.to_string()).collect(),
+        mean: vec![0.0; width],
+        std: vec![1.0; width],
+        layers: vec![Layer { w, b: vec![0.0] }],
+        trained_on: Default::default(),
+        probe: Vec::new(),
+    }
+}
+
+/// Every platoon's orders on side 0 after one planning round on a bought
+/// matchup on generated ground, under a commander built by `brain`, with
+/// her decisions recorded.
+fn commanded(
+    reg: &DataRegistry,
+    seed: u64,
+    brain: tactics_core::ai::CommandBrain,
+) -> (
+    Vec<Option<tactics_core::battle::Mission>>,
+    Vec<tactics_core::ai::features::GoalRecord>,
+) {
+    use tactics_core::force::{Purchase, buy};
+    use tactics_core::harness::arena::arena_named;
+    use tactics_core::harness::{forces, generated};
+    let arena = arena_named("ridge_arena").expect("the ridge arena");
+    let purchase = Purchase {
+        points: 90,
+        max_vehicles: 16,
+    };
+    let a = buy(reg, purchase, seed).expect("a force");
+    let b = buy(reg, purchase, seed + 1).expect("a force");
+    let made = generated::field(reg, arena, seed).expect("a generated field");
+    let mut state = forces::stage(reg, made.field, &made.deployment, [&a, &b], 1).expect("staged");
+    let config = AiConfig {
+        planner: "command".into(),
+        difficulty: 5,
+        doctrine: Some(a.doctrine.clone()),
+    };
+    let tap: GoalTap = Arc::new(Mutex::new(Vec::new()));
+    let mut ai = AiDriver::new();
+    ai.insert(
+        0,
+        Box::new(
+            SideCommand::from_config(&config, seed, reg)
+                .with_command_brain(brain)
+                .command_tapped(tap.clone()),
+        ),
+    );
+    ai.insert(
+        1,
+        make_battle_planner(
+            &AiConfig {
+                planner: "utility".into(),
+                ..config.clone()
+            },
+            seed,
+            reg,
+        ),
+    );
+    ai.plan_round(reg, &mut state);
+    let orders = state
+        .command
+        .formations()
+        .iter()
+        .filter(|f| f.side == 0)
+        .map(|f| f.latest_mission().cloned())
+        .collect();
+    let records = tap.lock().map(|r| r.clone()).unwrap_or_default();
+    (orders, records)
+}
+
+#[test]
+fn a_commanders_menu_offers_saying_nothing_first_then_every_objective_nearest_first_then_a_base_of_fire()
+ {
+    use tactics_core::ai::commander::{Choice, options};
+    use tactics_core::battle::Mission;
+    let reg = common::registry();
+    let (state, _) = mirrored_hills(&reg, 0);
+    let formations = state.command.formations();
+    let index = formations
+        .iter()
+        .position(|f| f.side == 0)
+        .expect("a platoon");
+    let menu = options(&state, 0, index);
+    assert_eq!(menu[0], Choice::Keep, "saying nothing comes first");
+    // Nobody has been given anything yet, so there is no judgment to hand
+    // back.
+    assert!(!menu.contains(&Choice::Release));
+    assert_eq!(menu[1], Choice::Give(Mission::Hold { at: None }));
+    let at = formations[index]
+        .leader
+        .and_then(|id| state.unit(id))
+        .expect("a leader")
+        .pos;
+    // Each objective's four orders together, nearest the platoon first.
+    let ground: Vec<_> = menu
+        .iter()
+        .filter_map(|c| match c.mission() {
+            Some(Mission::Advance { to }) => Some(*to),
+            _ => None,
+        })
+        .collect();
+    let open = state
+        .objectives()
+        .filter(|(o, _)| o.kind == tactics_core::map::ObjectiveKind::Hold && o.open_to(0))
+        .count();
+    assert!(open > 0);
+    assert_eq!(ground.len(), open);
+    assert!(
+        ground
+            .windows(2)
+            .all(|w| w[0].distance_to(at) <= w[1].distance_to(at)),
+        "objectives nearest first: {ground:?}"
+    );
+    for to in &ground {
+        for mission in [
+            Mission::Assault { to: *to },
+            Mission::Hold { at: Some(*to) },
+            Mission::Recon { toward: *to },
+        ] {
+            assert!(menu.contains(&Choice::Give(mission)));
+        }
+    }
+    // A base of fire for every other platoon of hers, and none for herself
+    // or for the enemy's.
+    let supports: Vec<_> = menu
+        .iter()
+        .filter_map(|c| match c.mission() {
+            Some(Mission::Support { formation }) => Some(formation.clone()),
+            _ => None,
+        })
+        .collect();
+    let others: Vec<_> = formations
+        .iter()
+        .enumerate()
+        .filter(|(i, f)| *i != index && f.side == 0)
+        .map(|(_, f)| f.id.clone())
+        .collect();
+    assert_eq!(supports, others);
+}
+
+#[test]
+fn a_platoon_and_her_mirror_twin_are_described_identically_by_their_commanders() {
+    use tactics_core::ai::commander::{Asking, describe, options, plan_now};
+    for closer in [0, 7] {
+        let reg = common::seen(common::registry());
+        let (state, _) = mirrored_hills(&reg, closer);
+        let doctrine = reg.doctrine("massed_armor").cloned().expect("doctrine");
+        let formations = state.command.formations();
+        let ours: Vec<usize> = (0..formations.len())
+            .filter(|i| formations[*i].side == 0)
+            .collect();
+        let theirs: Vec<usize> = (0..formations.len())
+            .filter(|i| formations[*i].side == 1)
+            .collect();
+        assert_eq!(ours.len(), theirs.len());
+        let plan = plan_now(&state);
+        for (&a, &b) in ours.iter().zip(&theirs) {
+            let read = |side: u8, index: usize| {
+                let menu = options(&state, side, index);
+                let asking = Asking {
+                    side,
+                    index,
+                    plan: &plan,
+                    decided_before: 0,
+                    doctrine: &doctrine,
+                };
+                describe(&reg, &state, &asking, &menu)
+            };
+            let (ra, rb) = (read(0, a), read(1, b));
+            assert!(
+                close(&ra.context, &rb.context),
+                "{} and her twin read different contexts:\n{:?}\n{:?}",
+                formations[a].id,
+                ra.context,
+                rb.context
+            );
+            let (ca, cb) = (sorted_rows(ra.candidates), sorted_rows(rb.candidates));
+            assert_eq!(ca.len(), cb.len());
+            for (x, y) in ca.iter().zip(&cb) {
+                assert!(
+                    close(x, y),
+                    "{} and her twin read an order differently:\n{x:?}\n{y:?}",
+                    formations[a].id
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_commander_by_coin_over_the_menu_records_every_platoons_decision_and_the_same_seed_the_same_ones()
+ {
+    use tactics_core::ai::CommandBrain;
+    use tactics_core::ai::commander::{CANDIDATE, CONTEXT};
+    let reg = common::registry();
+    for seed in 0..4 {
+        let (orders, records) = commanded(&reg, seed, CommandBrain::Uniform);
+        assert_eq!(
+            records.len(),
+            orders.len(),
+            "seed {seed}: one decision a platoon"
+        );
+        for r in &records {
+            assert_eq!(r.context.len(), CONTEXT.len());
+            assert!(r.candidates.iter().all(|row| row.len() == CANDIDATE.len()));
+            let chosen = r.chosen.expect("a choice");
+            assert!(chosen < r.candidates.len());
+            let logp = r.logp.expect("a coin says how likely its choice was");
+            assert!((logp + (r.candidates.len() as f32).ln()).abs() < 1e-5);
+            assert!(
+                r.context
+                    .iter()
+                    .chain(r.candidates.iter().flatten())
+                    .all(|x| x.is_finite())
+            );
+        }
+        let again = commanded(&reg, seed, CommandBrain::Uniform);
+        assert_eq!(orders, again.0, "seed {seed}: the coin is the seed's");
+        assert_eq!(
+            records.iter().map(|r| r.chosen).collect::<Vec<_>>(),
+            again.1.iter().map(|r| r.chosen).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn a_learned_commander_gives_the_order_its_network_scores_highest() {
+    use tactics_core::ai::CommandBrain;
+    use tactics_core::battle::Mission;
+    let reg = common::registry();
+    let net = |feature: &str| CommandBrain::Learned(Arc::new(one_feature_commander(feature, 1.0)));
+    for seed in 0..3 {
+        let (orders, _) = commanded(&reg, seed, net("assault"));
+        assert!(
+            orders
+                .iter()
+                .all(|m| matches!(m, Some(Mission::Assault { .. }))),
+            "seed {seed}: {orders:?}"
+        );
+        let (orders, _) = commanded(&reg, seed, net("support"));
+        assert!(
+            orders
+                .iter()
+                .all(|m| matches!(m, Some(Mission::Support { .. }))),
+            "seed {seed}: {orders:?}"
+        );
+        // Saying nothing is the first option, so a network that likes it
+        // gives no orders at all.
+        let (orders, _) = commanded(&reg, seed, net("keep"));
+        assert!(
+            orders.iter().all(Option::is_none),
+            "seed {seed}: {orders:?}"
+        );
+    }
+}
