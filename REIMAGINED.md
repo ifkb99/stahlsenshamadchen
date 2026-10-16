@@ -885,6 +885,48 @@ against +0.1, and the gain from the score. Given five rounds of approach
 and kilometres of room it still does not go round, and nothing in the
 reward pays it to.
 
+*What a commander is worth (2026-10-16).* Forces are platoons now, each a
+formation led by its first vehicle (`ForceUnit::platoons`), and can be
+bought: `platoons/` is a catalogue priced by chassis cost, `force::buy`
+draws platoons evenly to a budget, and the doctrine is read from the mix
+(`force::doctrine_for`). `SideCommand::with_random_missions` gives each
+platoon an advance, assault or hold on any objective, or a hold in place,
+by a coin per review. On open ground, teacher crews on both sides, the
+learner's side commanded and the opponent's not, fresh seeds 7,000,000 and
+9,000,000, 2,304 battles a row (±1.0 point):
+
+| learner's side | bought forces (70–100 points) | hand-written forces |
+| --- | --- | --- |
+| no commander (control) | 49.7% | 50.1% |
+| the hand-written commander | 42.3% | 42.7% |
+| a coin | 33.1% | 33.2% |
+| the hand-written commander, against a coin | 57.9% | |
+| open-ground crew net, no commander | 55.0% | 57.5% |
+| the same net under the hand-written commander | 51.3% | |
+| the same net against a hand-written commander | 60.2% | |
+
+**The mission decision is load-bearing**: a coin costs 17 points against
+crews left to choose, more than the crews' own goal decision was worth on
+the ridge (a coin there lost 40–60). **And the commander the game has
+loses 7 points to having none**, on both kinds of force. It is not the
+doctrine that devolves: recon_pull hands everything down and reads 52%
+under it as without; bounding overwatch falls 56% → 33%, delaying action
+42% → 32%, massed armour 56% → 44%. It gives about two missions a battle
+— an objective each by round robin, rarely revised — and a mission
+replaces a crew's candidate list (the ordered hex, her sweep tile, and
+places that carry the order out), so her approach places and the other
+objectives go. A learned commander has seven points to make up before it
+has done anything a commander is for, and a coin's seventeen below to
+show the decision is real. The crew net, which has never seen an order,
+keeps most of its gain under one (51.3% against the teacher's 42.3% in
+the same seat), and platoons alone did not move it (57.5% on the
+hand-written forces, 57.0% before).
+
+Bought matchups are about as even as the hand-written ones: by the
+learner's doctrine, with the teacher in both seats, 42% (delaying action,
+the infantry-heavy buys) to 56%, against 42–58% for the five company
+teams.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or
