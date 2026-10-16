@@ -47,10 +47,63 @@ pub struct GeneratedField {
     pub deployment: Vec<(Hex, Hex)>,
 }
 
+/// How the arena's deployment is laid on the ground: how far apart, and
+/// along which axis. The default is the arena's own, unchanged.
+///
+/// The question it exists for (REIMAGINED.md, *Flanks*): the arena puts the
+/// two forces 18 hexes apart, inside the heavy gun's reach and one round's
+/// drive from the 75's, so a battle is decided by the shooting before a
+/// manoeuvre could be worth anything. Spreading them across the map gives
+/// the approach a phase of its own; turning the axis stops every battle
+/// being fought along the same line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Layout {
+    /// The deployment's distance from the centre, in percent of the arena's.
+    pub spread_percent: u32,
+    /// Turn the axis by a sixth of a circle a step, chosen per world.
+    pub turned: bool,
+}
+
+impl Default for Layout {
+    fn default() -> Self {
+        Self {
+            spread_percent: 100,
+            turned: false,
+        }
+    }
+}
+
+impl Layout {
+    /// Where `want` (an arena deployment hex) lands under this layout, on
+    /// the world `seed` makes. The turn is drawn from the seed, so both
+    /// seatings of a world share it.
+    fn lay(&self, centre: Hex, want: Hex, seed: u64) -> Hex {
+        let d = want - centre;
+        let scale = |v: i32| (v * self.spread_percent as i32 + 50).div_euclid(100);
+        let spread = Hex::new(scale(d.x), scale(d.y));
+        let turns = if self.turned {
+            ((seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) % 6) as u32
+        } else {
+            0
+        };
+        centre + spread.rotate_cw(turns)
+    }
+}
+
 /// The battlefield `seed` makes, with `arena`'s deployment moved onto it.
 /// `None` when the registry has no world generator, or the world cannot be
 /// made.
 pub fn field(reg: &DataRegistry, arena: &Arena, seed: u64) -> Option<GeneratedField> {
+    field_laid_out(reg, arena, seed, Layout::default())
+}
+
+/// [`field`], with the deployment laid out by `layout`.
+pub fn field_laid_out(
+    reg: &DataRegistry,
+    arena: &Arena,
+    seed: u64,
+    layout: Layout,
+) -> Option<GeneratedField> {
     let rules = crate::data::WorldGen {
         radius: WORLD_RADIUS,
         ..reg.worldgen.clone()?
@@ -101,7 +154,8 @@ pub fn field(reg: &DataRegistry, arena: &Arena, seed: u64) -> Option<GeneratedFi
     };
     let mut deployment = Vec::new();
     for (west, east) in arena.deployment() {
-        deployment.push((place(west)?, place(east)?));
+        let lay = |want: Hex| layout.lay(centre, want, seed);
+        deployment.push((place(lay(west))?, place(lay(east))?));
     }
 
     // The ground worth having: the highest within reach of the centre, then

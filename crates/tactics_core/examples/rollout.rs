@@ -46,6 +46,10 @@ rollout: battles for reinforcement learning, learner against the utility AI
   --arena NAME        battlefield (default ridge_arena); with --ground generated,
                       whose forces and deployment are moved onto generated ground
   --ground generated  a fresh generated world every two games (one per seat)
+  --spread PERCENT    with --ground generated, the deployment's distance from
+                      the centre in percent of the arena's (default 100)
+  --turned            with --ground generated, turn each world's axis of
+                      advance by a sixth of a circle a step, drawn per world
   --forces LIST|all   draw each world's matchup from these forces (forces/ in
                       the mod), each side fighting by its force's doctrine
   --deterministic     the learner takes its best choice instead of sampling
@@ -152,6 +156,8 @@ struct Setup<'a> {
     /// (`harness::generated`) instead of on the arena's own ground: two games
     /// a world, so the learner has each seat on it.
     generated: bool,
+    /// How the deployment is laid on generated ground (`--spread`, `--turned`).
+    layout: generated::Layout,
     /// The forces battles are drawn from (`--forces`): each world gets a
     /// matchup, both seatings, each side fighting by its force's doctrine.
     /// Empty is the arena's own symmetric force.
@@ -193,7 +199,7 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
     let reg = setup.reg;
     let matchup = matchup(setup, game);
     let (field, deployment) = if setup.generated {
-        let made = generated::field(reg, setup.arena, game / 2)?;
+        let made = generated::field_laid_out(reg, setup.arena, game / 2, setup.layout)?;
         (made.field, made.deployment)
     } else {
         (setup.arena.map()?, setup.arena.deployment())
@@ -383,6 +389,13 @@ fn main() {
         brain,
         difficulty,
         generated: flag(&args, "--ground") == Some("generated"),
+        layout: generated::Layout {
+            spread_percent: flag(&args, "--spread").map_or(100, |s| {
+                s.parse()
+                    .unwrap_or_else(|_| panic!("--spread takes a percent, got {s}"))
+            }),
+            turned: args.iter().any(|a| a == "--turned"),
+        },
         forces: match flag(&args, "--forces") {
             None => Vec::new(),
             Some("all") => {

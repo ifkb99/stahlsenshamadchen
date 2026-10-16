@@ -687,6 +687,59 @@ fn a_generated_battlefield_is_a_function_of_its_seed_with_forces_on_ground_they_
     );
 }
 
+#[test]
+fn a_spread_layout_starts_the_forces_further_apart_and_a_turned_one_along_other_axes() {
+    use tactics_core::harness::arena::arena_named;
+    use tactics_core::harness::generated::{Layout, field, field_laid_out};
+    let reg = common::registry();
+    let arena = arena_named("ridge_arena").expect("the ridge arena");
+    // How far apart the two forces stand, on average over the pairs.
+    let apart = |deployment: &[(tactics_core::Hex, tactics_core::Hex)]| {
+        let n = deployment.len() as i32;
+        deployment
+            .iter()
+            .map(|(a, b)| a.distance_to(*b))
+            .sum::<i32>()
+            / n
+    };
+    let spread = Layout {
+        spread_percent: 200,
+        turned: false,
+    };
+    let turned = Layout {
+        spread_percent: 100,
+        turned: true,
+    };
+    let mut axes = std::collections::BTreeSet::new();
+    for seed in 0..12 {
+        let plain = field(&reg, arena, seed).expect("a generated field");
+        assert_eq!(
+            field_laid_out(&reg, arena, seed, Layout::default())
+                .expect("the default layout")
+                .deployment,
+            plain.deployment,
+            "seed {seed}: the default layout is the arena's own"
+        );
+        let far = field_laid_out(&reg, arena, seed, spread).expect("a spread field");
+        assert!(
+            apart(&far.deployment) >= apart(&plain.deployment) + 12,
+            "seed {seed}: {} apart spread, {} as the arena laid them",
+            apart(&far.deployment),
+            apart(&plain.deployment)
+        );
+        let (a, b) = field_laid_out(&reg, arena, seed, turned)
+            .expect("a turned field")
+            .deployment[0];
+        // Which way side 1 lies from side 0, by their first pair.
+        axes.insert(a.main_direction_to(b).index());
+    }
+    assert!(
+        axes.len() >= 3,
+        "twelve worlds were fought along {} axes",
+        axes.len()
+    );
+}
+
 // --- forces -----------------------------------------------------------------
 
 #[test]

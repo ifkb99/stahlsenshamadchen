@@ -68,6 +68,7 @@ def evaluate(net, places, arena, games, events="none"):
 
 FORCES = []  # set from --forces in main; passed to every rollout
 APPROACH = [0]  # set from --approach in main
+LAYOUT = []  # set from --spread and --turned in main: how generated ground is laid out
 
 
 def evaluate_generated(net, places, arena, games, events="none", seed=1_000_000):
@@ -77,7 +78,7 @@ def evaluate_generated(net, places, arena, games, events="none", seed=1_000_000)
     common = ["--net", str(net), "--deterministic", "--ground", "generated", "--arena", arena,
               "--places", str(places), "--approach", str(APPROACH[0]), "--events", events,
               "--out", str(ROOT / "target" / "rl" / "eval.jsonl"),
-              *(["--forces", FORCES[0]] if FORCES else [])]
+              *(["--forces", FORCES[0]] if FORCES else []), *LAYOUT]
     out = cargo("rollout", *common, "--games", str(games), "--seed", str(seed))
     # The learner's record with each force: overfitting to one method shows
     # as one force carrying the average.
@@ -107,6 +108,10 @@ def main():
     ap.add_argument("--ground", default="arena", choices=["arena", "generated"],
                     help="train and evaluate on the arena, or on a fresh generated world every two games")
     ap.add_argument("--forces", help="draw matchups from these forces (a list, or all)")
+    ap.add_argument("--spread", type=int, default=100,
+                    help="generated ground: the deployment's distance from the centre, percent of the arena's")
+    ap.add_argument("--turned", action="store_true",
+                    help="generated ground: turn each world's axis of advance, drawn per world")
     ap.add_argument("--events", default="none", help="planner.goal_events for every battle: a list, all, or none")
     ap.add_argument("--eval-every", type=int, default=5)
     ap.add_argument("--league", type=int, default=0, help="past checkpoints kept as opponents (0: utility only)")
@@ -121,6 +126,7 @@ def main():
     if args.forces:
         FORCES.append(args.forces)
     APPROACH[0] = args.approach
+    LAYOUT.extend(["--spread", str(args.spread), *(["--turned"] if args.turned else [])])
     args.dir.mkdir(parents=True, exist_ok=True)
     log = args.dir / "log.csv"
 
@@ -148,7 +154,7 @@ def main():
                         "--seed", str(it * args.games), "--temperature", str(args.temperature),
                         "--places", str(args.places), "--approach", str(args.approach),
                         "--arena", args.arena, "--events", args.events,
-                        "--ground", args.ground, *(["--forces", args.forces] if args.forces else []),
+                        "--ground", args.ground, *(["--forces", args.forces] if args.forces else []), *LAYOUT,
                         "--out", str(rollouts))
             m = re.search(r"learner won (\d+), lost (\d+)", out)
             rw, rl = (int(m.group(1)), int(m.group(2))) if m else ("", "")
