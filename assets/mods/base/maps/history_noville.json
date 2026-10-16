@@ -1,0 +1,945 @@
+{
+    "id": "history_noville",
+    "name": "Noville, 19 December 1944",
+    "kind": "battle",
+    "palette": {
+        "f": "forest",
+        "g": "grass",
+        "m": "mud",
+        "R": "road",
+        "s": "stream",
+        "t": "town"
+    },
+    "rows": [
+        "          mmmmgRggggggRgggggggg",
+        "         mmmmggRggggggRgggggggg",
+        "         mmmmgggRgggggRggggggggg",
+        "        mmmmggggRggggRgggggggggg",
+        "        gggggggggRggggRgggggggggg",
+        "       ggggggggggRgggRggggggggfgg",
+        "       gggggggggggRggRtgggggggffgg",
+        "      ggggggggggggRgtRtgggggggfggg",
+        "      gggggggggggggRtRttggggggggggg",
+        "     gggggggggggmggRRttgggggggggggg",
+        "     ggggggggggggggtRRtggggggggggggg",
+        "    gggggggggggggggtRRtggggggggggggg",
+        "    sggggggggggggggRRtRRRRRRggggggggg",
+        "   sggggggggggggRRRRtggggggRRRRRRgggg",
+        "   sggggggggtRRRRgttRtggggggffffgRRRRR",
+        "  sggggggggRRgggggtRtgggggggfffggggggR",
+        "  gsgggggggRtggggggRggggggggggggggggggg",
+        " gsgggggggRgggggggRgggggggggggggggggggg",
+        " gsggggggRRgggggggRRgggggggggggggggggggg",
+        "ggggggggRgggggggggRggggggggggggggggggggg",
+        "ggggggggRgggggggggRgggggggggggggggggggggg",
+        "ggggggRRgggggggggRgggggggggggggggggggggg",
+        " gggggRRgggggggggRRggggggggggggggggggggg",
+        " ggggRgggggggggggRggggggggggggggggggggg",
+        "  ggRRgggggggggggRggggggggggggggggggggg",
+        "  gRRgggggggggggRggggggggggggggggggggg",
+        "   RggggggggggggRggggggggggggggggggggg",
+        "   RgggggggggggRRgggggggggggggggggggg",
+        "    RggggggggggRRgggggggggggggggggggg",
+        "    RggggggggggRgggggggggggggggggggg",
+        "     RRggggggggRgggggggggggggggggggg",
+        "     gRRggggggRgggggggggggggggggggg",
+        "      gRRgggggRgggggggggggggggggggg",
+        "      ggRRgggRgggggggggggggggggggg",
+        "       ggRRggRgggggggggggggggggggg",
+        "       gggRRRtggggggggggggggggggg",
+        "        gggtRRtgggggggggggggggggg",
+        "        gggtRtgggggggggggggggggg",
+        "         gggRtgggggggggggggggggg",
+        "         ffRggggggggggggggggggg",
+        "          fRfffffgggggggggggggg"
+    ],
+    "elevation": [
+        "          111233344444455556666",
+        "         1112334444455555556666",
+        "         22223444555555555556667",
+        "        222234445555555555556677",
+        "        3333333444444555555556677",
+        "       33444333444444445555556777",
+        "       444454333444344455556666778",
+        "      4455554333333445556666667788",
+        "      55555554333334455666666777889",
+        "     555555544332344556666777778899",
+        "     5565555543333445556666777788999",
+        "    666665554433334556666677778899aa",
+        "    666655554444344555555667788899aaa",
+        "   666555544444444555555666788899aaaa",
+        "   766554444444455555555566778999aaaaa",
+        "  7665544444445555555555566788899aaaaa",
+        "  7665544444455555555555566778888999aaa",
+        " 76555444445555555555666666778878899aaa",
+        " 7665554444555555555666666677877888999aa",
+        "766555445555555556666666666777788889999a",
+        "76655554555555666666666666667778888899999",
+        "6665555555555666666666666667777788889999",
+        " 655555556666666666666666777777778888999",
+        " 55555556666666677776677777777777888999",
+        "  6555666666666677777777877777777888899",
+        "  666666776666677777777888887777888899",
+        "   66677777666677777778898888888888899",
+        "   6677777767777777788899999888888899",
+        "    6777777677777777889999a9989999999",
+        "    777777767778877889999aaa999a9999",
+        "     77777777778887788999aaa999aa999",
+        "     888777777888878899aaaaa999aa99",
+        "      888777778888888899aaaaa9aaaaa",
+        "      88877788888888899aaaaaaaaaaa",
+        "       8878888888888899aabbbaaaaaa",
+        "       888888888888899aabbbbaabbb",
+        "        988888888888899abbbbbabbb",
+        "        99999888888899aabbbbbbbb",
+        "         99999988888899abbbbbbbb",
+        "         a999999888899aabbbbccc",
+        "          a99999998899aabbbcccc"
+    ],
+    "sides": [
+        {
+            "name": "2. Panzer-Division",
+            "ai": {
+                "planner": "command",
+                "difficulty": 4,
+                "doctrine": "massed_armor"
+            }
+        },
+        {
+            "name": "Team Desobry"
+        }
+    ],
+    "formations": [
+        {
+            "id": "pz_north_1",
+            "name": "Panzer company, north (1)",
+            "side": 0
+        },
+        {
+            "id": "pz_north_2",
+            "name": "Panzer company, north (2)",
+            "side": 0
+        },
+        {
+            "id": "pz_east",
+            "name": "Panzer company, south-east ridge",
+            "side": 0
+        },
+        {
+            "id": "grenadiers",
+            "name": "Panzergrenadiers",
+            "side": 0
+        },
+        {
+            "id": "pz_artillery",
+            "name": "Divisional artillery",
+            "side": 0
+        },
+        {
+            "id": "desobry_north",
+            "name": "B/3rd Tank, north edge",
+            "side": 1
+        },
+        {
+            "id": "desobry_east",
+            "name": "B/3rd Tank, Bourcy road",
+            "side": 1
+        },
+        {
+            "id": "desobry_west",
+            "name": "B/3rd Tank, Vaux road",
+            "side": 1
+        },
+        {
+            "id": "b20_infantry",
+            "name": "B/20th Armored Infantry",
+            "side": 1
+        },
+        {
+            "id": "td_609",
+            "name": "609th Tank Destroyers",
+            "side": 1
+        },
+        {
+            "id": "cavalry",
+            "name": "90th Cavalry Recon",
+            "side": 1
+        },
+        {
+            "id": "us_artillery",
+            "name": "420th Armored Field Artillery",
+            "side": 1
+        }
+    ],
+    "units": [
+        {
+            "at": [
+                14,
+                3
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer N 1",
+            "formation": "pz_north_1",
+            "leads": true
+        },
+        {
+            "at": [
+                13,
+                3
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer N 2",
+            "formation": "pz_north_1"
+        },
+        {
+            "at": [
+                14,
+                2
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer N 3",
+            "formation": "pz_north_1"
+        },
+        {
+            "at": [
+                13,
+                4
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer N 4",
+            "formation": "pz_north_1"
+        },
+        {
+            "at": [
+                16,
+                2
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer N 5",
+            "formation": "pz_north_1"
+        },
+        {
+            "at": [
+                26,
+                5
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer NE 1",
+            "formation": "pz_north_2",
+            "leads": true
+        },
+        {
+            "at": [
+                25,
+                5
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer NE 2",
+            "formation": "pz_north_2"
+        },
+        {
+            "at": [
+                26,
+                6
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer NE 3",
+            "formation": "pz_north_2"
+        },
+        {
+            "at": [
+                28,
+                4
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer NE 4",
+            "formation": "pz_north_2"
+        },
+        {
+            "at": [
+                25,
+                6
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer NE 5",
+            "formation": "pz_north_2"
+        },
+        {
+            "at": [
+                32,
+                14
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer SE 1",
+            "formation": "pz_east",
+            "leads": true
+        },
+        {
+            "at": [
+                32,
+                13
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer SE 2",
+            "formation": "pz_east"
+        },
+        {
+            "at": [
+                31,
+                13
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer SE 3",
+            "formation": "pz_east"
+        },
+        {
+            "at": [
+                34,
+                14
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer SE 4",
+            "formation": "pz_east"
+        },
+        {
+            "at": [
+                32,
+                12
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer SE 5",
+            "formation": "pz_east"
+        },
+        {
+            "at": [
+                34,
+                15
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panzer SE 6",
+            "formation": "pz_east"
+        },
+        {
+            "at": [
+                17,
+                3
+            ],
+            "side": 0,
+            "vehicle": "halftrack",
+            "name": "Grenadiers 1",
+            "formation": "grenadiers",
+            "leads": true
+        },
+        {
+            "at": [
+                17,
+                3
+            ],
+            "aboard_at": [
+                17,
+                3
+            ],
+            "side": 0,
+            "vehicle": "rifle_platoon",
+            "name": "Grenadiers 1's section",
+            "formation": "grenadiers"
+        },
+        {
+            "at": [
+                18,
+                2
+            ],
+            "side": 0,
+            "vehicle": "halftrack",
+            "name": "Grenadiers 2",
+            "formation": "grenadiers"
+        },
+        {
+            "at": [
+                18,
+                2
+            ],
+            "aboard_at": [
+                18,
+                2
+            ],
+            "side": 0,
+            "vehicle": "rifle_platoon",
+            "name": "Grenadiers 2's section",
+            "formation": "grenadiers"
+        },
+        {
+            "at": [
+                19,
+                2
+            ],
+            "side": 0,
+            "vehicle": "halftrack",
+            "name": "Grenadiers 3",
+            "formation": "grenadiers"
+        },
+        {
+            "at": [
+                19,
+                2
+            ],
+            "aboard_at": [
+                19,
+                2
+            ],
+            "side": 0,
+            "vehicle": "rifle_platoon",
+            "name": "Grenadiers 3's section",
+            "formation": "grenadiers"
+        },
+        {
+            "at": [
+                19,
+                3
+            ],
+            "side": 0,
+            "vehicle": "halftrack",
+            "name": "Grenadiers 4",
+            "formation": "grenadiers"
+        },
+        {
+            "at": [
+                19,
+                3
+            ],
+            "aboard_at": [
+                19,
+                3
+            ],
+            "side": 0,
+            "vehicle": "rifle_platoon",
+            "name": "Grenadiers 4's section",
+            "formation": "grenadiers"
+        },
+        {
+            "at": [
+                34,
+                8
+            ],
+            "side": 0,
+            "vehicle": "artillery",
+            "name": "Battery 1",
+            "formation": "pz_artillery",
+            "leads": true
+        },
+        {
+            "at": [
+                33,
+                6
+            ],
+            "side": 0,
+            "vehicle": "artillery",
+            "name": "Battery 2",
+            "formation": "pz_artillery"
+        },
+        {
+            "at": [
+                21,
+                8
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman N 1",
+            "formation": "desobry_north",
+            "leads": true
+        },
+        {
+            "at": [
+                22,
+                8
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman N 2",
+            "formation": "desobry_north"
+        },
+        {
+            "at": [
+                21,
+                10
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman N 3",
+            "formation": "desobry_north"
+        },
+        {
+            "at": [
+                22,
+                10
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman N 4",
+            "formation": "desobry_north"
+        },
+        {
+            "at": [
+                23,
+                12
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman E 1",
+            "formation": "desobry_east",
+            "leads": true
+        },
+        {
+            "at": [
+                22,
+                13
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman E 2",
+            "formation": "desobry_east"
+        },
+        {
+            "at": [
+                24,
+                12
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman E 3",
+            "formation": "desobry_east"
+        },
+        {
+            "at": [
+                23,
+                10
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman E 4",
+            "formation": "desobry_east"
+        },
+        {
+            "at": [
+                18,
+                11
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman W 1",
+            "formation": "desobry_west",
+            "leads": true
+        },
+        {
+            "at": [
+                17,
+                11
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman W 2",
+            "formation": "desobry_west"
+        },
+        {
+            "at": [
+                19,
+                12
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman W 3",
+            "formation": "desobry_west"
+        },
+        {
+            "at": [
+                20,
+                12
+            ],
+            "side": 1,
+            "vehicle": "halftrack",
+            "name": "B/20 1",
+            "formation": "b20_infantry",
+            "leads": true
+        },
+        {
+            "at": [
+                20,
+                12
+            ],
+            "aboard_at": [
+                20,
+                12
+            ],
+            "side": 1,
+            "vehicle": "rifle_platoon",
+            "name": "B/20 1's section",
+            "formation": "b20_infantry"
+        },
+        {
+            "at": [
+                21,
+                12
+            ],
+            "side": 1,
+            "vehicle": "halftrack",
+            "name": "B/20 2",
+            "formation": "b20_infantry"
+        },
+        {
+            "at": [
+                21,
+                12
+            ],
+            "aboard_at": [
+                21,
+                12
+            ],
+            "side": 1,
+            "vehicle": "rifle_platoon",
+            "name": "B/20 2's section",
+            "formation": "b20_infantry"
+        },
+        {
+            "at": [
+                20,
+                10
+            ],
+            "side": 1,
+            "vehicle": "halftrack",
+            "name": "B/20 3",
+            "formation": "b20_infantry"
+        },
+        {
+            "at": [
+                20,
+                10
+            ],
+            "aboard_at": [
+                20,
+                10
+            ],
+            "side": 1,
+            "vehicle": "rifle_platoon",
+            "name": "B/20 3's section",
+            "formation": "b20_infantry"
+        },
+        {
+            "at": [
+                18,
+                16
+            ],
+            "side": 1,
+            "vehicle": "tank_destroyer",
+            "name": "M18 1",
+            "formation": "td_609",
+            "leads": true
+        },
+        {
+            "at": [
+                19,
+                16
+            ],
+            "side": 1,
+            "vehicle": "tank_destroyer",
+            "name": "M18 2",
+            "formation": "td_609"
+        },
+        {
+            "at": [
+                17,
+                15
+            ],
+            "side": 1,
+            "vehicle": "tank_destroyer",
+            "name": "M18 3",
+            "formation": "td_609"
+        },
+        {
+            "at": [
+                19,
+                17
+            ],
+            "side": 1,
+            "vehicle": "tank_destroyer",
+            "name": "M18 4",
+            "formation": "td_609"
+        },
+        {
+            "at": [
+                12,
+                15
+            ],
+            "side": 1,
+            "vehicle": "recon_car",
+            "name": "M8 1",
+            "formation": "cavalry",
+            "leads": true
+        },
+        {
+            "at": [
+                13,
+                14
+            ],
+            "side": 1,
+            "vehicle": "recon_car",
+            "name": "M8 2",
+            "formation": "cavalry"
+        },
+        {
+            "at": [
+                13,
+                38
+            ],
+            "side": 1,
+            "vehicle": "artillery",
+            "name": "M7 1",
+            "formation": "us_artillery",
+            "leads": true
+        },
+        {
+            "at": [
+                14,
+                38
+            ],
+            "side": 1,
+            "vehicle": "artillery",
+            "name": "M7 2",
+            "formation": "us_artillery"
+        }
+    ],
+    "objectives": [
+        {
+            "id": "noville",
+            "name": "Noville",
+            "at": [
+                [
+                    20,
+                    11
+                ],
+                [
+                    19,
+                    11
+                ],
+                [
+                    20,
+                    10
+                ],
+                [
+                    20,
+                    12
+                ],
+                [
+                    21,
+                    10
+                ],
+                [
+                    21,
+                    12
+                ],
+                [
+                    21,
+                    11
+                ],
+                [
+                    19,
+                    10
+                ],
+                [
+                    19,
+                    12
+                ],
+                [
+                    20,
+                    9
+                ],
+                [
+                    20,
+                    13
+                ],
+                [
+                    22,
+                    10
+                ],
+                [
+                    22,
+                    12
+                ],
+                [
+                    18,
+                    11
+                ],
+                [
+                    19,
+                    9
+                ],
+                [
+                    19,
+                    13
+                ]
+            ],
+            "value": 1,
+            "held": 1
+        },
+        {
+            "id": "cobru",
+            "name": "the Cobru crossroads",
+            "at": [
+                [
+                    12,
+                    15
+                ],
+                [
+                    12,
+                    14
+                ],
+                [
+                    11,
+                    15
+                ],
+                [
+                    13,
+                    14
+                ],
+                [
+                    12,
+                    16
+                ]
+            ],
+            "value": 1,
+            "held": 1
+        },
+        {
+            "id": "foy",
+            "name": "Foy and the road home",
+            "at": [
+                [
+                    12,
+                    36
+                ],
+                [
+                    12,
+                    37
+                ],
+                [
+                    13,
+                    36
+                ],
+                [
+                    11,
+                    37
+                ],
+                [
+                    12,
+                    35
+                ],
+                [
+                    11,
+                    36
+                ],
+                [
+                    13,
+                    37
+                ],
+                [
+                    11,
+                    35
+                ]
+            ],
+            "value": 1,
+            "held": 1
+        },
+        {
+            "id": "south",
+            "name": "the Bastogne road",
+            "at": [
+                [
+                    10,
+                    39
+                ],
+                [
+                    11,
+                    40
+                ],
+                [
+                    10,
+                    40
+                ],
+                [
+                    11,
+                    39
+                ],
+                [
+                    9,
+                    39
+                ]
+            ],
+            "value": 1,
+            "kind": "exit",
+            "side": 1
+        },
+        {
+            "id": "north",
+            "name": "the Houffalize road",
+            "at": [
+                [
+                    23,
+                    0
+                ],
+                [
+                    22,
+                    0
+                ],
+                [
+                    22,
+                    1
+                ]
+            ],
+            "value": 1,
+            "kind": "exit",
+            "side": 0
+        }
+    ],
+    "assault": {
+        "attacker": 0,
+        "needs": 2
+    },
+    "breaking": [
+        {
+            "side": 0,
+            "lost_percent": 50
+        },
+        {
+            "side": 1,
+            "lost_percent": 70
+        }
+    ],
+    "prepared": [
+        1
+    ],
+    "visibility": [
+        {
+            "from_round": 0,
+            "hexes": 3
+        },
+        {
+            "from_round": 6,
+            "hexes": null
+        }
+    ]
+}

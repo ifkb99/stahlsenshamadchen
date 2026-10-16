@@ -55,6 +55,63 @@ fn main() {
         ])
     };
 
+    // A shipped scenario map, fought `--games` times on successive seeds:
+    // the attacker's record, how the battles ended, and what they cost.
+    if let Some(map) = flag("--map") {
+        let games: u64 = flag("--games").and_then(|s| s.parse().ok()).unwrap_or(1);
+        let commander = flag("--commander").unwrap_or_else(|| "none".into());
+        let doctrine = |side: usize, default: &str| {
+            flag(if side == 0 {
+                "--attacker-doctrine"
+            } else {
+                "--defender-doctrine"
+            })
+            .or_else(|| {
+                reg.map(&map)
+                    .and_then(|m| m.sides.get(side))
+                    .and_then(|s| s.ai.as_ref())
+                    .and_then(|ai| ai.doctrine.clone())
+            })
+            .unwrap_or_else(|| default.to_string())
+        };
+        let doctrines = [doctrine(0, "massed_armor"), doctrine(1, "elastic_defense")];
+        let (mut won, mut rounds, mut lost, mut held, mut mines) = (0, 0, [0u64; 2], 0, 0);
+        let mut ends: std::collections::BTreeMap<String, u32> = Default::default();
+        for game in 0..games {
+            let mut state = BattleState::from_map(&reg, &map, 7000 + game)
+                .unwrap_or_else(|e| panic!("--map {map}: {e:?}"));
+            let outcome = fight(&reg, &mut state, &doctrines, &commander, game, games == 1);
+            won += u32::from(outcome.end.is_some_and(|(w, _)| w == Some(0)));
+            rounds += outcome.rounds;
+            lost[0] += u64::from(outcome.lost[0]);
+            lost[1] += u64::from(outcome.lost[1]);
+            held += outcome.held;
+            mines += outcome.mines;
+            let why = outcome.end.map_or("cut off".to_string(), |(_, r)| {
+                format!("{r:?}").to_lowercase()
+            });
+            *ends.entry(why).or_default() += 1;
+        }
+        let n = games.max(1) as f64;
+        let ends: Vec<String> = ends.iter().map(|(r, k)| format!("{r} {k}")).collect();
+        println!(
+            "{map}, {games} battles ({} vs {}, commander {commander}): attacker won {won} ({:.0}%); ended by {}",
+            doctrines[0],
+            doctrines[1],
+            100.0 * f64::from(won) / n,
+            ends.join(", ")
+        );
+        println!(
+            "  {:.1} rounds; attacker lost {:.0}%, defender {:.0}%; attacker held {:.2} zones at the end; {:.1} mines struck",
+            f64::from(rounds) / n,
+            lost[0] as f64 / n / 10.0,
+            lost[1] as f64 / n / 10.0,
+            held as f64 / n,
+            f64::from(mines) / n
+        );
+        return;
+    }
+
     if let Some(n) = flag("--survey").and_then(|s| s.parse::<u64>().ok()) {
         let (mut ok, mut failed) = (0, 0);
         for field in 0..n {
@@ -138,22 +195,47 @@ fn main() {
     }
 
     let commander = flag("--commander").unwrap_or_else(|| "none".into());
+    let doctrines = [pair[0].doctrine.clone(), pair[1].doctrine.clone()];
+    fight(&reg, &mut state, &doctrines, &commander, field, true);
+}
+
+/// How one battle ended: who won, why, after how many rounds (`None` for
+/// a battle cut off at the cap), and each side's losses in thousandths.
+struct Outcome {
+    end: Option<(Option<u8>, tactics_core::battle::EndReason)>,
+    rounds: u32,
+    lost: [u32; 2],
+    held: usize,
+    mines: u32,
+}
+
+/// Fight `state` out, both sides the utility AI by `doctrines` (under the
+/// hand-written commander if `commander` is `utility`), narrating every
+/// round if `verbose`.
+fn fight(
+    reg: &DataRegistry,
+    state: &mut BattleState,
+    doctrines: &[String; 2],
+    commander: &str,
+    seed: u64,
+    verbose: bool,
+) -> Outcome {
     let mut ai = AiDriver::new();
     for side in 0..2u8 {
         let config = AiConfig {
             planner: "utility".into(),
             difficulty: 5,
-            doctrine: Some(pair[side as usize].doctrine.clone()),
+            doctrine: Some(doctrines[side as usize].clone()),
         };
-        let seed = field.wrapping_mul(2).wrapping_add(side as u64);
+        let seed = seed.wrapping_mul(2).wrapping_add(side as u64);
         let planner: Box<dyn AiPlanner<BattleState, Order>> = if commander == "utility" {
-            Box::new(SideCommand::from_config(&config, seed, &reg))
+            Box::new(SideCommand::from_config(&config, seed, reg))
         } else {
-            Box::new(UtilityPlanner::from_config(&config, seed, &reg))
+            Box::new(UtilityPlanner::from_config(&config, seed, reg))
         };
         ai.insert(side, planner);
     }
-
+    let mut mines = 0;
     let name = |state: &BattleState, id| {
         state
             .unit(id)
@@ -173,8 +255,8 @@ fn main() {
     let (attacker_breaks, defender_breaks) = (breaks(0), breaks(1));
     let mut round = 0;
     while !state.is_over() && round < 120 {
-        ai.plan_round(&reg, &mut state);
-        let events = state.resolve_round(&reg);
+        ai.plan_round(reg, state);
+        let events = state.resolve_round(reg);
         round += 1;
         let mut notes: Vec<String> = Vec::new();
         for e in &events {
@@ -188,15 +270,16 @@ fn main() {
         for e in &events {
             match e {
                 Event::MineStruck { unit, .. } => {
-                    notes.push(format!("{} hit a mine", name(&state, *unit)))
+                    mines += 1;
+                    notes.push(format!("{} hit a mine", name(state, *unit)))
                 }
                 Event::UnitDestroyed { unit, .. } => notes.push(match last_hit.get(&unit.0) {
                     Some(by) => format!(
                         "{} lost to {}",
-                        name(&state, *unit),
-                        name(&state, tactics_core::battle::UnitId(*by))
+                        name(state, *unit),
+                        name(state, tactics_core::battle::UnitId(*by))
                     ),
-                    None => format!("{} lost", name(&state, *unit)),
+                    None => format!("{} lost", name(state, *unit)),
                 }),
                 Event::ObjectiveTaken {
                     objective, side, ..
@@ -217,15 +300,25 @@ fn main() {
             }
         }
         let held = state.objectives().filter(|(_, h)| *h == Some(0)).count();
+        if !verbose {
+            continue;
+        }
         println!(
             "round {round:3}: attacker lost {:3}% (breaks {attacker_breaks}), defender {:3}% (breaks {defender_breaks}); attacker holds {held}{}{}",
-            state.strength_lost(&reg, 0) / 10,
-            state.strength_lost(&reg, 1) / 10,
+            state.strength_lost(reg, 0) / 10,
+            state.strength_lost(reg, 1) / 10,
             if notes.is_empty() { "" } else { " — " },
             notes.join("; ")
         );
     }
-    if !state.is_over() {
+    if verbose && !state.is_over() {
         println!("cut off at round {round}");
+    }
+    Outcome {
+        end: state.over.map(|r| (r.winner, r.reason)),
+        rounds: round,
+        lost: [state.strength_lost(reg, 0), state.strength_lost(reg, 1)],
+        held: state.objectives().filter(|(_, h)| *h == Some(0)).count(),
+        mines,
     }
 }

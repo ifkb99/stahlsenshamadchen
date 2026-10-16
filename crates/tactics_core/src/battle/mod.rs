@@ -2312,6 +2312,19 @@ impl BattleState {
         leaders.next().is_none().then_some(side as u8)
     }
 
+    /// How far `unit` can see now, in hexes: her crew's vision
+    /// ([`stats::vision_range`]), no further than the scenario's visibility
+    /// this round (fog, smoke over the whole field, night). The one door
+    /// the fog asks through, so a scenario that says nothing about the
+    /// weather is the clear day every battle was fought on.
+    pub fn sight(&self, registry: &DataRegistry, unit: &Unit) -> u32 {
+        let range = stats::vision_range(registry, &self.roster, unit, self.terrain_at(unit.pos));
+        match self.scenario.visibility_at(self.round) {
+            Some(limit) => range.min(limit),
+            None => range,
+        }
+    }
+
     /// How much of its strength `side` has lost, in thousandths: substance
     /// still aboard a crew still fighting, over the full complement of
     /// every crew the side brought. A wreck keeps her complement in the

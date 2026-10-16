@@ -1,7 +1,8 @@
 //! The CDDA-inspired hex map format and its runtime representation.
 //!
 //! Map files are JSON: a palette mapping single-character glyphs to terrain
-//! ids, ASCII `rows` of glyphs, and a parallel `elevation` grid of digits.
+//! ids, ASCII `rows` of glyphs, and a parallel `elevation` grid of levels
+//! (`0`-`9`, then `a`-`z` for ten to thirty-five).
 //! Rows are offset coordinates (see [`crate::offset_to_hex`]); a space in a
 //! row means "no tile there", allowing non-rectangular maps.
 
@@ -405,6 +406,18 @@ pub struct BreakPoint {
     pub lost_percent: u32,
 }
 
+/// How far anybody can see from `from_round` on: fog over the field, and
+/// the hour it lifts. `hexes: None` is a clear sky again. Nobody sees past
+/// it, which is all fog does to a gunner: she can hit what she can see,
+/// and a meeting in the murk is fought at the range the murk allows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VisibilityPhase {
+    #[serde(default)]
+    pub from_round: u32,
+    #[serde(default)]
+    pub hexes: Option<u32>,
+}
+
 /// Mines laid before the battle, as a map file declares them: whose they
 /// are, what kind ([`crate::data::MineDef`]), where, and how thickly.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -621,7 +634,8 @@ pub struct MapFile {
     /// Single-character glyph -> terrain id.
     pub palette: HashMap<String, String>,
     pub rows: Vec<String>,
-    /// Parallel digit grid, `0`-`9`. Missing/short rows default to 0.
+    /// Parallel grid of levels, `0`-`9` then `a`-`z` (10-35). Missing/short
+    /// rows default to 0.
     #[serde(default)]
     pub elevation: Vec<String>,
     #[serde(default)]
@@ -661,6 +675,9 @@ pub struct MapFile {
     /// Mines laid before the battle (ASSAULT.md).
     #[serde(default)]
     pub minefields: Vec<MinefieldSpec>,
+    /// How far anybody can see, from which round: fog, and its lifting.
+    #[serde(default)]
+    pub visibility: Vec<VisibilityPhase>,
     /// What ends the campaign fought on this map, for an overworld map. The
     /// campaign's counterpart of `loss_conditions`, and absent for the same
     /// reason those may be: a map that says nothing is fought to elimination,
@@ -844,6 +861,9 @@ pub struct Scenario {
     /// Mines laid before the battle, resolved to hexes.
     #[serde(default)]
     minefields: Vec<Minefield>,
+    /// How far anybody can see, by round ([`VisibilityPhase`]).
+    #[serde(default)]
+    visibility: Vec<VisibilityPhase>,
 }
 
 /// Ground and a scenario on it, as a battle is set up from them.
@@ -956,6 +976,7 @@ impl Scenario {
                     density: spec.density,
                 })
                 .collect(),
+            visibility: file.visibility.clone(),
         }
     }
 
@@ -1022,6 +1043,23 @@ impl Scenario {
         self
     }
 
+    /// How far anybody can see in `round`, in hexes, if the weather says:
+    /// the last phase begun by then. `None` is a clear day.
+    pub fn visibility_at(&self, round: u32) -> Option<u32> {
+        self.visibility
+            .iter()
+            .filter(|p| p.from_round <= round)
+            .max_by_key(|p| p.from_round)
+            .and_then(|p| p.hexes)
+    }
+
+    /// This scenario with sight limited to `hexes` from `from_round` on
+    /// (`None` lifts it).
+    pub fn with_visibility(mut self, from_round: u32, hexes: Option<u32>) -> Self {
+        self.visibility.push(VisibilityPhase { from_round, hexes });
+        self
+    }
+
     /// Mines laid before the battle, in declaration order.
     pub fn minefields(&self) -> &[Minefield] {
         &self.minefields
@@ -1050,7 +1088,7 @@ pub enum MapError {
         row: usize,
         glyph: char,
     },
-    #[error("map `{map}` elevation row {row}: `{glyph}` is not a digit")]
+    #[error("map `{map}` elevation row {row}: `{glyph}` is not a level (0-9, then a-z)")]
     BadElevation {
         map: String,
         row: usize,
@@ -1079,7 +1117,11 @@ impl HexMap {
                 })?;
                 let elevation = match elev_char {
                     ' ' => 0,
-                    c => c.to_digit(10).ok_or(MapError::BadElevation {
+                    // `0`-`9`, then `a`-`z` for ten to thirty-five: a hand-drawn
+                    // map of real ground has more relief than ten levels of ten
+                    // metres (the Golan's ramps stand eight above the valley and
+                    // the valley a dozen below Hermonit).
+                    c => c.to_digit(36).ok_or(MapError::BadElevation {
                         map: file.id.clone(),
                         row,
                         glyph: c,

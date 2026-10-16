@@ -17,6 +17,9 @@ written before any of it is built.
 [WORLD.md](WORLD.md) is the memo and checklist for one continuous world at
 two resolutions — the world clock, the contact bubble, ground generated
 bottom up — and the designer's rulings of 2026-09-26 that started it.
+[ASSAULT.md](ASSAULT.md) is the memo for attack-and-defend battles: the
+research behind them, how a fight ends without a clock, the defended-sector
+generator, and the real battles drawn to compare against.
 [STRUCTURE.md](STRUCTURE.md) carries the seams that are in the wrong place —
 a rule living in the wrong crate, a contract asserted in prose that nothing
 checks — as against the rules that are wrong, which are here.
@@ -223,6 +226,47 @@ DONE.md under the same heading.
 - **A map that declares no objectives behaves exactly as before**, pinned by
   `a_map_that_names_no_objectives_is_fought_exactly_as_it_was_before`. Re-check
   it when touching `Evaluator::objective_value`.
+
+### An assault, and how a fight ends
+
+ASSAULT.md; tests `tests/assault.rs`, mutation-checked. All additive: a
+scenario that declares none of it is the game before.
+
+- **There is no clock.** An assault (`Scenario::assault`) is judged when the
+  fighting stops — a side breaks (`BreakPoint`, `EndReason::Broken`), is
+  gone, or the attack has stalled — and then the ground decides: a broken
+  defender has given hers up; otherwise the attacker wins if she holds
+  `needs` hold objectives. The score accrues and decides nothing. Anything
+  reading a result must handle `Broken`.
+- **Strength is substance over the full complement**
+  (`BattleState::strength_lost`, thousandths): a wreck and a crew who drove
+  off by an exit both count against her side.
+- **The stalemate clock counts an assault's progress**
+  (`assault_progressed`): ground changing hands, or an attacking crew closer
+  than any has been to ground she does not hold (`Battle::approach`, reset
+  when ground changes hands). Without it start lines kilometres apart ran
+  the clock out on the approach.
+- **`ObjectiveSpec::held`** opens ground already held; a defended position
+  is ground she has to have taken from her.
+- **A prepared position is deeper than a scrape** (`prepared_cover`, dug at
+  setup for `Scenario::prepared` sides) and the round's digging does not
+  fill it in — `begin_round` digs only below the cap. A prepared side's
+  riflemen are staged dismounted (`harness::forces`).
+- **Mines are rolled at the one place a crew changes hex** (`tread`), never
+  for the side that sowed them, and a strike goes through the shell's own
+  effect rolls (`combat::mine_blast`). **Knowledge of a field is the
+  side's** (`MineState::found`), set by a strike, and is all a road reads
+  (`movement::MinePrice` in `path_to`, `step_toward`'s `to_go` and `roads`)
+  — pricing the truth would bend roads round fields nobody has found. No
+  minefields, no die.
+- **`BattleState::sight` is the one door for how far a crew sees**: her
+  vision under the scenario's `visibility` this round. The fog asks through
+  it; the vision cache is keyed on range, so fog lifting needs nothing else.
+- **Elevation levels run `0`-`9` then `a`-`z`**: real ground has more relief
+  than ten levels.
+- **A battle map that says `"shape": "free"` is a scenario, not a campaign
+  battlefield**, and is exempt from the regulation hexagon
+  (`tools/make_historical_maps.py` writes three, radius 20-32).
 
 ### The campaign's ending
 

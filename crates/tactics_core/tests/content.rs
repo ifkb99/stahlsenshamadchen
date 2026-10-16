@@ -13,7 +13,7 @@
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, make_battle_planner};
 use tactics_core::battle::{BattleState, Event, Order, SideState};
 use tactics_core::data::{DataRegistry, MovementClass};
-use tactics_core::map::{Battlefield, MapKind, UnitPlacement};
+use tactics_core::map::{Battlefield, MapKind, MapShape, UnitPlacement};
 
 /// The battlefields added since `river_crossing`: the first two to stop the
 /// balance harness overfitting to one river, the second two so the campaign's
@@ -55,13 +55,16 @@ fn planner(
 
 #[test]
 fn every_battle_map_in_the_base_mod_is_the_regulation_hexagon() {
+    // Every battle map a campaign can field, that is: a scenario of a real
+    // battle that needs more ground than one overworld tile says `"shape":
+    // "free"` (ASSAULT.md), and the validator leaves it alone the same way.
     let reg = registry();
     let expected = reg.scale.battle_map_tiles() as usize;
     let mut seen = 0;
     let mut ids: Vec<&str> = reg
         .maps
         .values()
-        .filter(|m| m.kind == MapKind::Battle)
+        .filter(|m| m.kind == MapKind::Battle && m.shape() == MapShape::Tile)
         .map(|m| m.id.as_str())
         .collect();
     ids.sort_unstable();

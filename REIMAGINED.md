@@ -982,6 +982,13 @@ the commander: a meeting engagement over three objectives is a race that
 independent crews run well, and the teacher's crews execute any order
 worse than their own judgment.
 
+### The battle that needs a plan (2026-10-16)
+
+The designer chose the first of the two ways on: attack and defence of
+spread-out zones, ended the way real fights end. Built and measured in
+[ASSAULT.md](ASSAULT.md); the commander's features now include its role,
+the zones the attacker is short, and both sides' margins to breaking.
+
 ## Open questions
 
 - **"Operational-sized campaign with two companies"**: one battle, or

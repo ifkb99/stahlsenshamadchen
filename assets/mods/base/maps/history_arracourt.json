@@ -1,0 +1,1117 @@
+{
+    "id": "history_arracourt",
+    "name": "Arracourt, 19 September 1944",
+    "kind": "battle",
+    "shape": "free",
+    "palette": {
+        "f": "forest",
+        "g": "grass",
+        "m": "mud",
+        "R": "road",
+        "s": "stream",
+        "t": "town"
+    },
+    "rows": [
+        "                gggggmmmmmmmggggmmmmmmmmmmmmmmmmm",
+        "               gggggmmmmmmmgggggmmmmmmmmmmmmmmmmm",
+        "               gggggmmmmmmmgggggmmmmmmmmmmmmmmmmmm",
+        "              ggggggmmmmmmmgggggmmmmmmmmmmmmmmmmmm",
+        "              gggggmmmmmmmmmgggggmmmmmmmmmmmmmmmmmm",
+        "             ggggggmmmmmmmmggggggggmmmmmmmmmmmmmmmm",
+        "             ggggggggmmmmmmgggggggggmmmmmmmmmmmmmmmR",
+        "            gggggggggmmmggggggggggggmmmmmmmmmmmtmRRm",
+        "            ggggggggggmmgggggggggggggmmmmmmmgggtRRsss",
+        "           gggggggggggmgggggggggggRRRRRRRRRRRRRRRmmmm",
+        "           gtttgRRRRRRRRRRRRRRRRRRRssssmmmgggggRttmmmm",
+        "          sRRRRRsggggggggggggggggggggggmmgggggRRmmmmmm",
+        "          RRgtgggggggggggggggggggggggggggggggggRmmmmmmm",
+        "         gggggggggggggggggggggggggggggggggggggRgmmmmmmm",
+        "         gggggggggggggggggggggggggggggggggggggRgmmmmmmmm",
+        "        gggggggggggggggggggggggggggggggggggggRgmmmmmmmmm",
+        "        gggggggggggggggggggggggggggggggggggggRgmmmmmmmmmg",
+        "       gggggggggggggggggggggggggggggggggggggRRgmmmmmmmmmg",
+        "       ggggggggggggggggggggggggggggggggggggggRgmmmmmmmmmmm",
+        "      fgggggggggggggggggggggggggggggggggggggRgggggmmmmmmmm",
+        "      ffggggggggggggggggggggggggggggggggggggRgggggggmmmmmmm",
+        "     ffggggggggggggggggggggggggggggggggggggRggggggggmmmmmmg",
+        "     fffgggggggggggggggggggggggggggggggggggRggggggggmmmmgggm",
+        "    ffggggggggggggggggggggggggggggggggggggRsgggggggmmmgggggm",
+        "    ggggggggggggggggggggggggggggggggggggggRRggggggmmmmggggggm",
+        "   ggggggggggggggggggggggggggggggggggggggsRggggggmmmgggggggmm",
+        "   ggggggggggggggggggggggggggggggggggggggsRgggggggmgggggggggmm",
+        "  gggggggggggggggggggggggggggggggggggggggRggggggggggggggggggmg",
+        "  gggggggggggggggggggggggggggggggggggggggRggggggggggggggggggmgg",
+        " gggggggggggggggggggggggggggggggggggggggRggggggggggggggggggggRR",
+        " gggggggggggggggggggggggggggggggggggggggRRgggggggggggggggggRRRRg",
+        "gggggggggggggggggggggggggggggggggggggggRRggggggggggggggRRRRggggg",
+        "gggggggggggggggggggggggggggggggggggggggsRgggggggggggRRRRggggggggg",
+        "ggggggggggggggggggggggggggggggggggggggsRgggggggggRRRRggggggggggg",
+        " gggggggggggggggggggggggggggggggggggggsRggggggRRRRgggggggggggggg",
+        " ggggggggggggggggggggggggggggggggggggsRggggRRRggggggggggggggggg",
+        "  gggggggggggggggggggggggggggggggggggtRggRRRggggggggggggggggggg",
+        "  ggggggggggggggggggggggggggggggggggtRRRRggggggggggggggggggggs",
+        "   ggggggggggggggggggggggggggggggggRRRttgggggggggggggggggggggs",
+        "   ggggggggggggggggggggggggggggggRRRsttgggggggggggggggggggggs",
+        "    gggggggggggggggggggggggggggRRRggsgggggggggggggggggggggggs",
+        "    gggggggggggggggggggggggggRRRgggsgggggggggggggggggggggggs",
+        "     ggggggggggggggggggggggRRRgggggssggggggggggggggggggggggg",
+        "     ggggggggggggggggggggRRgggggggssggggggggggggggggggggggg",
+        "      ggggggggggggggggggRRgggggggggsggggggggggggggggggggggg",
+        "      ggggggggggggggggRRggggggggggsggggggggggggggggggggggg",
+        "       gggggggggggggRRRgggggggggggsggggggggggggggggggggggg",
+        "       gggggggggggRRRgggggggggggggggggggggggggggggggggggg",
+        "        gggggggggRRRggggggggggggggggggggggggggggggggggggR",
+        "        RRRggttRRggggggggggggggggggggggggggggggggggggggR",
+        "         ggRRRRRRRRRRRRgggggggggggggggggggggggggggggggtR",
+        "         ggggtttggggggRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR",
+        "          ggggttggggggggggggggggggggggggggggggggggggggt",
+        "          gggggggggggggggggggggggggggggggggggggggggggg",
+        "           ggggggggggggggggggggggggggggfffgggggggggggg",
+        "           gggggggggggggggggggggggggggffffggggggggggg",
+        "            gggggggggggggggggggggggggggfffggggggggggg",
+        "            ggggggggggggggggggggggggggffffgggggggggg",
+        "             ggggggggggggggggggggggggggggggggggggggg",
+        "             gggggggggggggggggggggggggggggggggggggg",
+        "              ggggggggggggggggggggggggggggggggggggg",
+        "              gggggggggggggggggggggggggggggggggggg",
+        "               ggggggggggggggggggggggggggggggggggg",
+        "               gggggggggggggggggggggggggggggggggg",
+        "                ggggggggggggggggggggggggggggggggg"
+    ],
+    "elevation": [
+        "                121111111111112111000000000001111",
+        "               2222111111111121111000000000000011",
+        "               22221111111111121111100000001000001",
+        "              222111111111111211111110000111000001",
+        "              2211111111111111211111110001111000000",
+        "             22111111111111112211111110001111100000",
+        "             221111111111111112222111110011111111111",
+        "            2211111111111111122222211110011111111111",
+        "            22222111111111111222222111110111111111110",
+        "           222222111111111222222221111111111111111110",
+        "           2222222112111112222222211111111122111111100",
+        "          22222222222111222222222221111111221111111101",
+        "          333322222222212222222222222111112211111111001",
+        "         3333322333322222223222222222111122211111110011",
+        "         44333333333222223333322222221112222211111110111",
+        "        444433333433222233333322222111122222211111000111",
+        "        5554444444332222333333322221111222222211110011111",
+        "       55554444444333223344433222222222222222111111111111",
+        "       555555555444433333444332222222222222221111111111111",
+        "      5555655555544443334444322212222222222211111111111111",
+        "      55566666655544444444443222222222222222211221111111111",
+        "     555566676665554444444433222222222222222222222111111111",
+        "     5555677776665555555444332222222222222222222221111111111",
+        "    45556677776666555555443332222222222222222222211111111111",
+        "    445556777776666666655443333323333222222222222111111112111",
+        "   4455567777776666666654443333333333222222222211111111222111",
+        "   44455567777777776666554444444333332222222222211111122222111",
+        "  344555566677777776665555555554433322232222221111111222222111",
+        "  3344455556667777766655555555554433333332222222211112222221111",
+        " 33344444555667766655555555555544333333322222222211112222221112",
+        " 333334444455567655544445555555544333333222222222211122322211122",
+        "3333333334444555554444445555555544433332222222222112223322211222",
+        "33333333333444454444444444555555544443332222222221122233222212222",
+        "3333333333333344444344444445555555444333333222211122233322212232",
+        " 333333333333333333344444455555555544333332222221222223322222233",
+        " 44333333333333333344455555555555554433322222221222232222222223",
+        "  4433344443333333344455555666566654433322222112222233222222223",
+        "  444444444333433334445555666556655443322222222222223222222223",
+        "   54444444444444334445555666655655443322222222222222222222223",
+        "   5554444444444433444555666655555543322222222233322222222233",
+        "    555544444444433444555666655555443322222222233322222223333",
+        "    66554444444443444555666655444443322222333333222222223333",
+        "     6655444444444444455666655444433322223333333222222333344",
+        "     655555554444444455666665444443332223333333333333333344",
+        "      65556555444444455666666544544332233334333333333333344",
+        "      6566655544444455666666554554333233344433333333333344",
+        "       666665554444555666766655554433333344433333333333344",
+        "       66766555455555566666666554433333444443333333333444",
+        "        7776655555555566676666655443333444444433334444444",
+        "        777666555655566667666655444443444444444444444444",
+        "         77666666665566667766655444444444444444444444555",
+        "         7766666666666667777665544555555544444444445555",
+        "          777777766666677877766555555666555555555555555",
+        "          77777776666777888776666666676666566665666665",
+        "           7778877677778898877777777777777666766677666",
+        "           888887777778899888887777788888777777777766",
+        "            88888888888899999998888889999888888888776",
+        "            8888888888899999999888888899888777787776",
+        "             888888888889999999888888888887776777666",
+        "             88888888888999999888877778877666666666",
+        "              8888788878889998887777777777665556655",
+        "              887777777788898877777666666655555555",
+        "               88777776677888877666666666555555555",
+        "               7777776677889887776666655554455555",
+        "                777666667788988877666555554444555"
+    ],
+    "sides": [
+        {
+            "name": "Panzer-Brigade 113",
+            "ai": {
+                "planner": "command",
+                "difficulty": 4,
+                "doctrine": "massed_armor"
+            }
+        },
+        {
+            "name": "Combat Command A"
+        }
+    ],
+    "formations": [
+        {
+            "id": "pz113_1",
+            "name": "Panther company (1)",
+            "side": 0
+        },
+        {
+            "id": "pz113_2",
+            "name": "Panther company (2)",
+            "side": 0
+        },
+        {
+            "id": "pz113_3",
+            "name": "Panther company (3)",
+            "side": 0
+        },
+        {
+            "id": "pz113_grenadiers",
+            "name": "Panzergrenadier-Regiment 2113",
+            "side": 0
+        },
+        {
+            "id": "c37",
+            "name": "C/37th Tank, Lezey",
+            "side": 1
+        },
+        {
+            "id": "lamison",
+            "name": "Lamison's platoon",
+            "side": 1
+        },
+        {
+            "id": "td_704",
+            "name": "C/704th Tank Destroyers",
+            "side": 1
+        },
+        {
+            "id": "hunter",
+            "name": "Hunter's companies",
+            "side": 1
+        },
+        {
+            "id": "d37",
+            "name": "D/37th light tanks",
+            "side": 1
+        },
+        {
+            "id": "cca_infantry",
+            "name": "53rd Armored Infantry",
+            "side": 1
+        },
+        {
+            "id": "cca_guns",
+            "name": "Armored field artillery",
+            "side": 1
+        }
+    ],
+    "units": [
+        {
+            "at": [
+                52,
+                16
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther N 1",
+            "formation": "pz113_1",
+            "leads": true
+        },
+        {
+            "at": [
+                53,
+                16
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther N 2",
+            "formation": "pz113_1"
+        },
+        {
+            "at": [
+                52,
+                17
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther N 3",
+            "formation": "pz113_1"
+        },
+        {
+            "at": [
+                50,
+                15
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther N 4",
+            "formation": "pz113_1"
+        },
+        {
+            "at": [
+                52,
+                18
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther N 5",
+            "formation": "pz113_1"
+        },
+        {
+            "at": [
+                50,
+                16
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther N 6",
+            "formation": "pz113_1"
+        },
+        {
+            "at": [
+                51,
+                18
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther N 7",
+            "formation": "pz113_1"
+        },
+        {
+            "at": [
+                50,
+                14
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther N 8",
+            "formation": "pz113_1"
+        },
+        {
+            "at": [
+                60,
+                32
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther C 1",
+            "formation": "pz113_2",
+            "leads": true
+        },
+        {
+            "at": [
+                60,
+                31
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther C 2",
+            "formation": "pz113_2"
+        },
+        {
+            "at": [
+                61,
+                32
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther C 3",
+            "formation": "pz113_2"
+        },
+        {
+            "at": [
+                58,
+                31
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther C 4",
+            "formation": "pz113_2"
+        },
+        {
+            "at": [
+                61,
+                33
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther C 5",
+            "formation": "pz113_2"
+        },
+        {
+            "at": [
+                61,
+                30
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther C 6",
+            "formation": "pz113_2"
+        },
+        {
+            "at": [
+                62,
+                32
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther C 7",
+            "formation": "pz113_2"
+        },
+        {
+            "at": [
+                59,
+                35
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther C 8",
+            "formation": "pz113_2"
+        },
+        {
+            "at": [
+                51,
+                53
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther S 1",
+            "formation": "pz113_3",
+            "leads": true
+        },
+        {
+            "at": [
+                52,
+                54
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther S 2",
+            "formation": "pz113_3"
+        },
+        {
+            "at": [
+                53,
+                54
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther S 3",
+            "formation": "pz113_3"
+        },
+        {
+            "at": [
+                50,
+                53
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther S 4",
+            "formation": "pz113_3"
+        },
+        {
+            "at": [
+                51,
+                55
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther S 5",
+            "formation": "pz113_3"
+        },
+        {
+            "at": [
+                54,
+                52
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther S 6",
+            "formation": "pz113_3"
+        },
+        {
+            "at": [
+                50,
+                54
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther S 7",
+            "formation": "pz113_3"
+        },
+        {
+            "at": [
+                49,
+                53
+            ],
+            "side": 0,
+            "vehicle": "medium_tank",
+            "name": "Panther S 8",
+            "formation": "pz113_3"
+        },
+        {
+            "at": [
+                59,
+                25
+            ],
+            "side": 0,
+            "vehicle": "halftrack",
+            "name": "Grenadiers 1",
+            "formation": "pz113_grenadiers",
+            "leads": true
+        },
+        {
+            "at": [
+                59,
+                25
+            ],
+            "aboard_at": [
+                59,
+                25
+            ],
+            "side": 0,
+            "vehicle": "rifle_platoon",
+            "name": "Grenadiers 1's section",
+            "formation": "pz113_grenadiers"
+        },
+        {
+            "at": [
+                60,
+                24
+            ],
+            "side": 0,
+            "vehicle": "halftrack",
+            "name": "Grenadiers 2",
+            "formation": "pz113_grenadiers"
+        },
+        {
+            "at": [
+                60,
+                24
+            ],
+            "aboard_at": [
+                60,
+                24
+            ],
+            "side": 0,
+            "vehicle": "rifle_platoon",
+            "name": "Grenadiers 2's section",
+            "formation": "pz113_grenadiers"
+        },
+        {
+            "at": [
+                59,
+                24
+            ],
+            "side": 0,
+            "vehicle": "halftrack",
+            "name": "Grenadiers 3",
+            "formation": "pz113_grenadiers"
+        },
+        {
+            "at": [
+                59,
+                24
+            ],
+            "aboard_at": [
+                59,
+                24
+            ],
+            "side": 0,
+            "vehicle": "rifle_platoon",
+            "name": "Grenadiers 3's section",
+            "formation": "pz113_grenadiers"
+        },
+        {
+            "at": [
+                60,
+                27
+            ],
+            "side": 0,
+            "vehicle": "halftrack",
+            "name": "Grenadiers 4",
+            "formation": "pz113_grenadiers"
+        },
+        {
+            "at": [
+                60,
+                27
+            ],
+            "aboard_at": [
+                60,
+                27
+            ],
+            "side": 0,
+            "vehicle": "rifle_platoon",
+            "name": "Grenadiers 4's section",
+            "formation": "pz113_grenadiers"
+        },
+        {
+            "at": [
+                46,
+                10
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman C 1",
+            "formation": "c37",
+            "leads": true
+        },
+        {
+            "at": [
+                45,
+                10
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman C 2",
+            "formation": "c37"
+        },
+        {
+            "at": [
+                46,
+                9
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman C 3",
+            "formation": "c37"
+        },
+        {
+            "at": [
+                47,
+                11
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman C 4",
+            "formation": "c37"
+        },
+        {
+            "at": [
+                23,
+                44
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman L 1",
+            "formation": "lamison",
+            "leads": true
+        },
+        {
+            "at": [
+                24,
+                44
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman L 2",
+            "formation": "lamison"
+        },
+        {
+            "at": [
+                23,
+                45
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman L 3",
+            "formation": "lamison"
+        },
+        {
+            "at": [
+                21,
+                43
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman L 4",
+            "formation": "lamison"
+        },
+        {
+            "at": [
+                30,
+                36
+            ],
+            "side": 1,
+            "vehicle": "tank_destroyer",
+            "name": "M18 1",
+            "formation": "td_704",
+            "leads": true
+        },
+        {
+            "at": [
+                31,
+                36
+            ],
+            "side": 1,
+            "vehicle": "tank_destroyer",
+            "name": "M18 2",
+            "formation": "td_704"
+        },
+        {
+            "at": [
+                30,
+                35
+            ],
+            "side": 1,
+            "vehicle": "tank_destroyer",
+            "name": "M18 3",
+            "formation": "td_704"
+        },
+        {
+            "at": [
+                28,
+                37
+            ],
+            "side": 1,
+            "vehicle": "tank_destroyer",
+            "name": "M18 4",
+            "formation": "td_704"
+        },
+        {
+            "at": [
+                13,
+                53
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman H 1",
+            "formation": "hunter",
+            "leads": true
+        },
+        {
+            "at": [
+                13,
+                54
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman H 2",
+            "formation": "hunter"
+        },
+        {
+            "at": [
+                14,
+                54
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman H 3",
+            "formation": "hunter"
+        },
+        {
+            "at": [
+                11,
+                53
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman H 4",
+            "formation": "hunter"
+        },
+        {
+            "at": [
+                13,
+                55
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman H 5",
+            "formation": "hunter"
+        },
+        {
+            "at": [
+                11,
+                52
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman H 6",
+            "formation": "hunter"
+        },
+        {
+            "at": [
+                15,
+                54
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman H 7",
+            "formation": "hunter"
+        },
+        {
+            "at": [
+                14,
+                55
+            ],
+            "side": 1,
+            "vehicle": "medium_tank",
+            "name": "Sherman H 8",
+            "formation": "hunter"
+        },
+        {
+            "at": [
+                8,
+                36
+            ],
+            "side": 1,
+            "vehicle": "light_tank",
+            "name": "Stuart 1",
+            "formation": "d37",
+            "leads": true
+        },
+        {
+            "at": [
+                9,
+                36
+            ],
+            "side": 1,
+            "vehicle": "light_tank",
+            "name": "Stuart 2",
+            "formation": "d37"
+        },
+        {
+            "at": [
+                8,
+                37
+            ],
+            "side": 1,
+            "vehicle": "light_tank",
+            "name": "Stuart 3",
+            "formation": "d37"
+        },
+        {
+            "at": [
+                6,
+                35
+            ],
+            "side": 1,
+            "vehicle": "light_tank",
+            "name": "Stuart 4",
+            "formation": "d37"
+        },
+        {
+            "at": [
+                9,
+                37
+            ],
+            "side": 1,
+            "vehicle": "light_tank",
+            "name": "Stuart 5",
+            "formation": "d37"
+        },
+        {
+            "at": [
+                36,
+                39
+            ],
+            "side": 1,
+            "vehicle": "halftrack",
+            "name": "53rd AIB 1",
+            "formation": "cca_infantry",
+            "leads": true
+        },
+        {
+            "at": [
+                36,
+                39
+            ],
+            "aboard_at": [
+                36,
+                39
+            ],
+            "side": 1,
+            "vehicle": "rifle_platoon",
+            "name": "53rd AIB 1's section",
+            "formation": "cca_infantry"
+        },
+        {
+            "at": [
+                37,
+                40
+            ],
+            "side": 1,
+            "vehicle": "halftrack",
+            "name": "53rd AIB 2",
+            "formation": "cca_infantry"
+        },
+        {
+            "at": [
+                37,
+                40
+            ],
+            "aboard_at": [
+                37,
+                40
+            ],
+            "side": 1,
+            "vehicle": "rifle_platoon",
+            "name": "53rd AIB 2's section",
+            "formation": "cca_infantry"
+        },
+        {
+            "at": [
+                7,
+                42
+            ],
+            "side": 1,
+            "vehicle": "artillery",
+            "name": "M7 1",
+            "formation": "cca_guns",
+            "leads": true
+        },
+        {
+            "at": [
+                8,
+                42
+            ],
+            "side": 1,
+            "vehicle": "artillery",
+            "name": "M7 2",
+            "formation": "cca_guns"
+        }
+    ],
+    "objectives": [
+        {
+            "id": "lezey",
+            "name": "the Lezey crossroads",
+            "at": [
+                [
+                    47,
+                    9
+                ],
+                [
+                    48,
+                    8
+                ],
+                [
+                    48,
+                    9
+                ],
+                [
+                    47,
+                    8
+                ],
+                [
+                    48,
+                    10
+                ],
+                [
+                    46,
+                    9
+                ],
+                [
+                    47,
+                    10
+                ],
+                [
+                    49,
+                    8
+                ]
+            ],
+            "value": 1,
+            "held": 1
+        },
+        {
+            "id": "bezange_ridge",
+            "name": "the ridge west of Bezange",
+            "at": [
+                [
+                    29,
+                    40
+                ],
+                [
+                    29,
+                    41
+                ],
+                [
+                    28,
+                    41
+                ],
+                [
+                    30,
+                    40
+                ],
+                [
+                    28,
+                    40
+                ],
+                [
+                    29,
+                    39
+                ],
+                [
+                    28,
+                    39
+                ]
+            ],
+            "value": 1,
+            "held": 1
+        },
+        {
+            "id": "rechicourt",
+            "name": "Réchicourt-la-Petite",
+            "at": [
+                [
+                    14,
+                    50
+                ],
+                [
+                    15,
+                    50
+                ],
+                [
+                    14,
+                    51
+                ],
+                [
+                    14,
+                    49
+                ],
+                [
+                    13,
+                    51
+                ],
+                [
+                    13,
+                    49
+                ],
+                [
+                    13,
+                    50
+                ],
+                [
+                    15,
+                    51
+                ]
+            ],
+            "value": 1,
+            "held": 1
+        },
+        {
+            "id": "haut_deau",
+            "name": "the Haut d'Eau",
+            "at": [
+                [
+                    25,
+                    57
+                ],
+                [
+                    24,
+                    57
+                ],
+                [
+                    25,
+                    56
+                ],
+                [
+                    25,
+                    58
+                ],
+                [
+                    26,
+                    56
+                ],
+                [
+                    24,
+                    56
+                ],
+                [
+                    26,
+                    58
+                ],
+                [
+                    24,
+                    58
+                ]
+            ],
+            "value": 1,
+            "held": 1
+        },
+        {
+            "id": "west",
+            "name": "the road to Arracourt",
+            "at": [
+                [
+                    8,
+                    48
+                ],
+                [
+                    8,
+                    47
+                ],
+                [
+                    7,
+                    47
+                ],
+                [
+                    9,
+                    48
+                ]
+            ],
+            "value": 1,
+            "kind": "exit",
+            "side": 1
+        },
+        {
+            "id": "east",
+            "name": "the road to Ley",
+            "at": [
+                [
+                    63,
+                    30
+                ],
+                [
+                    62,
+                    31
+                ],
+                [
+                    63,
+                    31
+                ],
+                [
+                    62,
+                    30
+                ]
+            ],
+            "value": 1,
+            "kind": "exit",
+            "side": 0
+        }
+    ],
+    "assault": {
+        "attacker": 0,
+        "needs": 3
+    },
+    "breaking": [
+        {
+            "side": 0,
+            "lost_percent": 50
+        },
+        {
+            "side": 1,
+            "lost_percent": 70
+        }
+    ],
+    "visibility": [
+        {
+            "from_round": 0,
+            "hexes": 2
+        },
+        {
+            "from_round": 15,
+            "hexes": null
+        }
+    ]
+}

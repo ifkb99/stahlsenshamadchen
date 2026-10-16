@@ -683,3 +683,59 @@ fn a_sector_is_the_same_sector_whoever_asks_for_it_first() {
     assert_eq!(a.obstacles, b.obstacles);
     assert_eq!(a.scenario, b.scenario);
 }
+
+// --- the weather and the ground ---------------------------------------------
+
+#[test]
+fn nobody_sees_through_fog_until_it_lifts() {
+    // Noville and Arracourt were fought in fog that cancelled the long
+    // guns until it lifted: two tanks five hexes apart on open grass do not
+    // see each other in a two-hex murk, and do the round it clears.
+    let reg = common::seen(registry());
+    let file: MapFile = serde_json::from_value(serde_json::json!({
+        "id": "fog",
+        "palette": { "g": "grass" },
+        "rows": ["gggggggg"],
+        "visibility": [
+            { "from_round": 0, "hexes": 2 },
+            { "from_round": 3, "hexes": null },
+        ],
+    }))
+    .unwrap();
+    let mut state = stage(
+        &reg,
+        &file,
+        vec![
+            unit_at([0, 0], 0, "medium_tank", "West"),
+            unit_at([5, 0], 1, "medium_tank", "East"),
+        ],
+    );
+    let east_seen = |state: &BattleState| state.fog.side(0).spotted.contains(&UnitId(1));
+    assert!(!east_seen(&state), "round 1, in the fog");
+    play_round(&reg, &mut state);
+    assert!(!east_seen(&state), "round 2, still");
+    play_round(&reg, &mut state);
+    play_round(&reg, &mut state);
+    assert!(east_seen(&state), "the fog has lifted");
+}
+
+#[test]
+fn a_hand_drawn_map_may_have_more_relief_than_ten_levels() {
+    // Real ground is not ten levels of ten metres deep: letters carry the
+    // levels on past nine.
+    let file: MapFile = serde_json::from_value(serde_json::json!({
+        "id": "relief",
+        "palette": { "g": "grass" },
+        "rows": ["ggg"],
+        "elevation": ["09z"],
+    }))
+    .unwrap();
+    let ground = Battlefield::from_map_file(&file).unwrap().terrain;
+    let level = |col| {
+        ground
+            .get(tactics_core::offset_to_hex(col, 0))
+            .unwrap()
+            .elevation
+    };
+    assert_eq!((level(0), level(1), level(2)), (0, 9, 35));
+}

@@ -8,7 +8,7 @@
 //! Enemy units are *spotted* while they stand on a visible tile, or while
 //! `revealed` (they fired recently and haven't moved since).
 
-use super::{BattleState, Event, Unit, UnitId, stats};
+use super::{BattleState, Event, Unit, UnitId};
 use crate::data::{DataRegistry, Scale};
 use crate::map::HexMap;
 use hexx::Hex;
@@ -536,11 +536,7 @@ pub fn unit_vision(registry: &DataRegistry, state: &BattleState, id: UnitId) -> 
     let Some(unit) = state.unit(id) else {
         return HashSet::new();
     };
-    look(
-        state,
-        unit.pos,
-        stats::vision_range(registry, &state.roster, unit, state.terrain_at(unit.pos)),
-    )
+    look(state, unit.pos, state.sight(registry, unit))
 }
 
 /// Whether `id` can currently see `target`, answered from the cache the last
@@ -557,7 +553,7 @@ pub(crate) fn sees(registry: &DataRegistry, state: &BattleState, id: UnitId, tar
     let Some(unit) = state.unit(id) else {
         return false;
     };
-    let range = stats::vision_range(registry, &state.roster, unit, state.terrain_at(unit.pos));
+    let range = state.sight(registry, unit);
     if let Some(tiles) = state.fog.cached(id, unit.pos, range) {
         return tiles.contains(&target);
     }
@@ -789,13 +785,7 @@ pub fn recompute(registry: &DataRegistry, state: &mut BattleState) -> Vec<Event>
             // Passengers see nothing for their side: buttoned up in the
             // back of a carrier, her eyes are the carrier's problem.
             .filter(|u| u.aboard.is_none())
-            .map(|u| {
-                (
-                    u.id,
-                    u.pos,
-                    stats::vision_range(registry, &state.roster, u, state.terrain_at(u.pos)),
-                )
-            })
+            .map(|u| (u.id, u.pos, state.sight(registry, u)))
             .collect();
 
         if state.fog.visible_key.get(side as usize) != Some(&key) {
