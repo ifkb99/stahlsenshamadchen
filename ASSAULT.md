@@ -580,6 +580,36 @@ defending, against 58 and 193 with it off; without the neighbour charge
 decide yet, the third species of null again. It is there for a commander
 who can aim at a platoon.
 
+**A commander who has a reserve to commit learns to beat the coin.**
+Trained fresh over the net60 crews on sectors with reserves (40
+iterations of 1536 battles, opponent's commander rotating, D off;
+`target/rl/l22/cmd`), the loop's own evaluation went from 26% attacking
+to about 40%. On fresh sectors, learner's wins of 288 a role:
+
+| learner's commander | sample | attacking | defending | all, of 576 |
+| --- | --- | --- | --- | --- |
+| none | 9,000,000 | 63 | 185 | 248 |
+| hand-written | 9,000,000 | 58 | 193 | 251 |
+| a coin | 9,000,000 | 105 | 189 | 294 |
+| learned, iteration 40 | 9,000,000 | 103 | 178 | 281 |
+| learned, iteration 20 | 9,000,000 | 119 | 193 | 312 |
+| hand-written | 9,100,000 | 54 | 173 | 227 |
+| a coin | 9,100,000 | 83 | 178 | 261 |
+| learned, iteration 20 | 9,100,000 | **117** | 184 | **301** |
+
+Iteration 20 was picked for its score on the loop's reused evaluation
+seeds, so the first sample flatters it; the second sample, drawn after
+the choice, is the honest one, and it has her **34 battles of 288 ahead
+of the coin attacking** (about three standard deviations) and 74 ahead of
+the hand-written commander. Defending, every commander is within noise
+of every other: a defence on its ground is already doing the right
+thing. The coin's own attacking record moved 105 → 83 between samples,
+so read differences within a sample, never across. The final net slid
+back to the coin, so the run is not converging monotonically. This is
+the first learned commander in this project to beat orders by coin
+anywhere; it is about 41% attacking against the coin's 33% over both
+samples, a long way from the 90/10 the experiment is aimed at.
+
 ## Open
 
 - The learned commander (L3) trained on sectors, both roles, measured
