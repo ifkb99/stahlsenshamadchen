@@ -276,6 +276,41 @@ with the commander's ground, and the crews carry it out worse than they
 choose. With a standing hold for the defender the sector baseline barely
 moves (the learner attacking 38-43%, defending 56-62%, 576 battles).
 
+### The learned commander on sectors
+
+`loop.py --train commander --ground sector`, all sizes, from a fresh network
+standardised on 18,614 uniform decisions, 60 iterations of 1,536 battles,
+teacher crews, against the mix of commanders (`target/rl/sector1`; run on
+binaries frozen before standing orders). Her best choices on 576 battles no
+rollout reached, every five iterations:
+
+| iteration | vs coin | attacking vs coin | defending vs coin | vs none | vs hand-written |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 45% | 28% | 62% | 37% | 41% |
+| 15 | 56% | 42% | 71% | 52% | 56% |
+| 30 | 52% | 41% | 64% | 46% | 48% |
+| 55 | 54% | 39% | 70% | 47% | 51% |
+| 60 | 47% | 29% | 66% | 49% | 48% |
+
+Her rollouts went from 48% to 50% won. **She learned to stop hurting and
+never learned to help**: a battle that needs a plan does not, by itself,
+make orders worth giving, because the crews carry orders out worse than
+they choose (the fixed-order table above). The 90/10 the designer is
+shooting for is not reachable from this seat while that holds. What would
+change it, in the order the measurements point:
+
+1. **Crews who carry orders out well** (REIMAGINED.md L2.1): train the crews
+   under orders, so that an order's ground is fought for as well as ground
+   they chose. Every fixed policy here loses because the executor is worse
+   at the commander's ground than at its own.
+2. **Orders worth having**: "every crew in her own position", per-formation
+   standing orders with ground, and the reserve as a thing a commander
+   holds back and commits — today a platoon is either free or tied to a
+   hex.
+3. **Breaking by manoeuvre** (above): while the only way a side breaks is
+   its losses, the decisive thing in real engagements — being enveloped,
+   cut off, outflanked — wins nothing a commander can plan for.
+
 ## Open
 
 - The learned commander (L3) trained on sectors, both roles, measured
