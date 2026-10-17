@@ -132,6 +132,21 @@ pub struct SectorShape {
     pub ditches: (u32, u32),
 }
 
+/// How far behind the attack's first wave her second echelon forms up, in
+/// hexes: out of the first wave's way, and a few minutes' drive behind it.
+const ECHELON: i32 = 4;
+
+/// How many of a side's `platoons` stand back from the line: a quarter,
+/// rounded down — and, when the reserve is a commander's to commit, at least
+/// one of any two or more, or a small force would have nothing to decide.
+fn held_back(platoons: usize, reserves: bool) -> usize {
+    if reserves && platoons >= 2 {
+        (platoons / 4).max(1)
+    } else {
+        platoons / 4
+    }
+}
+
 /// How sectors are drawn, beyond their size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SectorRules {
@@ -152,6 +167,13 @@ pub struct SectorRules {
     pub cut_off_counts: u32,
     /// The same for a crew whose nerve has gone (`unnerved_percent`).
     pub unnerved_counts: u32,
+    /// Whether each side holds a reserve only its commander can commit
+    /// (`Scenario::reserves`): the defender's quarter behind the middle of
+    /// her line, and the attacker's last quarter of platoons a second
+    /// echelon behind her start line. Off, the defender's quarter stands
+    /// there under the same standing order as the rest and the attacker
+    /// comes on in one wave — the sectors before.
+    pub reserves: bool,
 }
 
 impl Default for SectorRules {
@@ -162,6 +184,7 @@ impl Default for SectorRules {
             defender_breaks: 70,
             cut_off_counts: 0,
             unnerved_counts: 0,
+            reserves: false,
         }
     }
 }
@@ -423,7 +446,7 @@ pub fn sector(
         .iter()
         .flat_map(|u| u.platoon_sizes())
         .collect();
-    let reserves = defence_platoons.len() / 4;
+    let reserves = held_back(defence_platoons.len(), rules.reserves);
     let centroid = {
         let n = zones.len().max(1) as i32;
         let sum = zones.iter().fold(Hex::ZERO, |a, b| a + *b);
@@ -442,15 +465,46 @@ pub fn sector(
     }
 
     // The attacker: a start line `standoff` in front of the defended
-    // front, as wide as it, in rows two hexes deep.
+    // front, as wide as it, in rows two hexes deep. Holding a reserve, her
+    // last quarter of platoons is a second echelon `ECHELON` hexes behind
+    // the first's last row.
     let standoff = draw(seed, 4, shape.standoff) as i32;
+    let attack_platoons: Vec<u32> = forces[0]
+        .units
+        .iter()
+        .flat_map(|u| u.platoon_sizes())
+        .collect();
+    let attack_reserves = if rules.reserves {
+        held_back(attack_platoons.len(), true)
+    } else {
+        0
+    };
+    let attack_forward = attack_platoons.len() - attack_reserves;
+    let first_wave: usize = attack_platoons[..attack_forward]
+        .iter()
+        .map(|n| *n as usize)
+        .sum();
     let vehicles: usize = forces[0].units.iter().map(|u| u.count as usize).sum();
     let per_row = (shape.frontage as usize / 2).max(1);
     let mut attack: Vec<Hex> = Vec::new();
     for v in 0..vehicles {
-        let (row, col) = ((v / per_row) as i32, (v % per_row) as i32);
+        let (index, back) = if v < first_wave {
+            (v, 0)
+        } else {
+            let rows = first_wave.div_ceil(per_row) as i32;
+            (v - first_wave, rows * 2 + ECHELON)
+        };
+        let (row, col) = ((index / per_row) as i32, (index % per_row) as i32);
         let lateral = -(shape.frontage as i32) / 2 + 1 + col * 2;
-        attack.push(frame.at(standoff + row * 2, lateral));
+        attack.push(frame.at(standoff + back + row * 2, lateral));
+    }
+    if rules.reserves {
+        for n in forward + 1..=defence_platoons.len() {
+            scenario = scenario.with_reserve(format!("side1_platoon{n}"));
+        }
+        for n in attack_forward + 1..=attack_platoons.len() {
+            scenario = scenario.with_reserve(format!("side0_platoon{n}"));
+        }
     }
 
     // The defender's work, if she had the hours: mines across the ground

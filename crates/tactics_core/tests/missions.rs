@@ -3696,6 +3696,70 @@ fn an_order_names_the_ground_and_where_to_stand_on_it_is_hers() {
 }
 
 #[test]
+fn a_reserve_has_no_initiative_to_leave_its_ground_and_any_order_commits_it() {
+    // A reserve is the one force on the field whose use is her commander's
+    // decision and nobody else's (ASSAULT.md, *The reserve*). Holding a
+    // hex, a crew with initiative may still fight from the tile her own
+    // sweep picked; held in reserve on it, she may not, and the list is
+    // the ground or nothing. Any order from above commits her, and holding
+    // her reserve ground again is being held in reserve again: the state
+    // is read off her orders, never stored beside them.
+    use tactics_core::ai::goal::candidates;
+    use tactics_core::battle::{FormationId, Goal, Latitude, Mission};
+    let mut reg = registry_wireless();
+    reg.planner.goal_places = 16;
+    let mut state = BattleState::from_map(&reg, "battle_plains", 102).expect("a shipped map");
+    let unit = UnitId(0);
+    let me = state.unit(unit).expect("a crew").pos;
+    let index = state
+        .command
+        .formations()
+        .iter()
+        .position(|f| f.contains(unit))
+        .expect("she is in a formation");
+    let formation = FormationId(index as u32);
+    let elsewhere = me + tactics_core::Hex::new(3, 0);
+    let hold = Mission::Hold { at: Some(me) };
+    state
+        .command
+        .set_mission(formation, hold.clone(), Latitude::Delegated);
+    let list =
+        |state: &BattleState| candidates(&reg, state, unit, Some(&hold), Some(elsewhere), 1.0);
+    assert!(
+        list(&state).contains(&Goal::Take(elsewhere)),
+        "holding, a crew with initiative may fight from her own tile: {:?}",
+        list(&state)
+    );
+    assert!(!state.command.formations()[index].in_reserve());
+
+    state.command.set_reserve(formation, me);
+    assert!(state.command.formations()[index].in_reserve());
+    assert!(state.command.formations()[index].in_reserve_for(unit));
+    assert_eq!(
+        list(&state),
+        vec![Goal::Take(me), Goal::Hold],
+        "held in reserve, the ground or nothing"
+    );
+
+    state.command.set_mission(
+        formation,
+        Mission::Advance { to: elsewhere },
+        Latitude::Delegated,
+    );
+    assert!(
+        !state.command.formations()[index].in_reserve(),
+        "an order from above commits her"
+    );
+    state
+        .command
+        .set_mission(formation, hold.clone(), Latitude::Delegated);
+    assert!(
+        state.command.formations()[index].in_reserve(),
+        "and told to hold her reserve ground she is in reserve again"
+    );
+}
+
+#[test]
 fn two_crews_do_not_drive_for_the_same_hex() {
     // A section takes a piece of ground each. Said in the candidate list so
     // that it is said once and visibly, rather than as a tie-break buried in

@@ -58,6 +58,8 @@ rollout: battles for reinforcement learning, learner against the utility AI
                       three fields in four; both buy to the sector's budget
   --counts C,U        with --ground sector, every side counts a cut-off crew as
                       C percent lost and an unnerved one as U toward its break
+  --reserves          with --ground sector, each side holds a reserve only its
+                      commander can commit (SectorRules::reserves)
   --sizes LIST        with --ground sector, the sizes drawn per field: small,
                       medium, large (default all three)
   --arrays            write the decisions' numbers as flat f32 files beside the
@@ -154,6 +156,9 @@ struct Battle {
     /// Missions given, `[learner's side, opponent's]`: zero for a side
     /// nobody commands.
     missions: [u32; 2],
+    /// Platoons broken (`morale.platoon_breaks`), `[learner's side,
+    /// opponent's]`.
+    broke: [u32; 2],
     /// The learner's commander's decisions, when a learned or uniform
     /// commander gave them (`--commander learned|uniform`).
     commands: Vec<GoalRecord>,
@@ -299,6 +304,8 @@ struct Setup<'a> {
     /// `--counts C,U`: what a sector's break points count a cut-off and an
     /// unnerved crew as, in percent lost (`SectorRules`).
     counts: [u32; 2],
+    /// `--reserves`: each side holds a reserve (`SectorRules::reserves`).
+    reserves: bool,
     reg: &'a DataRegistry,
     arena: &'static tactics_core::harness::arena::Arena,
     brain: GoalBrain,
@@ -444,6 +451,7 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
             SectorRules {
                 cut_off_counts: setup.counts[0],
                 unnerved_counts: setup.counts[1],
+                reserves: setup.reserves,
                 ..SectorRules::default()
             },
             [&pair[0], &pair[1]],
@@ -561,6 +569,7 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
     let (mut by, mut on) = ([0u32; 3], [0u32; 3]);
     let (mut f4, mut aimed, mut standoff) = ([0u32; 2], [0u32; 2], [0u32; 2]);
     let mut missions = [0u32; 2];
+    let mut broke = [0u32; 2];
     // Per target: the last round a crew of each side struck his front, and
     // which crew.
     let mut fronted: std::collections::BTreeMap<(u32, u8), (u32, u32)> = Default::default();
@@ -576,6 +585,11 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
             }
         });
         for event in state.resolve_round(reg) {
+            if let Event::PlatoonBroke { formation } = &event
+                && let Some(f) = state.formations().iter().find(|f| f.id == *formation)
+            {
+                broke[usize::from(f.side != learner)] += 1;
+            }
             // Who was aimed at whom, for the standoff count.
             let aimed_at = match &event {
                 Event::ShotHit {
@@ -673,6 +687,7 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
         aimed,
         standoff,
         missions,
+        broke,
         commands,
         opponent_commander,
         reason,
@@ -809,6 +824,7 @@ fn main() {
                 .collect();
             [v[0], v[1]]
         }),
+        reserves: args.iter().any(|a| a == "--reserves"),
         commanders: [
             Commander::parse(flag(&args, "--commander")),
             Commander::parse(flag(&args, "--opponent-commander")),
@@ -1014,22 +1030,25 @@ fn main() {
     println!("  struck by the learner: {}", share(by));
     println!("  struck on the learner: {}", share(on));
     let (mut f4, mut aimed, mut off, mut missions) = ([0u32; 2], [0u32; 2], [0u32; 2], [0u32; 2]);
+    let mut broke = [0u32; 2];
     for battle in fought.iter().flatten() {
         for i in 0..2 {
             f4[i] += battle.fix_and_flank[i];
             aimed[i] += battle.aimed[i];
             off[i] += battle.standoff[i];
             missions[i] += battle.missions[i];
+            broke[i] += battle.broke[i];
         }
     }
     let n = fought.iter().flatten().count().max(1) as f32;
     for (i, who) in ["learner", "opponent"].iter().enumerate() {
         println!(
-            "  {who}: fix and flank {:.2} a battle; {:.0}% of {} aimed shots from beyond the target's reach; {:.1} missions a battle",
+            "  {who}: fix and flank {:.2} a battle; {:.0}% of {} aimed shots from beyond the target's reach; {:.1} missions a battle; {:.2} platoons broke a battle",
             f4[i] as f32 / n,
             100.0 * off[i] as f32 / aimed[i].max(1) as f32,
             aimed[i],
-            missions[i] as f32 / n
+            missions[i] as f32 / n,
+            broke[i] as f32 / n
         );
     }
 }

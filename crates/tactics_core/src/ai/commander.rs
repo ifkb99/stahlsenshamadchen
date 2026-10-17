@@ -53,6 +53,9 @@ pub const CONTEXT: &[&str] = &[
     "indirect",
     "eyes",
     "has_mission",
+    // Held back in reserve (`Scenario::reserves`): saying nothing keeps
+    // her there, and any order commits her.
+    "in_reserve",
     "nearest_enemy",
     "in_contact",
     // Her doctrine, which is how its crews will carry an order out.
@@ -424,6 +427,7 @@ pub fn describe(
         })),
         SideCommand::eyes_share(registry, state, formation),
         flag(formation.latest_mission().is_some()),
+        flag(formation.in_reserve()),
         nearest_to(at),
         flag(in_contact),
         doctrine.aggression,

@@ -1171,6 +1171,7 @@ impl BattleState {
         state.dig_prepared_positions(registry);
         state.mark_rear();
         state.give_standing_orders();
+        state.hold_reserves();
         fog::recompute(registry, &mut state);
         state.open_the_net(registry);
         Ok(state)
@@ -1299,6 +1300,7 @@ impl BattleState {
         state.dig_prepared_positions(registry);
         state.mark_rear();
         state.give_standing_orders();
+        state.hold_reserves();
         fog::recompute(registry, &mut state);
         state.open_the_net(registry);
         Ok(state)
@@ -1418,6 +1420,34 @@ impl BattleState {
                     Latitude::Delegated,
                 );
             }
+        }
+    }
+
+    /// Every formation the scenario holds in reserve opens under orders to
+    /// hold where its leader stands, and remembers that ground
+    /// ([`Formation::reserve`]): it stays in reserve until an order from
+    /// above says otherwise. After the standing orders, which a reserve's
+    /// own replaces. A scenario that names none touches nothing.
+    fn hold_reserves(&mut self) {
+        let scenario = Arc::clone(&self.scenario);
+        for id in scenario.reserves() {
+            let Some(index) = self.command.formations().iter().position(|f| f.id == *id) else {
+                continue;
+            };
+            let Some(at) = self.command.formations()[index]
+                .leader
+                .and_then(|leader| self.unit(leader))
+                .map(|u| u.pos)
+            else {
+                continue;
+            };
+            let formation = FormationId(index as u32);
+            self.command.set_mission(
+                formation,
+                Mission::Hold { at: Some(at) },
+                Latitude::Delegated,
+            );
+            self.command.set_reserve(formation, at);
         }
     }
 
@@ -2439,8 +2469,34 @@ impl BattleState {
         point: Option<&crate::map::BreakPoint>,
     ) -> u32 {
         let (cut, unnerved) = point.map_or((0, 0), |p| (p.cut_off_percent, p.unnerved_percent));
+        self.lost_among(registry, |u| u.side == side, cut, unnerved)
+    }
+
+    /// What one formation has lost toward breaking, in thousandths of its
+    /// full complement: its strength lost, with a member cut off counted as
+    /// `morale.platoon_cut_off_percent` of her lost. The platoon's twin of
+    /// [`Self::will_lost`] (ASSAULT.md, *Platoons break*).
+    pub fn formation_will_lost(&self, registry: &DataRegistry, formation: FormationId) -> u32 {
+        let Some(f) = self.command.formations().get(formation.index()) else {
+            return 0;
+        };
+        let cut = registry.morale.platoon_cut_off_percent;
+        self.lost_among(registry, |u| f.members.contains(&u.id), cut, 0)
+    }
+
+    /// Strength lost among the units `members` picks, in thousandths of
+    /// their full complement, a crew cut off counting as `cut` percent of
+    /// her lost and one whose nerve has gone as `unnerved`, the larger if
+    /// both. One reading for a side and a platoon.
+    fn lost_among(
+        &self,
+        registry: &DataRegistry,
+        members: impl Fn(&Unit) -> bool,
+        cut: u32,
+        unnerved: u32,
+    ) -> u32 {
         let (mut have, mut full) = (0u64, 0u64);
-        for unit in self.units.iter().filter(|u| u.side == side) {
+        for unit in self.units.iter().filter(|u| members(u)) {
             let (h, t) = self.substance(registry, unit);
             if unit.alive() {
                 // A crew her side cannot count on is that share gone.

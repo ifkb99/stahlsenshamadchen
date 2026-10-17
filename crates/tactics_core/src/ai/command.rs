@@ -37,7 +37,7 @@
 
 use super::{AiConfig, AiPlanner, Evaluator, next_unplanned_unit};
 use crate::Hex;
-use crate::battle::{BattleState, FireIntent, Formation, FormationId, Mission, Order};
+use crate::battle::{BattleState, FireIntent, Formation, FormationId, Knower, Mission, Order};
 use crate::data::{DataRegistry, DoctrineDef};
 use crate::map::{Objective, ObjectiveKind};
 use crate::roster::CadetId;
@@ -721,6 +721,30 @@ impl SideCommand {
                 continue;
             }
             let doctrine = self.doctrine_for(index);
+            // **A reserve waits for the fight to reach the ground**, and goes
+            // where it has (FM 100-5's counterattack and the attack's
+            // reinforcing of success, one rule from either end): ground that
+            // has changed hands since the battle opened, or that both sides
+            // stand on. Before that she says nothing, and it stays where it
+            // was put; a reserve a commander commits on the first review is
+            // no reserve.
+            if let Some(at) = formation.reserve.filter(|_| formation.in_reserve()) {
+                if let Some(to) = Self::reserve_wanted(registry, state, side, at) {
+                    let mission = if doctrine.aggression >= 0.7 {
+                        Mission::Assault { to }
+                    } else if doctrine.aggression >= 0.5 {
+                        Mission::Advance { to }
+                    } else {
+                        Mission::Hold { at: Some(to) }
+                    };
+                    orders.push(Order::SetMission {
+                        formation: FormationId(index as u32),
+                        mission,
+                        latitude: crate::battle::Latitude::Delegated,
+                    });
+                }
+                continue;
+            }
             if let Some(via) = self.wants_out(registry, state, formation, doctrine) {
                 orders.push(Order::SetMission {
                     formation: FormationId(index as u32),
@@ -883,6 +907,32 @@ impl SideCommand {
             }
         }
         orders
+    }
+
+    /// Where the fight has reached the ground, for a reserve held on `at`:
+    /// the hold objective nearest it (coordinate last) that has changed
+    /// hands since the battle opened, or that her side and an enemy her
+    /// commander knows of both stand on. `None` while nothing has.
+    fn reserve_wanted(
+        registry: &DataRegistry,
+        state: &BattleState,
+        side: u8,
+        at: Hex,
+    ) -> Option<Hex> {
+        let enemies = state.known_enemies(registry, Knower::Commander(side));
+        state
+            .objectives()
+            .filter(|(o, _)| o.kind == ObjectiveKind::Hold)
+            .filter(|(o, holder)| {
+                let changed = *holder != o.held;
+                let ours = state
+                    .alive_units()
+                    .any(|u| u.side == side && u.aboard.is_none() && o.contains(u.pos));
+                let theirs = enemies.iter().any(|u| o.contains(u.pos));
+                changed || (ours && theirs)
+            })
+            .map(|(o, _)| o.anchor())
+            .min_by_key(|h| (h.distance_to(at), h.x, h.y))
     }
 
     /// Review every operational command's plan, and return the orders that

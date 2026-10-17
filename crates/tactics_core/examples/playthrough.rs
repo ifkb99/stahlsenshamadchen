@@ -381,6 +381,9 @@ fn main() {
                 Event::ReleaseReceived { formation } => {
                     println!("   >> {formation} hears it is to use its own judgment")
                 }
+                Event::PlatoonBroke { formation } => {
+                    println!("   >> {formation} has broken")
+                }
                 Event::MissionCompleted { formation, mission } => {
                     println!("   >> {formation} completes {mission:?} and takes up the next order")
                 }

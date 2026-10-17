@@ -20,6 +20,8 @@
 //!
 //! `--set PATH=VALUE` changes any mod field, as `balance --set` does.
 //!
+//! `--reserves` has each side of a sector hold a reserve only its
+//! commander can commit (`SectorRules::reserves`).
 //! `--counts C,U` has every side count a cut-off crew as C percent lost and
 //! an unnerved one as U percent toward its break (`BreakPoint`), on a map
 //! or a sector; the summary then says how many breaks the count decided —
@@ -75,6 +77,7 @@ fn main() {
     let rules = SectorRules {
         cut_off_counts: counts[0],
         unnerved_counts: counts[1],
+        reserves: std::env::args().any(|a| a == "--reserves"),
         ..SectorRules::default()
     };
     let counting = |state: &mut BattleState| {

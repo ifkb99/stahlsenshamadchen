@@ -358,6 +358,31 @@ pub struct MoraleRules {
     /// withdrawing one's for `neighbour_withdrew` to reach it.
     #[serde(default = "neighbour_within")]
     pub neighbour_within: u32,
+    /// Percent of a platoon's full strength it can lose before it
+    /// **breaks** (ASSAULT.md, *Platoons break*): once, for the battle, and
+    /// as nerve rather than an order — every crew in it takes
+    /// `platoon_broke` pressure, and the ladder's own flight and rally do
+    /// the rest. Her orders stand; she refuses them, as broken troops do.
+    /// What a platoon has lost is read as a side's is, a member cut off
+    /// counting as `platoon_cut_off_percent` of her lost. Zero, the
+    /// default, is the game before: no platoon ever stops being one.
+    #[serde(default)]
+    pub platoon_breaks: u32,
+    /// Percent of a cut-off member a platoon counts as lost toward
+    /// `platoon_breaks`. Zero is losses alone.
+    #[serde(default)]
+    pub platoon_cut_off_percent: u32,
+    /// Pressure on every crew of a platoon, once, when it breaks.
+    #[serde(default)]
+    pub platoon_broke: u32,
+    /// Pressure, once, on every crew of her side's other formations with a
+    /// crew within `neighbour_within` hexes of the breaking platoon's: the
+    /// unit beside her has gone, and her flank with it. A platoon breaks
+    /// only once, which is the damping: a neighbour's nerve going does not
+    /// count toward her own platoon's break, so one break cannot take the
+    /// whole side by arithmetic alone.
+    #[serde(default)]
+    pub platoon_broke_near: u32,
 }
 
 fn neighbour_within() -> u32 {
@@ -497,6 +522,10 @@ impl Default for MoraleRules {
             bypassed: 0,
             neighbour_withdrew: 0,
             neighbour_within: neighbour_within(),
+            platoon_breaks: 0,
+            platoon_cut_off_percent: 0,
+            platoon_broke: 0,
+            platoon_broke_near: 0,
         }
     }
 }

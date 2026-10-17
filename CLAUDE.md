@@ -287,6 +287,18 @@ scenario that declares none of it is the game before.
   start, because a plain sum is flat between two crews); a neighbouring
   formation receiving `Withdraw`. A planner's expectation never reads
   surprise: a gun she knows of cannot surprise her.
+- **A reserve is her commander's** (`Scenario::reserves`): it holds the
+  ground it was put on, and `Formation::in_reserve` is *derived* — still
+  ordered to hold its reserve ground — so any order commits it and
+  nothing clears a flag. Its crews choose where to stand round it with
+  no initiative (`goal::candidates`). The hand-written commander commits
+  it where ground has changed hands or both sides stand. No reserve
+  named is the game before.
+- **Platoons break as nerve, never as an order** (`morale.platoon_breaks`,
+  `platoon_broke`, `platoon_broke_near`; ASSAULT.md): once, at the top of
+  a round, on `formation_will_lost` — the side's reading over a platoon's
+  members — and the engine gives nobody an order. A neighbour's nerve is
+  not a loss, which is what keeps one break from taking the side.
 - **Elevation levels run `0`-`9` then `a`-`z`**: real ground has more relief
   than ten levels.
 - **A battle map that says `"shape": "free"` is a scenario, not a campaign

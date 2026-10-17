@@ -516,6 +516,70 @@ Sources: McQuie's table as the Dupuy Institute reprints it
 Clark via HERO 117 App. C; Clausewitz, *On War* IV.4 and VI.4 (Graham);
 Lehmann and Zhukov, *International Organization* 73(1), 2019.
 
+## The reserve, and platoons that break (2026-10-17)
+
+The reading of the last section was that crews who play well blunt a
+commander's leverage: an order naming ground the crew would have chosen
+anyway is worth nothing. The designer's rulings: build the reserve only a
+commander can commit, and option D, as nerve.
+
+**The reserve** (`Scenario::reserves`, formation ids; `SectorRules::reserves`
+holds back the defender's quarter behind the middle of her line and the
+attacker's last quarter as a second echelon `ECHELON` hexes behind her
+first wave, at least one platoon of any two). A reserve opens holding the
+ground it was put on (`Formation::reserve`) and **is in reserve while its
+orders are still to hold there** — derived, so any order from above
+commits it and nothing has to remember to clear a flag. Its crews choose
+where to stand round that ground as under any order naming it, and have
+**no initiative** to leave it (`goal::candidates`): the one force on the
+field whose use is a commander's decision and nobody else's. No
+commander, no commitment. The hand-written commander waits for the fight
+to reach the ground — a hold objective that has changed hands since the
+battle opened, or that both sides stand on — and sends the reserve to the
+nearest such (FM 100-5's counterattack and the attack's reinforcing of
+success, one rule from either end). The learned commander sees
+`in_reserve` and keeps it by saying nothing. A scenario that names no
+reserve is the game before; the determinism snapshot passed unregenerated.
+
+*Measured* (net60 crews, the opponent's commander rotating, 576 fresh
+sectors a row, seed 9,000,000; learner's wins of 288 a role):
+
+| learner's commander | attacking | attacking, reserves | defending | defending, reserves |
+| --- | --- | --- | --- | --- |
+| none | 90 | 63 | 170 | 185 |
+| hand-written | 95 | 58 | 171 | 193 |
+| a coin | 98 | **105** | 166 | 189 |
+
+**The reserve gives the commander leverage.** Attacking, the three
+commanders sat within 8 battles of each other; with reserves they span
+47, about four standard deviations. A reserve nobody commits is a quarter
+of the force wasted, and the coin — which commits early, somewhere — beats
+both the commander who never does and the hand-written one, whose rule
+waits for ground that an attack rarely takes. Stalemates rise with
+reserves (181 → 301 under no commander). That is a decision with a price
+a learner can find.
+
+**Platoons break** (option D, as nerve — the designer agreed the idea;
+the open choices were taken as recommended: nerve, not an order; a broken
+platoon may rally; platoons only). `morale.platoon_breaks` is the percent
+of a platoon's full strength it can lose (`BattleState::formation_will_lost`,
+the side's reading over its members, a cut-off member counting
+`platoon_cut_off_percent`); past it the platoon breaks, once, at the top
+of a round: its crews take `platoon_broke` pressure, her side's other
+formations within `neighbour_within` take `platoon_broke_near`, and
+`Event::PlatoonBroke` is her side's business. **The engine issues no
+order**: her orders stand, and the ladder's flight and rally decide what
+her crews do. A neighbour's nerve going does not count toward its own
+platoon's break, which is the damping. All zero, the game before.
+
+*Measured* at 50 / 12 (the ladder's breaking rung) / 4, the same 576
+sectors with reserves, hand-written commander: about **one platoon a side
+breaks a battle**, and the learner wins 66 and 186 of 288 attacking and
+defending, against 58 and 193 with it off; without the neighbour charge
+65 and 192. Inside noise: the rule fires and the crews give it nothing to
+decide yet, the third species of null again. It is there for a commander
+who can aim at a platoon.
+
 ## Open
 
 - The learned commander (L3) trained on sectors, both roles, measured
@@ -524,7 +588,8 @@ Lehmann and Zhukov, *International Organization* 73(1), 2019.
 - **Every crew in her own position** — a line of ramps, a belt of
   trenches — is not an order (ruled 2026-10-16); crews under a general hold
   must learn it (*Crews under orders*, below).
-- Break pressure from manoeuvre and from reserves (above).
+- Break pressure from the reserve balance (option C's term), and a
+  commander who can see her platoons' margins to breaking.
 - Pre-registered fire: a defender's artillery lands on the ground she
   surveyed without adjusting (FM 3-90's target reference points; NTC found
   unregistered planned fires hit about a fifth of the time).

@@ -673,6 +673,72 @@ fn a_formation_whose_neighbour_is_ordered_out_feels_its_flank_go() {
     assert_eq!(left_alone(4, 6), left_alone(0, 6), "out of reach: nothing");
 }
 
+/// East's platoon `first` of two squads with one struck down, her
+/// platoon `second` one squad `apart` rows off, a West car far away; a
+/// platoon breaks at `breaks` percent lost and charges 10 to its own and 4
+/// to a neighbour within 3. Three rounds: how many platoons broke, and the
+/// survivor's and the neighbour's pressure.
+fn broken_platoon(breaks: u32, apart: i32) -> (usize, u32, u32) {
+    let mut reg = registry();
+    reg.morale.platoon_breaks = breaks;
+    reg.morale.platoon_broke = 10;
+    reg.morale.platoon_broke_near = 4;
+    reg.morale.neighbour_within = 3;
+    let mut lead = unit_at([6, 4], 1, "rifle_squad", "Lead");
+    lead.formation = Some("first".into());
+    lead.leads = true;
+    let mut struck = unit_at([7, 4], 1, "rifle_squad", "Struck");
+    struck.formation = Some("first".into());
+    let mut second = unit_at([6, 4 + apart], 1, "rifle_squad", "Second");
+    second.formation = Some("second".into());
+    second.leads = true;
+    let (reg, mut state) = plain(
+        &reg,
+        serde_json::json!([]),
+        serde_json::json!([
+            { "id": "first", "side": 1 },
+            { "id": "second", "side": 1 },
+        ]),
+        vec![unit_at([0, 0], 0, "recon_car", "Far"), lead, struck, second],
+    );
+    still(&mut state);
+    strike_down(&mut state, UnitId(2));
+    let mut broke = 0;
+    for _ in 0..3 {
+        broke += common::settle(&reg, &mut state)
+            .iter()
+            .filter(
+                |e| matches!(e, BattleEvent::PlatoonBroke { formation } if formation == "first"),
+            )
+            .count();
+    }
+    let pressure = |id: u32| state.unit(UnitId(id)).map_or(0, |u| u.pressure);
+    (broke, pressure(1), pressure(3))
+}
+
+#[test]
+fn a_platoon_that_has_lost_more_than_it_can_bear_breaks_once_and_its_neighbour_feels_it() {
+    // Option D, as nerve (the designer's agreement of 2026-10-17): a
+    // platoon past its point breaks, once, and its crews take the price —
+    // no order, so her nerve decides what she does — and the formation
+    // beside it takes a smaller one, because its flank went with it. A
+    // platoon not past its point, or no point at all, is the game before.
+    let (none, lead, near) = broken_platoon(0, 2);
+    assert_eq!(none, 0, "no point: nobody breaks");
+    let (once, broken_lead, broken_near) = broken_platoon(50, 2);
+    assert_eq!(once, 1, "half of her gone breaks her, and only once");
+    assert_eq!(broken_lead, lead + 10, "her own crews take the price");
+    assert_eq!(broken_near, near + 4, "the neighbour beside her, less");
+    let (held, _, _) = broken_platoon(60, 2);
+    assert_eq!(held, 0, "short of her point she holds");
+    let (_, _, far) = broken_platoon(50, 6);
+    assert_eq!(
+        far,
+        broken_platoon(0, 6).2,
+        "a formation out of reach feels nothing"
+    );
+}
+
 /// A tank destroyer ordered onto a medium tank four hexes off, the medium
 /// unable to answer, for one tick (a second 88 would leave nobody to be
 /// frightened); whether East had found the gun before it, and `surprise`
@@ -969,6 +1035,23 @@ fn sector_battle(
     index: u64,
     size: tactics_core::harness::sector::SectorSize,
 ) -> (tactics_core::harness::sector::Sector, BattleState) {
+    sector_battle_under(
+        reg,
+        worlds,
+        index,
+        size,
+        tactics_core::harness::sector::SectorRules::default(),
+    )
+}
+
+/// [`sector_battle`] drawn under `rules`.
+fn sector_battle_under(
+    reg: &DataRegistry,
+    worlds: &tactics_core::harness::open::Worlds,
+    index: u64,
+    size: tactics_core::harness::sector::SectorSize,
+    rules: tactics_core::harness::sector::SectorRules,
+) -> (tactics_core::harness::sector::Sector, BattleState) {
     use tactics_core::force::{Purchase, buy};
     use tactics_core::harness::sector;
     let purchase = Purchase {
@@ -977,15 +1060,8 @@ fn sector_battle(
     };
     let a = buy(reg, purchase, index * 7 + 1).expect("something is affordable");
     let b = buy(reg, purchase, index * 7 + 2).expect("something is affordable");
-    let made = sector::sector(
-        reg,
-        worlds,
-        index,
-        size,
-        sector::SectorRules::default(),
-        [&a, &b],
-    )
-    .unwrap_or_else(|e| panic!("field {index}: {e}"));
+    let made = sector::sector(reg, worlds, index, size, rules, [&a, &b])
+        .unwrap_or_else(|e| panic!("field {index}: {e}"));
     let state = sector::stage(reg, &made, [&a, &b], index).expect("every vehicle finds ground");
     (made, state)
 }
@@ -1050,6 +1126,126 @@ fn a_sector_is_the_same_sector_whoever_asks_for_it_first() {
     assert_eq!(a.deployment, b.deployment);
     assert_eq!(a.obstacles, b.obstacles);
     assert_eq!(a.scenario, b.scenario);
+}
+
+#[test]
+fn a_reserve_waits_for_the_fight_to_reach_the_ground_and_goes_where_it_has() {
+    // Each side of a sector drawn with reserves holds a quarter of its
+    // platoons back — the defender's behind the middle of her line, the
+    // attacker's a second echelon behind her start line — and only a
+    // commander sends them. The hand-written one waits for the fight to
+    // reach the ground and commits where it has: a defender's
+    // counterattack and an attacker's reinforcing of success, one rule.
+    use tactics_core::ai::{AiConfig, AiDriver, make_battle_planner};
+    use tactics_core::harness::sector::{SectorRules, SectorSize};
+    // No signals net, so each commander reviews every round rather than on
+    // her pulse.
+    let reg = common::registry_wireless();
+    let worlds = tactics_core::harness::open::Worlds::default();
+    let rules = SectorRules {
+        reserves: true,
+        ..SectorRules::default()
+    };
+    let (made, mut state) = sector_battle_under(&reg, &worlds, 1, SectorSize::Medium, rules);
+    let reserves = |state: &BattleState, side: u8| -> Vec<usize> {
+        state
+            .command
+            .formations()
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.side == side && f.in_reserve())
+            .map(|(i, _)| i)
+            .collect()
+    };
+    for side in [0, 1] {
+        assert!(
+            !reserves(&state, side).is_empty(),
+            "side {side} holds one back"
+        );
+    }
+    // The second echelon forms up behind the first.
+    let from_front = |u: &tactics_core::battle::Unit| {
+        made.zones
+            .iter()
+            .map(|z| z.distance_to(u.pos))
+            .min()
+            .unwrap_or(0) as f32
+    };
+    let held: Vec<UnitId> = reserves(&state, 0)
+        .iter()
+        .flat_map(|i| state.command.formations()[*i].members.clone())
+        .collect();
+    let mean = |reserve: bool| {
+        let d: Vec<f32> = state
+            .units
+            .iter()
+            .filter(|u| u.side == 0 && held.contains(&u.id) == reserve)
+            .map(from_front)
+            .collect();
+        d.iter().sum::<f32>() / d.len() as f32
+    };
+    assert!(
+        mean(true) > mean(false),
+        "{} against {}",
+        mean(true),
+        mean(false)
+    );
+
+    let mut ai = AiDriver::new();
+    for side in [0u8, 1] {
+        let config = AiConfig {
+            planner: "command".into(),
+            difficulty: 5,
+            doctrine: None,
+        };
+        ai.insert(
+            side,
+            make_battle_planner(&config, 40 + u64::from(side), &reg),
+        );
+    }
+    ai.plan_round(&reg, &mut state);
+    for side in [0, 1] {
+        assert!(
+            !reserves(&state, side).is_empty(),
+            "side {side}'s commander keeps her reserve while the fight is still in front of it"
+        );
+    }
+
+    // A round is fought (a commander thinks once a round), and the fight
+    // reaches the ground: a zone changes hands.
+    state.resolve_round(&reg);
+    ai.plan_round(&reg, &mut state);
+    for side in [0, 1] {
+        assert!(!reserves(&state, side).is_empty(), "round two, nothing has");
+    }
+    state.resolve_round(&reg);
+    let (zone, anchor) = state
+        .objectives()
+        .enumerate()
+        .map(|(i, (o, _))| (i, o.anchor()))
+        .next()
+        .expect("a zone");
+    state.objective_held[zone] = Some(0);
+    let before: Vec<Vec<usize>> = [0, 1].iter().map(|s| reserves(&state, *s)).collect();
+    ai.plan_round(&reg, &mut state);
+    for side in [0u8, 1] {
+        assert!(
+            reserves(&state, side).is_empty(),
+            "side {side} commits her reserve once ground has changed hands"
+        );
+        for index in &before[usize::from(side)] {
+            let sent = state.command.formations()[*index].latest_mission().cloned();
+            let to = match sent {
+                Some(
+                    tactics_core::battle::Mission::Assault { to }
+                    | tactics_core::battle::Mission::Advance { to }
+                    | tactics_core::battle::Mission::Hold { at: Some(to) },
+                ) => to,
+                other => panic!("side {side} sent her reserve to do {other:?}"),
+            };
+            assert_eq!(to, anchor, "to the ground the fight has reached");
+        }
+    }
 }
 
 // --- the weather and the ground ---------------------------------------------

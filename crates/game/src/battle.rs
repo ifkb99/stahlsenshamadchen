@@ -1636,6 +1636,10 @@ fn pump_events(
                 let who = formation_name(&battle.state, formation);
                 log.push(format!("{who} hears it is to use its own judgment."));
             }
+            BattleEvent::PlatoonBroke { formation } => {
+                let who = formation_name(&battle.state, formation);
+                log.push(format!("{who} has broken."));
+            }
             // A unit that has stopped answering the radio is announced for the
             // same reason a wavering crew is: she is about to do something
             // other than what she was told, and silent deviation is

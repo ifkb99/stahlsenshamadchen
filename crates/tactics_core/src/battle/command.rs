@@ -782,6 +782,17 @@ pub struct Formation {
     /// the delay is then zero and an order never travels at all.
     #[serde(default)]
     pub incoming: Option<(MissionChange, u32)>,
+    /// The ground this formation was held back on, if its scenario put it
+    /// in reserve ([`crate::map::Scenario::reserves`]). It is *in* reserve
+    /// while its orders are still to hold there ([`Self::in_reserve_for`]):
+    /// derived, so any order from above commits it and nothing has to
+    /// remember to clear a flag. `#[serde(default)]`: nobody held back.
+    #[serde(default)]
+    pub reserve: Option<Hex>,
+    /// Whether this platoon has broken (`morale.platoon_breaks`): once, for
+    /// the battle. `#[serde(default)]`: nobody has.
+    #[serde(default)]
+    pub broken: bool,
     /// Members who cannot currently hear their leader, in unit-id order,
     /// each carrying the orders she had when the wire went dead.
     ///
@@ -907,6 +918,24 @@ impl Formation {
             Some(cut) => cut.latitude,
             None => self.latitude,
         }
+    }
+
+    /// Whether this member is held in reserve: her formation was put there
+    /// and the orders she is acting on ([`Self::mission_for`]) are still to
+    /// hold its reserve ground. A reserve's crews choose where to stand
+    /// round that ground and nothing else; only an order from above sends
+    /// them anywhere.
+    pub fn in_reserve_for(&self, unit: UnitId) -> bool {
+        self.reserve
+            .is_some_and(|at| self.mission_for(unit) == Some(&Mission::Hold { at: Some(at) }))
+    }
+
+    /// Whether her commander still has this formation in hand: held back,
+    /// and nothing sent or queued that commits it ([`Self::latest_mission`],
+    /// what she has *said*, which is what she decides against).
+    pub fn in_reserve(&self) -> bool {
+        self.reserve
+            .is_some_and(|at| self.latest_mission() == Some(&Mission::Hold { at: Some(at) }))
     }
 
     /// The tail of the pipeline: the last thing this formation will end up
@@ -1117,6 +1146,8 @@ impl CommandState {
                     latitude: Latitude::default(),
                     plan: std::collections::VecDeque::new(),
                     incoming: None,
+                    reserve: None,
+                    broken: false,
                     out_of_contact: Vec::new(),
                 })
             })
@@ -1167,6 +1198,8 @@ impl CommandState {
             latitude: Latitude::default(),
             plan: std::collections::VecDeque::new(),
             incoming: None,
+            reserve: None,
+            broken: false,
             out_of_contact: Vec::new(),
         });
         Some(FormationId(self.formations.len() as u32 - 1))
@@ -1304,6 +1337,21 @@ impl CommandState {
     /// [`Self::queue_mission`] like any other, which is what makes the
     /// no-rules game the *same code path* rather than the same code path
     /// plus a branch.
+    /// Hold this formation back on `at` ([`Formation::reserve`]). Its
+    /// mission is the caller's to set.
+    pub fn set_reserve(&mut self, formation: FormationId, at: Hex) {
+        if let Some(f) = self.formations.get_mut(formation.index()) {
+            f.reserve = Some(at);
+        }
+    }
+
+    /// Note that this platoon has broken ([`Formation::broken`]).
+    pub fn mark_broken(&mut self, formation: FormationId) {
+        if let Some(f) = self.formations.get_mut(formation.index()) {
+            f.broken = true;
+        }
+    }
+
     /// Hand a formation back its own judgment, now: no mission, no plan,
     /// and nothing still travelling. Returns whether the formation exists.
     pub fn release(&mut self, formation: FormationId) -> bool {

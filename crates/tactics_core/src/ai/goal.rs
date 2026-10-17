@@ -198,6 +198,19 @@ pub fn candidates_surveyed(
     // before this existed: the list is the two entries it always was, so the
     // chooser draws exactly as many blurs from the rng as it always did.
     let ordered = mission.and_then(ordered_ground);
+    // **A reserve has no initiative** (`Scenario::reserves`): where to stand
+    // on her ground is still hers, but the tile her own sweep likes, and
+    // places nearer anything else, are not — committing her is her
+    // commander's decision and nobody else's.
+    let initiative = if state
+        .command
+        .formation_of(unit)
+        .is_some_and(|f| f.in_reserve_for(unit))
+    {
+        0.0
+    } else {
+        initiative
+    };
     if let Some(hex) = ordered {
         push(hex);
         // **Where to stand on it is hers** (`planner.order_ground`, the

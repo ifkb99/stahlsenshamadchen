@@ -721,6 +721,9 @@ pub struct MapFile {
     /// Orders a side's formations hold when the battle opens.
     #[serde(default)]
     pub standing: Vec<StandingOrder>,
+    /// Formations, by id, held back in reserve ([`Scenario::reserves`]).
+    #[serde(default)]
+    pub reserves: Vec<String>,
     /// What ends the campaign fought on this map, for an overworld map. The
     /// campaign's counterpart of `loss_conditions`, and absent for the same
     /// reason those may be: a map that says nothing is fought to elimination,
@@ -910,6 +913,9 @@ pub struct Scenario {
     /// Orders a side's formations hold when it opens ([`StandingOrder`]).
     #[serde(default)]
     standing: Vec<StandingOrder>,
+    /// Formations held back in reserve, by id ([`Self::reserves`]).
+    #[serde(default)]
+    reserves: Vec<String>,
 }
 
 /// Ground and a scenario on it, as a battle is set up from them.
@@ -1024,6 +1030,7 @@ impl Scenario {
                 .collect(),
             visibility: file.visibility.clone(),
             standing: file.standing.clone(),
+            reserves: file.reserves.clone(),
         }
     }
 
@@ -1100,6 +1107,29 @@ impl Scenario {
     /// This scenario with every formation of `side` opening under `mission`.
     pub fn with_standing(mut self, side: u8, mission: crate::battle::Mission) -> Self {
         self.standing.push(StandingOrder { side, mission });
+        self
+    }
+
+    /// Formations held back in reserve, by id: each opens holding the
+    /// ground it was put on, and **only its commander can send it
+    /// anywhere** (ASSAULT.md, *The reserve*). Its crews choose where to
+    /// stand round that ground as under any order naming it, but have no
+    /// initiative to leave it; any order from above commits it. A reserve
+    /// is the one force on the field whose use is a commander's decision
+    /// and nobody else's, which is what it is for: an attacker with the
+    /// reserve advantage forced the defender off in 14 of 14 of HERO's
+    /// divisional engagements. A scenario that names none is the game
+    /// before.
+    pub fn reserves(&self) -> &[String] {
+        &self.reserves
+    }
+
+    /// This scenario with the formation `id` held back in reserve.
+    pub fn with_reserve(mut self, id: impl Into<String>) -> Self {
+        let id = id.into();
+        if !self.reserves.contains(&id) {
+            self.reserves.push(id);
+        }
         self
     }
 
@@ -1346,6 +1376,16 @@ impl MapFile {
     /// scenario, and armies grow formations of their own when the campaign
     /// half of the chain of command lands.
     fn validate_formations(&self, registry: &DataRegistry, report: &mut ValidationReport) {
+        // A reserve naming nobody would be a force the author meant to hold
+        // back fighting from the first round with nothing said.
+        for id in &self.reserves {
+            if !self.formations.iter().any(|f| f.id == *id) {
+                report.errors.push(format!(
+                    "map `{}`: reserve `{id}` names no formation the map declares",
+                    self.id
+                ));
+            }
+        }
         let mut seen: Vec<&str> = Vec::new();
         for formation in &self.formations {
             if seen.contains(&formation.id.as_str()) {

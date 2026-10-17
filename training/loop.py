@@ -163,6 +163,8 @@ def main():
     ap.add_argument("--commander-temperature", type=float, default=1.0)
     ap.add_argument("--spread", type=int, default=100,
                     help="generated ground: the deployment's distance from the centre, percent of the arena's")
+    ap.add_argument("--reserves", action="store_true",
+                    help="with --ground sector, each side holds a reserve only its commander can commit")
     ap.add_argument("--turned", action="store_true",
                     help="generated ground: turn each world's axis of advance, drawn per world")
     ap.add_argument("--events", default="none", help="planner.goal_events for every battle: a list, all, or none")
@@ -184,7 +186,8 @@ def main():
         FORCES.append(args.forces)
     APPROACH[0] = args.approach
     LAYOUT.extend(["--spread", str(args.spread), *(["--turned"] if args.turned else []),
-                   *(["--sizes", args.sizes] if args.ground == "sector" else [])])
+                   *(["--sizes", args.sizes] if args.ground == "sector" else []),
+                   *(["--reserves"] if args.reserves else [])])
     COMMAND.extend(["--commander", args.commander, "--opponent-commander", args.opponent_commander,
                     *(["--budget", args.budget] if args.budget else [])])
     GROUND[0] = args.ground

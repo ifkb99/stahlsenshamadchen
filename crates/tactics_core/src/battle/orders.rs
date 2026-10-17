@@ -540,6 +540,11 @@ pub enum Event {
     ReleaseReceived {
         formation: String,
     },
+    /// A platoon lost more than it could bear and broke
+    /// (`morale.platoon_breaks`): its crews' nerve, not an order.
+    PlatoonBroke {
+        formation: String,
+    },
     /// A formation finished the leg it was on and takes up the next one in
     /// its plan. Announced because a formation changing direction with no
     /// visible order behind it reads as disobedience — the promotion IS the
@@ -719,6 +724,8 @@ impl Event {
             | Event::MissionReceived { formation, .. }
             | Event::MissionReleased { formation }
             | Event::ReleaseReceived { formation }
+            // How her platoon's nerve stands is her side's, like her rung.
+            | Event::PlatoonBroke { formation }
             | Event::MissionCompleted { formation, .. }
             | Event::CommandPassed { formation, .. } => own_formation(formation),
 
@@ -2644,6 +2651,73 @@ impl BattleState {
         }
     }
 
+    /// Every platoon past `morale.platoon_breaks` that has not broken
+    /// before breaks now, in declaration order: its crews take
+    /// `platoon_broke` pressure and every crew of her side's formations with
+    /// one within `neighbour_within` of it takes `platoon_broke_near`, all
+    /// worked out on where everybody stood before anybody is charged. The
+    /// engine issues no order: a broken platoon's orders stand and its
+    /// crews' nerve decides whether they keep them (ASSAULT.md, *Platoons
+    /// break*, the designer's agreement of 2026-10-17).
+    fn break_platoons(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
+        let rules = &registry.morale;
+        let mut charges: Vec<(UnitId, u32)> = Vec::new();
+        let count = self.command.formations().len();
+        for index in 0..count {
+            let formation = FormationId(index as u32);
+            let f = &self.command.formations()[index];
+            if f.broken || f.members.is_empty() {
+                continue;
+            }
+            if self.formation_will_lost(registry, formation) < rules.platoon_breaks * 10 {
+                continue;
+            }
+            let standing: Vec<(u8, Hex)> = f
+                .members
+                .iter()
+                .filter_map(|id| self.unit(*id))
+                .filter(|u| u.alive() && u.aboard.is_none())
+                .map(|u| (u.side, u.pos))
+                .collect();
+            charges.extend(f.members.iter().map(|id| (*id, rules.platoon_broke)));
+            for other in self.command.formations() {
+                if other.id == f.id {
+                    continue;
+                }
+                let near = other
+                    .members
+                    .iter()
+                    .filter_map(|id| self.unit(*id))
+                    .filter(|u| u.alive() && u.aboard.is_none())
+                    .any(|u| {
+                        standing.iter().any(|(side, pos)| {
+                            *side == u.side
+                                && pos.distance_to(u.pos) as u32 <= rules.neighbour_within
+                        })
+                    });
+                if near {
+                    charges.extend(
+                        other
+                            .members
+                            .iter()
+                            .map(|id| (*id, rules.platoon_broke_near)),
+                    );
+                }
+            }
+            events.push(Event::PlatoonBroke {
+                formation: f.id.clone(),
+            });
+            self.command.mark_broken(formation);
+        }
+        for (id, pressure) in charges {
+            if let Some(unit) = self.lookup_mut(id)
+                && unit.alive()
+            {
+                unit.pressure += pressure;
+            }
+        }
+    }
+
     fn begin_round(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
         self.round += 1;
         self.field_repairs(registry, events);
@@ -2676,6 +2750,11 @@ impl BattleState {
             if unit.cut_off {
                 unit.pressure += registry.morale.cut_off;
             }
+        }
+        // Platoons break, on the same reading (`morale.platoon_breaks`,
+        // zero the game before and nobody asked).
+        if registry.morale.platoon_breaks > 0 {
+            self.break_platoons(registry, events);
         }
         // Bypassed, on the same positions and at the same moment
         // (`morale.bypassed`, zero the game before and nobody asked).
