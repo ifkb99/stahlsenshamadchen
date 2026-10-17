@@ -641,5 +641,6 @@ pub fn felt(reg: &DataRegistry, ammo: &Option<String>, small_arms: bool) -> Roun
         open_top: false,
         aimed: true,
         flank: false,
+        surprised: false,
     }
 }

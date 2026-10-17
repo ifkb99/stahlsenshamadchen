@@ -56,6 +56,8 @@ rollout: battles for reinforcement learning, learner against the utility AI
   --ground sector     an attack on a defended sector (harness::sector): side 0
                       attacks zones side 1 holds, dug in, mined and wired on
                       three fields in four; both buy to the sector's budget
+  --counts C,U        with --ground sector, every side counts a cut-off crew as
+                      C percent lost and an unnerved one as U toward its break
   --sizes LIST        with --ground sector, the sizes drawn per field: small,
                       medium, large (default all three)
   --arrays            write the decisions' numbers as flat f32 files beside the
@@ -294,6 +296,9 @@ fn ledger(reg: &DataRegistry, state: &BattleState, round: u32, out: &mut Vec<Ent
 }
 
 struct Setup<'a> {
+    /// `--counts C,U`: what a sector's break points count a cut-off and an
+    /// unnerved crew as, in percent lost (`SectorRules`).
+    counts: [u32; 2],
     reg: &'a DataRegistry,
     arena: &'static tactics_core::harness::arena::Arena,
     brain: GoalBrain,
@@ -436,7 +441,11 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
             &setup.worlds,
             game / 2,
             size,
-            SectorRules::default(),
+            SectorRules {
+                cut_off_counts: setup.counts[0],
+                unnerved_counts: setup.counts[1],
+                ..SectorRules::default()
+            },
             [&pair[0], &pair[1]],
         )
         .ok()?;
@@ -792,6 +801,13 @@ fn main() {
                 .and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))
                 .unwrap_or_else(|| panic!("--budget takes LO,HI, got {range}"));
             (lo, hi)
+        }),
+        counts: flag(&args, "--counts").map_or([0, 0], |s| {
+            let v: Vec<u32> = s
+                .split(',')
+                .map(|x| x.parse().expect("--counts C,U"))
+                .collect();
+            [v[0], v[1]]
         }),
         commanders: [
             Commander::parse(flag(&args, "--commander")),

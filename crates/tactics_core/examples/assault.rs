@@ -17,6 +17,13 @@
 //!
 //! `--survey N` lays out N fields without fighting them and says, for each
 //! that cannot be staged, why.
+//!
+//! `--set PATH=VALUE` changes any mod field, as `balance --set` does.
+//!
+//! `--counts C,U` has every side count a cut-off crew as C percent lost and
+//! an unnerved one as U percent toward its break (`BreakPoint`), on a map
+//! or a sector; the summary then says how many breaks the count decided —
+//! a side that broke whose strength alone had not.
 
 use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, SideCommand, UtilityPlanner};
 use tactics_core::battle::{BattleState, Event, Order};
@@ -39,11 +46,50 @@ fn main() {
         args.get(i + 1).cloned()
     };
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
-    let (reg, _) = DataRegistry::load_dir(&root).expect("mods load");
+    let (mut reg, _) = DataRegistry::load_dir(&root).expect("mods load");
+    // `--set PATH=VALUE`, any number of times: a mod field by its json path,
+    // as `balance --set` takes it.
+    for (_, text) in args
+        .iter()
+        .zip(args.iter().skip(1))
+        .filter(|(a, _)| *a == "--set")
+    {
+        let applied = tactics_core::harness::overrides::Override::parse(text)
+            .and_then(|ov| tactics_core::harness::overrides::apply_override(&mut reg, &ov));
+        if let Err(e) = applied {
+            panic!("--set {text}: {e}");
+        }
+    }
+    let reg = reg;
     let size = flag("--size")
         .map(|n| SectorSize::named(&n).unwrap_or_else(|| panic!("--size: no size `{n}`")))
         .unwrap_or(SectorSize::Medium);
     let worlds = Worlds::default();
+    let counts: [u32; 2] = flag("--counts").map_or([0, 0], |s| {
+        let v: Vec<u32> = s
+            .split(',')
+            .map(|x| x.parse().expect("--counts C,U"))
+            .collect();
+        [v[0], v[1]]
+    });
+    let rules = SectorRules {
+        cut_off_counts: counts[0],
+        unnerved_counts: counts[1],
+        ..SectorRules::default()
+    };
+    let counting = |state: &mut BattleState| {
+        let mut scenario = (*state.scenario).clone();
+        for side in 0..2u8 {
+            if let Some(point) = scenario.breaking_of(side).copied() {
+                scenario = scenario.with_breaking(tactics_core::map::BreakPoint {
+                    cut_off_percent: counts[0],
+                    unnerved_percent: counts[1],
+                    ..point
+                });
+            }
+        }
+        state.scenario = std::sync::Arc::new(scenario);
+    };
     let forces_for = |field: u64| {
         let purchase = Purchase {
             points: sector::budget(size, field),
@@ -76,11 +122,14 @@ fn main() {
         };
         let doctrines = [doctrine(0, "massed_armor"), doctrine(1, "elastic_defense")];
         let (mut won, mut rounds, mut lost, mut held, mut mines) = (0, 0, [0u64; 2], 0, 0);
+        let mut by_count = 0;
         let mut ends: std::collections::BTreeMap<String, u32> = Default::default();
         for game in 0..games {
             let mut state = BattleState::from_map(&reg, &map, 7000 + game)
                 .unwrap_or_else(|e| panic!("--map {map}: {e:?}"));
+            counting(&mut state);
             let outcome = fight(&reg, &mut state, &doctrines, &commander, game, games == 1);
+            by_count += u32::from(outcome.by_count);
             won += u32::from(outcome.end.is_some_and(|(w, _)| w == Some(0)));
             rounds += outcome.rounds;
             lost[0] += u64::from(outcome.lost[0]);
@@ -102,7 +151,7 @@ fn main() {
             ends.join(", ")
         );
         println!(
-            "  {:.1} rounds; attacker lost {:.0}%, defender {:.0}%; attacker held {:.2} zones at the end; {:.1} mines struck",
+            "  {:.1} rounds; attacker lost {:.0}%, defender {:.0}%; attacker held {:.2} zones at the end; {:.1} mines struck; {by_count} broke on crews cut off or unnerved",
             f64::from(rounds) / n,
             lost[0] as f64 / n / 10.0,
             lost[1] as f64 / n / 10.0,
@@ -120,14 +169,7 @@ fn main() {
                 failed += 1;
                 continue;
             };
-            match sector::sector(
-                &reg,
-                &worlds,
-                field,
-                size,
-                SectorRules::default(),
-                [&pair[0], &pair[1]],
-            ) {
+            match sector::sector(&reg, &worlds, field, size, rules, [&pair[0], &pair[1]]) {
                 Err(e) => {
                     println!("field {field}: {e}");
                     failed += 1;
@@ -147,15 +189,8 @@ fn main() {
 
     let field: u64 = args.first().and_then(|s| s.parse().ok()).unwrap_or(0);
     let pair = forces_for(field).expect("both sides can buy something");
-    let made = sector::sector(
-        &reg,
-        &worlds,
-        field,
-        size,
-        SectorRules::default(),
-        [&pair[0], &pair[1]],
-    )
-    .unwrap_or_else(|e| panic!("field {field}: {e}"));
+    let made = sector::sector(&reg, &worlds, field, size, rules, [&pair[0], &pair[1]])
+        .unwrap_or_else(|e| panic!("field {field}: {e}"));
     let mut state = sector::stage(&reg, &made, [&pair[0], &pair[1]], 9000 + field * 2)
         .expect("every vehicle finds ground");
 
@@ -207,6 +242,9 @@ struct Outcome {
     lost: [u32; 2],
     held: usize,
     mines: u32,
+    /// A side broke whose strength lost alone had not reached its point:
+    /// the crews it could not count on decided it.
+    by_count: bool,
 }
 
 /// Fight `state` out, both sides the utility AI by `doctrines` (under the
@@ -311,10 +349,27 @@ fn fight(
         if !verbose {
             continue;
         }
+        // Crews each side cannot count on: cut off, and unnerved.
+        let shaken = |side: u8| {
+            let mine = state.units.iter().filter(|u| u.side == side && u.alive());
+            mine.fold((0, 0), |(c, n), u| {
+                (
+                    c + usize::from(u.cut_off),
+                    n + usize::from(!reg.morale.rung(u.pressure).obeys),
+                )
+            })
+        };
+        let (shaken_a, shaken_d) = (shaken(0), shaken(1));
         println!(
-            "round {round:3}: attacker lost {:3}% (breaks {attacker_breaks}), defender {:3}% (breaks {defender_breaks}); attacker holds {held}; defender dug in {dug}/{standing}{}{}",
+            "round {round:3}: attacker lost {:3}% / will {:3}% (breaks {attacker_breaks}; cut off {}, unnerved {}), defender {:3}% / will {:3}% (breaks {defender_breaks}; cut off {}, unnerved {}); attacker holds {held}; defender dug in {dug}/{standing}{}{}",
             state.strength_lost(reg, 0) / 10,
+            state.will_lost(reg, 0) / 10,
+            shaken_a.0,
+            shaken_a.1,
             state.strength_lost(reg, 1) / 10,
+            state.will_lost(reg, 1) / 10,
+            shaken_d.0,
+            shaken_d.1,
             if notes.is_empty() { "" } else { " — " },
             notes.join("; ")
         );
@@ -328,5 +383,13 @@ fn fight(
         lost: [state.strength_lost(reg, 0), state.strength_lost(reg, 1)],
         held: state.objectives().filter(|(_, h)| *h == Some(0)).count(),
         mines,
+        by_count: state
+            .over
+            .is_some_and(|r| r.reason == tactics_core::battle::EndReason::Broken)
+            && (0..2u8).any(|side| {
+                state.scenario.break_point(side).is_some_and(|p| {
+                    state.will_lost(reg, side) >= p * 10 && state.strength_lost(reg, side) < p * 10
+                })
+            }),
     }
 }

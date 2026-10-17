@@ -1512,6 +1512,22 @@ impl BattleState {
             unit.buttoned = unit.buttoned.saturating_sub(1);
         }
 
+        // Who each side has found as the tick opens: a gun that fires on it
+        // from outside this is one nobody knew of (`morale.surprise_percent`;
+        // nobody is asked at the neutral price).
+        let found_before: Vec<Vec<UnitId>> = if registry.morale.surprise_percent != 100 {
+            (0..self.sides.len() as u8)
+                .map(|side| {
+                    let mut found: Vec<UnitId> =
+                        self.fog.side(side).spotted.iter().copied().collect();
+                    found.sort_unstable();
+                    found
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         // Orders in transit land at the top of the tick, before anybody
         // drives: a mission that took one tick to arrive is one the formation
         // acts on as this tick's movement resolves, not a round later.
@@ -1569,7 +1585,7 @@ impl BattleState {
         self.resolve_fire(registry, &mut events);
         events.extend(fog::recompute(registry, self));
 
-        self.apply_pressure(registry, &mut events);
+        self.apply_pressure(registry, &mut events, &found_before);
 
         // Exits are settled before control, so a vehicle that drives off the
         // map is gone before anyone asks who is standing where.
@@ -2214,7 +2230,12 @@ impl BattleState {
     /// every source of fear is in one place and adding another — suppression,
     /// a commander lost, being outflanked — is a line here rather than a hook
     /// threaded through the shooting code.
-    fn apply_pressure(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
+    fn apply_pressure(
+        &mut self,
+        registry: &DataRegistry,
+        events: &mut Vec<Event>,
+        found_before: &[Vec<UnitId>],
+    ) {
         let rules = &registry.morale;
         let mut before: Vec<(UnitId, String)> = self
             .units
@@ -2244,12 +2265,24 @@ impl BattleState {
                 v.is_some_and(|v| v.open_top),
             )
         };
+        // Whether the gun that fired was one her side had not found when
+        // the tick opened (`morale.surprise_percent`): found since — by its
+        // own muzzle flash, most often — or not at all. Empty at the
+        // neutral price, and then nobody is asked.
+        let unseen = |state: &BattleState, attacker: UnitId, target: UnitId| {
+            state.lookup(target).is_some_and(|t| {
+                found_before
+                    .get(t.side as usize)
+                    .is_some_and(|found| found.binary_search(&attacker).is_err())
+            })
+        };
         // Which face a round arrived at says whether it came from her flank
         // (`morale.flank_percent`): the struck face for a hit or a bounce,
         // and for a miss the face the shooter's bearing would have struck.
         let felt = |state: &BattleState,
                     ammo: &Option<String>,
                     small_arms: bool,
+                    attacker: UnitId,
                     target: UnitId,
                     facing: ArmorFacing| {
             let (armoured, open_top) = hull(state, target);
@@ -2264,6 +2297,7 @@ impl BattleState {
                 open_top,
                 aimed: true,
                 flank: facing != ArmorFacing::Front,
+                surprised: unseen(state, attacker, target),
             }
         };
         // A near miss is priced by what went past and at whom: the round's
@@ -2273,7 +2307,8 @@ impl BattleState {
                          ammo: &Option<String>,
                          target: UnitId,
                          aimed: bool,
-                         flank: bool| {
+                         flank: bool,
+                         surprised: bool| {
             let round = ammo.as_ref().and_then(|id| registry.ammo(id));
             let (armoured, open_top) = hull(state, target);
             crate::data::RoundPressure {
@@ -2284,6 +2319,7 @@ impl BattleState {
                 open_top,
                 aimed,
                 flank,
+                surprised,
             }
         };
 
@@ -2297,6 +2333,7 @@ impl BattleState {
                 // through — but it is stated rather than defaulted so that a
                 // future price list which does read it gets the truth.
                 Event::ShotHit {
+                    attacker,
                     target,
                     ammo,
                     damage,
@@ -2308,7 +2345,7 @@ impl BattleState {
                     ShotFelt::Penetrated {
                         spent: super::combat::spent_share(*damage, *budget),
                     },
-                    felt(self, ammo, false, *target, *facing),
+                    felt(self, ammo, false, *attacker, *target, *facing),
                 )),
                 _ => None,
             })
@@ -2324,12 +2361,16 @@ impl BattleState {
             .iter()
             .filter_map(|e| match e {
                 Event::ShotBounced {
+                    attacker,
                     target,
                     rattled,
                     ammo,
                     facing,
                     ..
-                } => Some((*target, felt(self, ammo, !rattled, *target, *facing))),
+                } => Some((
+                    *target,
+                    felt(self, ammo, !rattled, *attacker, *target, *facing),
+                )),
                 _ => None,
             })
             .collect();
@@ -2354,7 +2395,11 @@ impl BattleState {
                             }
                             _ => false,
                         };
-                        near.push((*target, went_past(self, ammo, *target, true, flank)));
+                        let surprised = unseen(self, *attacker, *target);
+                        near.push((
+                            *target,
+                            went_past(self, ammo, *target, true, flank, surprised),
+                        ));
                     }
                     Event::ShellLanded { at, ammo, .. } => {
                         let ammo = Some(ammo.clone());
@@ -2365,7 +2410,7 @@ impl BattleState {
                             .collect();
                         ring.sort_unstable();
                         for id in ring {
-                            near.push((id, went_past(self, &ammo, id, false, false)));
+                            near.push((id, went_past(self, &ammo, id, false, false, false)));
                         }
                     }
                     _ => {}
@@ -2456,6 +2501,49 @@ impl BattleState {
                 id,
                 rules.pressure_for(ShotFelt::Missed, round).round() as u32,
             );
+        }
+        // A neighbour ordered out: every formation of her side with a crew
+        // within `neighbour_within` of one of its crews hears it once, the
+        // whole formation, as it hears its leader go.
+        let mut left_alone: Vec<UnitId> = Vec::new();
+        if rules.neighbour_withdrew > 0 {
+            for e in events.iter() {
+                let Event::MissionReceived {
+                    formation,
+                    mission: crate::battle::Mission::Withdraw { .. },
+                } = e
+                else {
+                    continue;
+                };
+                let formations = self.command.formations();
+                let Some(going) = formations.iter().find(|f| f.id == *formation) else {
+                    continue;
+                };
+                let at: Vec<(u8, Hex)> = going
+                    .members
+                    .iter()
+                    .filter_map(|id| self.unit(*id))
+                    .map(|u| (u.side, u.pos))
+                    .collect();
+                for other in formations.iter().filter(|f| f.id != going.id) {
+                    let near = other
+                        .members
+                        .iter()
+                        .filter_map(|id| self.unit(*id))
+                        .any(|u| {
+                            at.iter().any(|(side, pos)| {
+                                *side == u.side
+                                    && pos.distance_to(u.pos) as u32 <= rules.neighbour_within
+                            })
+                        });
+                    if near {
+                        left_alone.extend(other.members.iter().copied());
+                    }
+                }
+            }
+        }
+        for id in left_alone {
+            add(self, id, rules.neighbour_withdrew);
         }
         for members in bereaved {
             // The whole formation, wherever it is standing: unlike watching a
@@ -2564,9 +2652,15 @@ impl BattleState {
         // throw at the worst moment.
         let ids: Vec<UnitId> = self.units.iter().map(|u| u.id).collect();
         // Cut off, on where everybody stood when the round ended: the price
-        // goes on before she sheds any (`morale.cut_off`, zero the game
-        // before and then nobody is asked).
-        let cut: Vec<UnitId> = if registry.morale.cut_off > 0 {
+        // goes on before she sheds any (`morale.cut_off`), and her side's
+        // break point may count her as partly lost (`BreakPoint::
+        // cut_off_percent`). Neither, the game before, and nobody is asked.
+        let counted = self
+            .scenario
+            .breaking()
+            .iter()
+            .any(|b| b.cut_off_percent > 0);
+        let cut: Vec<UnitId> = if registry.morale.cut_off > 0 || counted {
             ids.iter()
                 .copied()
                 .filter(|id| {
@@ -2577,9 +2671,27 @@ impl BattleState {
         } else {
             Vec::new()
         };
-        for id in &cut {
-            if let Some(unit) = self.lookup_mut(*id) {
+        for unit in self.units.iter_mut() {
+            unit.cut_off = cut.contains(&unit.id);
+            if unit.cut_off {
                 unit.pressure += registry.morale.cut_off;
+            }
+        }
+        // Bypassed, on the same positions and at the same moment
+        // (`morale.bypassed`, zero the game before and nobody asked).
+        if registry.morale.bypassed > 0 {
+            let behind: Vec<UnitId> = ids
+                .iter()
+                .copied()
+                .filter(|id| {
+                    self.unit(*id).is_some_and(|u| u.aboard.is_none())
+                        && super::danger::bypassed(registry, self, *id)
+                })
+                .collect();
+            for id in behind {
+                if let Some(unit) = self.lookup_mut(id) {
+                    unit.pressure += registry.morale.bypassed;
+                }
             }
         }
         for id in ids {

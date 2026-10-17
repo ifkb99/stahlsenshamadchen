@@ -327,6 +327,41 @@ pub struct MoraleRules {
     /// default, is the game before.
     #[serde(default)]
     pub cut_off: u32,
+    /// The price of a round from a gun her side had not found before it
+    /// fired — hit, bounce or miss — in percent of the same round from a
+    /// gun it knew of (ASSAULT.md, *Breaking by manoeuvre*: surprise was
+    /// the stated reason a force broke off one time in twelve, and an
+    /// attacker who achieved it forced the defender off in ten of ten
+    /// regimental engagements). Only a gun nobody knew of can surprise, so
+    /// what a planner expects of a gun she knows is never scaled. 100, the
+    /// default, is the game before.
+    #[serde(default = "hundred")]
+    pub surprise_percent: u32,
+    /// Pressure each round on a crew who has been **bypassed**: an enemy
+    /// whose guns reach her stands nearer her side's rear than she does —
+    /// "they were moving in behind us", the veterans' words for what ended
+    /// most of HERO Report 117's defences. Her rear is her side's ways off
+    /// the field if it has any, else the ground it stood on when the
+    /// battle opened (`BattleState::rear_distance`). Charged at the top of
+    /// the round with `cut_off`. Zero, the default, is the game before.
+    #[serde(default)]
+    pub bypassed: u32,
+    /// Pressure, once, on every crew of a formation within
+    /// `neighbour_within` hexes of one of her side's formations when it
+    /// receives an order to withdraw: the unit beside her is going, and
+    /// her flank with it (McQuie's second reason a force broke off, 13%).
+    /// News that travels the line, so it reaches the whole formation.
+    /// Zero, the default, is the game before.
+    #[serde(default)]
+    pub neighbour_withdrew: u32,
+    /// How near, in hexes, a formation's nearest crew must be to a
+    /// withdrawing one's for `neighbour_withdrew` to reach it.
+    #[serde(default = "neighbour_within")]
+    pub neighbour_within: u32,
+}
+
+fn neighbour_within() -> u32 {
+    10
 }
 
 fn hundred() -> u32 {
@@ -395,6 +430,10 @@ pub struct RoundPressure {
     /// It arrived from outside her frontal arc, priced at
     /// [`MoraleRules::flank_percent`].
     pub flank: bool,
+    /// It came from a gun her side had not found before it fired, priced
+    /// at [`MoraleRules::surprise_percent`]. Never true of an expectation:
+    /// a planner prices the guns she knows of.
+    pub surprised: bool,
 }
 
 impl Default for MoraleRules {
@@ -454,6 +493,10 @@ impl Default for MoraleRules {
             open_top_percent: 100,
             flank_percent: 100,
             cut_off: 0,
+            surprise_percent: 100,
+            bypassed: 0,
+            neighbour_withdrew: 0,
+            neighbour_within: neighbour_within(),
         }
     }
 }
@@ -518,7 +561,12 @@ impl MoraleRules {
         } else {
             1.0
         };
-        from * self.pressure_ahead(outcome, round)
+        let unseen = if round.surprised {
+            self.surprise_percent as f32 / 100.0
+        } else {
+            1.0
+        };
+        from * unseen * self.pressure_ahead(outcome, round)
     }
 
     /// [`Self::pressure_for`] as if the round came from in front of her.

@@ -268,6 +268,25 @@ scenario that declares none of it is the game before.
   every zone their side held. "Hold where you are" closes a platoon on its
   leader; keeping each dug-in crew in her own hole was measured *worse* at
   Noville (30% against 14% for the attacker) and reverted — ASSAULT.md.
+- **A side breaks on its will, not its strength** (`BattleState::will_lost`,
+  ASSAULT.md *Breaking by manoeuvre*): a crew cut off or unnerved counts as
+  `BreakPoint::cut_off_percent` / `unnerved_percent` of her lost, the larger
+  if both, never the sum; zero is `strength_lost` exactly. Cut off is asked
+  once a round into `Unit::cut_off` (when `morale.cut_off` or a break point
+  reads it), never per tick. **Unnerved counts a rung, and the shipped
+  ladder's non-obeying rung is a crew going to ground**: most of an
+  attacking force sits on it under fire, so a value there ends every
+  battle in three rounds — measured, and why it ships at nothing.
+- **Pressure from position** (`morale.surprise_percent`, `bypassed`,
+  `neighbour_withdrew`): a shot from a gun her side had not found **when
+  the tick opened** (`found_before`, snapshotted at the top of the tick —
+  the fog's clock gives a planning-phase sighting and the round's first
+  tick the same number, so `spotted_since` cannot tell them apart); a gun
+  that can reach her nearer her side's rear (`BattleState::rear_distance`:
+  exits, else the *squared*-distance centre of where her side stood at the
+  start, because a plain sum is flat between two crews); a neighbouring
+  formation receiving `Withdraw`. A planner's expectation never reads
+  surprise: a gun she knows of cannot surprise her.
 - **Elevation levels run `0`-`9` then `a`-`z`**: real ground has more relief
   than ten levels.
 - **A battle map that says `"shape": "free"` is a scenario, not a campaign

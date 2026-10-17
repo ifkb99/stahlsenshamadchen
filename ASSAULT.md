@@ -48,15 +48,22 @@ here so a claim can be followed up.
   percent per battle"; median attacker under 4%, defender under 8%. Clark
   (1954, 43 battalion breakpoints): attacks failed at 7–48% (average 26%),
   defences withdrew at 37–69% (average 52%), cumulative over days. HERO
-  Report 117 (1988): attacker halts at 4–17%, defender withdraws at 14–40%.
+  Report 117 (1988): attacker halts at 5.0% (regimental) or 16.6%
+  (divisional), defender withdraws at 17.1% or 39.8% — and those are its
+  *third and fourth* checks; the first is geometric (below).
   Every source agrees **the attacker gives up at a half to a third of the
   losses the defender takes before she withdraws**.
 - **Manoeuvre, not casualties, ends most fights.** McQuie's 52 reasons a
   force broke off: enemy manoeuvre 64% (envelopment, encirclement or
   penetration 33; an adjacent unit withdrawing 13; surprise 8; key terrain
   lost 6; enemy reinforced 4), firepower 12%, no reserves left 12%, other
-  12%. Helmbold: none of Clark's breakpoints was a collapse, each "a
-  rational decision … to substitute one course of action for another".
+  12%. **Corrected** (*Breaking by manoeuvre*, below): the 64% is a
+  grouping, and McQuie's own unpublished grouping of the same reasons gives
+  less; the robust claim is that **losses were the stated reason about one
+  time in ten**, and envelopment, encirclement or penetration about one in
+  three. Clark's sample has no collapses because she dropped her five
+  collapse cases; the Helmbold line quoted here before could not be
+  checked.
 - **Our battles are one to two orders of magnitude too lethal** for those
   numbers: a battle here is over in tens of minutes, a historical attack in
   hours. A break point tuned to history has to be read in the game's own
@@ -303,22 +310,149 @@ change it, in the order the measurements point:
    under orders, so that an order's ground is fought for as well as ground
    they chose. Every fixed policy here loses because the executor is worse
    at the commander's ground than at its own.
-2. **Orders worth having**: "every crew in her own position", per-formation
-   standing orders with ground, and the reserve as a thing a commander
-   holds back and commits — today a platoon is either free or tied to a
-   hex.
+2. **Orders worth having**: the reserve as a thing a commander holds back
+   and commits, and orders that name ground rather than a hex. **Ruled
+   (2026-10-16): an order stays general** — "a general doesn't tell a squad
+   where to stand, that's the NCO's job" — so "every crew in her own
+   position" is not an order; it is something crews under "hold" must learn
+   to do. `planner.order_ground` (below) is the first half.
 3. **Breaking by manoeuvre** (above): while the only way a side breaks is
    its losses, the decisive thing in real engagements — being enveloped,
    cut off, outflanked — wins nothing a commander can plan for.
+
+## Breaking by manoeuvre: the record checked (2026-10-16)
+
+The designer's reading of the third recommendation: "needs to be explored
+more but sounds directionally correct". A research pass over the primary
+sources; nothing built.
+
+**What the record says.**
+
+- **McQuie (*ARMY*, Nov. 1987)**, 52 coded reasons for breaking off:
+  envelopment, encirclement or penetration 33%, a neighbour withdrawing 13,
+  no reserves left 12, casualties or equipment lost 10, surprise 8, key
+  terrain lost 6. One reason per engagement, chosen from narratives —
+  reasons people gave, not measured causes.
+- **HERO Report 117, *Forced Changes of Combat Posture* (1988, for the
+  Army's Concepts Analysis Agency; DTIC AD-A201405)**, 83 US engagements,
+  built a breakpoint model for simulations that checks, in order: **how
+  deep the attacker has got over the width of the front** (the defender
+  withdraws at 2.0 regimental, 1.59 divisional), the force ratio, the
+  attacker's losses, the defender's losses, the casualty ratio. About 80%
+  matched, in sample. Its veterans' groups: enemy manoeuvre ("they were
+  moving in behind us") present in 6 of 8 operations and **decisive in all
+  6**; casualties decisive in 2. **An attacker with the reserve advantage
+  forced the defender off in 14 of 14** divisional engagements; one with
+  surprise, 10 of 10 regimental.
+- **Dupuy's interim rule** (in HERO 117): three of four conditions change
+  posture — causes combine; one fact moves a side toward breaking, it does
+  not break it.
+- **Clausewitz IV.4**: "the rear being endangered makes defeat more
+  probable, and, at the same time, more decisive". **Lehmann and Zhukov
+  (2019)**: surrender is contagious from battle to battle.
+- Unchecked: Rowland's *Stress of Battle* figures; Helmbold R-772-PR beyond
+  its abstract.
+
+**What carries over.** The ratio (an attacker quits at about half the
+losses a defender takes), not the level: our battles are minutes, history's
+days. The mechanism is geometric — enveloped, penetrated, cut off; a
+neighbour going; key ground lost; surprise; the reserve balance — and losses
+are a minority cause. A side's will should read what her commander has been
+told (`Knower::Commander`), a crew's nerve what she knows.
+
+**Where the engine stands.** The crew level is mostly built (`cut_off`,
+flank shock, `leader_lost`, `ally_destroyed`). Nothing of it reaches the
+side: `strength_lost` counts substance and exits, so a crew cut off or
+running is full strength to her side, and a platoon breaking is the AI's
+private opinion (`beaten`), not a rule — "the unit beside us withdrew"
+cannot happen.
+
+**Options, smallest first**, each data with a neutral value:
+
+- **A — what a side can count on.** A crew cut off, or running, counts as
+  partly lost toward her side's break (`BreakPoint` gains two percents),
+  as a crew who left by an exit already counts in full. The board-game
+  rule: a unit with nowhere to go is lost to its side.
+- **B — what a crew notices.** New pressure on the ladder: *bypassed* (a
+  known enemy nearer her line of retreat than she is), *a neighbour
+  withdrew*, *surprise* (a shot from a gun her side had not found),
+  *isolated*, *a friend seen to run*.
+- **C — a side's will.** The break point reads a meter: losses, plus A's
+  shares, ground she held and lost, how much of her is bypassed, her
+  commander lost, and the reserve balance (fresh crews against the enemy's
+  known fresh crews); with a *why it broke* tally in `examples/assault` to
+  set beside McQuie's shape.
+- **D — platoons break**, as an engine event: a formation past its own
+  point is withdrawn by the engine, which charges its neighbours, so a side
+  breaks through its platoons. The largest, and it would be the engine
+  issuing a binding order — a ruling.
+
+**Recommendation**: A, then B's *bypassed*, *neighbour withdrew* and
+*surprise*, measured on the three real battles (Noville first: Foy behind
+the defence is a line-of-retreat case) and the sectors; C's ground and
+reserve terms once A and B show a side breaking by position at all; D last.
+Pre-registered: with teacher crews Arracourt should not move (the teacher
+strikes from the front 78% of the time, so nobody goes round anybody), and
+the real test is the learned commander retrained with them on.
+
+**Built: A and B** (the designer agreed the recommendation; D is still
+being thought about). Every number is data and every default is the game
+before — the determinism snapshot passed unregenerated.
+
+- **A**: `BreakPoint` gains `cut_off_percent` and `unnerved_percent`, and
+  a side breaks on `BattleState::will_lost` — strength lost, with a crew
+  cut off or unnerved counted as that share of her lost, the larger if
+  both. Whether a crew is cut off is asked once a round
+  (`Unit::cut_off`), so the tick's victory check reads a field.
+  `SectorRules` and `rollout`/`assault --counts C,U` set it; the
+  commander's break-margin features read the will, not the strength.
+- **B**: `morale.surprise_percent` (a shot from a gun her side had not
+  found when the tick opened, hit, bounce or miss; 100 neutral),
+  `morale.bypassed` (a gun that can reach her stands nearer her side's
+  rear: its exits, else the squared-distance centre of where it stood at
+  the start, `BattleState::rear_distance`), `morale.neighbour_withdrew`
+  and `neighbour_within` (a formation of her side within reach receives
+  an order to withdraw). `examples/assault` takes `--set` and narrates
+  each side's cut-off and unnerved crews and its will beside its losses.
+
+*Measured, teacher crews:*
+
+- **Unnerved cannot be counted as it stands.** The shipped ladder puts a
+  crew on its non-obeying rung at 12 pressure, and under the shipped fear
+  content 19 to 22 of Noville's ~30 attacking crews are there by round 2 —
+  a crew going to ground, not a collapse. At `--counts 50,50` every one of
+  64 Noville battles broke on the count, in 2.8 rounds. Before
+  `unnerved_percent` is worth a value it wants to read flight, or the rung
+  held for rounds.
+- **Cut off decides almost nothing**: at `--counts 100,0` Noville is 9 of
+  64 to the attacker either way (two battles broke on the count), and 576
+  sectors read 290 and 291 learner wins with identical endings. The
+  teacher strikes from the front and goes round nobody, so nobody is cut
+  off: the third species of null, a rule nobody uses yet.
+- **B**, Noville, 64 each, attacker wins: baseline 9; surprise 200% 7;
+  bypassed 3 a round 10; neighbour 4 identical (no commander orders
+  anybody out); everything at once 6. Sectors, 576, attacker 128 of 288
+  and with everything 117 — toward the defender, the side that fires from
+  where nobody has found her, and inside noise.
+
+So the rules are in and the crews do not yet give them anything to read.
+They are for the learner: crews and a commander trained with them on are
+the experiment, and a "why it broke" tally beside McQuie's shape (option
+C) the instrument.
+
+Sources: McQuie's table as the Dupuy Institute reprints it
+(dupuyinstitute.org, 2017-06-23); HERO 117 (generalstaff.org's DTIC scan);
+Clark via HERO 117 App. C; Clausewitz, *On War* IV.4 and VI.4 (Graham);
+Lehmann and Zhukov, *International Organization* 73(1), 2019.
 
 ## Open
 
 - The learned commander (L3) trained on sectors, both roles, measured
   against orders by coin per role: the experiment this was built for
   (below, *The learned commander on sectors*).
-- An order to hold **every crew in her own position** — a line of ramps, a
-  belt of trenches — which "hold where you are" is not: it closes a platoon
-  on its leader. Per-formation standing orders with ground, too.
+- **Every crew in her own position** — a line of ramps, a belt of
+  trenches — is not an order (ruled 2026-10-16); crews under a general hold
+  must learn it (*Crews under orders*, below).
 - Break pressure from manoeuvre and from reserves (above).
 - Pre-registered fire: a defender's artillery lands on the ground she
   surveyed without adjusting (FM 3-90's target reference points; NTC found

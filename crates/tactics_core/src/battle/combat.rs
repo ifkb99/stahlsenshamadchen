@@ -499,6 +499,7 @@ impl<'r> Round<'r> {
             open_top: false,
             aimed: true,
             flank: false,
+            surprised: false,
         }
     }
 

@@ -37,8 +37,8 @@ pub use command::{
     WaitingOrders, formation_exit, nearest_exit,
 };
 pub use danger::{
-    Bearing, Incoming, cut_off, drill_destination, fire_on, fire_on_as, incoming, incoming_from,
-    noticed_threats, threatened, threats,
+    Bearing, Incoming, bypassed, cut_off, drill_destination, fire_on, fire_on_as, incoming,
+    incoming_from, noticed_threats, threatened, threats,
 };
 pub use fog::{FogMap, SideFog, SightGrid, los_clear, unit_vision};
 pub use movement::{
@@ -512,6 +512,13 @@ pub struct Unit {
     /// crew re-deciding knows what she was doing.
     #[serde(default)]
     pub goal_witness: Option<crate::battle::GoalWitness>,
+    /// Whether she was cut off when the last round began
+    /// (`danger::cut_off`): asked once a round, and only where something
+    /// reads it — `morale.cut_off`, or a break point counting cut-off crews
+    /// as lost — so the tick's victory check reads a field rather than
+    /// walking every gun on the field. `#[serde(default)]`: nobody is.
+    #[serde(default)]
+    pub cut_off: bool,
 }
 
 impl Unit {
@@ -846,6 +853,12 @@ pub struct Battle<C = Built> {
     /// had none.
     #[serde(default)]
     pub mines: mines::MineState,
+    /// Where each side stood when the battle opened, by side, in id order:
+    /// her rear, where she has no way off the field to call it
+    /// ([`BattleState::rear_distance`]). `#[serde(default)]`: a battle
+    /// saved before had none, and asks nobody whether she is bypassed.
+    #[serde(default)]
+    pub rear: Vec<Vec<Hex>>,
     /// Rounds that have been fired and have not arrived yet, in the order
     /// they were fired.
     ///
@@ -926,6 +939,7 @@ impl SavedBattle {
             mut score,
             approach,
             mines,
+            rear,
             shells,
             smoke,
             command,
@@ -971,6 +985,7 @@ impl SavedBattle {
             score,
             approach,
             mines,
+            rear,
             shells,
             smoke,
             command,
@@ -1135,6 +1150,7 @@ impl BattleState {
             score: vec![0; side_count],
             approach: None,
             mines: mines::MineState::default(),
+            rear: Vec::new(),
             shells: Vec::new(),
             smoke: Vec::new(),
             command,
@@ -1153,6 +1169,7 @@ impl BattleState {
         state.board_mounted_starts(registry, &file.units);
         state.fog = FogMap::new(state.sides.len());
         state.dig_prepared_positions(registry);
+        state.mark_rear();
         state.give_standing_orders();
         fog::recompute(registry, &mut state);
         state.open_the_net(registry);
@@ -1258,6 +1275,7 @@ impl BattleState {
             score: vec![0; side_count],
             approach: None,
             mines: mines::MineState::default(),
+            rear: Vec::new(),
             shells: Vec::new(),
             smoke: Vec::new(),
             command,
@@ -1279,6 +1297,7 @@ impl BattleState {
         state.board_mounted_starts(registry, placements);
         state.fog = FogMap::new(state.sides.len());
         state.dig_prepared_positions(registry);
+        state.mark_rear();
         state.give_standing_orders();
         fog::recompute(registry, &mut state);
         state.open_the_net(registry);
@@ -1407,6 +1426,48 @@ impl BattleState {
     /// (`VehicleDef::prepared_cover`; ASSAULT.md): the hours before the
     /// attack, spent with shovels and a dozer. A passenger has nothing dug.
     /// A scenario that prepares nobody leaves every crew as she was.
+    /// Note where every side stands as the battle opens: her rear, for
+    /// [`Self::rear_distance`].
+    fn mark_rear(&mut self) {
+        self.rear = (0..self.sides.len() as u8)
+            .map(|side| {
+                self.units
+                    .iter()
+                    .filter(|u| u.side == side)
+                    .map(|u| u.pos)
+                    .collect()
+            })
+            .collect();
+    }
+
+    /// How far `hex` is from `side`'s rear, for asking which of two places
+    /// is nearer it: her nearest way off the field if she has one
+    /// (an `exit` objective open to her), else the sum of the squared
+    /// distances to where each of her crews stood when the battle opened —
+    /// a centre of her ground that needs no rounding to a hex, so a
+    /// reflection keeps it. Squared, because a plain sum is the same
+    /// anywhere on the line between two of them and a centre has to be a
+    /// point. `None` for a side with neither.
+    pub fn rear_distance(&self, side: u8, hex: Hex) -> Option<u64> {
+        let exits: Vec<Hex> = self
+            .scenario
+            .objectives()
+            .iter()
+            .filter(|o| o.kind == crate::map::ObjectiveKind::Exit && o.open_to(side))
+            .flat_map(|o| o.hexes.iter().copied())
+            .collect();
+        if let Some(d) = exits.iter().map(|e| e.distance_to(hex) as u64).min() {
+            return Some(d);
+        }
+        let start = self.rear.get(side as usize).filter(|r| !r.is_empty())?;
+        Some(
+            start
+                .iter()
+                .map(|h| (h.distance_to(hex) as u64).pow(2))
+                .sum(),
+        )
+    }
+
     fn dig_prepared_positions(&mut self, registry: &DataRegistry) {
         let scenario = Arc::clone(&self.scenario);
         for unit in self.units.iter_mut() {
@@ -1662,6 +1723,7 @@ impl BattleState {
             orders: None,
             goal: None,
             goal_witness: None,
+            cut_off: false,
         });
         Ok(id)
     }
@@ -2358,11 +2420,38 @@ impl BattleState {
     /// off by an exit, because she has taken herself out of this fight.
     /// Zero for a side with nobody.
     pub fn strength_lost(&self, registry: &DataRegistry, side: u8) -> u32 {
+        self.lost_counting(registry, side, None)
+    }
+
+    /// [`strength_lost`](Self::strength_lost), with what her scenario's
+    /// break point says about crews she cannot count on (`BreakPoint`'s
+    /// `cut_off_percent` and `unnerved_percent`): the share of her will to
+    /// go on that is gone, which is what she breaks on. With neither, or
+    /// no break point, it is her strength lost exactly.
+    pub fn will_lost(&self, registry: &DataRegistry, side: u8) -> u32 {
+        self.lost_counting(registry, side, self.scenario.breaking_of(side))
+    }
+
+    fn lost_counting(
+        &self,
+        registry: &DataRegistry,
+        side: u8,
+        point: Option<&crate::map::BreakPoint>,
+    ) -> u32 {
+        let (cut, unnerved) = point.map_or((0, 0), |p| (p.cut_off_percent, p.unnerved_percent));
         let (mut have, mut full) = (0u64, 0u64);
         for unit in self.units.iter().filter(|u| u.side == side) {
             let (h, t) = self.substance(registry, unit);
             if unit.alive() {
-                have += u64::from(h);
+                // A crew her side cannot count on is that share gone.
+                let mut gone = 0;
+                if unit.cut_off {
+                    gone = gone.max(cut);
+                }
+                if unnerved > 0 && !registry.morale.rung(unit.pressure).obeys {
+                    gone = gone.max(unnerved);
+                }
+                have += u64::from(h) * u64::from(100 - gone.min(100)) / 100;
             }
             full += u64::from(t);
         }
@@ -2382,7 +2471,7 @@ impl BattleState {
             let Some(percent) = self.scenario.break_point(side) else {
                 continue;
             };
-            let lost = i64::from(self.strength_lost(registry, side));
+            let lost = i64::from(self.will_lost(registry, side));
             let over = lost - i64::from(percent) * 10;
             if over >= 0 {
                 past.push((side, over));

@@ -399,11 +399,39 @@ pub struct Assault {
 /// so they count against it the same way. A scenario that declares no
 /// break point for a side is fought until that side is gone, which is
 /// every battle before this rule.
+///
+/// **A crew her side cannot count on counts against it too** (ASSAULT.md,
+/// *Breaking by manoeuvre*, option A): one cut off — the guns she knows of
+/// leave her no open half of the compass — counts `cut_off_percent` of what
+/// she still has as lost, and one whose nerve has gone — on a rung that
+/// does not obey — `unnerved_percent`; the larger of the two if both, never
+/// the sum. In the record losses were the stated reason a force broke off
+/// about one time in ten, and being enveloped, encircled or penetrated
+/// about one in three: a unit with nowhere to go is lost to its side
+/// before it is destroyed. Zero, the default, is strength alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BreakPoint {
     pub side: u8,
     /// Percent of its strength lost at which it breaks: 1 to 100.
     pub lost_percent: u32,
+    /// Percent of a cut-off crew's strength counted as lost: 0 to 100.
+    #[serde(default)]
+    pub cut_off_percent: u32,
+    /// Percent of an unnerved crew's strength counted as lost: 0 to 100.
+    #[serde(default)]
+    pub unnerved_percent: u32,
+}
+
+impl BreakPoint {
+    /// `side` breaking at `lost_percent`, counting strength alone.
+    pub fn at(side: u8, lost_percent: u32) -> Self {
+        Self {
+            side,
+            lost_percent,
+            cut_off_percent: 0,
+            unnerved_percent: 0,
+        }
+    }
 }
 
 /// An order every formation of `side` holds when the battle opens: given
@@ -1043,10 +1071,12 @@ impl Scenario {
     /// The share of its strength `side` can lose before it breaks, if the
     /// scenario says.
     pub fn break_point(&self, side: u8) -> Option<u32> {
-        self.breaking
-            .iter()
-            .find(|b| b.side == side)
-            .map(|b| b.lost_percent)
+        self.breaking_of(side).map(|b| b.lost_percent)
+    }
+
+    /// Everything the scenario says about where `side` breaks, if anything.
+    pub fn breaking_of(&self, side: u8) -> Option<&BreakPoint> {
+        self.breaking.iter().find(|b| b.side == side)
     }
 
     /// Whether `side` starts in positions prepared before the battle.
@@ -1103,9 +1133,14 @@ impl Scenario {
 
     /// This scenario with `side` breaking at `lost_percent` of its strength
     /// lost, replacing whatever it said for that side.
-    pub fn with_break_point(mut self, side: u8, lost_percent: u32) -> Self {
-        self.breaking.retain(|b| b.side != side);
-        self.breaking.push(BreakPoint { side, lost_percent });
+    pub fn with_break_point(self, side: u8, lost_percent: u32) -> Self {
+        self.with_breaking(BreakPoint::at(side, lost_percent))
+    }
+
+    /// This scenario with `point` replacing whatever it said for its side.
+    pub fn with_breaking(mut self, point: BreakPoint) -> Self {
+        self.breaking.retain(|b| b.side != point.side);
+        self.breaking.push(point);
         self
     }
 }
@@ -1441,6 +1476,17 @@ impl MapFile {
                     "map `{}`: side {} breaks at {}% lost, which is not 1 to 100",
                     self.id, point.side, point.lost_percent
                 ));
+            }
+            for (name, percent) in [
+                ("cut_off_percent", point.cut_off_percent),
+                ("unnerved_percent", point.unnerved_percent),
+            ] {
+                if percent > 100 {
+                    report.errors.push(format!(
+                        "map `{}`: side {}'s {name} is {percent}, which is not 0 to 100",
+                        self.id, point.side
+                    ));
+                }
             }
         }
     }

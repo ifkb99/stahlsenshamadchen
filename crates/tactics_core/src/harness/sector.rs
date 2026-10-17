@@ -147,6 +147,11 @@ pub struct SectorRules {
     /// Percent of its strength the defender can lose before she gives up
     /// the position.
     pub defender_breaks: u32,
+    /// Percent of a cut-off crew's strength each side counts as lost toward
+    /// its break (`BreakPoint::cut_off_percent`; 0, strength alone).
+    pub cut_off_counts: u32,
+    /// The same for a crew whose nerve has gone (`unnerved_percent`).
+    pub unnerved_counts: u32,
 }
 
 impl Default for SectorRules {
@@ -155,6 +160,8 @@ impl Default for SectorRules {
             prepared_percent: 75,
             attacker_breaks: 50,
             defender_breaks: 70,
+            cut_off_counts: 0,
+            unnerved_counts: 0,
         }
     }
 }
@@ -383,8 +390,16 @@ pub fn sector(
     // are. Her commander may give others as the fight develops.
     let mut scenario = Scenario::default()
         .with_assault(0, needs)
-        .with_break_point(0, rules.attacker_breaks)
-        .with_break_point(1, rules.defender_breaks)
+        .with_breaking(crate::map::BreakPoint {
+            cut_off_percent: rules.cut_off_counts,
+            unnerved_percent: rules.unnerved_counts,
+            ..crate::map::BreakPoint::at(0, rules.attacker_breaks)
+        })
+        .with_breaking(crate::map::BreakPoint {
+            cut_off_percent: rules.cut_off_counts,
+            unnerved_percent: rules.unnerved_counts,
+            ..crate::map::BreakPoint::at(1, rules.defender_breaks)
+        })
         .with_standing(1, crate::battle::Mission::Hold { at: None });
     for (i, anchor) in zones.iter().enumerate() {
         scenario.push_objective(Objective {

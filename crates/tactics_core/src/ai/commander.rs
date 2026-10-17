@@ -399,7 +399,7 @@ pub fn describe(
     // What a side can still lose before it breaks, as a share of its
     // strength: the whole of what it has left when it has no break point.
     let break_margin = |who: u8| {
-        let lost = state.strength_lost(registry, who) as f32 / 1000.0;
+        let lost = state.will_lost(registry, who) as f32 / 1000.0;
         let point = state.scenario.break_point(who).unwrap_or(100) as f32 / 100.0;
         point - lost
     };

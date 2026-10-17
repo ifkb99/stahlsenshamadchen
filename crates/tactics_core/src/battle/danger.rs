@@ -342,6 +342,26 @@ pub fn cut_off(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> bo
     (0..6).all(|d| (0..3).any(|k| from[(d + k) % 6]))
 }
 
+/// Whether `unit` has been **bypassed**: a gun she knows can reach her
+/// stands nearer her side's rear than she does
+/// ([`BattleState::rear_distance`]) — "they were moving in behind us". A
+/// fact about where the enemy is against her line home, never a name for
+/// what he did to get there.
+pub fn bypassed(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> bool {
+    let Some(me) = state.unit(unit) else {
+        return false;
+    };
+    let Some(mine) = state.rear_distance(me.side, me.pos) else {
+        return false;
+    };
+    threats(registry, state, unit).into_iter().any(|enemy| {
+        state
+            .unit(enemy)
+            .and_then(|e| state.rear_distance(me.side, e.pos))
+            .is_some_and(|theirs| theirs < mine)
+    })
+}
+
 pub fn threats(registry: &DataRegistry, state: &BattleState, unit: UnitId) -> Vec<UnitId> {
     let Some(me) = state.unit(unit) else {
         return Vec::new();
