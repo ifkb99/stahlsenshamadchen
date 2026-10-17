@@ -1153,6 +1153,7 @@ impl BattleState {
         state.board_mounted_starts(registry, &file.units);
         state.fog = FogMap::new(state.sides.len());
         state.dig_prepared_positions(registry);
+        state.give_standing_orders();
         fog::recompute(registry, &mut state);
         state.open_the_net(registry);
         Ok(state)
@@ -1278,6 +1279,7 @@ impl BattleState {
         state.board_mounted_starts(registry, placements);
         state.fog = FogMap::new(state.sides.len());
         state.dig_prepared_positions(registry);
+        state.give_standing_orders();
         fog::recompute(registry, &mut state);
         state.open_the_net(registry);
         Ok(state)
@@ -1376,6 +1378,30 @@ impl BattleState {
     /// events are dropped: a sighting in hand when the battle opens is the
     /// state of things, not something that just happened. With no `command`
     /// block both calls return at once, which is the game as it was.
+    /// Every formation of a side the scenario gives a standing order opens
+    /// under it, straight onto the formation: it was given before the
+    /// battle, and the net carries nothing that has already arrived.
+    fn give_standing_orders(&mut self) {
+        let scenario = Arc::clone(&self.scenario);
+        for order in scenario.standing() {
+            let ours: Vec<usize> = self
+                .command
+                .formations()
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.side == order.side)
+                .map(|(i, _)| i)
+                .collect();
+            for index in ours {
+                self.command.set_mission(
+                    FormationId(index as u32),
+                    order.mission.clone(),
+                    Latitude::Delegated,
+                );
+            }
+        }
+    }
+
     /// Every crew of a side the scenario says starts prepared begins the
     /// battle dug in as deep as her chassis's prepared position goes
     /// (`VehicleDef::prepared_cover`; ASSAULT.md): the hours before the

@@ -300,11 +300,19 @@ fn fight(
             }
         }
         let held = state.objectives().filter(|(_, h)| *h == Some(0)).count();
+        // The defender's crews on the field and how many are still in a
+        // hole: whether a defence stayed in the positions it prepared.
+        let on_field = state
+            .units
+            .iter()
+            .filter(|u| u.side == 1 && u.alive() && u.aboard.is_none());
+        let (standing, dug) =
+            on_field.fold((0, 0), |(n, d), u| (n + 1, d + usize::from(u.dug_in > 0)));
         if !verbose {
             continue;
         }
         println!(
-            "round {round:3}: attacker lost {:3}% (breaks {attacker_breaks}), defender {:3}% (breaks {defender_breaks}); attacker holds {held}{}{}",
+            "round {round:3}: attacker lost {:3}% (breaks {attacker_breaks}), defender {:3}% (breaks {defender_breaks}); attacker holds {held}; defender dug in {dug}/{standing}{}{}",
             state.strength_lost(reg, 0) / 10,
             state.strength_lost(reg, 1) / 10,
             if notes.is_empty() { "" } else { " — " },

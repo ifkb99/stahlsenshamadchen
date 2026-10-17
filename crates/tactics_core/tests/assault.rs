@@ -739,3 +739,85 @@ fn a_hand_drawn_map_may_have_more_relief_than_ten_levels() {
     };
     assert_eq!((level(0), level(1), level(2)), (0, 9, 35));
 }
+
+// --- standing orders ---------------------------------------------------------
+
+/// A defender dug in at the east end of a strip, with ground her side holds
+/// at the west end worth driving for, and the attacker out of sight
+/// between. `standing` gives her formation the order to hold before the
+/// battle.
+fn holding(reg: &DataRegistry, standing: bool) -> BattleState {
+    let mut extra = serde_json::json!({
+        "objectives": [{ "id": "far", "at": [[2, 1]], "value": 3, "held": 1 }],
+        "prepared": [1],
+        "formations": [
+            { "id": "west", "side": 0 },
+            { "id": "east", "side": 1 },
+        ],
+    });
+    if standing {
+        extra["standing"] =
+            serde_json::json!([{ "side": 1, "mission": { "hold": { "at": null } } }]);
+    }
+    let file = assault_map(16, 6, extra);
+    let mut west = unit_at([0, 0], 0, "medium_tank", "West");
+    west.formation = Some("west".into());
+    west.leads = true;
+    let mut lead = unit_at([12, 1], 1, "medium_tank", "East 1");
+    lead.formation = Some("east".into());
+    lead.leads = true;
+    let mut second = unit_at([14, 2], 1, "medium_tank", "East 2");
+    second.formation = Some("east".into());
+    stage(reg, &file, vec![west, lead, second])
+}
+
+/// Round one, planned by the utility AI on both sides: how many of the
+/// defender's crews are still in their holes at the end of it.
+fn still_dug_in_after_a_round(reg: &DataRegistry, state: &mut BattleState) -> usize {
+    use tactics_core::ai::{AiConfig, AiDriver, AiPlanner, UtilityPlanner};
+    let mut ai = AiDriver::new();
+    for side in 0..2u8 {
+        let config = AiConfig {
+            planner: "utility".into(),
+            difficulty: 5,
+            doctrine: Some("elastic_defense".into()),
+        };
+        let planner: Box<dyn AiPlanner<BattleState, Order>> =
+            Box::new(UtilityPlanner::from_config(&config, u64::from(side), reg));
+        ai.insert(side, planner);
+    }
+    ai.plan_round(reg, state);
+    state.resolve_round(reg);
+    state
+        .units
+        .iter()
+        .filter(|u| u.side == 1 && u.dug_in > 0)
+        .count()
+}
+
+#[test]
+fn a_defence_opens_under_the_orders_it_was_given_before_the_battle() {
+    // An order given in round one lands a round late, and in that round a
+    // crew choosing for herself drove out of her prepared position for the
+    // next ground worth having — at Noville, a zone two kilometres behind
+    // her, the defence scattered over every zone it held. A standing order
+    // is on the formation from the start.
+    let reg = registry();
+    let mut free = holding(&reg, false);
+    assert_eq!(free.formations()[1].latest_mission(), None);
+    assert!(
+        still_dug_in_after_a_round(&reg, &mut free) < 2,
+        "with nothing said, the far ground draws somebody out of her hole"
+    );
+    let mut held = holding(&reg, true);
+    assert_eq!(
+        held.formations()[1].latest_mission(),
+        Some(&tactics_core::battle::Mission::Hold { at: None }),
+        "the standing order is on the formation before round one"
+    );
+    assert_eq!(
+        still_dug_in_after_a_round(&reg, &mut held),
+        2,
+        "and nobody leaves for the far ground"
+    );
+}

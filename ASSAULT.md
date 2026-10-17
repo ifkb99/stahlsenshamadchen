@@ -123,6 +123,7 @@ mutation-checked.
 | the way round a known field | `balance.mine_route_cost` | 8 |
 | obstacles | terrain `wire`, `tank_ditch` | foot 3; no hull crosses a ditch |
 | fog | `VisibilityPhase { from_round, hexes }` | — |
+| orders given before the battle | `StandingOrder { side, mission }` | sectors: the defender holds |
 | relief past ten levels | elevation `a`-`z` (10-35) | — |
 
 - **A prepared position is deeper than a scrape** and the round's digging
@@ -138,6 +139,12 @@ mutation-checked.
 - **Fog is a cap on sight**, through one door (`BattleState::sight`), and
   the fog's vision cache is keyed on range, so it lifts the round the phase
   says.
+- **A standing order is on the formation when the battle opens.** Every
+  other mission travels the net and lands a round late, and in that round a
+  defender's crews, choosing for themselves, scattered to every zone their
+  side held — at Noville four Shermans and both M7s set off for Foy, two
+  kilometres behind them. A defence's first order is given before the
+  attack.
 
 ## The defended sector (`harness::sector`)
 
@@ -216,32 +223,67 @@ infantry and artillery; it was an infantry-and-guns set piece.
 
 ### Measured: the teacher on the real battles
 
-64 battles a row, `massed_armor` attacking `elastic_defense`:
+64 battles a row, `massed_armor` attacking `elastic_defense`, no commander,
+the attacker's wins:
 
-| battle | commander | attacker won | ended by | attacker lost | defender lost |
-| --- | --- | --- | --- | --- | --- |
-| Noville | none | 66% | broken 64 | 36% | 63% |
-| Noville | hand-written | 64% | broken 64 | 36% | 62% |
-| Valley of Tears | none | 62% | broken 44, stalled 20 | 37% | 56% |
-| Valley of Tears | hand-written | 53% | broken 47, stalled 17 | 38% | 57% |
-| Arracourt | none | 17% | broken 64 | 51% | 35% |
-| Arracourt | hand-written | 31% | broken 58, stalled 6 | 48% | 40% |
+| battle | history | first cut | as shipped |
+| --- | --- | --- | --- |
+| Noville | the attack ebbed | 66% | **14%** (standing hold) |
+| Arracourt | the attack broke up | 17% | **17%** (no standing order) |
+| Valley of Tears | the attack was called off | 62% | **62%** (no standing order) |
 
-**Arracourt comes out as it went; Noville and the Valley of Tears do not.**
-The narration says why: the defenders' crews leave their holes. A crew
-choosing for herself has no notion that she is defending, drives out of a
-prepared position toward the enemy or the next place worth standing on, and
-loses the cover that was the whole of the defence's advantage; at Noville
-the Shermans died in the open round the village they were meant to hold.
-That is the coordination a commander is for — an order to hold is the
-lever, and whether a learned commander finds it is the experiment. It is
-**not** fixed here by a rule that tells crews to stay, which would be naming
-the tactic (REIMAGINED.md, *Tactics emerge*).
+The first cut gave neither defence an order before the battle, and the
+narration of Noville showed the defenders out of their prepared positions in
+round one, before any contact — 20 of 25. **The first diagnosis was that
+they were leaving their holes, and the measurement says it was the
+scattering.** Two rules that kept each dug-in crew in her own hole (the hold
+order anchored on her hole, her hole counted by the terrain prior) were
+built and measured and reverted: with both, Noville's attacker won 30%;
+with neither, and a standing hold that closes each platoon on its leader in
+the village, 14%. A concentrated defence beat one spread over its holes.
+
+The standing order is the wrong one for the other two, and that is history
+too: Combat Command A won Arracourt by manoeuvre, racing for the Bezange
+ridge and swinging companies into the German flank (17% to 55% with a
+standing hold), and the Valley of Tears was held from a line of ramps,
+every tank on her own, which "hold where you are" — close on your leader —
+pulls them off (62% to 86%). **The order the 7th Armored Brigade actually
+had is one the vocabulary cannot give yet.** And even on their ramps the
+Israeli tanks trade one for one with the attacker (in one battle: 6 lost to
+tanks, 3 to artillery, for 6 Syrian tanks, and 12 mines struck); a prepared
+hull-down position here is worth about one attacker, where in 1973 it was
+worth several, which is a question for the cover and gunnery numbers.
+
+### Measured: fixed orders over the teacher's crews
+
+`rollout --ground sector`, all sizes, 576 battles, a fixed policy for the
+learner's commander against the opponent mix, the learner's wins (96 a cell):
+
+| policy | attacking vs none / coin / hand-written | defending vs none / coin / hand-written |
+| --- | --- | --- |
+| say nothing | 26 / 51 / 48% | 72 / 55 / 62% |
+| hold the nearest own zone | 20 / 32 / 22% | 69 / 58 / 54% |
+| hold where you stand | 2 / 10 / 8% | 68 / 62 / 60% |
+| assault the nearest zone | 18 / 41 / 21% | 58 / 61 / 58% |
+| mass on one zone | 18 / 31 / 21% | 44 / 50 / 51% |
+| spread over the zones | 18 / 39 / 24% | 60 / 61 / 59% |
+
+(Measured before standing orders.) The same finding as on open ground
+(REIMAGINED.md, *The commander*): **over the teacher's crews, every order
+costs the attacker**, massing included, and no order buys the defender
+anything over choosing for herself. An order replaces a crew's candidates
+with the commander's ground, and the crews carry it out worse than they
+choose. With a standing hold for the defender the sector baseline barely
+moves (the learner attacking 38-43%, defending 56-62%, 576 battles).
 
 ## Open
 
 - The learned commander (L3) trained on sectors, both roles, measured
-  against orders by coin per role: the experiment this was built for.
+  against orders by coin per role: the experiment this was built for
+  (below, *The learned commander on sectors*).
+- An order to hold **every crew in her own position** — a line of ramps, a
+  belt of trenches — which "hold where you are" is not: it closes a platoon
+  on its leader. Per-formation standing orders with ground, too.
 - Break pressure from manoeuvre and from reserves (above).
 - Pre-registered fire: a defender's artillery lands on the ground she
   surveyed without adjusting (FM 3-90's target reference points; NTC found

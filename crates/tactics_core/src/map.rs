@@ -406,6 +406,18 @@ pub struct BreakPoint {
     pub lost_percent: u32,
 }
 
+/// An order every formation of `side` holds when the battle opens: given
+/// before it, so it is not on the net and lands nowhere late (ASSAULT.md).
+/// A defence's first order is to hold the positions it prepared, and
+/// without it a defender's crews spent the first round, before her
+/// commander's first order could reach them, driving out of their holes.
+/// A commander may give another at any time, as she may any order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StandingOrder {
+    pub side: u8,
+    pub mission: crate::battle::Mission,
+}
+
 /// How far anybody can see from `from_round` on: fog over the field, and
 /// the hour it lifts. `hexes: None` is a clear sky again. Nobody sees past
 /// it, which is all fog does to a gunner: she can hit what she can see,
@@ -678,6 +690,9 @@ pub struct MapFile {
     /// How far anybody can see, from which round: fog, and its lifting.
     #[serde(default)]
     pub visibility: Vec<VisibilityPhase>,
+    /// Orders a side's formations hold when the battle opens.
+    #[serde(default)]
+    pub standing: Vec<StandingOrder>,
     /// What ends the campaign fought on this map, for an overworld map. The
     /// campaign's counterpart of `loss_conditions`, and absent for the same
     /// reason those may be: a map that says nothing is fought to elimination,
@@ -864,6 +879,9 @@ pub struct Scenario {
     /// How far anybody can see, by round ([`VisibilityPhase`]).
     #[serde(default)]
     visibility: Vec<VisibilityPhase>,
+    /// Orders a side's formations hold when it opens ([`StandingOrder`]).
+    #[serde(default)]
+    standing: Vec<StandingOrder>,
 }
 
 /// Ground and a scenario on it, as a battle is set up from them.
@@ -977,6 +995,7 @@ impl Scenario {
                 })
                 .collect(),
             visibility: file.visibility.clone(),
+            standing: file.standing.clone(),
         }
     }
 
@@ -1040,6 +1059,17 @@ impl Scenario {
         if !self.prepared.contains(&side) {
             self.prepared.push(side);
         }
+        self
+    }
+
+    /// Orders a side's formations hold when the battle opens.
+    pub fn standing(&self) -> &[StandingOrder] {
+        &self.standing
+    }
+
+    /// This scenario with every formation of `side` opening under `mission`.
+    pub fn with_standing(mut self, side: u8, mission: crate::battle::Mission) -> Self {
+        self.standing.push(StandingOrder { side, mission });
         self
     }
 

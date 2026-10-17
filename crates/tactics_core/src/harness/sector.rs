@@ -379,10 +379,13 @@ pub fn sector(
             .collect()
     };
     let needs = count - count / 3;
+    // The defender's orders were given before the attack: hold where you
+    // are. Her commander may give others as the fight develops.
     let mut scenario = Scenario::default()
         .with_assault(0, needs)
         .with_break_point(0, rules.attacker_breaks)
-        .with_break_point(1, rules.defender_breaks);
+        .with_break_point(1, rules.defender_breaks)
+        .with_standing(1, crate::battle::Mission::Hold { at: None });
     for (i, anchor) in zones.iter().enumerate() {
         scenario.push_objective(Objective {
             id: format!("zone{}", i + 1),

@@ -172,9 +172,11 @@ class Map:
             spec["doctrine"] = doctrine
         self.formations.append(spec)
 
-    def place(self, side, formation, vehicle, count, x, y, name, carries=None, spread=0.25):
+    def place(self, side, formation, vehicle, count, x, y, name, carries=None, spread=0.25, dismounted=False):
         """`count` of `vehicle` round (`x`, `y`) km, each on the nearest free
-        cell it can stand on, the first leading the formation."""
+        cell it can stand on, the first leading the formation. `dismounted`
+        starts what she carries on the ground beside her: a prepared
+        defence has had the hours to get its riflemen into their holes."""
         taken = {tuple(u["at"]) for u in self.units if "aboard_at" not in u}
         foot = vehicle in ("rifle_platoon", "rifle_squad", "scout_section")
         stands = {"water"} if foot else {"water", "tank_ditch", "mountains"}
@@ -200,16 +202,16 @@ class Map:
                 unit["leads"] = True
             self.units.append(unit)
             if carries:
-                self.units.append(
-                    {
-                        "at": list(cell),
-                        "aboard_at": list(cell),
-                        "side": side,
-                        "vehicle": carries,
-                        "name": f"{unit['name']}'s section",
-                        "formation": formation,
-                    }
-                )
+                rider = {
+                    "at": list(cell),
+                    "side": side,
+                    "vehicle": carries,
+                    "name": f"{unit['name']}'s section",
+                    "formation": formation,
+                }
+                if not dismounted:
+                    rider = {"at": list(cell), "aboard_at": list(cell), **{k: v for k, v in rider.items() if k != "at"}}
+                self.units.append(rider)
 
     def file(self, id, name, sides, scenario):
         rows = 2 * self.radius + 1
@@ -345,7 +347,7 @@ def noville():
     m.place(1, "desobry_north", "medium_tank", 4, 0.22, 1.25, "Sherman N", spread=0.15)
     m.place(1, "desobry_east", "medium_tank", 4, 0.38, 0.95, "Sherman E", spread=0.15)
     m.place(1, "desobry_west", "medium_tank", 3, -0.05, 1.05, "Sherman W", spread=0.15)
-    m.place(1, "b20_infantry", "halftrack", 3, 0.1, 0.95, "B/20", carries="rifle_platoon", spread=0.15)
+    m.place(1, "b20_infantry", "halftrack", 3, 0.1, 0.95, "B/20", carries="rifle_platoon", spread=0.15, dismounted=True)
     m.place(1, "td_609", "tank_destroyer", 4, -0.1, 0.55, "M18")
     m.place(1, "cavalry", "recon_car", 2, -0.67, 0.71, "M8")
     m.place(1, "us_artillery", "artillery", 2, -0.6, -1.3, "M7")
@@ -364,6 +366,7 @@ def noville():
             "assault": {"attacker": 0, "needs": 2},
             "breaking": [{"side": 0, "lost_percent": 50}, {"side": 1, "lost_percent": 70}],
             "prepared": [1],
+            "standing": [{"side": 1, "mission": {"hold": {"at": None}}}],
             # Fog until it lifts: a few hundred yards, then clear.
             "visibility": [{"from_round": 0, "hexes": 3}, {"from_round": 6, "hexes": None}],
         },
@@ -451,6 +454,11 @@ def valley_of_tears():
             "assault": {"attacker": 0, "needs": 3},
             "breaking": [{"side": 0, "lost_percent": 50}, {"side": 1, "lost_percent": 70}],
             "prepared": [1],
+            # No standing order: "hold where you are" closes a platoon on its
+            # leader, which pulls tanks off a line of ramps, and the order the
+            # brigade actually had — every tank on her own ramp — is one the
+            # vocabulary cannot give yet. Measured: the attacker's wins went
+            # from 62% without one to 86% with one.
             "minefields": minefields,
         },
     )
@@ -538,6 +546,10 @@ def arracourt():
         {
             "assault": {"attacker": 0, "needs": 3},
             "breaking": [{"side": 0, "lost_percent": 50}, {"side": 1, "lost_percent": 70}],
+            # No standing order to hold: CCA won by manoeuvre, racing for the
+            # Bezange ridge and swinging companies into the German flank, and
+            # nobody had dug in. Measured with one: the attacker's wins went
+            # from 17% to 55%.
             # "Seventy-five yards": fog thick enough to hide a Panther at
             # two hexes, lifting by mid-morning.
             "visibility": [{"from_round": 0, "hexes": 2}, {"from_round": 15, "hexes": None}],

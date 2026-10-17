@@ -582,10 +582,6 @@
                 20,
                 12
             ],
-            "aboard_at": [
-                20,
-                12
-            ],
             "side": 1,
             "vehicle": "rifle_platoon",
             "name": "B/20 1's section",
@@ -606,10 +602,6 @@
                 21,
                 12
             ],
-            "aboard_at": [
-                21,
-                12
-            ],
             "side": 1,
             "vehicle": "rifle_platoon",
             "name": "B/20 2's section",
@@ -627,10 +619,6 @@
         },
         {
             "at": [
-                20,
-                10
-            ],
-            "aboard_at": [
                 20,
                 10
             ],
@@ -931,6 +919,16 @@
     ],
     "prepared": [
         1
+    ],
+    "standing": [
+        {
+            "side": 1,
+            "mission": {
+                "hold": {
+                    "at": null
+                }
+            }
+        }
     ],
     "visibility": [
         {

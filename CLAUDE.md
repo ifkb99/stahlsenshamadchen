@@ -262,6 +262,12 @@ scenario that declares none of it is the game before.
 - **`BattleState::sight` is the one door for how far a crew sees**: her
   vision under the scenario's `visibility` this round. The fog asks through
   it; the vision cache is keyed on range, so fog lifting needs nothing else.
+- **A standing order is on the formation at setup** (`StandingOrder`,
+  `give_standing_orders`), never on the net: any order given in round one
+  lands a round late, and a defender's crews spent that round scattering to
+  every zone their side held. "Hold where you are" closes a platoon on its
+  leader; keeping each dug-in crew in her own hole was measured *worse* at
+  Noville (30% against 14% for the attacker) and reverted — ASSAULT.md.
 - **Elevation levels run `0`-`9` then `a`-`z`**: real ground has more relief
   than ten levels.
 - **A battle map that says `"shape": "free"` is a scenario, not a campaign
