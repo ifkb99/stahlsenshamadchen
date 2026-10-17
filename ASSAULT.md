@@ -320,6 +320,77 @@ change it, in the order the measurements point:
    its losses, the decisive thing in real engagements — being enveloped,
    cut off, outflanked — wins nothing a commander can plan for.
 
+## Crews under orders (L2.1, 2026-10-16)
+
+The designer agreed the first recommendation and ruled on the second: an
+order stays general, and where to stand under it is the crews' to learn
+(`planner.order_ground`, the `tactical` reward tier, `rollout --commander
+orders`; commit `dac8a30`).
+
+A fresh crew network (87 inputs, 128 × 128), 60 iterations of 1,536
+sector battles, `order_ground` 3, every goal event, the learner's crews
+under none / utility / coin / a coin over the learned commander's menu in
+turn and the opponent's under the mix (`target/rl/l21/run`). Against the
+teacher on the loop's own seeds: 29.3% at the start, 37.3 at 10, 42.0 at
+20, 45.1 at 30, 41.7 at 40, 46.2 at 50, **47.4 at 60**.
+
+*On 1,152 battles no rollout touched* (seed 7,000,000), the learner and,
+as the control, the teacher in her seat:
+
+| | learned crews | teacher crews |
+| --- | --- | --- |
+| all | 44.8% | 48.4% |
+| attacking | 29.0% | 36.1% |
+| defending | 60.6% | 60.8% |
+| under no orders | 43.8% | 50.0% |
+| under the hand-written commander | 44.4% | 49.3% |
+| under a coin | 42.4% | 44.8% |
+| under a coin over the learned menu | 48.6% | 49.7% |
+
+The teacher's level as a defender, short of it as an attacker.
+
+*The fixed orders again*, over these crews (576 sectors, attacker /
+defender win %, against the teacher's crews at the same `order_ground`):
+
+| policy | teacher crews | learned crews |
+| --- | --- | --- |
+| say nothing | 44 / 65 | 27 / 61 |
+| hold our ground | 27 / 63 | 29 / 61 |
+| hold where you are | 8 / 65 | 24 / 61 |
+| assault the nearest | 28 / 58 | 23 / 53 |
+| mass on one | 22 / 50 | 22 / 49 |
+| spread | 33 / 57 | 26 / 51 |
+
+**Orders have stopped hurting** — the attacker's spread across policies is
+22–29 where it was 8–44 — **and nothing helps yet**, because the crews'
+own play fell to the level of their obedience rather than their obedience
+rising to their own play. "Hold where you are" names no ground, so it
+leaves a learned crew her whole list; she reads the order only through
+its verb. What is left for the commander is whatever a plan can add over
+crews that no longer resist it: the next run trains the learned commander
+over them (`target/rl/l21/cmd`).
+
+**The commander over them is flat.** Started from
+`cmd_sector_fresh.json`, 40 iterations of 1536 battles, the crews frozen
+at net60 (`target/frozen/l21`), the loop's own eval at 192 battles a
+column, whose band is about ±7 points:
+
+| iteration | vs a coin | vs no orders | vs the hand-written |
+| --- | --- | --- | --- |
+| start | 45.3 | 42.7 | 41.1 |
+| 10 | 53.1 | 44.3 | 46.9 |
+| 20 | 47.9 | 41.7 | 46.9 |
+| 30 | 49.5 | 48.4 | 45.3 |
+| 40 | 52.6 | 44.8 | 45.3 |
+
+Nothing it found is outside the band, and it never beats saying nothing.
+**The reading: crews who have learned to play compensate for bad orders,
+so a coin barely hurts and the commander's leverage shrinks with it.**
+What only a commander can do — release a reserve nobody else may touch,
+time two platoons' attacks together, know a part of the field a crew
+cannot see — is not in the battle yet, and an order that only names
+ground the crew would have chosen anyway cannot be worth anything.
+
 ## Breaking by manoeuvre: the record checked (2026-10-16)
 
 The designer's reading of the third recommendation: "needs to be explored
