@@ -983,6 +983,22 @@ pub struct PlannerRules {
     /// flank without naming it. Zero, the default, draws none.
     #[serde(default)]
     pub approach_places: u32,
+    /// How far round the ground her order names a crew may choose where to
+    /// stand, in hexes (the designer's ruling, 2026-10-16: a general does not
+    /// tell a squad where to stand, that is the NCO's job).
+    ///
+    /// Above zero, an order naming ground offers her the rest of the
+    /// objective it lies in and places anywhere within this distance of it,
+    /// **whatever her doctrine's initiative** — standing in the wood beside
+    /// the crossroads she was sent to is carrying the order out, not setting
+    /// it aside, so none of it is a deviation and none of it is charged.
+    /// Places further off are still drawn only nearer the ground than she
+    /// stands, and only with initiative, as before.
+    ///
+    /// **Zero is the list before**: the ordered hex, and her initiative's
+    /// places no further from it than she already is.
+    #[serde(default)]
+    pub order_ground: u32,
     /// The events that end a crew's goal so she chooses again
     /// ([`GoalEvents`]), beside the ending `Goal::finished` already reads
     /// (arrived, or the ground filled). Each goal keeps a witness of the
@@ -1041,6 +1057,7 @@ impl Default for PlannerRules {
             goal_places: 0,
             place_spacing: place_spacing(),
             approach_places: 0,
+            order_ground: 0,
             goal_events: GoalEvents::default(),
         }
     }

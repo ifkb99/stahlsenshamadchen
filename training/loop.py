@@ -25,15 +25,19 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 EVAL_SEEDS = [100000, 101000, 102000, 103000]
 
 
+SETS = []  # set from --set in main: mod fields every rollout plays under
+
+
 def cargo(example, *args):
     # `STAHL_BIN_DIR` names a directory of examples built beforehand, run as
     # they are: a long run then cannot pick up an edit made while it trains,
     # which `cargo run` would rebuild into the next iteration.
+    sets = SETS if example == "rollout" else []
     frozen = os.environ.get("STAHL_BIN_DIR")
     if frozen:
-        cmd = [str(pathlib.Path(frozen).resolve() / example), *args]
+        cmd = [str(pathlib.Path(frozen).resolve() / example), *args, *sets]
         return subprocess.run(cmd, cwd=ROOT, check=True, capture_output=True, text=True).stdout
-    cmd = ["cargo", "run", "--release", "-q", "-p", "tactics_core", "--example", example, "--", *args]
+    cmd = ["cargo", "run", "--release", "-q", "-p", "tactics_core", "--example", example, "--", *args, *sets]
     return subprocess.run(cmd, cwd=ROOT, check=True, capture_output=True, text=True).stdout
 
 
@@ -148,7 +152,7 @@ def main():
                     help="train and evaluate on the arena, or on a fresh generated world every two games")
     ap.add_argument("--forces", help="draw matchups from these forces (a list, all, or bought)")
     ap.add_argument("--budget", help="with --forces bought, the points range LO,HI both sides buy to")
-    ap.add_argument("--commander", default="none", choices=["none", "utility", "random"],
+    ap.add_argument("--commander", default="none", choices=["none", "utility", "random", "orders"],
                     help="who gives the learner's platoons their missions")
     ap.add_argument("--opponent-commander", default="none", choices=["none", "utility", "random", "mix"],
                     help="who gives the opponent's platoons theirs")
@@ -167,11 +171,15 @@ def main():
     ap.add_argument("--league-every", type=int, default=5)
     ap.add_argument("--eval-games", type=int, default=36)
     ap.add_argument("--dir", type=pathlib.Path, default=ROOT / "target" / "rl" / "run")
+    ap.add_argument("--set", action="append", default=[], metavar="PATH=VALUE",
+                    help="a mod field every rollout plays under, as rollout --set takes it (repeatable)")
     ap.add_argument("ppo_args", nargs="*", help="passed to ppo.py after --")
     args = ap.parse_args()
     # Absolute, because cargo runs from the repository root and ppo.py from
     # here: a relative path meant two different places.
     args.dir = args.dir.resolve()
+    for kv in args.set:
+        SETS.extend(["--set", kv])
     if args.forces:
         FORCES.append(args.forces)
     APPROACH[0] = args.approach

@@ -3620,6 +3620,82 @@ fn a_doctrine_with_initiative_puts_her_own_judgment_on_the_list_behind_the_order
 }
 
 #[test]
+fn an_order_names_the_ground_and_where_to_stand_on_it_is_hers() {
+    // The designer's ruling of 2026-10-16: a general does not tell a squad
+    // where to stand, that is the NCO's job. With `planner.order_ground` an
+    // order to an objective offers the rest of that objective and places
+    // round it — to a doctrine with no initiative too, because choosing the
+    // house in the village she was sent to is carrying the order out, not
+    // setting it aside — and the order is still at the head of the list.
+    // Nothing further off joins it: initiative is still how she carries an
+    // order out, never whether she believes it.
+    let mut reg = registry_wireless();
+    reg.planner.goal_places = 16;
+    let state = BattleState::from_map(&reg, "battle_plains", 102).expect("a shipped map");
+    let unit = UnitId(0);
+    let me = state.unit(unit).expect("a crew").pos;
+    let objective = state
+        .scenario
+        .objectives()
+        .iter()
+        .filter(|o| o.hexes.len() > 1)
+        .min_by_key(|o| o.hexes.iter().map(|h| h.distance_to(me)).min())
+        .expect("an objective of more than one hex");
+    let told = *objective
+        .hexes
+        .iter()
+        .min_by_key(|h| (h.distance_to(me), h.x, h.y))
+        .expect("a hex");
+    let mission = tactics_core::battle::Mission::Hold { at: Some(told) };
+    let list = |reg: &DataRegistry| {
+        tactics_core::ai::goal::candidates(reg, &state, unit, Some(&mission), None, 0.0)
+    };
+    assert_eq!(
+        list(&reg),
+        vec![
+            tactics_core::battle::Goal::Take(told),
+            tactics_core::battle::Goal::Hold
+        ],
+        "with no ground of her own to choose, it is the map reference or nothing"
+    );
+    assert!(
+        tactics_core::ai::goal::on_ordered_ground(&reg, &state, told, told),
+        "the map reference itself is never a deviation"
+    );
+
+    reg.planner.order_ground = 3;
+    let wide = list(&reg);
+    assert_eq!(
+        wide[0],
+        tactics_core::battle::Goal::Take(told),
+        "the order still leads"
+    );
+    for hex in &objective.hexes {
+        assert!(
+            wide.contains(&tactics_core::battle::Goal::Take(*hex)),
+            "every hex of the objective she was sent to is hers to choose: {wide:?}"
+        );
+    }
+    for goal in &wide {
+        if let tactics_core::battle::Goal::Take(hex) = goal {
+            assert!(
+                objective.hexes.contains(hex) || hex.distance_to(told) <= 3,
+                "{hex:?} is not on the ground she was sent to: {wide:?}"
+            );
+            assert!(
+                tactics_core::ai::goal::on_ordered_ground(&reg, &state, told, *hex),
+                "and choosing it is not a deviation"
+            );
+        }
+    }
+    assert!(
+        wide.iter().any(|g| matches!(g,
+            tactics_core::battle::Goal::Take(h) if !objective.hexes.contains(h))),
+        "and ground round it, not only the objective's own hexes: {wide:?}"
+    );
+}
+
+#[test]
 fn two_crews_do_not_drive_for_the_same_hex() {
     // A section takes a piece of ground each. Said in the candidate list so
     // that it is said once and visibly, rather than as a tie-break buried in

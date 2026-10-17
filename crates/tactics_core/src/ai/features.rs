@@ -237,6 +237,10 @@ pub const CANDIDATE: &[&str] = &[
     "hold",
     "ordered",
     "deviates",
+    // Where it lies against the ground her order names (none: far, unseen):
+    // under a general order, where to stand is hers to work out.
+    "order_distance",
+    "order_sees",
     "objective",
     "objective_value",
     "objective_ours",
@@ -515,7 +519,12 @@ fn candidate(
         return vec![0.0; CANDIDATE.len()];
     };
     let hex = reading.hex;
-    let ordered = super::goal::ordered_goal(state, unit) == Some(reading.goal);
+    let order = super::goal::ordered_goal(state, unit);
+    let ordered = order == Some(reading.goal);
+    let order_hex = match order {
+        Some(Goal::Take(o)) => Some(o),
+        _ => None,
+    };
     // The richest objective this hex belongs to, if any, and who holds it.
     let objective = state
         .objectives()
@@ -557,6 +566,9 @@ fn candidate(
     // The relational facts. Distances and counts, and cosines of angles
     // between differences — never a bearing, which a reflection turns round.
     let sight = |from: Hex, to: Hex| state.sees_through(from, to);
+    let order_distance = order_hex.map_or(FAR, |o| (o.distance_to(hex) as f32).min(FAR));
+    let order_sees =
+        order_hex.is_some_and(|o| o == hex || (o.distance_to(hex) <= scene.reach && sight(hex, o)));
     let nearest_enemy = scene
         .enemies
         .iter()
@@ -672,6 +684,8 @@ fn candidate(
         flag(reading.goal == Goal::Hold),
         flag(ordered),
         flag(reading.deviates),
+        order_distance,
+        flag(order_sees),
         flag(objective.is_some()),
         value,
         flag(ours),

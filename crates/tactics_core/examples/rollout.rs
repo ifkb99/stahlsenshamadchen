@@ -76,7 +76,9 @@ rollout: battles for reinforcement learning, learner against the utility AI
                       learned (the network --commander-net names, sampling at
                       --commander-temperature unless --commander-deterministic) or
                       uniform (a coin over the learned commander's menu,
-                      recorded as a learned one is)
+                      recorded as a learned one is), or orders (none, utility,
+                      random and uniform in turn by world: crews learning to
+                      fight under every kind of order, L2.1)
   --commander-net PATH  the learned commander's network
   --commander-deterministic   the learned commander takes her best choice
   --commander-temperature T   its sampling temperature (default 1.0)
@@ -105,6 +107,14 @@ struct Entry {
     left: u32,
     full: u32,
     fighting: bool,
+    /// The ground her orders name, as `[x, y]`, if they name any: the
+    /// trainer pays the `tactical` tier only while one order stands.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    order: Option<[i32; 2]>,
+    /// Whether her side holds the objective that ground lies in; `None`
+    /// with no such objective.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    order_held: Option<bool>,
 }
 
 #[derive(serde::Serialize)]
@@ -260,6 +270,16 @@ fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 fn ledger(reg: &DataRegistry, state: &BattleState, round: u32, out: &mut Vec<Entry>) {
     for unit in &state.units {
         let (left, full) = state.substance(reg, unit);
+        let order = match tactics_core::ai::goal::ordered_goal(state, unit.id) {
+            Some(tactics_core::battle::Goal::Take(hex)) => Some(hex),
+            _ => None,
+        };
+        let order_held = order.and_then(|hex| {
+            state
+                .objectives()
+                .find(|(o, _)| o.hexes.contains(&hex))
+                .map(|(_, held)| held == Some(unit.side))
+        });
         out.push(Entry {
             round,
             unit: unit.id.0,
@@ -267,6 +287,8 @@ fn ledger(reg: &DataRegistry, state: &BattleState, round: u32, out: &mut Vec<Ent
             left: if unit.alive() { left } else { 0 },
             full,
             fighting: unit.alive(),
+            order: order.map(|h| [h.x, h.y]),
+            order_held,
         });
     }
 }
@@ -325,6 +347,10 @@ enum Commander {
     Learned,
     /// For the opponent: none, utility and random in turn by world.
     Mix,
+    /// For the learner's crews to learn to fight under orders (L2.1): none,
+    /// utility, random and a coin over the learned commander's menu in turn
+    /// by world, so they meet every kind of order and none.
+    Orders,
 }
 
 impl Commander {
@@ -335,9 +361,10 @@ impl Commander {
             Some("random") => Self::Random,
             Some("learned") | Some("uniform") => Self::Learned,
             Some("mix") => Self::Mix,
+            Some("orders") => Self::Orders,
             Some(other) => {
                 eprintln!(
-                    "error: a commander is none, utility, random, learned, uniform or mix, not `{other}`"
+                    "error: a commander is none, utility, random, learned, uniform, mix or orders, not `{other}`"
                 );
                 std::process::exit(1);
             }
@@ -457,6 +484,7 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
         Commander::Random => "random",
         Commander::Learned => "learned",
         Commander::Mix => ["none", "utility", "random"][(game / 2 % 3) as usize],
+        Commander::Orders => ["none", "utility", "random", "learned"][(game / 2 % 4) as usize],
     };
     let mut ai = AiDriver::new();
     for side in 0..2u8 {
@@ -474,6 +502,12 @@ fn fight(setup: &Setup, game: u64) -> Option<Battle> {
             Commander::Mix => {
                 [Commander::None, Commander::Utility, Commander::Random][(game / 2 % 3) as usize]
             }
+            Commander::Orders => [
+                Commander::None,
+                Commander::Utility,
+                Commander::Random,
+                Commander::Learned,
+            ][(game / 2 % 4) as usize],
             other => other,
         };
         let brain = if side == learner {
@@ -764,7 +798,7 @@ fn main() {
             Commander::parse(flag(&args, "--opponent-commander")),
         ],
         command_brain: match flag(&args, "--commander") {
-            Some("uniform") => CommandBrain::Uniform,
+            Some("uniform") | Some("orders") => CommandBrain::Uniform,
             Some("learned") => {
                 let path = flag(&args, "--commander-net").unwrap_or_else(|| {
                     eprintln!("error: --commander learned needs --commander-net");

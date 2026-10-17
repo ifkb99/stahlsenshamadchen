@@ -25,8 +25,12 @@ order of magnitude above the next:
 - `operational` — the battle: ±1 for its outcome, and the objective margin as
   a share of the score that wins it outright (`victory_score`), shared by the
   whole side. A side that waits forfeits what the other holds.
-- `tactical` — her own order carried out; nothing yet on a battle with no
-  orders (the arenas), so it weighs and reads nothing there.
+- `tactical` — her own order carried out: +1 the round the objective her
+  orders name becomes her side's, -1 the round it stops being, counted only
+  while the same order stands (the ledger's `order` / `order_held`). The
+  order names the ground and never where to stand on it (the designer's
+  ruling, 2026-10-16), so this pays for the ground, and where she stood to
+  win it is hers to learn. Nothing on a battle with no orders.
 - `attrition` and `self` — the enemy's substance destroyed and the side's own
   lost, and her own skin, charged to her alone.
 
@@ -74,9 +78,12 @@ def round_rewards(battle, w):
     learner = battle["learner"]
     rounds = battle["rounds"]
     left = defaultdict(dict)  # round -> unit -> left
+    held = defaultdict(dict)  # round -> unit -> (order, whether its ground is ours)
     full, side = {}, {}
     for e in battle["ledger"]:
         left[e["round"]][e["unit"]] = e["left"]
+        if e.get("order_held") is not None:
+            held[e["round"]][e["unit"]] = (tuple(e["order"]), e["order_held"])
         full[e["unit"]] = e["full"]
         side[e["unit"]] = e["side"]
     ours = [u for u in full if side[u] == learner]
@@ -101,6 +108,10 @@ def round_rewards(battle, w):
             operational += 0 if winner is None else (1 if winner == learner else -1)
         team[k] = w["operational"] * operational + w["attrition"] * (dealt - taken)
         own[k] = {u: -w["self"] * (left[k - 1][u] - left[k][u]) / max(1, full[u]) for u in ours}
+        for u in ours:
+            before, now = held[k - 1].get(u), held[k].get(u)
+            if before is not None and now is not None and before[0] == now[0]:
+                own[k][u] += w["tactical"] * (int(now[1]) - int(before[1]))
     return team, own
 
 

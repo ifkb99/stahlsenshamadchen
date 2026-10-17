@@ -200,17 +200,45 @@ pub fn candidates_surveyed(
     let ordered = mission.and_then(ordered_ground);
     if let Some(hex) = ordered {
         push(hex);
+        // **Where to stand on it is hers** (`planner.order_ground`, the
+        // designer's ruling of 2026-10-16): the rest of the objective the
+        // order names, nearest her first, then places round it below. An
+        // order says "hold the village"; which house is the NCO's call.
+        let within = registry.planner.order_ground;
+        if within > 0 {
+            for objective in state.scenario.objectives() {
+                if !objective.hexes.contains(&hex) {
+                    continue;
+                }
+                let mut hexes: Vec<Hex> = objective
+                    .hexes
+                    .iter()
+                    .copied()
+                    .filter(|h| !claimed_by_another(registry, state, unit, *h))
+                    .collect();
+                hexes.sort_by_key(|h| (h.distance_to(me.pos), h.x, h.y));
+                for h in hexes {
+                    push(h);
+                }
+            }
+        }
         if initiative > 0.0
             && let Some(mine) = best_reachable
             && mine != me.pos
         {
             push(mine);
         }
-        // Places of her own, by the same rule as the sweep tile: only a
-        // doctrine with initiative sees any, and only ground that carries the
-        // order out (see `places`).
-        if initiative > 0.0 {
-            for place in places(registry, state, unit, Some(hex), survey) {
+        // Places of her own: round the ordered ground for anybody, and
+        // nearer it than she stands for a doctrine with initiative — by the
+        // same rule as the sweep tile, ground that carries the order out
+        // (see `places`).
+        if initiative > 0.0 || within > 0 {
+            let toward = Toward {
+                hex,
+                within,
+                nearer: initiative > 0.0,
+            };
+            for place in places(registry, state, unit, Some(toward), survey) {
                 push(place);
             }
         }
@@ -332,14 +360,14 @@ pub fn with_interrupted(
 /// ground is reflected; `a_crew_and_her_mirror_twin_are_described_identically`
 /// runs with places on.
 ///
-/// Under orders (`toward` the ordered hex) only ground no further from it
-/// than she already stands is drawn: a place under orders is a way to carry
-/// the order out.
+/// Under orders (`toward` the ordered hex) only ground that carries the
+/// order out is drawn: within `planner.order_ground` of it, and — for a
+/// doctrine with initiative — no further from it than she already stands.
 fn places(
     registry: &DataRegistry,
     state: &BattleState,
     unit: UnitId,
-    toward: Option<Hex>,
+    toward: Option<Toward>,
     survey: &Survey,
 ) -> Vec<Hex> {
     let planner = &registry.planner;
@@ -355,7 +383,7 @@ fn places(
         .reached()
         .into_iter()
         .filter(|(hex, _)| *hex != me.pos)
-        .filter(|(hex, _)| toward.is_none_or(|t| hex.distance_to(t) <= me.pos.distance_to(t)))
+        .filter(|(hex, _)| toward.is_none_or(|t| t.admits(me.pos, *hex)))
         .filter(|(hex, _)| !claimed_by_another(registry, state, unit, *hex))
         .collect();
 
@@ -530,6 +558,44 @@ fn places(
         }
     }
     picked
+}
+
+/// What ground under orders a place may be drawn from (`places`).
+#[derive(Clone, Copy)]
+struct Toward {
+    /// The ground the order names.
+    hex: Hex,
+    /// Anywhere this near it (`planner.order_ground`).
+    within: u32,
+    /// And anywhere no further from it than she stands.
+    nearer: bool,
+}
+
+impl Toward {
+    fn admits(&self, from: Hex, hex: Hex) -> bool {
+        let d = hex.distance_to(self.hex);
+        d as u32 <= self.within || (self.nearer && d <= from.distance_to(self.hex))
+    }
+}
+
+/// Whether `hex` is ground her order lets her choose to stand on: the
+/// ordered hex itself, or with `planner.order_ground` above zero, anywhere
+/// that near it or in the objective it lies in.
+pub fn on_ordered_ground(
+    registry: &DataRegistry,
+    state: &BattleState,
+    ordered: Hex,
+    hex: Hex,
+) -> bool {
+    let within = registry.planner.order_ground;
+    hex == ordered
+        || within > 0
+            && ((hex.distance_to(ordered) as u32) <= within
+                || state
+                    .scenario
+                    .objectives()
+                    .iter()
+                    .any(|o| o.hexes.contains(&ordered) && o.hexes.contains(&hex)))
 }
 
 /// The ground this crew's standing orders name, if she has any and they name
@@ -914,7 +980,13 @@ pub fn read_candidates_surveyed(
             // the memo drew. She may take the good firing position instead of
             // the exact map reference; she may not decide the other objective
             // was the better idea.
-            let deviates = ordered.is_some_and(|order| *goal != order) && *goal != Goal::Hold;
+            // Ground round the order (`planner.order_ground`) is where she
+            // carries it out, not a rival plan, so it is not charged.
+            let deviates = ordered.is_some_and(|order| match (order, *goal) {
+                (_, Goal::Hold) => false,
+                (Goal::Take(o), Goal::Take(h)) => !on_ordered_ground(registry, state, o, h),
+                (o, g) => o != g,
+            });
             let worth = evaluator.score_tile(registry, state, unit, hex).score;
             let drive = drive(registry, state, unit, roads, least.as_ref(), hex, speed);
             Reading {
