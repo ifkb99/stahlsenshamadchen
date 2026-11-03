@@ -290,6 +290,9 @@ fn main() {
                 Event::Dismounted { unit, at } => {
                     println!("   >> {} dismounts at {at:?}", name(&state, *unit))
                 }
+                Event::Arrived { unit, at } => {
+                    println!("   ++ {} arrives at {at:?}", name(&state, *unit))
+                }
                 Event::ShotMissed { .. } => println!("   miss"),
                 Event::ShotStrayed { intended, onto, .. } => println!(
                     "   past {} — and into {}",

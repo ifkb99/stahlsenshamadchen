@@ -210,6 +210,7 @@ def hollerbach():
             {"id": "sec3", "name": "3rd Section", "side": 0},
             {"id": "kuhlmann_scouts", "name": "Brandt's scouts", "side": 0},
             {"id": "valk_recon", "name": "Valkyrie recon", "side": 1},
+            {"id": "valk_armour", "name": "Ravenna's Wiesel", "side": 1},
             {"id": "valk_scouts", "name": "Müller's scouts", "side": 1},
         ],
         "units": [
@@ -235,10 +236,15 @@ def hollerbach():
             # The scouts went ahead on foot and are already at the lane.
             {"at": [7, 3], "side": 0, "vehicle": "scout_section", "crew": ["elsa", "ilse"],
              "name": "Scouts", "formation": "kuhlmann_scouts", "leads": True},
-            # The Valkyrie recon, coming up the south road. Sofia Ravenna
-            # leads from the Wiesel, the only gun on the field.
-            {"at": [13, 20], "side": 1, "vehicle": "light_tank", "crew": ["sofia", "kira", "rea"],
-             "name": "Wiesel", "formation": "valk_recon", "leads": True},
+            # The Wiesel, the only gun on the field, is not on it when the
+            # battle opens: Sofia Ravenna brings her up the south road
+            # around round 4 (`arrivals` below; SLICE.md, *Reinforcements*).
+            # On the map from the start she drove straight into the
+            # village and fought there at one hex (playtest 1b); arriving,
+            # she has to cross the open valley the recon has already
+            # crossed, to a village Kuhlmann may already hold.
+            {"at": [13, 21], "side": 1, "vehicle": "light_tank", "crew": ["sofia", "kira", "rea"],
+             "name": "Wiesel", "formation": "valk_armour", "leads": True},
             # Halftracks, like Kuhlmann's: the Wiesel is the Valkyries' edge
             # on day 1, and the measurements say it is edge enough.
             # Playthroughs, 16 seeds, Kuhlmann wins (doctrines as shipped /
@@ -250,7 +256,7 @@ def hollerbach():
             {"at": [12, 21], "side": 1, "vehicle": "halftrack", "crew": ["franka", "malin"],
              "name": "Kette 1", "formation": "valk_recon"},
             {"at": [12, 21], "aboard_at": [12, 21], "side": 1, "vehicle": "rifle_squad",
-             "crew": ["sanna"], "name": "Lindholm's Squad", "formation": "valk_recon"},
+             "crew": ["sanna"], "name": "Lindholm's Squad", "formation": "valk_recon", "leads": True},
             {"at": [14, 21], "side": 1, "vehicle": "halftrack", "crew": ["cecile", "selin"],
              "name": "Kette 2", "formation": "valk_recon"},
             {"at": [14, 21], "aboard_at": [14, 21], "side": 1, "vehicle": "rifle_squad",
@@ -272,6 +278,7 @@ def hollerbach():
             {"id": "south_track", "name": "the track south", "kind": "exit", "side": 1,
              "value": 1, "at": [[5, 21], [6, 21], [7, 21]]},
         ],  # fmt: skip
+        "arrivals": [{"formation": "valk_armour", "round": 4, "spread": 1}],
         "victory_score": 24,
     }
 

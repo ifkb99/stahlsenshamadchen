@@ -319,11 +319,17 @@ impl Tally {
                     side: s,
                     cells: vec![(' ', ' '); k],
                 });
-                let riding = round.units.iter().any(|u| u.id == id && u.aboard.is_some());
+                let here = round.units.iter().find(|u| u.id == id);
+                let riding = here.is_some_and(|u| u.aboard.is_some());
                 let gone_before = lane.cells.last().is_some_and(|c| c.0 == 'X' || c.0 == ' ');
                 let glyph = match act.get(&id) {
                     Some(g) => *g,
-                    None if gone_before => ' ',
+                    // Not yet arrived, or already gone.
+                    None if gone_before
+                        || here.is_none_or(|u| !u.standing && u.aboard.is_none()) =>
+                    {
+                        ' '
+                    }
                     None if riding => 'r',
                     None => '.',
                 };

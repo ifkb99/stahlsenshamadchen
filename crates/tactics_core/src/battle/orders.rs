@@ -170,6 +170,12 @@ pub enum Order {
 /// animates these; AI and campaign scripts observe them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Event {
+    /// A reinforcement came onto the field at the top of the round
+    /// ([`crate::map::ArrivalSpec`]): one event per unit, passengers too.
+    Arrived {
+        unit: UnitId,
+        at: Hex,
+    },
     /// A new round opened and sides may plan again.
     RoundStarted {
         round: u32,
@@ -735,6 +741,9 @@ impl Event {
             // more so. Where she has decided to go and whether her radio is
             // working are the same kind of fact.
             Event::TookCover { unit, .. }
+            // Her own side knows its reinforcement has come; the enemy
+            // finds out the way he finds out anything, by seeing her.
+            | Event::Arrived { unit, .. }
             | Event::WeaponDry { unit, .. }
             | Event::CrewHit { unit, .. }
             | Event::ModuleHit { unit, .. }
@@ -2868,6 +2877,9 @@ impl BattleState {
             committed: vec![false; self.sides.len()],
         };
         events.push(Event::RoundStarted { round: self.round });
+        // Reinforcements due this round come on now, before anybody plans
+        // it: a crew that arrives is a crew her side can order this round.
+        self.arrive_due(registry, events);
         // A standing boarding order is a march that renews itself: she
         // re-paths toward wherever her ride now stands, every round, until
         // she is aboard or the ride is gone.
@@ -3193,7 +3205,12 @@ impl BattleState {
                 return;
             }
         }
-        let living = self.living_sides();
+        // A side with help still on its way is not beaten: it has nobody
+        // on the field, not nobody. Only a map naming arrivals has any.
+        let mut living = self.living_sides();
+        living.extend(self.arrivals.iter().map(|a| a.def.side));
+        living.sort_unstable();
+        living.dedup();
         if living.len() <= 1 {
             // A side still on the board when the other has nothing left has
             // won, whatever the score says. `leader` only breaks the tie when

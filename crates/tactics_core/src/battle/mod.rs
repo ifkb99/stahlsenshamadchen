@@ -85,6 +85,26 @@ impl UnitId {
     }
 }
 
+/// A formation on its way to the battle ([`crate::map::ArrivalSpec`]): who
+/// comes, crewed by whom, and when.
+///
+/// Its units do not exist until it arrives. They are not on the field, so
+/// nothing can see, shoot, count or lose them, and their ids are given when
+/// they come, after every id already on it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Arriving {
+    pub def: crate::map::FormationDef,
+    /// Where each unit enters, from the map; a passenger names her carrier
+    /// by `aboard_at` as at setup.
+    pub placements: Vec<UnitPlacement>,
+    pub crews: Vec<Vec<CadetId>>,
+    /// What her side was told: the round expected, give or take `spread`.
+    pub expected: u32,
+    pub spread: u32,
+    /// The round she comes, rolled at setup and told to nobody.
+    pub round: u32,
+}
+
 /// A force to put on a field: each placement, the cadets aboard it, and the
 /// id it will answer to — all three in placement order.
 ///
@@ -897,6 +917,11 @@ pub struct Battle<C = Built> {
     /// AI commands — is no such rule.
     #[serde(default)]
     pub commanders: Vec<(u8, Option<UnitId>)>,
+    /// Formations on their way ([`Arriving`]), soonest first. Empty in every
+    /// battle whose map names no arrival, and in every save written before
+    /// arrivals existed, which is the battle it was.
+    #[serde(default)]
+    pub arrivals: Vec<Arriving>,
     /// Evidence that the skipped caches above hold something.
     ///
     /// Skipped itself, which is exactly what makes it work: serde reaches for
@@ -944,6 +969,7 @@ impl SavedBattle {
             smoke,
             command,
             commanders,
+            arrivals,
             built: Unbuilt,
         } = self;
 
@@ -990,6 +1016,7 @@ impl SavedBattle {
             smoke,
             command,
             commanders,
+            arrivals,
             built: Built(()),
         }
     }
@@ -1105,15 +1132,32 @@ impl BattleState {
         if !report.is_ok() {
             return Err(BattleSetupError::Invalid(report.errors));
         }
-        let ids = match ids {
-            Some(ids) => ids.to_vec(),
-            None => numbered_from_zero(file.units.len()),
-        };
-        check_ids(&ids, file.units.len())?;
         let Battlefield {
             terrain: map,
             scenario,
         } = Battlefield::from_map_file(file)?;
+        // The units that arrive later are set aside here and never spawned
+        // until they come (`Arriving`). Everybody else is the battle as the
+        // map opens it, in the map's order; on a map naming no arrival that
+        // is every unit, and nothing below changes.
+        let arrives = |p: &UnitPlacement| {
+            p.formation
+                .as_deref()
+                .is_some_and(|f| scenario.arrival_of(f).is_some())
+        };
+        let present: Vec<usize> = (0..file.units.len())
+            .filter(|i| !arrives(&file.units[*i]))
+            .collect();
+        let placements: Vec<UnitPlacement> =
+            present.iter().map(|i| file.units[*i].clone()).collect();
+        let ids = match ids {
+            Some(ids) => {
+                check_ids(ids, file.units.len())?;
+                present.iter().map(|i| ids[*i]).collect()
+            }
+            None => numbered_from_zero(placements.len()),
+        };
+        check_ids(&ids, placements.len())?;
         let sides: Vec<SideState> = file
             .sides
             .iter()
@@ -1128,10 +1172,13 @@ impl BattleState {
         // Resolved before the map is moved into its `Arc`, and from the same
         // two things the units are spawned from, so membership cannot drift
         // from the roster it describes.
-        let command = CommandState::from_placements(scenario.formations(), &file.units, &ids);
+        let command = CommandState::from_placements(scenario.formations(), &placements, &ids);
         // A scenario battle has no campaign behind it, so its cadets are
-        // stamped fresh from mod data and forgotten afterwards.
-        let (roster, crews) = Roster::stamp_for(registry, &file.units);
+        // stamped fresh from mod data and forgotten afterwards. Everybody's,
+        // the late as well: a cadet arriving in round five was always in
+        // the battle's roster, only not yet on its field.
+        let (roster, all_crews) = Roster::stamp_for(registry, &file.units);
+        let crews: Vec<Vec<CadetId>> = present.iter().map(|i| all_crews[*i].clone()).collect();
         let mut state = Self {
             world: Arc::new(World::build(registry, map)),
             scenario: Arc::new(scenario),
@@ -1155,9 +1202,10 @@ impl BattleState {
             smoke: Vec::new(),
             command,
             commanders: Vec::new(),
+            arrivals: Vec::new(),
             built: Built(()),
         };
-        for ((placement, crew), id) in file.units.iter().zip(&crews).zip(&ids) {
+        for ((placement, crew), id) in placements.iter().zip(&crews).zip(&ids) {
             // `validate_into` above has already said these placements name
             // content this registry has, so this cannot fail here. It is still
             // a `?` rather than an `expect`, because the day somebody adds a
@@ -1165,8 +1213,9 @@ impl BattleState {
             // should reach the caller rather than the player's screen.
             state.spawn_unit_as(registry, placement, crew.clone(), *id)?;
         }
-        state.face_units_at_enemies(&file.units);
-        state.board_mounted_starts(registry, &file.units);
+        state.face_units_at_enemies(&placements);
+        state.board_mounted_starts(registry, &placements);
+        state.expect_arrivals(&file.units, &all_crews);
         state.fog = FogMap::new(state.sides.len());
         state.dig_prepared_positions(registry);
         state.mark_rear();
@@ -1281,6 +1330,7 @@ impl BattleState {
             smoke: Vec::new(),
             command,
             commanders: Vec::new(),
+            arrivals: Vec::new(),
             built: Built(()),
         };
         for (i, placement) in placements.iter().enumerate() {
@@ -1351,6 +1401,206 @@ impl BattleState {
         self.settle_world(registry);
         fog::recompute(registry, self);
         Ok(formation)
+    }
+
+    /// Set aside every formation the scenario brings on later, with its
+    /// crews, and roll the round each comes: its expected round, give or
+    /// take its spread, never before round 2. Rolled here, once, from the
+    /// battle's own dice, so a battle forked through a save has the same
+    /// future; a map naming no arrival throws no die.
+    fn expect_arrivals(&mut self, units: &[UnitPlacement], crews: &[Vec<CadetId>]) {
+        use rand::RngExt;
+        let scenario = Arc::clone(&self.scenario);
+        for spec in scenario.arrivals() {
+            let Some(def) = scenario
+                .formations()
+                .iter()
+                .find(|f| f.id == spec.formation)
+            else {
+                continue;
+            };
+            let members: Vec<usize> = (0..units.len())
+                .filter(|i| units[*i].formation.as_deref() == Some(spec.formation.as_str()))
+                .collect();
+            let swing = self.rng.random_range(0..=2 * spec.spread);
+            let round = (spec.round + swing).saturating_sub(spec.spread).max(2);
+            self.arrivals.push(Arriving {
+                def: def.clone(),
+                placements: members.iter().map(|i| units[*i].clone()).collect(),
+                crews: members.iter().map(|i| crews[*i].clone()).collect(),
+                expected: spec.round,
+                spread: spec.spread,
+                round,
+            });
+        }
+        // Soonest first, and in map order within a round, so arrivals in
+        // one round come in the order the author wrote them.
+        self.arrivals.sort_by_key(|a| a.round);
+    }
+
+    /// Bring on every formation due by this round, at the top of the round
+    /// and before anybody plans it. Each unit enters on the hex the map put
+    /// her on or, if somebody is standing there, the nearest hex nobody is
+    /// (distance first, the coordinate last). She takes her side's standing
+    /// order, and arrives in reserve if the map holds her formation back.
+    pub(crate) fn arrive_due(&mut self, registry: &DataRegistry, events: &mut Vec<Event>) {
+        if !self.arrivals.iter().any(|a| a.round <= self.round) {
+            return;
+        }
+        let (due, later): (Vec<Arriving>, Vec<Arriving>) = std::mem::take(&mut self.arrivals)
+            .into_iter()
+            .partition(|a| a.round <= self.round);
+        self.arrivals = later;
+        for arrival in due {
+            let mut placements = arrival.placements.clone();
+            // Carriers and walkers first find their ground; a passenger
+            // then rides in whichever carrier stood where the map put hers.
+            let mut moved: Vec<([i32; 2], [i32; 2])> = Vec::new();
+            let mut taken: Vec<Hex> = Vec::new();
+            for p in placements.iter_mut().filter(|p| p.aboard_at.is_none()) {
+                let want = crate::offset_to_hex(p.at[0], p.at[1]);
+                let Some(ground) = self.entry_ground(want, &taken) else {
+                    continue;
+                };
+                taken.push(ground);
+                let to = crate::hex_to_offset(ground);
+                moved.push((p.at, to));
+                p.at = to;
+            }
+            for p in placements.iter_mut() {
+                if let Some(carrier) = p.aboard_at
+                    && let Some((_, to)) = moved.iter().find(|(from, _)| *from == carrier)
+                {
+                    p.aboard_at = Some(*to);
+                    p.at = *to;
+                }
+            }
+            let first = self.units.last().map_or(0, |u| u.id.0 + 1);
+            let ids: Vec<UnitId> = (0..placements.len() as u32)
+                .map(|i| UnitId(first + i))
+                .collect();
+            let formation = match self.reinforce(
+                registry,
+                &arrival.def,
+                Muster {
+                    placements: &placements,
+                    crews: &arrival.crews,
+                    ids: &ids,
+                },
+            ) {
+                Ok(formation) => formation,
+                // Nowhere to put her this round: she comes next round
+                // instead, rather than being silently dropped.
+                Err(_) => {
+                    self.arrivals.push(Arriving {
+                        round: self.round + 1,
+                        ..arrival
+                    });
+                    continue;
+                }
+            };
+            self.board_arrivals(registry, &placements, &ids);
+            self.face_arrivals(&placements, &ids);
+            let side = arrival.def.side;
+            let scenario = Arc::clone(&self.scenario);
+            if let Some(order) = scenario.standing().iter().find(|o| o.side == side) {
+                self.command
+                    .set_mission(formation, order.mission.clone(), Latitude::Delegated);
+            }
+            if scenario.reserves().contains(&arrival.def.id) {
+                self.hold_in_reserve(formation);
+            }
+            for id in &ids {
+                if let Some(u) = self.unit(*id) {
+                    events.push(Event::Arrived {
+                        unit: *id,
+                        at: u.pos,
+                    });
+                }
+            }
+        }
+        self.arrivals.sort_by_key(|a| a.round);
+    }
+
+    /// The nearest hex to `want` with nobody on it and not already claimed
+    /// by an arrival this round. Ties go by distance, then the coordinate,
+    /// last, as the tiebreak rule asks.
+    fn entry_ground(&self, want: Hex, taken: &[Hex]) -> Option<Hex> {
+        let free =
+            |h: Hex| self.world.contains(h) && !taken.contains(&h) && self.unit_at(h).is_none();
+        if free(want) {
+            return Some(want);
+        }
+        (1..=6u32).find_map(|r| {
+            let mut ring: Vec<Hex> = want.ring(r).filter(|h| free(*h)).collect();
+            ring.sort_by_key(|h| (h.x, h.y));
+            ring.first().copied()
+        })
+    }
+
+    /// Passengers into their carriers, among the units that just arrived:
+    /// the arrival's half of [`Self::board_mounted_starts`].
+    fn board_arrivals(
+        &mut self,
+        registry: &DataRegistry,
+        placements: &[UnitPlacement],
+        ids: &[UnitId],
+    ) {
+        for (placement, rider) in placements.iter().zip(ids) {
+            let Some(coords) = placement.aboard_at else {
+                continue;
+            };
+            let carrier_pos = crate::offset_to_hex(coords[0], coords[1]);
+            let Some(carrier) = ids.iter().copied().filter(|c| c != rider).find(|c| {
+                self.unit(*c)
+                    .is_some_and(|u| u.pos == carrier_pos && u.aboard.is_none())
+            }) else {
+                continue;
+            };
+            let fits = self
+                .unit(carrier)
+                .and_then(|c| registry.vehicle(&c.vehicle))
+                .is_some_and(|v| v.capacity as usize > self.passengers(carrier).len());
+            let on_foot = self
+                .unit(*rider)
+                .and_then(|u| registry.vehicle(&u.vehicle))
+                .is_some_and(|v| v.movement.class == crate::data::MovementClass::Foot);
+            if fits
+                && on_foot
+                && let Some(u) = self.lookup_mut(*rider)
+            {
+                u.aboard = Some(carrier);
+                u.pos = carrier_pos;
+            }
+        }
+    }
+
+    /// The arrivals with no facing of their own turn to face the enemy's
+    /// centre, as everybody did at setup ([`Self::face_units_at_enemies`]).
+    fn face_arrivals(&mut self, placements: &[UnitPlacement], ids: &[UnitId]) {
+        for (placement, id) in placements.iter().zip(ids) {
+            if placement.facing.is_some() {
+                continue;
+            }
+            let Some(side) = self.unit(*id).map(|u| u.side) else {
+                continue;
+            };
+            let (mut sx, mut sy, mut n) = (0i64, 0i64, 0i64);
+            for unit in self.units.iter().filter(|u| u.side != side && u.alive()) {
+                sx += unit.pos.x as i64;
+                sy += unit.pos.y as i64;
+                n += 1;
+            }
+            if n == 0 {
+                continue;
+            }
+            let target = Hex::round([sx as f32 / n as f32, sy as f32 / n as f32]);
+            if let Some(u) = self.lookup_mut(*id)
+                && u.pos != target
+            {
+                u.facing = u.pos.main_direction_to(target);
+            }
+        }
     }
 
     /// Add ground worth fighting for, in the middle of the battle, held by
@@ -1434,21 +1684,25 @@ impl BattleState {
             let Some(index) = self.command.formations().iter().position(|f| f.id == *id) else {
                 continue;
             };
-            let Some(at) = self.command.formations()[index]
-                .leader
-                .and_then(|leader| self.unit(leader))
-                .map(|u| u.pos)
-            else {
-                continue;
-            };
-            let formation = FormationId(index as u32);
-            self.command.set_mission(
-                formation,
-                Mission::Hold { at: Some(at) },
-                Latitude::Delegated,
-            );
-            self.command.set_reserve(formation, at);
+            self.hold_in_reserve(FormationId(index as u32));
         }
+    }
+
+    /// One formation held in reserve where its leader stands.
+    fn hold_in_reserve(&mut self, formation: FormationId) {
+        let Some(at) = self.command.formations()[formation.index()]
+            .leader
+            .and_then(|leader| self.unit(leader))
+            .map(|u| u.pos)
+        else {
+            return;
+        };
+        self.command.set_mission(
+            formation,
+            Mission::Hold { at: Some(at) },
+            Latitude::Delegated,
+        );
+        self.command.set_reserve(formation, at);
     }
 
     /// Every crew of a side the scenario says starts prepared begins the

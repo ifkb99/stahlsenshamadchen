@@ -101,6 +101,11 @@
    "side": 1
   },
   {
+   "id": "valk_armour",
+   "name": "Ravenna's Wiesel",
+   "side": 1
+  },
+  {
    "id": "valk_scouts",
    "name": "Müller's scouts",
    "side": 1
@@ -221,7 +226,7 @@
   {
    "at": [
     13,
-    20
+    21
    ],
    "side": 1,
    "vehicle": "light_tank",
@@ -231,7 +236,7 @@
     "rea"
    ],
    "name": "Wiesel",
-   "formation": "valk_recon",
+   "formation": "valk_armour",
    "leads": true
   },
   {
@@ -263,7 +268,8 @@
     "sanna"
    ],
    "name": "Lindholm's Squad",
-   "formation": "valk_recon"
+   "formation": "valk_recon",
+   "leads": true
   },
   {
    "at": [
@@ -396,6 +402,13 @@
      21
     ]
    ]
+  }
+ ],
+ "arrivals": [
+  {
+   "formation": "valk_armour",
+   "round": 4,
+   "spread": 1
   }
  ],
  "victory_score": 24

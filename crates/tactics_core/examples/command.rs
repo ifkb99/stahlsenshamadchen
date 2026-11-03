@@ -42,7 +42,9 @@
 //! ```
 //!
 //! `stay` holds a crew on the hex she stands on, binding; `stay_aboard`
-//! keeps a passenger in her carrier this round.
+//! keeps a passenger in her carrier this round; `fire` orders a shot
+//! (`{"unit": "2nd Squad", "at": "Wiesel", "weapon": "rpg"}`) at an enemy
+//! her commander knows of.
 //!
 //! **The preview.** `plan` runs the same planning `turn` does and prints
 //! each crew's plan under the orders file, saving nothing: where she means
@@ -91,6 +93,17 @@ struct Orders {
     /// Passengers who stay aboard this round: the overrule for a squad
     /// whose plan is to get out where the carrier starts the round.
     stay_aboard: Vec<String>,
+    /// A shot ordered: this crew, at this known enemy, with this weapon (by
+    /// id; her first that can if none is named).
+    fire: Vec<FireOrder>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FireOrder {
+    unit: String,
+    at: String,
+    #[serde(default)]
+    weapon: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -285,6 +298,23 @@ fn preview(state: &BattleState, planned: &Planned) {
     for note in &planned.notes {
         println!("   !! {note}");
     }
+    // A mission travels: it reaches the crews some ticks into the round,
+    // after they have planned it. Said here, or the plans below read as
+    // crews ignoring an order they have not yet heard.
+    for f in state.formations().iter().filter(|f| f.side == SEAT) {
+        if let Some((change, ticks)) = &f.incoming {
+            let what = change
+                .mission()
+                .map(mission_text)
+                .unwrap_or_else(|| "release".into());
+            println!(
+                "   !! {}'s new orders ({what}) are on the radio: they reach her crews {} s into the round, \
+                 so this round they plan on what they had",
+                f.id,
+                ticks * 5
+            );
+        }
+    }
     for i in planned.intentions.iter().filter(|i| i.side == SEAT) {
         let Some(u) = state.lookup(UnitId(i.unit)) else {
             continue;
@@ -410,7 +440,6 @@ fn order_text(order: &Order) -> String {
 
 /// The commander's orders file, turned into engine orders.
 fn commander_orders(registry: &DataRegistry, state: &BattleState, orders: &Orders) -> Vec<Order> {
-    let _ = registry;
     let mut out = Vec::new();
     let formation = |id: &str| {
         state
@@ -476,6 +505,33 @@ fn commander_orders(registry: &DataRegistry, state: &BattleState, orders: &Order
         out.push(Order::SetFire {
             unit: unit(name),
             fire: tactics_core::battle::FireIntent::Hold,
+        });
+    }
+    for f in &orders.fire {
+        let shooter = unit(&f.unit);
+        let target = state
+            .known_enemies(registry, Knower::Commander(SEAT))
+            .iter()
+            .find(|u| u.name == f.at)
+            .map(|u| u.id)
+            .unwrap_or_else(|| panic!("no enemy called {} in your picture", f.at));
+        let weapons = state
+            .lookup(shooter)
+            .and_then(|u| registry.vehicle(&u.vehicle))
+            .map(|v| v.weapons.clone())
+            .unwrap_or_default();
+        let weapon = match &f.weapon {
+            Some(w) => weapons
+                .iter()
+                .position(|x| x == w)
+                .unwrap_or_else(|| panic!("{} carries no {w}", f.unit)),
+            None => 0,
+        };
+        out.push(Order::Radio {
+            unit: shooter,
+            to: None,
+            fire: Some(tactics_core::battle::FireIntent::Target { target, weapon }),
+            latitude: Latitude::default(),
         });
     }
     for r in &orders.radio {
@@ -596,6 +652,16 @@ fn sitrep(registry: &DataRegistry, state: &BattleState) {
     );
     for (o, holder) in state.objectives() {
         let at: Vec<String> = o.hexes.iter().map(|h| fmt(*h)).collect();
+        // A way off the map is ground nobody scores for holding.
+        if o.kind == tactics_core::map::ObjectiveKind::Exit {
+            let whose = if o.open_to(SEAT) {
+                "your"
+            } else {
+                "the enemy's"
+            };
+            println!("   {} is {whose} way out: {}", o.name, at.join(" "));
+            continue;
+        }
         let who = match holder {
             Some(s) if s == SEAT => "yours",
             Some(_) => "THE ENEMY'S",
@@ -609,6 +675,25 @@ fn sitrep(registry: &DataRegistry, state: &BattleState) {
         );
     }
 
+    // What she has been told is coming: the window, never the roll.
+    for a in state.arrivals.iter().filter(|a| a.def.side == SEAT) {
+        let names: Vec<&str> = a
+            .placements
+            .iter()
+            .map(|p| p.name.as_deref().unwrap_or("?"))
+            .collect();
+        println!(
+            "   on the way: {} ({}), expected round {}{}",
+            a.def.name,
+            names.join(", "),
+            a.expected,
+            if a.spread > 0 {
+                format!(" give or take {}", a.spread)
+            } else {
+                String::new()
+            }
+        );
+    }
     let known: Vec<_> = state.known_enemies(registry, Knower::Commander(SEAT));
     let mine: Vec<_> = state
         .units

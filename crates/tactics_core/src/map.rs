@@ -446,6 +446,34 @@ pub struct StandingOrder {
     pub mission: crate::battle::Mission,
 }
 
+/// A formation that is not on the field when the battle opens and arrives
+/// during it: a reinforcement (SLICE.md, *Reinforcements*).
+///
+/// Its units are written in the map's `units` like anybody's, at the hexes
+/// they enter on, and are held off the field until the round comes. That
+/// round is rolled once when the battle is set up: `round`, give or take up
+/// to `spread`, never before round 2. What a side is told is the window
+/// (`round` ± `spread`), never the roll, which is the legible kind of
+/// uncertainty: a named range, a die inside it, and the replay saying when.
+///
+/// Arrival is the start of a round, before planning: the formation enters
+/// through [`crate::battle::BattleState::reinforce`] with its passengers
+/// aboard, takes its side's standing order, and, if the map holds it in
+/// reserve, arrives in reserve, so committing it is still its commander's
+/// decision. A unit that arrives is a unit that did not exist until then:
+/// nothing is spotted, counted or lost before it comes. A map that names
+/// no arrival is the battle it always was.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArrivalSpec {
+    /// The formation that arrives, by id; every unit in it arrives with it.
+    pub formation: String,
+    /// The round it is expected.
+    pub round: u32,
+    /// How many rounds either side of `round` it may come.
+    #[serde(default)]
+    pub spread: u32,
+}
+
 /// How far anybody can see from `from_round` on: fog over the field, and
 /// the hour it lifts. `hexes: None` is a clear sky again. Nobody sees past
 /// it, which is all fog does to a gunner: she can hit what she can see,
@@ -724,6 +752,9 @@ pub struct MapFile {
     /// Formations, by id, held back in reserve ([`Scenario::reserves`]).
     #[serde(default)]
     pub reserves: Vec<String>,
+    /// Formations that arrive during the battle ([`ArrivalSpec`]).
+    #[serde(default)]
+    pub arrivals: Vec<ArrivalSpec>,
     /// What ends the campaign fought on this map, for an overworld map. The
     /// campaign's counterpart of `loss_conditions`, and absent for the same
     /// reason those may be: a map that says nothing is fought to elimination,
@@ -916,6 +947,9 @@ pub struct Scenario {
     /// Formations held back in reserve, by id ([`Self::reserves`]).
     #[serde(default)]
     reserves: Vec<String>,
+    /// Formations that arrive during the battle ([`Self::arrivals`]).
+    #[serde(default)]
+    arrivals: Vec<ArrivalSpec>,
 }
 
 /// Ground and a scenario on it, as a battle is set up from them.
@@ -1031,6 +1065,7 @@ impl Scenario {
             visibility: file.visibility.clone(),
             standing: file.standing.clone(),
             reserves: file.reserves.clone(),
+            arrivals: file.arrivals.clone(),
         }
     }
 
@@ -1122,6 +1157,16 @@ impl Scenario {
     /// before.
     pub fn reserves(&self) -> &[String] {
         &self.reserves
+    }
+
+    /// Formations that arrive during the battle ([`ArrivalSpec`]).
+    pub fn arrivals(&self) -> &[ArrivalSpec] {
+        &self.arrivals
+    }
+
+    /// The arrival `formation` makes, if it is one that arrives.
+    pub fn arrival_of(&self, formation: &str) -> Option<&ArrivalSpec> {
+        self.arrivals.iter().find(|a| a.formation == formation)
     }
 
     /// This scenario with the formation `id` held back in reserve.
@@ -1383,6 +1428,28 @@ impl MapFile {
                 report.errors.push(format!(
                     "map `{}`: reserve `{id}` names no formation the map declares",
                     self.id
+                ));
+            }
+        }
+        // An arrival naming nobody would be a reinforcement that silently
+        // never comes; one in round 1 is no arrival at all.
+        for arrival in &self.arrivals {
+            if !self
+                .units
+                .iter()
+                .any(|u| u.formation.as_deref() == Some(arrival.formation.as_str()))
+            {
+                report.errors.push(format!(
+                    "map `{}`: arrival `{}` names no formation with units on the map",
+                    self.id, arrival.formation
+                ));
+            }
+            if arrival.round < 2 || arrival.round <= arrival.spread + 1 {
+                report.errors.push(format!(
+                    "map `{}`: arrival `{}` could come in round {}; the earliest is round 2",
+                    self.id,
+                    arrival.formation,
+                    i64::from(arrival.round) - i64::from(arrival.spread)
                 ));
             }
         }

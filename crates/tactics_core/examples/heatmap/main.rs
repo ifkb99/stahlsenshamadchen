@@ -4,7 +4,7 @@
 //! ```text
 //! heatmap --map slice_hollerbach --games 16 [--swap] [--map-ai] [--vehicle light_tank]
 //! heatmap --seat <dir>...                  # hand games from examples/command
-//! heatmap ... --json a.json                # keep the counts
+//! heatmap ... --json a.json [--label name] # keep the counts, named
 //! heatmap --diff a.json b.json             # what changed between two runs
 //! heatmap --sight --map slice_hollerbach [--range 8] [--from 13,10 ...]
 //! heatmap ... --timeline                   # every unit, round by round, as text
@@ -170,6 +170,11 @@ fn main() {
             Some(v) => format!("{title}; {v} only"),
             None => title,
         };
+        // A name for this run, for `--diff` to tell two runs of the same
+        // seats apart ("Wiesel on the map", "Wiesel arrives").
+        if let Some(label) = flag("--label") {
+            heat.title = format!("{label}: {}", heat.title);
+        }
         report(&heat);
         if let Some(path) = flag("--json") {
             std::fs::write(&path, serde_json::to_string(&heat).expect("json"))

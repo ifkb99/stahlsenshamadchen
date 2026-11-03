@@ -1113,6 +1113,7 @@ fn drive_movers(
 #[allow(clippy::too_many_arguments)]
 fn pump_events(
     mut commands: Commands,
+    art: Res<ArtCache>,
     time: Res<Time>,
     mods: Res<Mods>,
     mut battle: ResMut<Battle>,
@@ -1178,6 +1179,17 @@ fn pump_events(
     let mine = |id: UnitId| sides.get(id.index()).is_none_or(|s| *s == view_side);
     let traffic = |id: UnitId, said: &str| format!("{}: {said}", name(id));
     let entity_of = |id: UnitId| units.iter().find(|(_, u)| u.0 == id).map(|(e, _)| e);
+
+    // A reinforcement did not exist until she arrived, so nothing drew
+    // her at setup: every unit on the field without a sprite gets one, as
+    // everybody did at setup. Not on the `Arrived` event, which only her
+    // own side hears; whether the enemy's sprite is *shown* is the fog's
+    // business, as for anybody's.
+    for u in battle.state.alive_units() {
+        if !units.iter().any(|(_, b)| b.0 == u.id) {
+            spawn_unit_sprite(&mut commands, &art, u.id, u.side, &u.vehicle);
+        }
+    }
 
     for event in &drained {
         match event {
@@ -1518,6 +1530,11 @@ fn pump_events(
             }
             BattleEvent::Dismounted { unit, .. } => {
                 log.push(traffic(*unit, "dismounting."));
+            }
+            // Her sprite is not made here (see the arrivals pass above):
+            // this event is her own side's alone.
+            BattleEvent::Arrived { unit, .. } => {
+                log.push(traffic(*unit, "arriving."));
             }
             // The armor holding is news the player must hear, or the shot
             // reads as the game eating a hit.

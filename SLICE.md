@@ -254,7 +254,7 @@ Text and placeholder portraits only. No new screen beyond a page over the map.
 
 ### Reinforcements
 
-**Proposed (designer, 2026-11-03).** A unit that arrives during a battle
+**Built (2026-11-03), at the designer's suggestion.** A unit that arrives during a battle
 instead of starting on the map. The story wants it: being beaten back and the
 tank arriving in time is a moment the slice should have. The heat map below
 wants it too: a tank that starts on the map drives straight into the
@@ -264,9 +264,9 @@ be seen.
 - **Day 2: Anka's Panther arrives** over the reverse slope during the
   assault rather than starting there, and arrives *into reserve*, so the
   decision of the day (when to commit it) stays the player's.
-- **Day 1, a candidate: the Wiesel arrives** up the south road some rounds
+- **Day 1: the Wiesel arrives** up the south road around round 4 (±1),
   after the Valkyrie recon, across the open valley floor, to a village the
-  player may already hold.
+  player may already hold. Shipped on `slice_hollerbach`; see playtest 2.
 
 **How it stays legible (ASL's convention).** The entry is announced in the
 briefing ("Weiss expects to be with you around round 6") and is a named roll:
@@ -274,12 +274,26 @@ a fixed round, ±1 on a die, shown in the replay. Not a trigger on the player
 losing: a rescue that comes because you're losing reads as the game cheating,
 and the enemy commander has to be able to plan around it the same way.
 
-**What it costs.** Nothing in the engine does this yet. It is scenario data
-(`arrivals`: formation, round, entry hexes), additive like every other
-scenario rule, so a map naming none fights exactly as before. The open
-question is how a unit that hasn't arrived is held: a fourth `Fate`, or a
-reserve placed off the board. That decision touches the `Fate` invariant and
-wants care.
+**How it is built.** Scenario data: `"arrivals": [{"formation":
+"valk_armour", "round": 4, "spread": 1}]` (`map::ArrivalSpec`). The
+arriving formation's units are written in `units` at the hexes they enter
+on. **A unit that arrives does not exist until it does**: set aside at
+setup with its crew, the round rolled once from the battle's dice, then
+brought on at the top of its round through the engine's existing
+`reinforce` (built for the campaign's columns). That answered the open
+question without a fourth `Fate`. Nothing can see, shoot, count or lose a
+unit that isn't there, so fog, strength and the rest are untouched.
+
+The rules it needed:
+- a side with help still on the way isn't eliminated;
+- the arrival takes its side's standing order, and arrives in reserve if
+  the map says so;
+- if an enemy stands on its entry hex, it enters on the nearest free one;
+- `Event::Arrived` is heard by its own side; the enemy has to see it.
+
+The seat shows the window ("expected round 4 give or take 1"), never the
+roll. Defended by `tests/arrivals.rs`; the determinism snapshot passes
+unregenerated.
 
 ## The cadet card: fewer numbers
 
@@ -699,6 +713,75 @@ Not yet measured: the range at which each side first spots the other.
 so it arrives across the open floor to a village the player holds; and
 rockets that can kill (milestone 8, earlier). Each is a heat-map
 comparison: the same picture before and after.
+
+### Playtest 2: Hollerbach with tools, a preview and a late Wiesel, 2026-11-03
+
+**The instruments** (`examples/heatmap`), each of which changed what we
+think is wrong:
+
+- **Sight lines** (`--sight`). The map isn't the one I meant to draw. Each
+  10 m level is a terrace whose edge hides the ground below it:
+  - Kuhlmann's start sees 110 hexes, all of them its own plateau.
+  - The Valkyries' start sees 75 hexes, all of them their own strip.
+  - The crossroads, inside the town, sees 49.
+  - Only the church knoll overlooks the field (204).
+- **Contact.** Both sides first see each other in round 2, at 2–3 hexes,
+  and 86–92% of all spots are within two hexes. With the sight map, that's
+  why playtest 1b found a brawl: nobody sees anybody until they're touching.
+  **The map needs relief that can be seen across (gentler, longer slopes,
+  or real overlooks) before anything else about it is tuned.**
+- **Orders kept, timelines and diffs.** These are now numbers and
+  pictures: whether a plan keeps its order, whether the round ends where it
+  was planned, each unit round by round, and B minus A for any change.
+
+**The planning preview** (`command plan`). It shows each crew's plan under
+the orders file before the round is committed, and `turn` then fights
+exactly that. Replaying hand game 2 through it explains finding 1 before
+each round:
+- **Squads dismount short because of when dismounting happens.** A
+  passenger gets out at the first tick, where the carrier *starts* the
+  round. Her crew AI decides to (within two hexes of a held objective, or
+  the ride under threat), and the carrier then drives on without her. The
+  overrules are `stay_aboard` this round, then `dismount` next round at
+  the destination.
+- **A binding order to a crew's own hex was a no-op.** It was a march
+  with no step to take, so she stayed unplanned and her crew AI drove her
+  onto the objective. Fixed in the engine: it is now a hold, and a crew
+  under her commander's hold stays put.
+- **Missions cost a whole round.** A formation's mission reaches its crews
+  10–15 s into the round, after they've planned, so under WEGO any delay
+  above zero is a round late. A radio order to one crew is instant. The
+  preview now says so. **This is a rule question for the designer:**
+  either missions land before planning, or crews re-plan when a mission
+  lands.
+
+**The late Wiesel**, AI against AI, 16 seeds, before → after. One
+confound: the recon is now led by Lindholm's squad, since the Wiesel left
+the recon formation.
+
+| | Kuhlmann wins (shipped / swapped) | Wiesel shots a battle | Wiesel lost |
+| --- | --- | --- | --- |
+| On the map from round 1 | 3 / 7 | 14 | half the battles |
+| Arrives round 4 ± 1 | 4 / 10 | 21 | under a third |
+
+It now crosses the valley in the open, and about one shot in ten is at
+5–8 hexes, but 81% of its shots are still within two hexes. Arrival timing
+doesn't cure the brawl; the dead ground does.
+
+**Hand game 3**, Claude commanding with the preview: lost 1–12 in round 8,
+but it was a different battle.
+- **Orders kept:** 100% of 35 plans kept their order, where game 2's
+  carriers deviated repeatedly.
+- **Kills:** two enemy units, against one across both earlier games.
+- **Range:** 40% of Kuhlmann's shots were at 4+ hexes, from carriers on
+  the slope.
+- **The moment the day was written for happened.** The Wiesel was seen
+  coming across the valley, drove onto the church hex next to 2nd Squad,
+  and Traudl Kessler's squad was ordered to fire both rockets at it at one
+  hex. Both missed. Nothing on the screen said what the chance was. That's
+  finding 3 at its sharpest, and the case for the forecast (milestone 4)
+  and the shot (milestone 8) coming sooner.
+- **The seat's new orders:** `stay`, `stay_aboard`, `fire`.
 
 ## What's parked
 
