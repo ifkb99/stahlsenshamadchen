@@ -8,6 +8,7 @@
 //! heatmap --diff a.json b.json             # what changed between two runs
 //! heatmap --sight --map slice_hollerbach [--range 8] [--from 13,10 ...] [--across 4-9 12-17]
 //! heatmap ... --timeline                   # every unit, round by round, as text
+//! heatmap ... --set planner.goal_places=16  # any mod field, as `balance --set`
 //! ```
 //! (`cargo run --release -p tactics_core --example heatmap -- <args>`.)
 //!
@@ -58,8 +59,20 @@ use tally::{BUCKETS, Cell, Heat, LAYERS, Tally};
 
 fn main() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
-    let (registry, _) = DataRegistry::load_dir(&root).expect("mods load");
+    let (mut registry, _) = DataRegistry::load_dir(&root).expect("mods load");
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // `--set path=value`, repeatable: the balance harness's own override,
+    // so a rule can be tried on a map's battles without editing mod.json.
+    for (i, a) in args.iter().enumerate() {
+        if a == "--set" {
+            let text = args.get(i + 1).expect("--set takes path=value");
+            let ov = tactics_core::harness::overrides::Override::parse(text)
+                .unwrap_or_else(|e| panic!("--set {text}: {e}"));
+            let was = tactics_core::harness::overrides::apply_override(&mut registry, &ov)
+                .unwrap_or_else(|e| panic!("--set {text}: {e}"));
+            eprintln!("--set {} = {} (was {was})", ov.path, ov.value);
+        }
+    }
     let flag = |name: &str| -> Option<String> {
         let i = args.iter().position(|a| a == name)?;
         args.get(i + 1).cloned()

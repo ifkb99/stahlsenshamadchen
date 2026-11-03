@@ -892,8 +892,9 @@ are in reach; the AI doesn't take them.
 **Verdict: both.** The map's woods are out of reach and its objective is
 walled in, so on the shipped map no wood can matter; that is the map. Put
 woods where they matter and the AI still won't stand in them, though its
-own arithmetic prefers them half the time; that is the AI, and it is
-the goal layer, not the evaluator.
+own arithmetic prefers them half the time; that is the AI. (Which part of
+the AI was first put down to the goal layer; 3b below found it is the
+price, and the missing phases, instead.)
 
 **Found on the way:**
 
@@ -916,6 +917,67 @@ the goal layer, not the evaluator.
   AMMUNITION" told me the Wiesel was harmless before anything else did).
   The game's hover panel leaks the same way in its return-fire line. A
   fog-honest forecast must use what the commander knows.
+
+### Playtest 3b: offering the AI the woods, 2026-11-03
+
+The designer agreed to the fix 3 pointed at: give a crew destinations near
+the objective (goal endpoints), not only the objective's own hexes. The
+machinery already existed and ships off: `planner.goal_places` (covered,
+then high, then cheap ground within reach, as destinations) and
+`planner.order_ground` (anywhere within N hexes of the ordered ground,
+uncharged). `heatmap --set` now takes any mod field, as `balance --set`
+does. Copse map, 16 seeds, the map's own AI seats (`--map-ai`):
+
+| | Kuhlmann in copse | Valkyries in copse | Kuhlmann wins |
+| --- | --- | --- | --- |
+| as shipped | 1.5% | 0.2% | 7 |
+| `goal_places` 16 | 3.6% | 2.1% | 7 |
+| `order_ground` 3 | as shipped, to the digit | | 7 |
+| `goal_events` all on (re-decide on contact, fire, losses, orders) | 1.7% | 1.3% | 7 |
+| `goal_events` + `goal_places` 16 | 2.1% | 0.7% | 6 |
+
+On the shipped map, `goal_places` 16 read 3 of 16 Kuhlmann wins against 8:
+not something to ship, though 16 seeds can't say it is worse.
+
+**Why the endpoints don't help: the price.** A probe read each candidate the
+way the chooser does, at the 532 decisions with a copse place on the list
+(a copse goal was kept 6 times):
+
+| | an objective hex | the best copse place |
+| --- | --- | --- |
+| before contact | worth 10.5–11.5 | worth −0.3 to −2.4 |
+| in contact | worth 35–55 | worth 7–16 |
+
+Standing on the objective pays `value × score_worth × 1.5` (about 9 at the
+crossroads) whether or not it is contested, though the rules pay a
+contested objective nothing. Cover pays a few tenths before contact. In
+contact the objective also offers one-hex shots, which the currency rates
+above the threat that comes with them, for both sides at once.
+
+**And removing that pull doesn't send them to the woods.** A throwaway
+build scaling the presence bonus (1.5) down, with places on:
+
+| presence bonus | Kuhlmann in copse | Kuhlmann in town | Kuhlmann in the open |
+| --- | --- | --- | --- |
+| 1.5 (shipped) | 3.6% | 51% | 39% |
+| 0.75 | 2.5% | 53% | 38% |
+| 0 | 0.2% | 28% | 46% |
+
+Without the pull, crews leave the village for open ground, not the copse.
+A one-round evaluator prices the shot in front of her now, and a wood's
+worth is the shot it *will* give and the fire it *will* save once the
+enemy is fixed on the objective: a later round's value. That is what the
+hand games did (fire from the knoll and the copse, then walk in), and it
+is two phases.
+
+**Verdict.** Nothing shipped: no planner setting moves the AI into the
+woods. The fix is the designer's time-and-phases idea: a commander with
+a clock (rounds until each side wins, arrivals due) and plans made of
+phases ("fire on the crossroads from the copse until it is clear, then
+take it"). The phase machinery exists for one play (`PlanPhase::Forming`
+→ `Going`, `go_by`) and `Mission::Support` exists; no shipped doctrine
+uses either. Separately, the objective's presence bonus ignoring contest
+is a rule the evaluator gets wrong, and worth fixing on its own.
 
 ## What's parked
 
