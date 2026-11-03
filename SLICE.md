@@ -578,6 +578,129 @@ variety; they are training data, not slice content.
   needs, new reward research, learning across battles, the campaign-level
   commander.
 
+### Time and phases (proposed 2026-11-03, for the designer)
+
+**The problem** (playtest 3b). The AI judges every hex by what it is worth
+this round. A wood beside the objective is worth little *now*; its worth is
+the shots it gives and the fire it saves once the enemy is fixed on the
+objective, a later round's value. The hand games won with exactly that: fire
+from the church knoll and the copse, then walk in. That's two phases, and
+the AI has no phases and no clock:
+
+| Who | Sense of time today |
+| --- | --- |
+| A crew | a goal costs `impatience` per round of driving and `contest_aversion` for arriving after the enemy; roads are searched 4 rounds ahead. She never reads the round, the score or the victory line. |
+| A plan | the one built play (fix and flank) has two phases, `Forming` → `Going`, and a `go_by` round. No shipped doctrine teaches it. |
+| A commander | the learned commander's features include the round and the score; nothing has learned from them. The utility commander reads neither. |
+
+**What exists to build on.** A formation's orders are already a queue
+(`Formation::plan`): legs transmitted once, promoted locally the moment the
+standing leg completes, with no radio latency. But `Hold`, `Support` and
+`Withdraw` never complete, so nothing may be queued behind them. A phase is
+the missing piece: *hold here until something is true, then go*.
+
+#### 1. A clock the commander reads
+
+Derived each review from the battle, never stored, and fog-honest (her own
+side's facts and what she has been told):
+
+- **Rounds to win**, each side: points still needed over the points a round
+  the ground each side holds now pays. "At this rate they win in 6; we never
+  do" is the whole of a meeting engagement's urgency.
+- **The stalemate clock**: rounds until the battle ends on nobody hurting
+  anybody (`stalemate_rounds`).
+- **What is coming**: her own arrivals, as she was told them ("round 4, give
+  or take 1"), never the rolled round.
+- In an assault (no clock): the break margins instead.
+
+It prices a plan's feasibility (a play that needs five rounds when the
+enemy wins in three is worth nothing), sets phase deadlines, and joins the
+commander's features. The player sees the same line in the sitrep, which is
+legibility for free.
+
+#### 2. Phased orders: `until`, on the player's menu
+
+A leg of a formation's orders gains an optional **until**: `Hold at the
+copse until the crossroads is clear, or round 7; then Assault the
+crossroads`. The conditions are a short, fixed list, each read from what
+the formation itself knows:
+
+| Condition | True when |
+| --- | --- |
+| `round N` | round N has begun |
+| `clear <ground>` | no enemy she knows of stands on or beside it |
+| `in_place <formation>` | that formation's leg has completed, or it stands on its ground |
+| `arrived <formation>` | that reinforcement is on the field |
+| `found` | the formation is under fire or has been seen (fix and flank's "go at once") |
+
+`Hold … until` and `Support … until` complete when the condition does, so
+legs may queue behind them. A leg without `until` is the game before (the
+determinism snapshot must pass unregenerated). Promotion is local and
+immediate, mid-round, as now, and by the re-planning ruling the crews
+re-plan for the new leg when it begins. The player orders phases through
+the same door: in the seat's orders file, and later on the planning screen.
+
+**Not a script.** This is an order the player can give, so the enemy
+commander's menu gains it too, which is the ruling ("the same menu the
+player orders from"). Nothing is written into a map. A learned commander at
+milestone 7 picks phased orders from this menu; the utility commander,
+the teacher, picks them through templates.
+
+#### 3. Templates become phased plays (the teacher's library)
+
+A template is a list of phases, each naming a mission per role and an
+`until`. `plan.rs` keeps the matching onto ground (`ground::firing_positions`,
+covered routes) and the choice by playout. For the slice:
+
+| Play | Phases | Where it shows |
+| --- | --- | --- |
+| **fire, then seize** (the hand games' play) | element to a covered firing position onto the objective, `Hold until clear <objective>` or a deadline from the clock; then `Assault <objective>` | Hollerbach: the knoll, the village edge; the copse in the test map |
+| **hold for relief** | `Hold <covered ground> until arrived <formation>` or the enemy's clock runs short; then `Advance` beside it | Hollerbach: the Valkyries waiting for the Wiesel |
+| **fix and flank** (exists) | the same play in the new vocabulary: `go_by` becomes `round N`, the trigger `in_place` / `found` | day 2's reserve |
+
+Why this fixes 3b's price problem without retuning: under a mission, the
+objective's pull is replaced by the mission's (`score_tile`), so a crew sent
+to the copse is priced toward the copse, and `order_ground` lets her choose
+where in it.
+
+#### 4. Legibility
+
+- A phase beginning is an event with its reason: "2nd Section: the
+  crossroads is clear (round 6) → assaulting".
+- The seat's preview shows a formation's queued legs and their conditions,
+  and "until" in plain words.
+- The enemy's plan stays hidden during the battle and is named in the
+  after-action report ("round 3: Ravenna holds the copse until the
+  crossroads is clear; round 6: goes in"), as already ruled.
+
+#### Build order and measurement
+
+| Step | What | Done when |
+| --- | --- | --- |
+| 1 | The clock; the sitrep line; commander features | `the_clock_reads_only_what_her_side_knows`; rounds-to-win matches a hand count on Hollerbach |
+| 2 | `until` on legs; conditions; local promotion; events; validation; save; the seat's orders | `a_leg_without_until_is_the_game_before` (snapshot unregenerated); `an_until_reads_only_what_the_formation_knows`; a hand game using phases |
+| 3 | **fire, then seize**, matched and chosen by playout; taught to both academies on Hollerbach | on the copse map, fire from cover above 10% of shots (now 2–5%); one-hex shots and losses down; wins against today's commander in the same seat, fresh seeds |
+| 4 | **hold for relief** with the arrivals and the clock | the Valkyries' recon waits for the Wiesel in most battles where she comes |
+| 5 | fix and flank re-expressed | neutral: its old measurements reproduce |
+
+**Fit with the slice.** This is milestone 7 work (the commander) done before
+milestones 3–4, at the designer's request. It changes no rule and no card
+number, so no tripwire is crossed; the commander's features change, and
+nothing has been trained yet.
+
+#### Open questions
+
+1. **Does the player get `until` in the slice?** Recommended: yes. ASL and
+   Combat Mission players expect "hold until", and the seat's orders file
+   takes it at once.
+2. **Deadlines: a round, or the clock?** Recommended: both conditions,
+   `round N` and `their clock under N` ("go when they are 3 rounds from
+   winning").
+3. **How many conditions?** Recommended: the five above and no more until a
+   playtest asks. Each one widens the learned commander's menu.
+4. **Should a phase change be heard by the enemy?** Recommended: no; it is
+   seen through what the formation then does, as every order is.
+
 ## Playtest log
 
 ### Playtest 1: Hollerbach, 2026-11-03
