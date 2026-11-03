@@ -118,12 +118,25 @@ def hollerbach():
     W, H = 26, 22
 
     def level(c, r):
-        # The valley floor is the brook (row ~14). Ground rises gently to
-        # the north (the platoon's side, two levels up at the edge) and less
-        # to the south. Ten metres a level: a fold, not a ridge.
-        if r <= 14:
-            return round((14 - r) / 6)
-        return round((r - 14) / 6)
+        # Relief drawn for sight lines (`heatmap --sight`), not for looks.
+        # A 10 m level is a terrace, and the brow of a flat terrace hides
+        # everything below it, so the first draft (a plateau stepping down
+        # to a village terrace, then the valley) was dead ground from both
+        # starts: first contact at two hexes, and a brawl on the crossroads
+        # (SLICE.md, playtests 1b and 2). Now the platoon's plateau ends at a
+        # crest on row 5, which hides its start; a short slope (rows 6-8)
+        # falls to a village at valley level, so nothing between the slope
+        # and the brook stands higher than the slope. From the slope 50% of
+        # pairs in range see the valley (13% before; `--across 4-9 12-17`),
+        # the start still sees nothing below the crest (4%), and the village
+        # houses and the church knoll are what hide ground now.
+        if r <= 5:
+            return 2
+        if r <= 8:
+            return 1
+        if r <= 17:
+            return 0
+        return 1
 
     g = Ground(W, H, "p", level)
 

@@ -750,10 +750,13 @@ each round:
   under her commander's hold stays put.
 - **Missions cost a whole round.** A formation's mission reaches its crews
   10–15 s into the round, after they've planned, so under WEGO any delay
-  above zero is a round late. A radio order to one crew is instant. The
-  preview now says so. **This is a rule question for the designer:**
-  either missions land before planning, or crews re-plan when a mission
-  lands.
+  above zero is a round late. A radio order to one crew is instant.
+  **Ruled (designer, 2026-11-03): crews re-plan when orders arrive.** Built
+  as `command.replan_on_arrival`: when a mission lands, each crew it reaches
+  drops her own errand and re-routes for the order's ground for the rest of
+  the round, saying so (`Replanned`). Her full judgement of where to stand
+  returns at the next planning phase, and the drill can still take her
+  into cover.
 
 **The late Wiesel**, AI against AI, 16 seeds, before → after. One
 confound: the recon is now led by Lindholm's squad, since the Wiesel left
@@ -782,6 +785,44 @@ but it was a different battle.
   finding 3 at its sharpest, and the case for the forecast (milestone 4)
   and the shot (milestone 8) coming sooner.
 - **The seat's new orders:** `stay`, `stay_aboard`, `fire`.
+
+### The relief, redrawn (2026-11-03)
+
+The fix playtest 2 asked for, made with the sight tool before any battle
+was fought on it. `--across A B` measures how much of one band of rows can
+be seen from another:
+
+- **Before:** a plateau (rows 0–5), a village terrace one level up (rows
+  6–10), then the valley.
+- **After:** the plateau ends at a crest on row 5, a short slope (rows
+  6–8) falls to a village at valley level, and the church knoll still
+  stands over it.
+
+| Sight within 8 hexes | Before | After |
+| --- | --- | --- |
+| Valley (rows 12–17) from the north slope (rows 4–9), pairs | 13% | 50% |
+| North slope (rows 6–11) from the valley, pairs | 44% | 65% |
+| Anything below the crest from Kuhlmann's start (rows 0–2) | 5% | 4% |
+
+AI against AI, 16 seeds, doctrines as shipped / swapped, Wiesel arriving:
+
+| | Before | After |
+| --- | --- | --- |
+| Kuhlmann wins | 4 / 10 | 7 / 6 |
+| First contact (Kuhlmann) | round 2.0, 1.2 hexes | round 1.2, 7.1 hexes |
+| Shots at one hex | 69–74% | 49–54% |
+| Wiesel's shots at 5–8 hexes | 10% | 29% |
+| Wiesel lost | under a third of battles | one in ten |
+
+Kuhlmann wins 14 of 32 overall either way, so the balance hasn't moved
+beyond the noise of 16 games. What moved is what kind of battle it is:
+- The lines of fire now cross the valley: the Valkyries shoot up into the
+  village from the south slope, Kuhlmann down into the valley.
+- The Wiesel fights from the open floor at range. That is what Day 1 was
+  written for.
+- The crossroads is still where the fighting gathers, because it is the
+  objective.
+- Nobody uses the woods yet. That is the AI's appetite, not the ground's.
 
 ## What's parked
 

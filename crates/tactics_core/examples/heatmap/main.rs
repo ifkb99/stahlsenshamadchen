@@ -6,7 +6,7 @@
 //! heatmap --seat <dir>...                  # hand games from examples/command
 //! heatmap ... --json a.json [--label name] # keep the counts, named
 //! heatmap --diff a.json b.json             # what changed between two runs
-//! heatmap --sight --map slice_hollerbach [--range 8] [--from 13,10 ...]
+//! heatmap --sight --map slice_hollerbach [--range 8] [--from 13,10 ...] [--across 4-9 12-17]
 //! heatmap ... --timeline                   # every unit, round by round, as text
 //! ```
 //! (`cargo run --release -p tactics_core --example heatmap -- <args>`.)
@@ -99,6 +99,17 @@ fn main() {
                 Some([c.parse().ok()?, r.parse().ok()?])
             })
             .collect();
+        // `--across 4-9 12-17`: how much of the second band of rows can be
+        // seen from the first, the number a map's sight lines are drawn
+        // for ("can the slope see the valley").
+        let across = many("--across");
+        if across.len() == 2 {
+            let band = |s: &str| -> (i32, i32) {
+                let (a, b) = s.split_once('-').expect("a band is rows a-b");
+                (a.parse().expect("a row"), b.parse().expect("a row"))
+            };
+            across_bands(&ground, range, band(&across[0]), band(&across[1]));
+        }
         sight(&ground, &map, range, &froms)
     } else {
         let mut tally = Tally::new(flag("--vehicle"));
@@ -362,6 +373,56 @@ fn compare(a: &Heat, b: &Heat) {
             .collect();
         println!("{label} ({} battles): {}", h.battles, short.join("; "));
     }
+}
+
+/// How much of band `to` can be seen from band `from` (rows, inclusive),
+/// within `range`: the share of target hexes seen from at least one hex of
+/// `from`, the share of all pairs in range that see each other, and the
+/// hexes of `from` that see most of `to`.
+fn across_bands(ground: &BattleState, range: u32, from: (i32, i32), to: (i32, i32)) {
+    let cells: Vec<Cell> = ground.world.iter().map(|(h, _)| hex_to_offset(h)).collect();
+    let in_band = |c: &Cell, b: (i32, i32)| c[1] >= b.0 && c[1] <= b.1;
+    let (mut pairs, mut seen_pairs) = (0u32, 0u32);
+    let mut covered: BTreeSet<Cell> = BTreeSet::new();
+    let mut best: Vec<(u32, Cell)> = Vec::new();
+    let targets: Vec<&Cell> = cells.iter().filter(|c| in_band(c, to)).collect();
+    for f in cells.iter().filter(|c| in_band(c, from)) {
+        let a = offset_to_hex(f[0], f[1]);
+        let mut n = 0;
+        for t in &targets {
+            let b = offset_to_hex(t[0], t[1]);
+            if a.unsigned_distance_to(b) > range {
+                continue;
+            }
+            pairs += 1;
+            if ground.sees_through(a, b) {
+                seen_pairs += 1;
+                n += 1;
+                covered.insert(**t);
+            }
+        }
+        best.push((n, *f));
+    }
+    best.sort_by(|x, y| y.0.cmp(&x.0).then(x.1.cmp(&y.1)));
+    let top: Vec<String> = best
+        .iter()
+        .take(6)
+        .map(|(n, c)| format!("({},{}) {n}", c[0], c[1]))
+        .collect();
+    println!(
+        "rows {}-{} seen from rows {}-{} within {range}: {} of {} hexes ({}), {} of {} pairs in range ({}); best: {}",
+        to.0,
+        to.1,
+        from.0,
+        from.1,
+        covered.len(),
+        targets.len(),
+        pct(covered.len() as u32, targets.len() as u32),
+        seen_pairs,
+        pairs,
+        pct(seen_pairs, pairs),
+        top.join("  ")
+    );
 }
 
 /// The ground's sight lines: what every hex overlooks within `range`, and
