@@ -130,6 +130,19 @@ pub struct CommandRules {
     /// same type with the same knobs. A mod that sets `max_ticks: 0` here has
     /// missions that simply happen.
     pub latency: ReactionRules,
+    /// Whether a crew re-plans when her formation's mission reaches her
+    /// partway through a round (`latency` above), rather than finishing the
+    /// round on the plan she made without it.
+    ///
+    /// In WEGO a crew plans at the top of the round, so without this any
+    /// latency at all made a mission a whole round late: it landed ten
+    /// seconds in and nobody acted on it until the next planning phase
+    /// (SLICE.md, playtest 2). With it, she drops her own errand and
+    /// re-routes for the new order's ground for the rest of the round; her
+    /// full judgement of where to stand returns at the next planning phase,
+    /// and the battle drill can still take her into cover on the way. Off,
+    /// what a block that does not say gets, is the game before.
+    pub replan_on_arrival: bool,
 }
 
 /// The review a block that says nothing gets: every round, at every skill.
@@ -161,6 +174,7 @@ impl Default for CommandRules {
                 levels_per_tick: 4,
                 max_ticks: 5,
             },
+            replan_on_arrival: false,
         }
     }
 }
@@ -239,6 +253,7 @@ mod tests {
                 levels_per_tick: 0,
                 max_ticks: 0,
             },
+            replan_on_arrival: false,
         };
         for level in [-20, 0, AVERAGE, 30] {
             assert_eq!(rules.delay(level), 0, "level {level} should be instant");

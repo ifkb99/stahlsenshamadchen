@@ -1347,6 +1347,79 @@ fn a_breaking_formation_wakes_her_between_pulses() {
 // --- detachment: a personal order outranks the standing mission ------------
 
 #[test]
+fn a_crew_acts_on_a_mission_the_moment_it_reaches_her() {
+    // WEGO plans at the top of the round, so a mission with any latency at
+    // all used to be a round late: it landed ten seconds in, and the crews
+    // finished the round on the plan they had made without it (SLICE.md,
+    // playtest 2). With `command.replan_on_arrival` they re-plan for it
+    // when it lands. Side 0's crews are planned first, under no mission;
+    // then their section is sent down to the village.
+    let fight = |replan: bool| {
+        let mut reg = registry();
+        reg.command
+            .as_mut()
+            .expect("the base mod has a net")
+            .replan_on_arrival = replan;
+        let mut state = BattleState::from_map(&reg, "slice_hollerbach", 1).unwrap();
+        let sec1 = formation_named(&state, "sec1");
+        let carrier = state.formations()[sec1.index()]
+            .members
+            .iter()
+            .copied()
+            .find(|id| state.unit(*id).is_some_and(|u| u.vehicle == "halftrack"))
+            .unwrap();
+        let mut ai = AiDriver::new();
+        ai.insert(
+            0,
+            make_battle_planner(
+                &AiConfig {
+                    planner: "utility".into(),
+                    difficulty: 4,
+                    doctrine: Some("bounding_overwatch".into()),
+                },
+                1,
+                &reg,
+            ),
+        );
+        let village = tactics_core::offset_to_hex(8, 9);
+        state
+            .apply(
+                &reg,
+                &Order::SetMission {
+                    formation: sec1,
+                    mission: Mission::Advance { to: village },
+                    latitude: Latitude::Delegated,
+                },
+            )
+            .unwrap();
+        assert!(
+            state.formations()[sec1.index()].incoming.is_some(),
+            "the order is on the radio, so the crews plan without it"
+        );
+        let start = state.unit(carrier).unwrap().pos;
+        ai.plan_round(&reg, &mut state);
+        commit_all(&reg, &mut state);
+        let events = state.resolve_round(&reg);
+        let replanned = events
+            .iter()
+            .any(|e| matches!(e, BattleEvent::Replanned { unit, .. } if *unit == carrier));
+        let end = state.unit(carrier).unwrap().pos;
+        (
+            replanned,
+            start.distance_to(village) - end.distance_to(village),
+        )
+    };
+    let (heard, closed) = fight(true);
+    let (deaf, closed_before) = fight(false);
+    assert!(heard, "she said she was acting on it");
+    assert!(!deaf, "and a net without the rule says nothing");
+    assert!(
+        closed > closed_before,
+        "she closed on the new ground this round ({closed} hexes), not next round ({closed_before})"
+    );
+}
+
+#[test]
 fn a_crew_told_to_hold_the_hex_she_stands_on_holds_it() {
     // The slice's first playtest: a carrier radioed to the hex she already
     // stood on, binding, drove onto the crossroads in the same round. The

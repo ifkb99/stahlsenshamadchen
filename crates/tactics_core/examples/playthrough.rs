@@ -293,6 +293,12 @@ fn main() {
                 Event::Arrived { unit, at } => {
                     println!("   ++ {} arrives at {at:?}", name(&state, *unit))
                 }
+                Event::Replanned { unit, to } => {
+                    println!(
+                        "   -> {} acts on new orders, for {to:?}",
+                        name(&state, *unit)
+                    )
+                }
                 Event::ShotMissed { .. } => println!("   miss"),
                 Event::ShotStrayed { intended, onto, .. } => println!(
                     "   past {} — and into {}",

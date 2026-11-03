@@ -273,6 +273,7 @@ fn a_command_block_with_zero_coefficients_is_the_game_without_one() {
             levels_per_tick: 0,
             max_ticks: 0,
         },
+        replan_on_arrival: false,
     }));
     let (spoken, deeds): (Vec<String>, Vec<String>) = zeroed.into_iter().partition(wire);
     assert_eq!(

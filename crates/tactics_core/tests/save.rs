@@ -569,6 +569,7 @@ fn a_mission_in_transit_survives_a_save() {
             levels_per_tick: 0,
             max_ticks: 5,
         },
+        replan_on_arrival: false,
     });
     let mut original = BattleState::from_map(&reg, "river_crossing", 19).expect("battle");
     let armor = tactics_core::battle::FormationId(
@@ -681,6 +682,7 @@ fn an_order_waiting_at_the_radio_survives_a_save() {
             levels_per_tick: 0,
             max_ticks: 5,
         },
+        replan_on_arrival: false,
     });
     for vehicle in reg.vehicles.values_mut() {
         vehicle.radio = None;
@@ -841,6 +843,7 @@ fn strung_out_net() -> DataRegistry {
             levels_per_tick: 0,
             max_ticks: 5,
         },
+        replan_on_arrival: false,
     });
     reg
 }

@@ -177,7 +177,7 @@ fn main() {
                 return;
             }
             let planned = plan(&registry, &mut state, &orders_at(args.get(2)), &dir);
-            preview(&state, &planned);
+            preview(&registry, &state, &planned);
         }
         Some("turn") if args.len() >= 2 => {
             let dir = PathBuf::from(&args[1]);
@@ -290,7 +290,7 @@ fn plan(registry: &DataRegistry, state: &mut BattleState, orders: &Orders, dir: 
 /// The planning preview: each of her crews, the ground her orders name,
 /// what she means to do about it, and whether that keeps the order. Only
 /// side 0's: the enemy's plans are not hers to see.
-fn preview(state: &BattleState, planned: &Planned) {
+fn preview(registry: &DataRegistry, state: &BattleState, planned: &Planned) {
     println!(
         "== round {}: your crews' plans (not yet committed)",
         state.round
@@ -307,9 +307,17 @@ fn preview(state: &BattleState, planned: &Planned) {
                 .mission()
                 .map(mission_text)
                 .unwrap_or_else(|| "release".into());
+            let then = if registry
+                .command
+                .as_ref()
+                .is_some_and(|c| c.replan_on_arrival)
+            {
+                "the plans below are until then, and they re-plan for it when it lands"
+            } else {
+                "so this round they plan on what they had"
+            };
             println!(
-                "   !! {}'s new orders ({what}) are on the radio: they reach her crews {} s into the round, \
-                 so this round they plan on what they had",
+                "   !! {}'s new orders ({what}) are on the radio: they reach her crews {} s into the round; {then}",
                 f.id,
                 ticks * 5
             );
@@ -379,7 +387,7 @@ fn turn(registry: &DataRegistry, state: &mut BattleState, orders: &Orders, dir: 
         return;
     }
     let planned = plan(registry, state, orders, dir);
-    preview(state, &planned);
+    preview(registry, state, &planned);
     let round = state.round;
     let events = state.resolve_round(registry);
     append(

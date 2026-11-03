@@ -269,6 +269,9 @@ pub fn command_rules(
             levels_per_tick: 0,
             max_ticks: 5,
         },
+        // These stage the net as it was; re-planning on arrival has its
+        // own test.
+        replan_on_arrival: false,
     }
 }
 

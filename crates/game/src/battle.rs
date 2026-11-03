@@ -1536,6 +1536,11 @@ fn pump_events(
             BattleEvent::Arrived { unit, .. } => {
                 log.push(traffic(*unit, "arriving."));
             }
+            // Her new orders reached her mid-round and she is acting on
+            // them now rather than next round.
+            BattleEvent::Replanned { unit, .. } => {
+                log.push(traffic(*unit, "new orders received — moving."));
+            }
             // The armor holding is news the player must hear, or the shot
             // reads as the game eating a hit.
             BattleEvent::ShotBounced { target, facing, .. } => {

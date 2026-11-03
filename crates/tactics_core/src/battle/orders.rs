@@ -176,6 +176,13 @@ pub enum Event {
         unit: UnitId,
         at: Hex,
     },
+    /// A mission reached her mid-round and she re-planned for it
+    /// (`command.replan_on_arrival`): her route for the rest of the round now
+    /// ends at `to`, which is where she stands if the order is to stay.
+    Replanned {
+        unit: UnitId,
+        to: Hex,
+    },
     /// A new round opened and sides may plan again.
     RoundStarted {
         round: u32,
@@ -744,6 +751,7 @@ impl Event {
             // Her own side knows its reinforcement has come; the enemy
             // finds out the way he finds out anything, by seeing her.
             | Event::Arrived { unit, .. }
+            | Event::Replanned { unit, .. }
             | Event::WeaponDry { unit, .. }
             | Event::CrewHit { unit, .. }
             | Event::ModuleHit { unit, .. }
@@ -1103,6 +1111,81 @@ impl BattleState {
         self.command
             .hold_orders(id, to.map(|to| March { to, latitude }), fire);
         Ok(vec![Event::OrdersWaiting { unit: id }])
+    }
+
+    /// Every crew a mission just reached re-plans for it, mid-round
+    /// (`command.replan_on_arrival`). Walked in formation order and then
+    /// member (id) order.
+    ///
+    /// Who: a crew on the field who will still do as she is told, in her
+    /// formation's chain, and not under her commander's personal order (a
+    /// detached crew is excused from the mission) nor riding (her carrier
+    /// re-plans; she goes where it goes). What: her own errand ends, and her
+    /// route for the rest of the round is this round's march toward the
+    /// ground the mission names: the objective of an advance, an assault or
+    /// a reconnaissance, the ground of a hold (where she stands, if it names
+    /// none), the exit of a withdrawal. A base of fire stays where it is.
+    fn replan_on_arrival(
+        &mut self,
+        registry: &DataRegistry,
+        formations: &[String],
+        events: &mut Vec<Event>,
+    ) {
+        for fid in formations {
+            let Some(formation) = self.command.formations().iter().find(|f| f.id == *fid) else {
+                continue;
+            };
+            let members = formation.members.clone();
+            for id in members {
+                let Some(u) = self.unit(id) else {
+                    continue;
+                };
+                if !u.alive()
+                    || u.aboard.is_some()
+                    || u.boarding.is_some()
+                    || u.orders.is_some()
+                    || !registry.morale.rung(u.pressure).obeys
+                {
+                    continue;
+                }
+                let pos = u.pos;
+                let Some(mission) = self
+                    .formation_of(id)
+                    .and_then(|f| f.mission_for(id))
+                    .cloned()
+                else {
+                    continue;
+                };
+                let ground = match mission {
+                    Mission::Advance { to } | Mission::Assault { to } => to,
+                    Mission::Recon { toward } => toward,
+                    Mission::Hold { at } => at.unwrap_or(pos),
+                    Mission::Withdraw { via } => self
+                        .scenario
+                        .objectives()
+                        .iter()
+                        .find(|o| o.id == via)
+                        .map(|o| o.anchor())
+                        .unwrap_or(pos),
+                    Mission::Support { .. } => pos,
+                };
+                let route: Vec<Hex> = if ground == pos {
+                    Vec::new()
+                } else {
+                    movement::step_toward(registry, self, id, ground)
+                        .and_then(|step| movement::path_to(registry, self, id, step))
+                        .map(|(path, _)| path.into_iter().skip(1).collect())
+                        .unwrap_or_default()
+                };
+                let to = route.last().copied().unwrap_or(pos);
+                if let Some(u) = self.unit_mut(id) {
+                    u.goal = None;
+                    u.intent.path = route;
+                    u.intent.own_idea = false;
+                }
+                events.push(Event::Replanned { unit: id, to });
+            }
+        }
     }
 
     /// Hand out every radioed order whose cadet is back on the net.
@@ -1562,7 +1645,22 @@ impl BattleState {
         // Orders in transit land at the top of the tick, before anybody
         // drives: a mission that took one tick to arrive is one the formation
         // acts on as this tick's movement resolves, not a round later.
+        let before = events.len();
         self.deliver_missions(&mut events);
+        if registry
+            .command
+            .as_ref()
+            .is_some_and(|c| c.replan_on_arrival)
+        {
+            let landed: Vec<String> = events[before..]
+                .iter()
+                .filter_map(|e| match e {
+                    Event::MissionReceived { formation, .. } => Some(formation.clone()),
+                    _ => None,
+                })
+                .collect();
+            self.replan_on_arrival(registry, &landed, &mut events);
+        }
 
         // The drill runs after delivery on purpose: an order that lands this
         // tick is the commander speaking *now*, and a fresh explicit order

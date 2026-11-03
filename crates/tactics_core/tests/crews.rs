@@ -991,6 +991,7 @@ fn a_zeroed_command_block_is_the_game_without_one_with_a_commander_at_both_ends(
             levels_per_tick: 0,
             max_ticks: 0,
         },
+        replan_on_arrival: false,
     };
     for seed in [31u64, 53] {
         let without = run(None, seed);
