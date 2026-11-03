@@ -10,7 +10,9 @@ measurements and the wrong first drafts are elsewhere:
 - [STRUCTURE.md](STRUCTURE.md) — seams in the wrong place (a rule in the wrong
   crate, a contract nothing checks).
 - [PARKED.md](PARKED.md) — why code with no callers is still in the tree.
-- Design memos: [DIRECTION.md](DIRECTION.md) (live plan),
+- Design memos: [SLICE.md](SLICE.md) (live plan: the three-battle slice,
+  the cadet card, legibility from ASL), [DIRECTION.md](DIRECTION.md)
+  (the August argument it builds on),
   [PLANNING.md](PLANNING.md) (AI planning layer), [WORLD.md](WORLD.md) (one
   world at two resolutions), [ASSAULT.md](ASSAULT.md) (attack and defence),
   REIMAGINED.md (learned goals / RL).
