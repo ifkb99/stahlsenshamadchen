@@ -101,18 +101,25 @@ should feel that in the forecast numbers before she feels it in losses.
 
 ### Kuhlmann, 2nd Platoon (the player)
 
-All existing characters (`characters/kuhlmann.json`). Fourteen named cadets is
+All existing characters (`characters/kuhlmann.json`). Fifteen named cadets is
 about a Fire Emblem chapter's worth, and is the ceiling.
+
+The first draft cast Sandoval and Sorge as squad leaders from their bios.
+Under the current 22 numbers both are tank commanders (no small arms, no
+fieldcraft), and that draft lost every AI battle. Nothing short of reading all
+22 numbers showed it, which is the card's case made by accident. The squads
+went to the three Kuhlmann cadets the data says are infantry. Sandoval
+commands Falk's carrier, so their thread is intact.
 
 | Element | Unit | Cadets |
 | --- | --- | --- |
 | 1st Squad | `rifle_squad` | **Lt Sigrun Falk** (platoon leader, leads from 1st Squad) |
-| 1st Carrier | `halftrack` | Nele Brauer (driver), Marlen Ostwald (commander, MG) |
-| 2nd Squad | `rifle_squad` | **Sgt Vera Sandoval** |
-| 2nd Carrier | `halftrack` | Emmi Ranke (driver), Yuki Tachibana (commander) |
-| 3rd Squad | `rifle_squad` | **Sgt Wilma Sorge** |
-| 3rd Carrier | `halftrack` | Lotte Vogel (driver, first-year), Ruth Adler (commander) |
-| Scouts | `scout_section` | **Elsa Brandt** |
+| 1st Carrier | `halftrack` | **Sgt Vera Sandoval** (commander, MG), Nele Brauer (driver) |
+| 2nd Squad | `rifle_squad` | **Sgt Traudl Kessler** |
+| 2nd Carrier | `halftrack` | **Sgt Wilma Sorge** (commander), Yuki Tachibana (driver) |
+| 3rd Squad | `rifle_squad` | **Marlen Ostwald** |
+| 3rd Carrier | `halftrack` | Ruth Adler (commander), Lotte Vogel (driver, first-year) |
+| Scouts | `scout_section` | **Elsa Brandt**, Ilse Radtke |
 | *From day 2* | `medium_tank` | **Capt Anka Weiss** (commander), Mina Falkenrath (gunner), Juno Akiyama (driver), Rosa Steiner (loader, first-year) |
 
 The infantry squads have one named cadet each, the section leader. The rest of
@@ -126,8 +133,8 @@ named, and the AI should play to their bios through doctrine and temper.
 
 | Map | Force | Named |
 | --- | --- | --- |
-| 1 | Recon: scout section, 2 rifle squads in a `ifv` and an `apc`, **one `light_tank`** | Greta Müller (scouts), Sgt Sofia Ravenna (Wiesel commander), Kira Belova (driver), Rea Marchetti (gunner) |
-| 2 | Lt Zofia Nowak's mechanised platoon: 3 rifle squads in 3 `ifv`, **one `heavy_tank`** | Nowak, Sgt Erika Thal, Sgt Britta Ehlers; Lt Hedda Ziegler (Löwe), Carmen Solano (gunner) |
+| 1 | Recon: scout section, 2 rifle squads in 2 `halftrack`, **one `light_tank`** | Greta Müller, Runa Eide (scouts), Sgt Sofia Ravenna (Wiesel commander), Kira Belova, Rea Marchetti; Sanna Lindholm, Marta Kovač (squads); Franka Mohr, Malin Roth, Cecile Aubry, Selin Aydın (carriers) |
+| 2 | Lt Zofia Nowak's mechanised platoon: 3 rifle squads in carriers (the draft's 3 `ifv` breaks the one-gun rule; see the playtest log), **one `heavy_tank`** | Nowak, Sgt Erika Thal, Sgt Britta Ehlers; Lt Hedda Ziegler (Löwe), Carmen Solano (gunner) |
 | 3 | Lt Ingrid Stahl's holding force: 2 dug-in squads, **one `tank_destroyer`**, and the Löwe if it survived day 2 | Stahl, Sgt Alma Reiter; Nadja Orlov (Marder gunner) |
 
 ### Character threads
@@ -165,9 +172,11 @@ Valkyrie recon arrives from the south. Neither side has dug in.
 hedges to the west, open fields to the south, a sunken lane the scouts can use
 unseen.
 
-**Ending.** A clock (15 rounds) and two objectives: the crossroads and the
-church. This is the only clocked battle. It is also the one place the slice
-teaches what the score is for.
+**Ending.** Two objectives, the crossroads (2 a round) and the church (1), and
+a victory score of 24. Holding both ends it in eight rounds. There is no
+clock in the engine and the slice shouldn't add one; the score race is the
+clock. This is the one battle in the slice decided by score, and the one
+place it teaches what the score is for.
 
 **What it teaches.** Dismounting; that a halftrack is a taxi, not a tank;
 concealment markers; morale checks. Above all, **what a single light tank does
@@ -313,7 +322,7 @@ is content. That fixes a "content is data" smell on the way, and it is the
 only Rust the card needs.
 
 The 49 shipped characters are converted by a script, from their current cores
-and skills into card numbers. The slice uses 26 of them (14 Kuhlmann, 12 Valkyries); the rest stay valid
+and skills into card numbers. The slice uses about 30 of them; the rest stay valid
 content.
 
 ## Legibility: what's taken from ASL
@@ -523,6 +532,96 @@ variety; they are training data, not slice content.
 - Not in the slice: new network architectures, features beyond what the card
   needs, new reward research, learning across battles, the campaign-level
   commander.
+
+## Playtest log
+
+### Playtest 1: Hollerbach, 2026-11-03
+
+**What was fought.** The map is `slice_hollerbach`, drawn by
+`tools/make_slice_maps.py` (shapes, not hand-typed rows). Two kinds of
+battle:
+
+- **AI against AI**, through `examples/playthrough` (utility planner both
+  sides, 16 seeds, doctrines as shipped and swapped). These measure the
+  ground and the kit.
+- **By hand**, through `examples/command`, a new headless seat: Claude as
+  Kuhlmann's commander, giving section missions and radio orders from a
+  situation report that shows only what side 0 knows (`heard_by`,
+  `known_enemies`, and the commander's lost contacts). The crews were the
+  utility planner, inside those orders. Two games on seed 1. **Both lost**:
+  eliminated in round 10 (3 to 22) and round 8 (4 to 14), having killed one
+  enemy vehicle in total.
+
+**The ground and the kit** (AI against AI, Kuhlmann wins of 16, shipped /
+swapped doctrines):
+
+| Valkyries field | Kuhlmann wins |
+| --- | --- |
+| a Schütze IFV, a Kasten APC and the Wiesel (the draft) | 0 / 1 |
+| two Kasten APCs and the Wiesel | 2 / 1 |
+| two halftracks and the Wiesel (shipped) | 3 / 7 |
+| two halftracks, no Wiesel | 15 / 15 |
+
+The ground favours Kuhlmann heavily, and one light tank takes it back. That
+is the slice's premise working. The draft's IFV broke the one-gun rule: its
+20 mm autocannon, not the Wiesel, did the killing (73 penetrations to 43).
+The Kasten's armour 2 was the other half. Nothing Kuhlmann carries goes
+through it except six rockets, while its MG goes through a halftrack (73
+penetrations to 14). Day 2's three IFVs need the same treatment.
+
+**What the hand games found.** In order of how much each one cost:
+
+1. **Orders don't land, and the screen can't show it in time.**
+   - Under "advance to the house", two of three squads dismounted three hexes
+     short on their own judgement, in both games, and walked the rest under
+     fire at one hex a round.
+   - Under "hold (12,9)", a carrier's crew decided to "take the crossroads"
+     and drove into rocket range.
+   - A binding radio order to the hex a carrier already stood on was ignored:
+     there is no order for "stay here" short of a hold mission, and the crew AI
+     planned it fresh, onto the crossroads. All three carriers died there in
+     one round.
+   - Missions travel by radio and arrive *mid-round*, after the crews have
+     planned without them.
+
+   Every deviation was printed as an intention, but only after the round was
+   committed. This is the case for the AI section's first condition (intent
+   shown before committing). It needs the seat to split planning from
+   resolution, and probably a "stay" order for one unit.
+2. **Morale is invisible, and it ends battles.** Three carriers destroyed in
+   sight put every squad on the platoon at Breaking in the same tick
+   (`ally_destroyed` 4 each, Breaking at 12). Squads then sat at Breaking for
+   rounds without rallying, and each was eventually removed by the bail-out
+   check (`combat.rs`). That check treats a rifle squad like a tank crew
+   abandoning a hull: a breaking squad that fails discipline is
+   **destroyed**. None of Kuhlmann's leaders has the discipline skill; four
+   Valkyries do. The narration says `Abandoned` with no roll, target or
+   cause.
+
+   Exempting infantry from the bail-out (a temporary experiment) changed
+   nothing AI-against-AI: 1 of 16 against 2, with all 61 infantry bail-outs
+   gone and the squads dying of other causes. So the bail-out is *how* they
+   die, not *why* the Valkyries win. It is still the wrong rule for the slice:
+   Broken should rout and be able to rally (milestone 3).
+3. **The shot is illegible.** Rockets went through and did nothing a player
+   could predict: 9 points into a halftrack's front (the Valkyrie one kept
+   going), 4 into a light tank's side at close range. Kuhlmann's rockets made
+   31 penetrations and no kills over 16 battles, while one Valkyrie rocket
+   brewed up a halftrack through its ammunition rack. "Pts of effect" isn't a
+   number a player can use. This is evidence that milestone 8 (the shot) may
+   need to come earlier than planned.
+4. **The 22 numbers hid a bad cast.** See *The force*.
+5. **Walking is the hidden decision.** Foot units move one hex a round and
+   carriers five or six. How far from the fight a squad dismounts decides
+   whether she arrives at all, and nothing on the screen prices it.
+6. **The narrator.** The AI-against-AI narrator prints `cadet #8` and axial
+   coordinates. The seat prints names and map coordinates, but still as the
+   events' debug text.
+
+**What it means for the build order.** Finding 1 comes before the card and
+before morale: no rules change helps while orders don't land. Next, then: the
+seat splits planning from resolution and shows each crew's intent before the
+round is committed, with a way to overrule it.
 
 ## What's parked
 

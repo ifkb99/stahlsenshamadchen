@@ -1,0 +1,360 @@
+{
+ "id": "slice_hollerbach",
+ "name": "Hollerbach, the first day",
+ "kind": "battle",
+ "shape": "free",
+ "palette": {
+  "p": "plains",
+  "g": "grass",
+  "R": "road",
+  "t": "town",
+  "f": "forest",
+  "h": "hedgerow",
+  "s": "stream",
+  "m": "mud"
+ },
+ "rows": [
+  "pppppphppppppRpppppppppppp",
+  "pppppphppppppRppppppfffppp",
+  "pppppphhpppppRpppppffffffp",
+  "ppppppphpppppRppppfffffffp",
+  "ppppppphpppppRpppppffffffp",
+  "pppppppphppppRppppppfffppp",
+  "pphhphhhhppppRpppppppppppp",
+  "ppppppppphpppRpppppppppppp",
+  "ppphhhhphhtppRpppppppppppp",
+  "pppppppppppttRttpptppppppp",
+  "RRRRRRRRRRRttRttRRttRRRRRR",
+  "pppppppppppttRtppppppppppp",
+  "gghghhhhghgggRgggggggggggg",
+  "gggggggggggggRggggggmmmmmg",
+  "ggggmmsssssssRggggssssssss",
+  "sssssssmmgggsRsssssggggggg",
+  "ggggmmmmgggggRggggfffffggg",
+  "pppppppppppppRppffffffffpp",
+  "pppffffppppppRppfffffffffp",
+  "ppfffffppppppRppffffffffpp",
+  "pppffffppppppRppppfffffppp",
+  "pppppppppppppRpppppppppppp"
+ ],
+ "elevation": [
+  "22222222222222222222222222",
+  "22222222222222222222222222",
+  "22222222222222222222222222",
+  "22222222222222222222222222",
+  "22222222222222222222222222",
+  "22222222222222222222222222",
+  "11111111111111111111111111",
+  "11111111112111111111111111",
+  "11111111122211111111111111",
+  "11111111112211111111111111",
+  "11111111111111111111111111",
+  "00000000000000000000000000",
+  "00000000000000000000000000",
+  "00000000000000000000000000",
+  "00000000000000000000000000",
+  "00000000000000000000000000",
+  "00000000000000000000000000",
+  "00000000000000000000000000",
+  "11111111111111111111111111",
+  "11111111111111111111111111",
+  "11111111111111111111111111",
+  "11111111111111111111111111"
+ ],
+ "sides": [
+  {
+   "name": "Kuhlmann Academy"
+  },
+  {
+   "name": "Iron Valkyries",
+   "ai": {
+    "planner": "command",
+    "difficulty": 4,
+    "doctrine": "recon_pull"
+   }
+  }
+ ],
+ "formations": [
+  {
+   "id": "sec1",
+   "name": "1st Section",
+   "side": 0
+  },
+  {
+   "id": "sec2",
+   "name": "2nd Section",
+   "side": 0
+  },
+  {
+   "id": "sec3",
+   "name": "3rd Section",
+   "side": 0
+  },
+  {
+   "id": "kuhlmann_scouts",
+   "name": "Brandt's scouts",
+   "side": 0
+  },
+  {
+   "id": "valk_recon",
+   "name": "Valkyrie recon",
+   "side": 1
+  },
+  {
+   "id": "valk_scouts",
+   "name": "Müller's scouts",
+   "side": 1
+  }
+ ],
+ "units": [
+  {
+   "at": [
+    13,
+    1
+   ],
+   "side": 0,
+   "vehicle": "halftrack",
+   "crew": [
+    "vera",
+    "nele"
+   ],
+   "name": "1st Carrier",
+   "formation": "sec1"
+  },
+  {
+   "at": [
+    13,
+    1
+   ],
+   "aboard_at": [
+    13,
+    1
+   ],
+   "side": 0,
+   "vehicle": "rifle_squad",
+   "crew": [
+    "sigrun"
+   ],
+   "name": "1st Squad",
+   "formation": "sec1",
+   "leads": true
+  },
+  {
+   "at": [
+    12,
+    0
+   ],
+   "side": 0,
+   "vehicle": "halftrack",
+   "crew": [
+    "wilma",
+    "yuki"
+   ],
+   "name": "2nd Carrier",
+   "formation": "sec2"
+  },
+  {
+   "at": [
+    12,
+    0
+   ],
+   "aboard_at": [
+    12,
+    0
+   ],
+   "side": 0,
+   "vehicle": "rifle_squad",
+   "crew": [
+    "traudl"
+   ],
+   "name": "2nd Squad",
+   "formation": "sec2",
+   "leads": true
+  },
+  {
+   "at": [
+    14,
+    0
+   ],
+   "side": 0,
+   "vehicle": "halftrack",
+   "crew": [
+    "ruth",
+    "lotte"
+   ],
+   "name": "3rd Carrier",
+   "formation": "sec3"
+  },
+  {
+   "at": [
+    14,
+    0
+   ],
+   "aboard_at": [
+    14,
+    0
+   ],
+   "side": 0,
+   "vehicle": "rifle_squad",
+   "crew": [
+    "marlen"
+   ],
+   "name": "3rd Squad",
+   "formation": "sec3",
+   "leads": true
+  },
+  {
+   "at": [
+    7,
+    3
+   ],
+   "side": 0,
+   "vehicle": "scout_section",
+   "crew": [
+    "elsa",
+    "ilse"
+   ],
+   "name": "Scouts",
+   "formation": "kuhlmann_scouts",
+   "leads": true
+  },
+  {
+   "at": [
+    13,
+    20
+   ],
+   "side": 1,
+   "vehicle": "light_tank",
+   "crew": [
+    "sofia",
+    "kira",
+    "rea"
+   ],
+   "name": "Wiesel",
+   "formation": "valk_recon",
+   "leads": true
+  },
+  {
+   "at": [
+    12,
+    21
+   ],
+   "side": 1,
+   "vehicle": "halftrack",
+   "crew": [
+    "franka",
+    "malin"
+   ],
+   "name": "Kette 1",
+   "formation": "valk_recon"
+  },
+  {
+   "at": [
+    12,
+    21
+   ],
+   "aboard_at": [
+    12,
+    21
+   ],
+   "side": 1,
+   "vehicle": "rifle_squad",
+   "crew": [
+    "sanna"
+   ],
+   "name": "Lindholm's Squad",
+   "formation": "valk_recon"
+  },
+  {
+   "at": [
+    14,
+    21
+   ],
+   "side": 1,
+   "vehicle": "halftrack",
+   "crew": [
+    "cecile",
+    "selin"
+   ],
+   "name": "Kette 2",
+   "formation": "valk_recon"
+  },
+  {
+   "at": [
+    14,
+    21
+   ],
+   "aboard_at": [
+    14,
+    21
+   ],
+   "side": 1,
+   "vehicle": "rifle_squad",
+   "crew": [
+    "marta"
+   ],
+   "name": "Kovač's Squad",
+   "formation": "valk_recon"
+  },
+  {
+   "at": [
+    17,
+    19
+   ],
+   "side": 1,
+   "vehicle": "scout_section",
+   "crew": [
+    "greta",
+    "runa"
+   ],
+   "name": "Valkyrie Scouts",
+   "formation": "valk_scouts",
+   "leads": true
+  }
+ ],
+ "objectives": [
+  {
+   "id": "crossroads",
+   "name": "the Hollerbach crossroads",
+   "at": [
+    [
+     13,
+     10
+    ],
+    [
+     12,
+     10
+    ],
+    [
+     14,
+     10
+    ],
+    [
+     13,
+     9
+    ],
+    [
+     13,
+     11
+    ]
+   ],
+   "value": 2
+  },
+  {
+   "id": "church",
+   "name": "St. Georg's",
+   "at": [
+    [
+     10,
+     8
+    ],
+    [
+     11,
+     9
+    ]
+   ],
+   "value": 1
+  }
+ ],
+ "victory_score": 24
+}
