@@ -95,8 +95,10 @@ Valkyries know their doctrine.
 **Mechanised infantry first. Tanks are rare, and each one is an event.** A
 platoon of rifle squads in carriers is the player's army. Across the whole
 operation there is exactly one friendly tank and, per map, at most one enemy
-vehicle with a real gun. Everything else is infantry, carriers and the odd
-scout. The point is that a tank's arrival changes the battle, and the player
+**gun vehicle** (a tank, tank destroyer or cannon-armed IFV). Everything else
+is infantry, carriers and the odd scout. This is a count of *vehicles*, not
+of weapons: every vehicle carries what it really would (the Wiesel has its
+37 mm and a machine gun; a carrier its MG). We call it the **one-tank rule**. The point is that a tank's arrival changes the battle, and the player
 should feel that in the forecast numbers before she feels it in losses.
 
 ### Kuhlmann, 2nd Platoon (the player)
@@ -134,7 +136,7 @@ named, and the AI should play to their bios through doctrine and temper.
 | Map | Force | Named |
 | --- | --- | --- |
 | 1 | Recon: scout section, 2 rifle squads in 2 `halftrack`, **one `light_tank`** | Greta Müller, Runa Eide (scouts), Sgt Sofia Ravenna (Wiesel commander), Kira Belova, Rea Marchetti; Sanna Lindholm, Marta Kovač (squads); Franka Mohr, Malin Roth, Cecile Aubry, Selin Aydın (carriers) |
-| 2 | Lt Zofia Nowak's mechanised platoon: 3 rifle squads in carriers (the draft's 3 `ifv` breaks the one-gun rule; see the playtest log), **one `heavy_tank`** | Nowak, Sgt Erika Thal, Sgt Britta Ehlers; Lt Hedda Ziegler (Löwe), Carmen Solano (gunner) |
+| 2 | Lt Zofia Nowak's mechanised platoon: 3 rifle squads in carriers (the draft's 3 `ifv` would be three more gun vehicles, breaking the one-tank rule; see the playtest log), **one `heavy_tank`** | Nowak, Sgt Erika Thal, Sgt Britta Ehlers; Lt Hedda Ziegler (Löwe), Carmen Solano (gunner) |
 | 3 | Lt Ingrid Stahl's holding force: 2 dug-in squads, **one `tank_destroyer`**, and the Löwe if it survived day 2 | Stahl, Sgt Alma Reiter; Nadja Orlov (Marder gunner) |
 
 ### Character threads
@@ -249,6 +251,35 @@ character-first, Fire Emblem's support conversations. Each one:
   conversation about it instead.
 
 Text and placeholder portraits only. No new screen beyond a page over the map.
+
+### Reinforcements
+
+**Proposed (designer, 2026-11-03).** A unit that arrives during a battle
+instead of starting on the map. The story wants it: being beaten back and the
+tank arriving in time is a moment the slice should have. The heat map below
+wants it too: a tank that starts on the map drives straight into the
+village, and one that arrives later has to cross ground where its power can
+be seen.
+
+- **Day 2: Anka's Panther arrives** over the reverse slope during the
+  assault rather than starting there, and arrives *into reserve*, so the
+  decision of the day (when to commit it) stays the player's.
+- **Day 1, a candidate: the Wiesel arrives** up the south road some rounds
+  after the Valkyrie recon, across the open valley floor, to a village the
+  player may already hold.
+
+**How it stays legible (ASL's convention).** The entry is announced in the
+briefing ("Weiss expects to be with you around round 6") and is a named roll:
+a fixed round, ±1 on a die, shown in the replay. Not a trigger on the player
+losing: a rescue that comes because you're losing reads as the game cheating,
+and the enemy commander has to be able to plan around it the same way.
+
+**What it costs.** Nothing in the engine does this yet. It is scenario data
+(`arrivals`: formation, round, entry hexes), additive like every other
+scenario rule, so a map naming none fights exactly as before. The open
+question is how a unit that hasn't arrived is held: a fourth `Fate`, or a
+reserve placed off the board. That decision touches the `Fate` invariant and
+wants care.
 
 ## The cadet card: fewer numbers
 
@@ -563,8 +594,9 @@ swapped doctrines):
 | two halftracks, no Wiesel | 15 / 15 |
 
 The ground favours Kuhlmann heavily, and one light tank takes it back. That
-is the slice's premise working. The draft's IFV broke the one-gun rule: its
-20 mm autocannon, not the Wiesel, did the killing (73 penetrations to 43).
+is the slice's premise working. The draft's IFV broke the one-tank rule (a
+20 mm autocannon makes it a second gun vehicle): its cannon, not the Wiesel,
+did the killing (73 penetrations to 43).
 The Kasten's armour 2 was the other half. Nothing Kuhlmann carries goes
 through it except six rockets, while its MG goes through a halftrack (73
 penetrations to 14). Day 2's three IFVs need the same treatment.
@@ -622,6 +654,51 @@ penetrations to 14). Day 2's three IFVs need the same treatment.
 before morale: no rules change helps while orders don't land. Next, then: the
 seat splits planning from resolution and shows each crew's intent before the
 round is committed, with a way to overrule it.
+
+### Playtest 1b: where the battle happened, 2026-11-03
+
+A new instrument, `examples/heatmap`, counts per hex and per side where
+units moved, stopped, fired from, were hit, died, were spotted and were
+pinned, and draws each over the ground (an SVG). It reads AI battles it
+fights itself (the same seats as the kit table, which it reproduces: 3 and
+7 Kuhlmann wins of 16) or hand games from the seat's new `rounds.jsonl`.
+Hand game 2 replays exactly from its orders files; game 1 predates the
+recast and doesn't.
+
+**What the map was drawn for.** The Valkyries forming up in the Buchwald,
+Kuhlmann's flank in the Kreuzholz, the scouts down the sunken lane to the
+church, the hedges west of the village as cover in strips, and the Wiesel
+winning exchanges with infantry *in the open* while a squad with rockets
+kills it *from cover at close range*.
+
+**What was fought.** A brawl on five hexes.
+
+- **Everything converges on the crossroads.** The busiest hexes for every
+  layer, both sides, are the objective hexes and their neighbours. 70–77% of
+  all shots are at one hex (100 m), and 91–93% within two, in both doctrine
+  orientations. Hand game 2 is the same: 67% at one hex.
+- **Most of the map is decoration.** None of the three woods is used. The
+  valley floor and the plateau are only driven across. The sunken lane is used
+  only by the scouts who start at its head.
+- **The Wiesel fights in the village, and wins there.** It drives up the
+  south road onto the crossroads and fires from the objective hexes: 14 shots
+  a battle, 74% at one hex. It is lost in half the battles. It wins as a
+  brawler in a village, the one place the slice says infantry with rockets
+  should beat it. That ties finding 3 (31 rocket penetrations, no kills) to
+  the map: the village is no refuge, so the lesson Day 1 was written for
+  can't be learned on it.
+- **Suppression barely acts.** About one `PinnedDown` per side per battle.
+
+**Why, as far as measured.** Vision is not the limit: a squad sees 8 hexes
+and the Wiesel 14, and weapons reach 4 to 8. The likely cause is the score race.
+Five hexes are worth 3 points a round, and both columns, at 5–6 hexes a round,
+can reach them in two rounds.
+Not yet measured: the range at which each side first spots the other.
+
+**What it suggests, not yet tried:** the Wiesel as a reinforcement (above),
+so it arrives across the open floor to a village the player holds; and
+rockets that can kill (milestone 8, earlier). Each is a heat-map
+comparison: the same picture before and after.
 
 ## What's parked
 

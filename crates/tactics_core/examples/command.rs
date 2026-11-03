@@ -43,6 +43,11 @@
 //! `recon`, and `support` (base of fire for the formation named in `of`). Planners are rebuilt each turn from the seed and the round, so a
 //! hand-fought battle is reproducible from its orders files, though not
 //! identical to the same battle played in one process.
+//!
+//! Each turn also appends the round's whole event stream, unfiltered, to
+//! `<dir>/rounds.jsonl` with where every unit stood after it, so a hand game
+//! can be read afterwards by `examples/heatmap --seat <dir>`. That file is
+//! the post-mortem's, not the commander's: it holds what she was not told.
 
 use std::path::{Path, PathBuf};
 
@@ -105,6 +110,7 @@ fn main() {
             let state = BattleState::from_map(&registry, &args[1], seed).expect("battle");
             let dir = PathBuf::from(&args[3]);
             std::fs::write(dir_seed(&dir), seed.to_string()).ok();
+            std::fs::write(dir.join("rounds.jsonl"), "").ok();
             store(&registry, &dir, state.clone());
             sitrep(&registry, &state);
         }
@@ -214,6 +220,7 @@ fn turn(registry: &DataRegistry, state: &mut BattleState, orders: &Orders, dir: 
     }
 
     let events = state.resolve_round(registry);
+    log_round(state, &events, dir);
     println!(
         "== round {} as heard by your side",
         state.round.saturating_sub(1)
@@ -223,6 +230,37 @@ fn turn(registry: &DataRegistry, state: &mut BattleState, orders: &Orders, dir: 
             continue;
         }
         println!("   {}", describe(state, ev));
+    }
+}
+
+/// One line of `rounds.jsonl`: the round's events and every unit's side and
+/// place after it (`standing` is false for the dead, the gone and the
+/// carried), in the shape `examples/heatmap` reads.
+fn log_round(state: &BattleState, events: &[Event], dir: &Path) {
+    use std::io::Write;
+    let units: Vec<serde_json::Value> = state
+        .units
+        .iter()
+        .map(|u| {
+            let [c, r] = hex_to_offset(u.pos);
+            serde_json::json!({
+                "id": u.id.0, "side": u.side, "at": [c, r],
+                "standing": u.fate.alive() && u.aboard.is_none(),
+                "vehicle": u.vehicle,
+            })
+        })
+        .collect();
+    let line = serde_json::json!({
+        "round": state.round.saturating_sub(1),
+        "events": events,
+        "units": units,
+    });
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("rounds.jsonl"))
+    {
+        writeln!(f, "{line}").ok();
     }
 }
 
