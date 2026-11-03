@@ -262,6 +262,15 @@ def hollerbach():
             {"id": "crossroads", "name": "the Hollerbach crossroads",
              "at": [[13, 10], [12, 10], [14, 10], [13, 9], [13, 11]], "value": 2},
             {"id": "church", "name": "St. Georg's", "at": [[10, 8], [11, 9]], "value": 1},
+            # The ways home: Kuhlmann up the sunken lane's head on the north
+            # edge, the Valkyries out by the copse on the south edge. Off the
+            # roads both columns arrive on, so nobody deploys standing on
+            # her own way out (tests/field.rs). An exit is only run for
+            # when a side is losing (`withdraw_threshold`).
+            {"id": "north_lane", "name": "the lane north", "kind": "exit", "side": 0,
+             "value": 1, "at": [[5, 0], [6, 0], [7, 0]]},
+            {"id": "south_track", "name": "the track south", "kind": "exit", "side": 1,
+             "value": 1, "at": [[5, 21], [6, 21], [7, 21]]},
         ],  # fmt: skip
         "victory_score": 24,
     }

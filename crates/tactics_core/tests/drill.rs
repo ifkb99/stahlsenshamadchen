@@ -1347,6 +1347,76 @@ fn a_breaking_formation_wakes_her_between_pulses() {
 // --- detachment: a personal order outranks the standing mission ------------
 
 #[test]
+fn a_crew_told_to_hold_the_hex_she_stands_on_holds_it() {
+    // The slice's first playtest: a carrier radioed to the hex she already
+    // stood on, binding, drove onto the crossroads in the same round. The
+    // order was a march with no step to take, so she stayed unplanned, and
+    // the crews' planner bid her onto the objective. "Go where you are" is
+    // "hold here", and a crew under her commander's hold stays put.
+    let reg = registry_wireless();
+    let crews = |state: &mut BattleState| {
+        let mut ai = AiDriver::new();
+        ai.insert(
+            0,
+            make_battle_planner(
+                &AiConfig {
+                    planner: "utility".into(),
+                    difficulty: 4,
+                    doctrine: Some("bounding_overwatch".into()),
+                },
+                1,
+                &reg,
+            ),
+        );
+        ai.plan_round(&reg, state);
+    };
+    let fresh = || BattleState::from_map(&reg, "slice_hollerbach", 1).unwrap();
+    let carrier = fresh()
+        .units
+        .iter()
+        .find(|u| u.side == 0 && u.vehicle == "halftrack")
+        .map(|u| u.id)
+        .expect("Kuhlmann rides halftracks");
+
+    // Unordered, the crossroads pulls her: without this the test below
+    // would pass on a crew that never wanted to move.
+    let mut state = fresh();
+    let start = state.unit(carrier).unwrap().pos;
+    crews(&mut state);
+    assert_ne!(
+        state.unit(carrier).unwrap().planned_destination(),
+        start,
+        "left to herself she drives for the objective"
+    );
+
+    for latitude in [Latitude::Binding, Latitude::Delegated] {
+        let mut state = fresh();
+        state
+            .apply(
+                &reg,
+                &Order::Radio {
+                    unit: carrier,
+                    to: Some(start),
+                    fire: None,
+                    latitude,
+                },
+            )
+            .expect("her own hex is sayable");
+        assert_eq!(
+            state.unit(carrier).unwrap().orders,
+            Some(PersonalOrder::Holding { latitude }),
+            "an order to where she stands is a hold, at once"
+        );
+        crews(&mut state);
+        assert_eq!(
+            state.unit(carrier).unwrap().planned_destination(),
+            start,
+            "she plans to stay ({latitude:?})"
+        );
+    }
+}
+
+#[test]
 fn a_hand_placed_vehicle_stays_where_her_commander_put_her() {
     // The second playtest's bug: a tank ordered by hand into a town tile
     // drifted back to the road at the next planning phase, because the

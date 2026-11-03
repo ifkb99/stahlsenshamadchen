@@ -340,6 +340,24 @@ impl UtilityPlanner {
                 }]
             };
         }
+        // Held by her commander's personal order: she stays on the ground
+        // she was put on and shoots whatever presents itself. Detaching her
+        // from the mission was never enough on its own: every other term
+        // of the evaluator still bid for ground, objectives above all, and
+        // a carrier told "hold here" drove onto the crossroads (playtest 1,
+        // SLICE.md). How hard the order was meant is still the latitude's
+        // business, in resolution: a delegated hold may break off for
+        // cover in the drill, a binding one may not. The AI never radios a
+        // crew, so this only ever reads a player's order.
+        if state
+            .unit(unit)
+            .is_some_and(|u| matches!(u.orders, Some(crate::battle::PersonalOrder::Holding { .. })))
+        {
+            return vec![Order::SetFire {
+                unit,
+                fire: FireIntent::Hold,
+            }];
+        }
         // The driver's half of a taxi run. A platoon walks at one hex a round
         // and her ride drives at six, so a passenger marching after a carrier
         // that is doing its own planning never catches it — the pickup has to

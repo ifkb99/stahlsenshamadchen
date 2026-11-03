@@ -33,8 +33,9 @@ cargo run --release -p tactics_core --example perf               # hot-path timi
 cargo run --release -p tactics_core --example balance -- --help  # the balance harness: every flag
 cargo run --release -p tactics_core --example campaign [seed [to]]  # whole AI-vs-AI campaigns (--map frontier)
 cargo run --release -p tactics_core --example worldgen [seed]    # a generated world, drawn
-cargo run --release -p tactics_core --example command -- start <map> <seed> <dir>  # the player's seat, headless
-cargo run --release -p tactics_core --example heatmap -- --map <map> --games 16      # where a map's battles happen (SVG)
+cargo run --release -p tactics_core --example command -- start <map> <seed> <dir>  # the player's seat, headless (then plan/turn <dir> orders.json)
+cargo run --release -p tactics_core --example heatmap -- --map <map> --games 16      # where a map's battles happen (SVG); --help in its doc
+cargo run --release -p tactics_core --example heatmap -- --sight --map <map>         # a map's sight lines, before anybody fights on it
 cargo run --release -p tactics_core --example mirror -- --arena ridge_arena  # does a rule read the compass?
 cargo run --release -p tactics_core --example prices -- --worlds 4096        # what each chassis is worth
 cargo run --release -p tactics_core --example goal_dataset -- --games 1024   # utility AI goals as training data

@@ -36,8 +36,19 @@
 //!   "radio":    [ {"unit": "1st Carrier", "to": [12, 6], "binding": true} ],
 //!   "dismount": [ "2nd Squad" ],
 //!   "mount":    [ {"unit": "3rd Squad", "into": "3rd Carrier"} ],
-//!   "release":  [ "sec3" ] }
+//!   "release":  [ "sec3" ],
+//!   "stay":     [ "3rd Carrier" ],
+//!   "stay_aboard": [ "1st Squad" ] }
 //! ```
+//!
+//! `stay` holds a crew on the hex she stands on, binding; `stay_aboard`
+//! keeps a passenger in her carrier this round.
+//!
+//! **The preview.** `plan` runs the same planning `turn` does and prints
+//! each crew's plan under the orders file, saving nothing: where she means
+//! to go, whether that keeps her order, and whether her passengers mean to
+//! get out. Change the orders and plan again; `turn` with the same file
+//! fights exactly what the last `plan` showed.
 //!
 //! Missions are `advance`, `assault`, `hold` (with or without `to`),
 //! `recon`, and `support` (base of fire for the formation named in `of`). Planners are rebuilt each turn from the seed and the round, so a
@@ -48,6 +59,9 @@
 //! `<dir>/rounds.jsonl` with where every unit stood after it, so a hand game
 //! can be read afterwards by `examples/heatmap --seat <dir>`. That file is
 //! the post-mortem's, not the commander's: it holds what she was not told.
+
+#[path = "heatmap/log.rs"]
+mod log;
 
 use std::path::{Path, PathBuf};
 
@@ -70,6 +84,13 @@ struct Orders {
     dismount: Vec<String>,
     mount: Vec<MountOrder>,
     release: Vec<String>,
+    /// Hold exactly here, meant to the letter: a binding radio order to
+    /// the hex she stands on. The overrule for a crew whose plan leaves
+    /// ground you want held.
+    stay: Vec<String>,
+    /// Passengers who stay aboard this round: the overrule for a squad
+    /// whose plan is to get out where the carrier starts the round.
+    stay_aboard: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -103,7 +124,16 @@ fn main() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
     let (registry, _) = DataRegistry::load_dir(&root).expect("mods load");
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let usage = "usage: command start <map> <seed> <dir> | turn <dir> [orders.json] | look <dir>";
+    let usage = "usage: command start <map> <seed> <dir> | plan <dir> [orders.json] | turn <dir> [orders.json] | look <dir>";
+    let orders_at = |path: Option<&String>| -> Orders {
+        match path {
+            Some(path) => {
+                serde_json::from_str(&std::fs::read_to_string(path).expect("orders file reads"))
+                    .expect("orders file parses")
+            }
+            None => Orders::default(),
+        }
+    };
     match args.first().map(String::as_str) {
         Some("start") if args.len() == 4 => {
             let seed: u64 = args[2].parse().expect("seed is a number");
@@ -111,19 +141,35 @@ fn main() {
             let dir = PathBuf::from(&args[3]);
             std::fs::write(dir_seed(&dir), seed.to_string()).ok();
             std::fs::write(dir.join("rounds.jsonl"), "").ok();
+            append(
+                &dir,
+                &log::Round {
+                    round: 0,
+                    events: Vec::new(),
+                    units: log::placed(&state),
+                    intentions: Vec::new(),
+                },
+            );
             store(&registry, &dir, state.clone());
             sitrep(&registry, &state);
+        }
+        // The preview: plan the round under these orders and show it, and
+        // save nothing. Change the orders and plan again until the plans
+        // are the ones you want, then `turn` with the same file.
+        Some("plan") if args.len() >= 2 => {
+            let dir = PathBuf::from(&args[1]);
+            let mut state = load(&registry, &dir);
+            if state.is_over() {
+                println!("the battle is over");
+                return;
+            }
+            let planned = plan(&registry, &mut state, &orders_at(args.get(2)), &dir);
+            preview(&state, &planned);
         }
         Some("turn") if args.len() >= 2 => {
             let dir = PathBuf::from(&args[1]);
             let mut state = load(&registry, &dir);
-            let orders: Orders = match args.get(2) {
-                Some(path) => {
-                    serde_json::from_str(&std::fs::read_to_string(path).expect("orders file reads"))
-                        .expect("orders file parses")
-                }
-                None => Orders::default(),
-            };
+            let orders = orders_at(args.get(2));
             turn(&registry, &mut state, &orders, &dir);
             store(&registry, &dir, state.clone());
             sitrep(&registry, &state);
@@ -156,21 +202,44 @@ fn load(registry: &DataRegistry, dir: &Path) -> BattleState {
     game.battle.expect("the save holds a battle")
 }
 
-/// One round: the commander's orders, then the crews and the enemy plan,
-/// then it is fought.
-fn turn(registry: &DataRegistry, state: &mut BattleState, orders: &Orders, dir: &Path) {
-    if state.is_over() {
-        println!("the battle is over");
-        return;
-    }
+/// What planning produced: what the commander's orders did on the way in,
+/// and every crew's intention as the round stands committed.
+struct Planned {
+    /// Orders refused, and the engine's word on those accepted (an order
+    /// held at the radio says so here).
+    notes: Vec<String>,
+    intentions: Vec<log::Intention>,
+}
+
+/// The commander's orders, then the crews and the enemy plan. Everything
+/// up to the moment of commitment, and nothing after: `plan` stops here and
+/// `turn` goes on to fight it. The planners are seeded from the battle's
+/// seed and the round, so the intentions a `plan` shows are exactly the
+/// ones the same orders' `turn` will fight.
+fn plan(registry: &DataRegistry, state: &mut BattleState, orders: &Orders, dir: &Path) -> Planned {
     let seed: u64 = std::fs::read_to_string(dir_seed(dir))
         .ok()
         .and_then(|s| s.trim().parse().ok())
         .unwrap_or(0);
 
+    let mut notes = Vec::new();
     for order in commander_orders(registry, state, orders) {
-        if let Err(e) = state.apply(registry, &order) {
-            println!("!! refused: {order:?}: {e}");
+        match state.apply(registry, &order) {
+            Err(e) => notes.push(format!(
+                "REFUSED {}: {e}",
+                describe_text(state, order_text(&order))
+            )),
+            Ok(events) => {
+                for ev in events {
+                    notes.push(match ev {
+                        Event::OrdersWaiting { unit } => format!(
+                            "your order to {} is held at the radio: it reaches her at the top of next round",
+                            name_of(state, unit)
+                        ),
+                        other => describe(state, &other),
+                    });
+                }
+            }
         }
     }
 
@@ -199,28 +268,99 @@ fn turn(registry: &DataRegistry, state: &mut BattleState, orders: &Orders, dir: 
             );
         }
     }
+    let mut events = Vec::new();
+    ai.plan_round_with(registry, state, |d| events.extend(d.events.iter().cloned()));
+    let intentions = log::intentions(state, &events);
+    Planned { notes, intentions }
+}
 
-    // What her own crews mean to do is hers to see; the enemy's is not.
-    let mut intents = Vec::new();
-    ai.plan_round_with(registry, state, |d| {
-        if d.side != SEAT {
-            return;
-        }
-        for ev in &d.events {
-            if let Event::SetOut { .. } = ev {
-                intents.push(ev.clone());
+/// The planning preview: each of her crews, the ground her orders name,
+/// what she means to do about it, and whether that keeps the order. Only
+/// side 0's: the enemy's plans are not hers to see.
+fn preview(state: &BattleState, planned: &Planned) {
+    println!(
+        "== round {}: your crews' plans (not yet committed)",
+        state.round
+    );
+    for note in &planned.notes {
+        println!("   !! {note}");
+    }
+    for i in planned.intentions.iter().filter(|i| i.side == SEAT) {
+        let Some(u) = state.lookup(UnitId(i.unit)) else {
+            continue;
+        };
+        let order = match i.ordered {
+            Some(g) => format!("{} ({},{})", i.order, g[0], g[1]),
+            None => "no order".into(),
+        };
+        let verdict = match log::keeps_order(i) {
+            Some(true) => "keeps it",
+            Some(false) => "DEVIATES",
+            None => "",
+        };
+        let route = if i.intends == i.from {
+            "stays".to_string()
+        } else {
+            format!(
+                "to ({},{}), {} hexes",
+                i.intends[0],
+                i.intends[1],
+                log::distance(i.from, i.intends)
+            )
+        };
+        let fire = match u.intent.fire {
+            tactics_core::battle::FireIntent::Target { target, .. } => {
+                format!(", firing at {}", name_of(state, target))
             }
-        }
-    });
-    if !intents.is_empty() {
-        println!("== your crews' intentions");
-        for ev in &intents {
-            println!("   {}", describe(state, ev));
+            _ => String::new(),
+        };
+        let doing = if i.doing.is_empty() {
+            String::new()
+        } else {
+            format!(" \"{}\"", i.doing)
+        };
+        println!(
+            "   {:<14} at ({},{}) under {order}: {route}{fire}{doing}  {verdict}",
+            u.name, i.from[0], i.from[1]
+        );
+        // Who rides with her, and whether they mean to get out.
+        for p in state
+            .units
+            .iter()
+            .filter(|p| p.aboard == Some(u.id) && p.fate.alive())
+        {
+            println!(
+                "      {} aboard{}",
+                p.name,
+                if p.dismounting {
+                    ": GETS OUT at the start of the round, beside the carrier where it stands now, and walks"
+                } else {
+                    ", staying aboard"
+                }
+            );
         }
     }
+}
 
+/// One round: plan, show the plans, then fight it and log it.
+fn turn(registry: &DataRegistry, state: &mut BattleState, orders: &Orders, dir: &Path) {
+    if state.is_over() {
+        println!("the battle is over");
+        return;
+    }
+    let planned = plan(registry, state, orders, dir);
+    preview(state, &planned);
+    let round = state.round;
     let events = state.resolve_round(registry);
-    log_round(state, &events, dir);
+    append(
+        dir,
+        &log::Round {
+            round,
+            events: events.clone(),
+            units: log::placed(state),
+            intentions: planned.intentions,
+        },
+    );
     println!(
         "== round {} as heard by your side",
         state.round.saturating_sub(1)
@@ -233,35 +373,39 @@ fn turn(registry: &DataRegistry, state: &mut BattleState, orders: &Orders, dir: 
     }
 }
 
-/// One line of `rounds.jsonl`: the round's events and every unit's side and
-/// place after it (`standing` is false for the dead, the gone and the
-/// carried), in the shape `examples/heatmap` reads.
-fn log_round(state: &BattleState, events: &[Event], dir: &Path) {
+/// One line of `rounds.jsonl` (`heatmap/log.rs` is its shape).
+fn append(dir: &Path, round: &log::Round) {
     use std::io::Write;
-    let units: Vec<serde_json::Value> = state
-        .units
-        .iter()
-        .map(|u| {
-            let [c, r] = hex_to_offset(u.pos);
-            serde_json::json!({
-                "id": u.id.0, "side": u.side, "at": [c, r],
-                "standing": u.fate.alive() && u.aboard.is_none(),
-                "vehicle": u.vehicle,
-            })
-        })
-        .collect();
-    let line = serde_json::json!({
-        "round": state.round.saturating_sub(1),
-        "events": events,
-        "units": units,
-    });
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(dir.join("rounds.jsonl"))
     {
-        writeln!(f, "{line}").ok();
+        writeln!(
+            f,
+            "{}",
+            serde_json::to_string(round).expect("a round serialises")
+        )
+        .ok();
     }
+}
+
+fn name_of(state: &BattleState, id: UnitId) -> String {
+    state
+        .lookup(id)
+        .map(|u| {
+            if u.side == SEAT {
+                u.name.clone()
+            } else {
+                format!("enemy {}", u.name)
+            }
+        })
+        .unwrap_or_else(|| format!("unit {}", id.0))
+}
+
+/// An order's debug text, for `describe` to put names into.
+fn order_text(order: &Order) -> String {
+    format!("{order:?}")
 }
 
 /// The commander's orders file, turned into engine orders.
@@ -318,6 +462,22 @@ fn commander_orders(registry: &DataRegistry, state: &BattleState, orders: &Order
             into: unit(&m.into),
         });
     }
+    for name in &orders.stay {
+        let u = unit(name);
+        let here = state.lookup(u).map(|u| u.pos).expect("a unit has a place");
+        out.push(Order::Radio {
+            unit: u,
+            to: Some(here),
+            fire: None,
+            latitude: Latitude::Binding,
+        });
+    }
+    for name in &orders.stay_aboard {
+        out.push(Order::SetFire {
+            unit: unit(name),
+            fire: tactics_core::battle::FireIntent::Hold,
+        });
+    }
     for r in &orders.radio {
         out.push(Order::Radio {
             unit: unit(&r.unit),
@@ -349,7 +509,11 @@ fn quiet(ev: &Event) -> bool {
 /// An event in words a player can follow: its debug text with every unit
 /// id replaced by her name and every hex by its map coordinate.
 fn describe(state: &BattleState, ev: &Event) -> String {
-    let mut text = format!("{ev:?}");
+    describe_text(state, format!("{ev:?}"))
+}
+
+/// Debug text with names and map coordinates put in.
+fn describe_text(state: &BattleState, mut text: String) -> String {
     text = replace_ids(&text, "UnitId(", |n| {
         state
             .lookup(UnitId(n))

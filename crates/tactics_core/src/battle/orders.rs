@@ -1048,6 +1048,21 @@ impl BattleState {
                 if !self.world.contains(to) {
                     return Err(OrderError::NotOnMap);
                 }
+                // Sent to the ground she stands on: that is "hold here",
+                // and it is a hold from this moment. As a march it went
+                // nowhere (there is no step to take), left her unplanned,
+                // and waited for the next round's arrival check to turn it
+                // into a hold, so for a whole round the order meant nothing
+                // and her crew planned her off the hex (playtest 1, SLICE.md).
+                if self.unit(id).is_some_and(|u| u.pos == to) {
+                    if let Some(unit) = self.unit_mut(id) {
+                        unit.orders = Some(PersonalOrder::Holding { latitude });
+                    }
+                    if let Some(fire) = fire {
+                        self.set_fire(registry, id, fire)?;
+                    }
+                    return Ok(Vec::new());
+                }
                 if let Some(unit) = self.unit_mut(id) {
                     // The destination and the latitude land as one value, so
                     // the rule that they travel together is no longer
