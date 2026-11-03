@@ -824,6 +824,99 @@ beyond the noise of 16 games. What moved is what kind of battle it is:
   objective.
 - Nobody uses the woods yet. That is the AI's appetite, not the ground's.
 
+### Playtest 3: the woods, map or AI? 2026-11-03
+
+The designer's question: the AI never fights from the woods; is that the
+map or the AI? Answered three ways: by measuring the ground, by putting
+woods where they would matter and watching the AI, and by fighting two
+games by hand to see whether a player gains from the same ground. The seat
+now ends every sitrep with a **shot forecast** (every shot either side
+could take, its named modifiers, the chance through the plate, and "hurts",
+the product), and an ordered shot in the preview carries its odds or says
+there is no line.
+
+**The ground.** Hollerbach's two woods can't matter, to anybody:
+
+- The north wood is 8–10 hexes from the crossroads, and the south wood
+  about as far. The rockets reach 3, the rifles 4, the carriers' machine
+  guns 6.
+- The crossroads is walled in by its own village. From every non-town hex
+  2–5 away, at most 3 of its 5 hexes are in sight (town blocks 20 m).
+  Nothing can cover it from outside; the fight there is close by
+  construction.
+- The church knoll is the map's real vantage point: it sees 144 hexes
+  within 8, from town cover.
+
+**The AI, given woods that matter.** A copy of the map with two copses
+beside the road, 2–3 hexes from the crossroads, placed on the sight lines
+the village leaves open (`target/slice/slice_hollerbach_copse.json`). AI
+against AI, 16 seeds:
+
+| | Shipped map | With copses |
+| --- | --- | --- |
+| Kuhlmann rounds in town / in the copses | 55% / – | 53% / 2.0% |
+| Valkyrie rounds in open meadow / in the copses | 32% / – | 34% / 0.2% |
+| Shots fired from the copses (Kuhlmann / Valkyries) | – | 2.4% / 0% |
+| Kuhlmann wins | 7 of 16 | 8 of 16 |
+
+A probe asked the evaluator, at every plan where a crew's round ended
+beside a copse hex, to score the copse hex too. **In 55 of 111 such plans,
+the AI's own `score_tile` rated the copse higher than where the crew went**,
+and she went anyway. The sharpest case: Third Squad ends her round on open
+road under 14 points of threat with an untouched wood beside her at 0.
+
+Why: a crew chooses a *destination* (`goal::candidates`: the objective's
+hexes, the one tile this round's sweep likes best, and `places`, which
+ship off), and the chooser values a goal by what the destination is worth
+less the rounds to reach it (`UtilityChooser`). Where she stands while she
+gets there is priced only as a route tie-break. "Stop in the wood short of
+the objective and fight from there" is never a destination unless it is
+that round's single best tile *and* beats the objective, and an objective
+is worth 2–5 on that scale while cover is worth a few tenths.
+
+**By hand.** Two games, seed 1, the same opening plan: the church knoll,
+the village hexes beside the road, carriers kept out of the Wiesel's
+sight, every crew held with `stay` and binding orders.
+
+| | Game 4, shipped map | Game 5, copses |
+| --- | --- | --- |
+| Result | won 22–8, every Valkyrie destroyed, round 13 | won 26–10 on points, round 13 |
+| Kuhlmann lost | 1 carrier, 2 squads | 1 squad |
+| Kuhlmann rounds in a wood | 0% | 17% (and 18% of her shots) |
+| Who killed the Wiesel | 2nd Squad's last rocket, church, 1 hex | 2nd Squad's last rocket knocked out her gun and racks |
+
+In game 5 the copse gave First Carrier a +10 downhill shot from −15 forest
+cover at a Kette standing on the open crossroads. The woods pay when they
+are in reach; the AI doesn't take them.
+
+**Verdict: both.** The map's woods are out of reach and its objective is
+walled in, so on the shipped map no wood can matter; that is the map. Put
+woods where they matter and the AI still won't stand in them, though its
+own arithmetic prefers them half the time; that is the AI, and it is
+the goal layer, not the evaluator.
+
+**Found on the way:**
+
+- **A squad sharing a hex with her carrier dies to the carrier's strays.**
+  Twice in two games, a rocket aimed at the carrier went astray onto the
+  squad that had just got out beside it (`ShotStrayed`). The rule is right;
+  nothing on the screen warns of it. The preview should say "stacked with
+  1st Carrier: shots at her can stray onto you".
+- **A fire order with no line is accepted and silently does nothing.** The
+  church's carrier and squad were told to fire on a Kette two hexes away
+  that the knoll's own shoulder hid. The preview said "firing at Kette 1".
+  It now says "NO LINE: she holds it until one opens".
+- **Crews spend rockets on poor shots.** 3rd Squad fired both rockets on
+  opportunity at 2 hexes through town cover (about 25% each) in game 4, and
+  2nd Squad one at a rifle squad. With six rockets the only answer to the
+  Wiesel, the opportunity-fire threshold for a scarce round is a real rule
+  question.
+- **The forecast's "at you" half reads the enemy as she is**: her crew's
+  gunnery, her nerve (a breaking rung is a named −20) and her racks ("NO
+  AMMUNITION" told me the Wiesel was harmless before anything else did).
+  The game's hover panel leaks the same way in its return-fire line. A
+  fog-honest forecast must use what the commander knows.
+
 ## What's parked
 
 Parked means no new work, tests keep passing and CI keeps it compiling.

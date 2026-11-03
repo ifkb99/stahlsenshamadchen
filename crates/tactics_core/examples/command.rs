@@ -52,6 +52,16 @@
 //! get out. Change the orders and plan again; `turn` with the same file
 //! fights exactly what the last `plan` showed.
 //!
+//! **The forecast.** Every sitrep ends with every shot either side could
+//! take from where it stands (`preview_attack`, the game's hover panel, for
+//! every pair with a line and the range): the hit chance with its named
+//! modifiers, the chance through the plate it would strike, and "hurts",
+//! their product. A pair with a line and nothing that can hurt is listed as
+//! such, because "no shot" and "a shot that does nothing" are different
+//! things to know. In the preview, an ordered shot carries its odds from
+//! where she stands and from where her route ends, or says she has no line:
+//! a fire order with no line is accepted and waits.
+//!
 //! Missions are `advance`, `assault`, `hold` (with or without `to`),
 //! `recon`, and `support` (base of fire for the formation named in `of`). Planners are rebuilt each turn from the seed and the round, so a
 //! hand-fought battle is reproducible from its orders files, though not
@@ -348,7 +358,12 @@ fn preview(registry: &DataRegistry, state: &BattleState, planned: &Planned) {
         };
         let fire = match u.intent.fire {
             tactics_core::battle::FireIntent::Target { target, .. } => {
-                format!(", firing at {}", name_of(state, target))
+                let end = u.intent.path.last().copied().unwrap_or(u.pos);
+                format!(
+                    ", firing at {} ({})",
+                    name_of(state, target),
+                    fire_odds(registry, state, u.id, target, u.pos, end)
+                )
             }
             _ => String::new(),
         };
@@ -377,6 +392,175 @@ fn preview(registry: &DataRegistry, state: &BattleState, planned: &Planned) {
                 }
             );
         }
+    }
+}
+
+/// The shot forecast: every shot either side could take this instant, from
+/// where each crew stands, with the arithmetic behind it. Two halves: yours
+/// at what you know of, and theirs at you from where you know them to be.
+///
+/// It is `preview_attack`, the game's own hover panel, asked for every pair
+/// that has a weapon in range and a line between them (`best_weapon_from`
+/// picks the gun the crew would pick). "Hurts" is hit times through: the
+/// chance one shot does anything structural. A miss and a bounce still
+/// frighten, which this does not count.
+///
+/// **The second half is not fog-honest.** `preview_attack` reads the
+/// shooter as she is: her crew's gunnery, her nerve (a pinned or breaking
+/// rung is a named modifier) and her racks. For your own crews that is what
+/// you know; for theirs it is what the post-mortem knows, and the printout
+/// says so. The game's hover panel has the same leak in its return-fire
+/// line, which matters more there (SLICE.md, playtest 3).
+fn forecast(
+    registry: &DataRegistry,
+    state: &BattleState,
+    mine: &[&tactics_core::battle::Unit],
+    known: &[&tactics_core::battle::Unit],
+) {
+    let standing: Vec<_> = mine.iter().filter(|u| u.aboard.is_none()).collect();
+    // The gun she would pick; failing that, any direct-fire gun with a line
+    // and the range, which is a shot that cannot hurt (the plate is too
+    // thick for anything she carries). That second case is listed rather
+    // than left out: "no shot" and "a shot that does nothing" are different
+    // things to know about the tank beside you.
+    let shot = |from: &tactics_core::battle::Unit, to: &tactics_core::battle::Unit| {
+        let weapon = match tactics_core::battle::best_weapon_from(
+            registry, state, from.id, from.pos, to.id, to.pos,
+        ) {
+            Some((i, _)) => i,
+            None => {
+                let dist = from.pos.distance_to(to.pos);
+                let vehicle = registry.vehicle(&from.vehicle)?;
+                vehicle.weapons.iter().position(|w| {
+                    registry.weapon(w).is_some_and(|w| {
+                        !w.indirect
+                            && (w.range[0] as i32..=w.range[1] as i32).contains(&dist)
+                            && state.sees_through(from.pos, to.pos)
+                    })
+                })?
+            }
+        };
+        tactics_core::battle::preview_attack(registry, state, from.id, weapon, to.id, false)
+    };
+    let line = |p: &tactics_core::battle::AttackPreview, shooter: &str, target: &str| {
+        let mods: Vec<String> = std::iter::once(format!("base {}", p.hit.base))
+            .chain(
+                p.hit
+                    .modifiers
+                    .iter()
+                    .map(|m| format!("{:+} {}", m.delta, m.label)),
+            )
+            .collect();
+        let hurts = p.hit.total * p.pen_chance / 100;
+        let through = match &p.ammo {
+            Some(round) => format!(
+                "{round} {}% through {:?} ({})",
+                p.pen_chance, p.facing, p.effective_armor
+            ),
+            None => "NO AMMUNITION".into(),
+        };
+        format!(
+            "  {shooter:12} -> {target:14} {} hex  {:10} hit {:>2}%{}  {through}  => hurts {hurts}%{}\n      [{}]",
+            p.distance,
+            p.weapon_name,
+            p.hit.total,
+            if p.hit.clamped { " (capped)" } else { "" },
+            if hurts == 0 {
+                ": CAN'T HURT HER"
+            } else if p.lethal {
+                ", could finish her"
+            } else {
+                ""
+            },
+            mods.join(", ")
+        )
+    };
+    println!("\n== shot forecast, from where everyone stands now");
+    let mut any = false;
+    for u in &standing {
+        for e in known {
+            if let Some(p) = shot(u, e) {
+                println!("{}", line(&p, &u.name, &e.name));
+                any = true;
+            }
+        }
+    }
+    if !any {
+        println!("   you have no shot at anything you know of");
+    }
+    println!(
+        "   -- and at you (their crews' real gunnery, nerve and racks, which you would not know):"
+    );
+    let mut any = false;
+    for e in known {
+        for u in &standing {
+            if let Some(p) = shot(e, u) {
+                println!("{}", line(&p, &e.name, &u.name));
+                any = true;
+            }
+        }
+    }
+    if !any {
+        println!("   nothing you know of has a shot at you");
+    }
+}
+
+/// The odds on an ordered shot, from where she stands and from where her
+/// route ends: the gun she would pick and its hit chance, or that she has
+/// no line. A fire order with no line is not refused (that would tell the
+/// commander something about the ground she may not have read), but she
+/// cannot carry it out until one opens, and the plan must say so or it
+/// reads as a shot that will be taken.
+fn fire_odds(
+    registry: &DataRegistry,
+    state: &BattleState,
+    unit: UnitId,
+    target: UnitId,
+    from: Hex,
+    end: Hex,
+) -> String {
+    let Some(at) = state.unit(target).map(|t| t.pos) else {
+        return "gone".into();
+    };
+    let odds = |from: Hex| {
+        let vehicle = registry.vehicle(&state.unit(unit)?.vehicle)?;
+        // As in the forecast: the gun she would pick, else a gun that has
+        // the line and the range but cannot hurt what it is pointed at.
+        let (index, harmless) =
+            match tactics_core::battle::best_weapon_from(registry, state, unit, from, target, at) {
+                Some((i, _)) => (i, false),
+                None => {
+                    let dist = from.distance_to(at);
+                    let i = vehicle.weapons.iter().position(|w| {
+                        registry.weapon(w).is_some_and(|w| {
+                            !w.indirect
+                                && (w.range[0] as i32..=w.range[1] as i32).contains(&dist)
+                                && state.sees_through(from, at)
+                        })
+                    })?;
+                    (i, true)
+                }
+            };
+        let weapon = registry.weapon(vehicle.weapons.get(index)?)?;
+        let hit = tactics_core::battle::hit_breakdown(
+            registry, state, unit, from, weapon, target, at, false,
+        );
+        Some(format!(
+            "{} hit {}% at {} hex{}",
+            weapon.name,
+            hit.total,
+            from.distance_to(at),
+            if harmless { ", but CAN'T HURT HER" } else { "" }
+        ))
+    };
+    let here = odds(from);
+    let there = (end != from).then(|| odds(end));
+    match (here, there) {
+        (Some(h), None) => h,
+        (Some(h), Some(Some(t))) => format!("now {h}; from {} {t}", fmt(end)),
+        (Some(h), Some(None)) => format!("now {h}; NO LINE from {}", fmt(end)),
+        (None, Some(Some(t))) => format!("no line now; from {} {t}", fmt(end)),
+        (None, _) => "NO LINE: she holds it until one opens".into(),
     }
 }
 
@@ -838,6 +1022,7 @@ fn sitrep(registry: &DataRegistry, state: &BattleState) {
             contact.round
         );
     }
+    forecast(registry, state, &mine, &known);
 }
 
 fn mission_text(m: &Mission) -> String {
