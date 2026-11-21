@@ -27,3 +27,9 @@ path = "src/bin/validate_mods.rs"
 [[example]]
 name = "command"
 test = true
+
+# The same for the heatmap's command line: a flag it would ignore is a run
+# the playtester did not ask for, so the refusals are tested.
+[[example]]
+name = "heatmap"
+test = true

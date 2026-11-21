@@ -20,7 +20,7 @@ use crate::data::DataRegistry;
 /// `<kind>.<id>.<field>` for the content maps, where `kind` is one of
 /// `vehicle`, `weapon`, `ammo`, `module`, `terrain`, `doctrine`. Nesting and
 /// list indices work throughout: `morale.rungs[2].accuracy` is a path.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Override {
     pub path: String,
     pub value: String,

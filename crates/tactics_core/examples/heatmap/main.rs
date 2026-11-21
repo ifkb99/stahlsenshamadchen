@@ -2,15 +2,23 @@
 //! it was drawn for.
 //!
 //! ```text
-//! heatmap --map slice_hollerbach --games 16 [--swap] [--map-ai] [--vehicle light_tank]
+//! heatmap --map slice_hollerbach --games 16 [--seed 1] [--planner utility] [--swap] [--map-ai]
 //! heatmap --seat <dir>...                  # hand games from examples/command
+//! heatmap ... [--vehicle light_tank]       # count one chassis only
 //! heatmap ... --json a.json [--label name] # keep the counts, named
 //! heatmap --diff a.json b.json             # what changed between two runs
 //! heatmap --sight --map slice_hollerbach [--range 8] [--from 13,10 ...] [--across 4-9 12-17]
 //! heatmap ... --timeline                   # every unit, round by round, as text
 //! heatmap ... --set planner.goal_places=16  # any mod field, as `balance --set`
+//! heatmap ... --out target/heatmap.svg     # where the picture goes
+//! heatmap --help                           # every flag, and which runs read it
 //! ```
 //! (`cargo run --release -p tactics_core --example heatmap -- <args>`.)
+//!
+//! The command line is read strictly (`args.rs`): a word that is not a
+//! flag, a flag without its value, or a flag the run would not read stops
+//! the run before a mod loads, so a typo can never fight the default
+//! experiment instead.
 //!
 //! A map is drawn with a battle in mind: this lane is the covered approach,
 //! that knoll the base of fire. Every other instrument here reports who won
@@ -41,6 +49,7 @@
 //! doctrines, `--map-ai` uses the map's own `ai` blocks). The picture is an
 //! SVG (`--out`, default `target/heatmap.svg`).
 
+mod args;
 mod draw;
 mod log;
 mod tally;
@@ -48,98 +57,113 @@ mod tally;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use tactics_core::ai::{AiConfig, AiDriver, make_battle_planner};
+use tactics_core::ai::{AiConfig, AiDriver, PlannerRegistry, make_battle_planner};
 use tactics_core::battle::BattleState;
 use tactics_core::data::DataRegistry;
 use tactics_core::save;
 use tactics_core::{hex_to_offset, offset_to_hex};
 
+use args::{Parsed, Record, Run};
 use log::Round;
 use tally::{BUCKETS, Cell, Heat, LAYERS, Tally};
 
+/// Stop before anything is fought: the exit code a refused command line
+/// gets, as `command` gives a refused orders file.
+fn refuse(why: impl std::fmt::Display) -> ! {
+    eprintln!("heatmap: {why}\n\n{}", args::usage());
+    std::process::exit(2)
+}
+
 fn main() {
+    let words: Vec<String> = std::env::args().skip(1).collect();
+    let args = match args::parse(&words) {
+        Ok(Parsed::Help) => {
+            print!("{}", args::usage());
+            return;
+        }
+        Ok(Parsed::Run(args)) => args,
+        Err(e) => refuse(e),
+    };
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/mods");
     let (mut registry, _) = DataRegistry::load_dir(&root).expect("mods load");
-    let args: Vec<String> = std::env::args().skip(1).collect();
     // `--set path=value`, repeatable: the balance harness's own override,
     // so a rule can be tried on a map's battles without editing mod.json.
-    for (i, a) in args.iter().enumerate() {
-        if a == "--set" {
-            let text = args.get(i + 1).expect("--set takes path=value");
-            let ov = tactics_core::harness::overrides::Override::parse(text)
-                .unwrap_or_else(|e| panic!("--set {text}: {e}"));
-            let was = tactics_core::harness::overrides::apply_override(&mut registry, &ov)
-                .unwrap_or_else(|e| panic!("--set {text}: {e}"));
-            eprintln!("--set {} = {} (was {was})", ov.path, ov.value);
-        }
+    for ov in &args.sets {
+        let was = tactics_core::harness::overrides::apply_override(&mut registry, ov)
+            .unwrap_or_else(|e| refuse(format!("--set {}={}: {e}", ov.path, ov.value)));
+        eprintln!("--set {} = {} (was {was})", ov.path, ov.value);
     }
-    let flag = |name: &str| -> Option<String> {
-        let i = args.iter().position(|a| a == name)?;
-        args.get(i + 1).cloned()
-    };
-    let many = |name: &str| -> Vec<String> {
-        match args.iter().position(|a| a == name) {
-            Some(i) => args[i + 1..]
-                .iter()
-                .take_while(|a| !a.starts_with("--"))
-                .cloned()
-                .collect(),
-            None => Vec::new(),
-        }
-    };
-    let has = |name: &str| args.iter().any(|a| a == name);
-    let out = PathBuf::from(flag("--out").unwrap_or_else(|| "target/heatmap.svg".into()));
-    let map = flag("--map").unwrap_or_else(|| "slice_hollerbach".into());
+    // Two names the engine would take without a word: an unknown planner
+    // falls back to the utility planner (a mod's typo should not crash a
+    // battle), and an unknown chassis simply counts nothing. Here either
+    // is a run that is not the one asked for, so it is refused.
+    if let Run::Fight { planner, .. } = &args.run
+        && !PlannerRegistry::with_builtins().contains(planner)
+    {
+        refuse(format!("`--planner {planner}` is not a planner"));
+    }
+    if let Run::Fight { record, .. } | Run::Seats { record, .. } = &args.run
+        && let Some(v) = &record.vehicle
+        && registry.vehicle(v).is_none()
+    {
+        refuse(format!("`--vehicle {v}` is not a vehicle in the mods"));
+    }
+    let out = args.out;
+    let map = args.map;
 
-    let svg = if has("--diff") {
-        let files = many("--diff");
-        assert!(files.len() == 2, "--diff takes two json files");
-        let read = |p: &str| -> Heat {
-            serde_json::from_str(&std::fs::read_to_string(p).expect("json reads"))
-                .expect("json parses")
-        };
-        let (a, b) = (read(&files[0]), read(&files[1]));
-        let ground = BattleState::from_map(&registry, &b.map, 1).expect("battle");
-        compare(&a, &b);
-        draw::diff(&ground, &a, &b)
-    } else if has("--sight") {
-        let range: u32 = flag("--range").and_then(|s| s.parse().ok()).unwrap_or(8);
-        let ground = BattleState::from_map(&registry, &map, 1).expect("battle");
-        let froms: Vec<Cell> = many("--from")
-            .iter()
-            .filter_map(|s| {
-                let (c, r) = s.split_once(',')?;
-                Some([c.parse().ok()?, r.parse().ok()?])
-            })
-            .collect();
-        // `--across 4-9 12-17`: how much of the second band of rows can be
-        // seen from the first, the number a map's sight lines are drawn
-        // for ("can the slope see the valley").
-        let across = many("--across");
-        if across.len() == 2 {
-            let band = |s: &str| -> (i32, i32) {
-                let (a, b) = s.split_once('-').expect("a band is rows a-b");
-                (a.parse().expect("a row"), b.parse().expect("a row"))
+    let svg = match args.run {
+        Run::Diff { a, b } => {
+            let read = |p: &PathBuf| -> Heat {
+                serde_json::from_str(&std::fs::read_to_string(p).expect("json reads"))
+                    .expect("json parses")
             };
-            across_bands(&ground, range, band(&across[0]), band(&across[1]));
+            let (a, b) = (read(&a), read(&b));
+            let ground = BattleState::from_map(&registry, &b.map, 1).expect("battle");
+            compare(&a, &b);
+            draw::diff(&ground, &a, &b)
         }
-        sight(&ground, &map, range, &froms)
-    } else {
-        let mut tally = Tally::new(flag("--vehicle"));
-        let rungs: Vec<(String, String)> = registry
-            .morale
-            .rungs
-            .iter()
-            .map(|r| (r.id.clone(), r.name.clone()))
-            .collect();
-        let timeline = has("--timeline");
-        let ground: BattleState;
-        let title: String;
-        let seats = many("--seat");
-        if !seats.is_empty() {
+        Run::Sight {
+            range,
+            from,
+            across,
+        } => {
+            let ground = BattleState::from_map(&registry, &map, 1).expect("battle");
+            // `--across 4-9 12-17`: how much of the second band of rows can
+            // be seen from the first, the number a map's sight lines are
+            // drawn for ("can the slope see the valley").
+            if let Some([looking, looked_at]) = across {
+                across_bands(&ground, range, looking, looked_at);
+            }
+            sight(&ground, &map, range, &from)
+        }
+        Run::Fight { ref record, .. } | Run::Seats { ref record, .. } => {
+            battles(&registry, &map, &args.run, record)
+        }
+    };
+    if let Some(dir) = out.parent() {
+        std::fs::create_dir_all(dir).ok();
+    }
+    std::fs::write(&out, svg).expect("svg writes");
+    println!("drawn to {}", out.display());
+}
+
+/// Fight or read the battles, report them, and draw their heat.
+fn battles(registry: &DataRegistry, map: &str, run: &Run, record: &Record) -> String {
+    let mut tally = Tally::new(record.vehicle.clone());
+    let rungs: Vec<(String, String)> = registry
+        .morale
+        .rungs
+        .iter()
+        .map(|r| (r.id.clone(), r.name.clone()))
+        .collect();
+    let timeline = record.timeline;
+    let ground: BattleState;
+    let title: String;
+    match run {
+        Run::Seats { dirs, .. } => {
             let mut last = None;
-            for dir in seats.iter().map(PathBuf::from) {
-                let (game, _) = save::read(&registry, dir.join("battle.json")).expect("save reads");
+            for dir in dirs {
+                let (game, _) = save::read(registry, dir.join("battle.json")).expect("save reads");
                 let state = game.battle.expect("the save holds a battle");
                 let text = std::fs::read_to_string(dir.join("rounds.jsonl")).expect("rounds.jsonl");
                 let rounds: Vec<Round> = text
@@ -155,27 +179,32 @@ fn main() {
                 last = Some(state);
             }
             ground = last.expect("at least one --seat directory");
-            title = format!("{map}: {} hand-fought battle(s)", seats.len());
-        } else {
-            let games: u64 = flag("--games").and_then(|s| s.parse().ok()).unwrap_or(16);
-            let first: u64 = flag("--seed").and_then(|s| s.parse().ok()).unwrap_or(1);
-            let planner = flag("--planner").unwrap_or_else(|| "utility".into());
-            let map_ai = has("--map-ai");
-            let doctrines = if has("--swap") {
+            title = format!("{map}: {} hand-fought battle(s)", dirs.len());
+        }
+        Run::Fight {
+            games,
+            first,
+            planner,
+            map_ai,
+            swap,
+            ..
+        } => {
+            let (games, first, map_ai) = (*games, *first, *map_ai);
+            let doctrines = if *swap {
                 ["elastic_defense", "massed_armor"]
             } else {
                 ["massed_armor", "elastic_defense"]
             };
             for seed in first..first + games {
-                let rounds = fight(&registry, &map, seed, &planner, doctrines, map_ai);
+                let rounds = fight(registry, map, seed, planner, doctrines, map_ai);
                 let lanes = tally.battle(&rounds, &rungs);
                 if timeline {
                     println!("== seed {seed}");
-                    let state = BattleState::from_map(&registry, &map, seed).expect("battle");
+                    let state = BattleState::from_map(registry, map, seed).expect("battle");
                     tally::print_timeline(&lanes, &side_names(&state));
                 }
             }
-            ground = BattleState::from_map(&registry, &map, first).expect("battle");
+            ground = BattleState::from_map(registry, map, first).expect("battle");
             title = format!(
                 "{map}, {games} AI battles ({planner}; {} / {}{})",
                 doctrines[0],
@@ -187,31 +216,26 @@ fn main() {
                 }
             );
         }
-        let mut heat = tally.finish();
-        heat.map = map.clone();
-        heat.names = side_names(&ground);
-        heat.title = match &heat.only {
-            Some(v) => format!("{title}; {v} only"),
-            None => title,
-        };
-        // A name for this run, for `--diff` to tell two runs of the same
-        // seats apart ("Wiesel on the map", "Wiesel arrives").
-        if let Some(label) = flag("--label") {
-            heat.title = format!("{label}: {}", heat.title);
-        }
-        report(&heat);
-        if let Some(path) = flag("--json") {
-            std::fs::write(&path, serde_json::to_string(&heat).expect("json"))
-                .expect("json writes");
-            println!("counts kept in {path}");
-        }
-        draw::heat(&ground, &heat)
-    };
-    if let Some(dir) = out.parent() {
-        std::fs::create_dir_all(dir).ok();
+        Run::Diff { .. } | Run::Sight { .. } => unreachable!("only battles are tallied"),
     }
-    std::fs::write(&out, svg).expect("svg writes");
-    println!("drawn to {}", out.display());
+    let mut heat = tally.finish();
+    heat.map = map.to_string();
+    heat.names = side_names(&ground);
+    heat.title = match &heat.only {
+        Some(v) => format!("{title}; {v} only"),
+        None => title,
+    };
+    // A name for this run, for `--diff` to tell two runs of the same
+    // seats apart ("Wiesel on the map", "Wiesel arrives").
+    if let Some(label) = &record.label {
+        heat.title = format!("{label}: {}", heat.title);
+    }
+    report(&heat);
+    if let Some(path) = &record.json {
+        std::fs::write(path, serde_json::to_string(&heat).expect("json")).expect("json writes");
+        println!("counts kept in {path}");
+    }
+    draw::heat(&ground, &heat)
 }
 
 fn side_names(state: &BattleState) -> [String; 2] {
