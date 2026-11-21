@@ -20,3 +20,10 @@ thiserror.workspace = true
 [[bin]]
 name = "validate-mods"
 path = "src/bin/validate_mods.rs"
+
+# The orders file's parsing is tested where it lives; examples are built but
+# not tested by default, and an untested strictness check is a typo away
+# from silently ignoring typos again.
+[[example]]
+name = "command"
+test = true

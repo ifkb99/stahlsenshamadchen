@@ -88,8 +88,13 @@ use tactics_core::{hex_to_offset, offset_to_hex};
 /// The side this seat plays.
 const SEAT: u8 = 0;
 
+// Every order struct denies unknown fields. A seat writes this file by
+// hand, and a misspelled key (`"dismout"`) would otherwise be dropped
+// without a word: the crew does nothing and the commander reads it as the
+// crew's choice. None of them may use `#[serde(flatten)]`, which does not
+// combine with `deny_unknown_fields`.
 #[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct Orders {
     missions: Vec<MissionOrder>,
     radio: Vec<RadioOrder>,
@@ -109,6 +114,7 @@ struct Orders {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FireOrder {
     unit: String,
     at: String,
@@ -117,6 +123,7 @@ struct FireOrder {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MissionOrder {
     formation: String,
     mission: String,
@@ -128,6 +135,7 @@ struct MissionOrder {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RadioOrder {
     unit: String,
     to: [i32; 2],
@@ -138,9 +146,44 @@ struct RadioOrder {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MountOrder {
     unit: String,
     into: String,
+}
+
+/// Why an orders file could not be taken: both name the file, so a seat
+/// juggling several knows which one to fix.
+#[derive(Debug, thiserror::Error)]
+enum OrdersError {
+    #[error("{}: {source}", path.display())]
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    /// serde's text names the offending field and where it stands.
+    #[error("{}: {source}", path.display())]
+    Parse {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+}
+
+/// An orders document, read strictly: see the note on `Orders`. `path` is
+/// only for the error.
+fn parse_orders(text: &str, path: &Path) -> Result<Orders, OrdersError> {
+    serde_json::from_str(text).map_err(|source| OrdersError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn read_orders(path: &Path) -> Result<Orders, OrdersError> {
+    let text = std::fs::read_to_string(path).map_err(|source| OrdersError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    parse_orders(&text, path)
 }
 
 fn main() {
@@ -150,10 +193,12 @@ fn main() {
     let usage = "usage: command start <map> <seed> <dir> | plan <dir> [orders.json] | turn <dir> [orders.json] | look <dir>";
     let orders_at = |path: Option<&String>| -> Orders {
         match path {
-            Some(path) => {
-                serde_json::from_str(&std::fs::read_to_string(path).expect("orders file reads"))
-                    .expect("orders file parses")
-            }
+            // A bad file stops the turn before anything is planned or
+            // saved: half an order set fought is worse than none.
+            Some(path) => read_orders(Path::new(path)).unwrap_or_else(|e| {
+                eprintln!("orders refused: {e}");
+                std::process::exit(2)
+            }),
             None => Orders::default(),
         }
     };
@@ -1053,5 +1098,70 @@ fn terrain_glyph(terrain: &str) -> char {
         "stream" | "water" => '~',
         "mud" => '_',
         _ => '?',
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rejection(text: &str) -> String {
+        parse_orders(text, Path::new("round3.json"))
+            .expect_err("a typo'd orders file is refused")
+            .to_string()
+    }
+
+    #[test]
+    fn a_misspelled_order_is_refused_naming_the_field_and_the_file() {
+        let err = rejection(r#"{ "dismout": ["2nd Squad"] }"#);
+        assert!(err.contains("dismout"), "{err}");
+        assert!(err.contains("round3.json"), "{err}");
+    }
+
+    #[test]
+    fn a_misspelled_field_inside_an_order_is_refused_too() {
+        for (text, field) in [
+            (
+                r#"{ "missions": [{"formation": "sec1", "mision": "hold"}] }"#,
+                "mision",
+            ),
+            (
+                r#"{ "radio": [{"unit": "1st Carrier", "to": [12, 6], "bindng": true}] }"#,
+                "bindng",
+            ),
+            (
+                r#"{ "mount": [{"unit": "3rd Squad", "in": "3rd Carrier"}] }"#,
+                "`in`",
+            ),
+            (
+                r#"{ "fire": [{"unit": "2nd Squad", "at": "Wiesel", "weapn": "rpg"}] }"#,
+                "weapn",
+            ),
+        ] {
+            let err = rejection(text);
+            assert!(err.contains(field), "{text}: {err}");
+            assert!(err.contains("round3.json"), "{err}");
+        }
+    }
+
+    #[test]
+    fn the_documented_orders_file_still_reads() {
+        let orders = parse_orders(
+            r#"{ "missions": [ {"formation": "sec1", "mission": "advance", "to": [13, 9]},
+                               {"formation": "sec2", "mission": "hold"},
+                               {"formation": "sec3", "mission": "support", "of": "sec1"} ],
+                 "radio":    [ {"unit": "1st Carrier", "to": [12, 6], "binding": true} ],
+                 "dismount": [ "2nd Squad" ],
+                 "mount":    [ {"unit": "3rd Squad", "into": "3rd Carrier"} ],
+                 "release":  [ "sec3" ],
+                 "stay":     [ "3rd Carrier" ],
+                 "stay_aboard": [ "1st Squad" ],
+                 "fire":     [ {"unit": "2nd Squad", "at": "Wiesel", "weapon": "rpg"} ] }"#,
+            Path::new("orders.json"),
+        )
+        .expect("every documented field is known");
+        assert_eq!(orders.missions.len(), 3);
+        assert_eq!(orders.dismount, ["2nd Squad"]);
+        assert!(parse_orders("{}", Path::new("empty.json")).is_ok());
     }
 }
