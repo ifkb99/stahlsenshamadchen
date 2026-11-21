@@ -115,6 +115,7 @@
     "order_complement": 0.5,
     "pull_under_fire": 0.25,
     "distance_decay": 0.15,
+    "objective_arrival": 1.5,
     "plateau": 0.3,
     "cover_prior": 0.03,
     "elevation_prior": 0.4,

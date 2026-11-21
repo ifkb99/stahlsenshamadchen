@@ -2081,6 +2081,128 @@ fn an_order_and_an_objective_are_led_to_by_the_same_slope() {
     );
 }
 
+/// What standing on an objective is worth, over and above the last hex of
+/// the walk to it, is the mod's to choose — for ground she wants of her own
+/// accord and for a lane she has been ordered out by alike.
+///
+/// `objective_arrival` is the step at the top of the gradient
+/// `distance_decay` is the slope of. Both stages measure the gap between a
+/// hex on the objective and the hex beside it, so every term that is not the
+/// objective's — threat, the shot on offer, cover — is the same on both sides
+/// of each comparison, and what moves the gap is the field and nothing else.
+/// The ordered withdrawal is a separate stage because a mission replaces the
+/// map's objectives in the evaluator: it is the second place the reward is
+/// read, and it reads the same number on purpose.
+#[test]
+fn what_arriving_on_an_objective_is_worth_is_a_mod_decision() {
+    let mut reg = seen(registry_wireless());
+    let eval = Evaluator::new(reg.doctrine("massed_armor").cloned().unwrap());
+    let gap = |reg: &DataRegistry,
+               state: &BattleState,
+               on: tactics_core::Hex,
+               beside: tactics_core::Hex| {
+        eval.score_tile(reg, state, UnitId(0), on).score
+            - eval.score_tile(reg, state, UnitId(0), beside).score
+    };
+
+    // Ground she wants of her own accord: a ford, and no orders.
+    let rows: Vec<&str> = vec!["gggggggggggggggggggg"; 3];
+    let ford = goal_battle(
+        &reg,
+        &rows,
+        serde_json::json!([
+            { "id": "ford", "name": "The Ford", "at": [[18, 1]], "value": 2 },
+        ]),
+        vec![
+            unit_at([1, 1], 0, "medium_tank", "Chooser"),
+            unit_at([19, 0], 1, "medium_tank", "Somebody"),
+        ],
+        17,
+    );
+    let on = tactics_core::offset_to_hex(18, 1);
+    let beside = tactics_core::offset_to_hex(17, 1);
+    reg.planner.objective_arrival = 0.0;
+    let flat = gap(&reg, &ford, on, beside);
+    reg.planner.objective_arrival = 1.5;
+    let shipped = gap(&reg, &ford, on, beside);
+    assert!(
+        shipped > flat,
+        "the shipped reward makes the ford itself worth more than the walk to it: \
+         {shipped} against {flat}"
+    );
+    reg.planner.objective_arrival = 3.0;
+    assert!(
+        gap(&reg, &ford, on, beside) > shipped,
+        "and a larger one makes it worth more still"
+    );
+
+    // A lane she has been ordered out by.
+    let file: tactics_core::map::MapFile = serde_json::from_value(serde_json::json!({
+        "id": "withdrawing",
+        "palette": { "g": "grass" },
+        "rows": rows,
+        "objectives": [
+            { "id": "east_exit", "name": "East Exit", "at": [[19, 1]], "value": 5,
+              "kind": "exit", "side": 0 },
+        ],
+        "formations": [{ "id": "platoon", "name": "Platoon", "side": 0 }],
+    }))
+    .unwrap();
+    let map = Battlefield::from_map_file(&file).unwrap();
+    let sides = vec![
+        SideState {
+            name: "West".into(),
+            ai: None,
+        },
+        SideState {
+            name: "East".into(),
+            ai: None,
+        },
+    ];
+    let mut hers = unit_at([1, 1], 0, "medium_tank", "Retreater");
+    hers.formation = Some("platoon".into());
+    hers.leads = true;
+    let placements = vec![hers, unit_at([7, 1], 1, "medium_tank", "Target")];
+    let (roster, crews) = tactics_core::roster::Roster::stamp_for(&reg, &placements);
+    let mut lane = BattleState::from_placements(
+        &reg,
+        map,
+        sides,
+        &placements,
+        &crews,
+        std::sync::Arc::new(roster),
+        37,
+    )
+    .expect("the staged placements are content the base mod ships");
+    lane.apply(
+        &reg,
+        &Order::SetMission {
+            formation: formation_named(&lane, "platoon"),
+            mission: Mission::Withdraw {
+                via: "east_exit".into(),
+            },
+            latitude: Latitude::Delegated,
+        },
+    )
+    .expect("a legal mission");
+    let on = tactics_core::offset_to_hex(19, 1);
+    let beside = tactics_core::offset_to_hex(18, 1);
+    reg.planner.objective_arrival = 0.0;
+    let flat = gap(&reg, &lane, on, beside);
+    reg.planner.objective_arrival = 1.5;
+    let shipped = gap(&reg, &lane, on, beside);
+    assert!(
+        shipped > flat,
+        "an ordered withdrawal reads the same reward for reaching the lane: \
+         {shipped} against {flat}"
+    );
+    reg.planner.objective_arrival = 3.0;
+    assert!(
+        gap(&reg, &lane, on, beside) > shipped,
+        "and a larger one pulls her onto it harder"
+    );
+}
+
 /// How much better a tile has to be before she will drive for it is the mod's
 /// to choose.
 ///

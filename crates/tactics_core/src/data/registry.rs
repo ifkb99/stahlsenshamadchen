@@ -1244,6 +1244,17 @@ impl DataRegistry {
                 p.distance_decay
             ));
         }
+        // A warning, not an error: below zero the gradient still leads her
+        // to the objective, it just makes the ground itself worse than the
+        // hex beside it, so she stops short. Strange, and loud, but a
+        // coherent thing for a mod to ask.
+        if p.objective_arrival < 0.0 {
+            report.warn(format!(
+                "planner objective_arrival is {}; standing on an objective is worth less \
+                 than the hex beside it, so a crew is led to the ground and stops short of it",
+                p.objective_arrival
+            ));
+        }
         if p.plateau < 0.0 {
             report.error(format!(
                 "planner plateau is {}; the band is a width, and a negative one excludes the \

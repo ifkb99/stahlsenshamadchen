@@ -38,6 +38,7 @@
 //! [`order_complement`](PlannerRules::order_complement),
 //! [`pull_under_fire`](PlannerRules::pull_under_fire),
 //! [`distance_decay`](PlannerRules::distance_decay),
+//! [`objective_arrival`](PlannerRules::objective_arrival),
 //! [`plateau`](PlannerRules::plateau),
 //! [`cover_prior`](PlannerRules::cover_prior) and
 //! [`elevation_prior`](PlannerRules::elevation_prior) — say what a piece of
@@ -149,6 +150,11 @@ fn pull_under_fire() -> f32 {
 /// Serde's default for [`PlannerRules::distance_decay`].
 fn distance_decay() -> f32 {
     0.15
+}
+
+/// Serde's default for [`PlannerRules::objective_arrival`].
+fn objective_arrival() -> f32 {
+    1.5
 }
 
 /// The things that happen to a crew which make her think again about where
@@ -675,6 +681,28 @@ pub struct PlannerRules {
     /// see the note on `Evaluator::objective_value`.
     #[serde(default = "distance_decay")]
     pub distance_decay: f32,
+    /// What standing on one of a map objective's own hexes is worth before
+    /// the [`Self::distance_decay`] slope is taken off, in the objective's
+    /// own units (it is multiplied by the same weight the slope is).
+    ///
+    /// It is the step at the top of the gradient: at the shipped 1.5 and
+    /// 0.15, arriving is worth ten hexes of getting nearer, which is what
+    /// makes a crew stop *on* the bridge rather than a hex short of it, and
+    /// it is also how far off an objective's pull stays positive. Zero leaves
+    /// the slope alone, so a crew is led toward the ground but standing on it
+    /// is worth only the last hex of the walk.
+    ///
+    /// **One number for held ground, unordered exits and ordered
+    /// withdrawals.** All three are a scenario objective scored on the
+    /// objective scale; an ordered withdrawal is priced through
+    /// [`Self::exit_urgency`] exactly as the unordered pull is, and two
+    /// arrival rewards would let the order and the instinct disagree about
+    /// what reaching the same lane is worth. The mission arms that are a
+    /// share of the crew rather than objective units (advance, hold, recon)
+    /// have arrival rewards of their own, rebased with
+    /// [`Self::order_worth`], and do not read this.
+    #[serde(default = "objective_arrival")]
+    pub objective_arrival: f32,
     /// How much better a tile has to score before a crew will drive across
     /// open ground to reach it.
     ///
@@ -1028,6 +1056,7 @@ impl Default for PlannerRules {
             retired_mission_weight: None,
             pull_under_fire: pull_under_fire(),
             distance_decay: distance_decay(),
+            objective_arrival: objective_arrival(),
             plateau: plateau(),
             cover_prior: cover_prior(),
             elevation_prior: elevation_prior(),

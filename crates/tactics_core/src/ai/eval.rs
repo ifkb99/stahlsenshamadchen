@@ -570,7 +570,11 @@ impl Evaluator {
                 .map(|h| h.distance_to(tile))
                 .min()
                 .unwrap_or(0);
-            let reward = if objective.contains(tile) { 1.5 } else { 0.0 };
+            let reward = if objective.contains(tile) {
+                registry.planner.objective_arrival
+            } else {
+                0.0
+            };
             let score = weight * (reward - decay * distance as f32);
             if best.is_none_or(|b| score > b) {
                 best = Some(score);
@@ -733,7 +737,16 @@ impl Evaluator {
                             .map(|h| h.distance_to(tile))
                             .min()
                             .unwrap_or(0);
-                        let reward = if objective.contains(tile) { 1.5 } else { 0.0 };
+                        // The arrival reward is the objective's, not one of
+                        // the mission rewards above: this lane is a scenario
+                        // objective scored on the objective scale, and the
+                        // order and the instinct must agree on what reaching
+                        // it is worth.
+                        let reward = if objective.contains(tile) {
+                            registry.planner.objective_arrival
+                        } else {
+                            0.0
+                        };
                         // The one arm that is *not* a share of her: an
                         // ordered withdrawal is priced on the objective scale
                         // through `exit_urgency`, exactly as the unordered
